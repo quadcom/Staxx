@@ -10527,6 +10527,87 @@ console.log('\nAR9-AR12. PLAN_106 — a broader check on a file that was already
      afterLines.filter(function (_, i) { return i !== 4; }).join('\n'));
 })();
 
+/* =========================================================================
+ * AS. PLAN_150 phase 1 — placeholder retraction reaches a field nested one
+ *     level inside x-unraid (update.mode, update.delay), not just a direct
+ *     child. The scaffolded comment for such a field lives in the OUTER
+ *     x-unraid block's text (see removePlaceholder's `inner` note), so the
+ *     search has to look there rather than in the inner block the write
+ *     itself creates.
+ * ========================================================================= */
+console.log('\nAS. PLAN_150 phase 1 — nested placeholder retraction (update.mode/delay)');
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n' +
+            '      # update:\n' +
+            '      #   mode: notify          # off, notify or auto\n' +
+            '      #   delay: 24             # hours to wait before auto applies one\n';
+  var doc = Y.parse(src);
+
+  var at = Y.addNested(doc, null, 'a', ['x-unraid', 'update', 'mode'], 'notify');
+  ok('writing update.mode over the scaffolded block succeeds', at >= 0, at);
+  var out = Y.serialise(doc);
+  ok('the mode placeholder is gone', out.indexOf('#   mode:') < 0, out);
+  ok('the real update/mode pair is written',
+     /update:\s*\n\s*mode: notify/.test(out), out);
+  ok('there is no stale second "mode:" line',
+     (out.match(/mode:/g) || []).length === 1, out);
+  ok('the delay placeholder is untouched',
+     out.indexOf('#   delay: 24             # hours to wait before auto applies one') >= 0, out);
+  ok('the block header comment is untouched',
+     out.indexOf('# update:') >= 0, out);
+
+  var reparsed = Y.parse(out);
+  ok('the result re-parses clean', reparsed.warnings.length === 0 && !reparsed.unreadTail);
+
+  // Continuing on the same doc: writing update.delay next retracts its own
+  // placeholder too, leaving both real keys and no leftover comment lines.
+  var at2 = Y.addNested(doc, null, 'a', ['x-unraid', 'update', 'delay'], '24');
+  ok('writing update.delay afterwards also succeeds', at2 >= 0, at2);
+  var out2 = Y.serialise(doc);
+  ok('the delay placeholder is now gone too', out2.indexOf('#   delay:') < 0, out2);
+  ok('the real update/delay pair is written',
+     /update:\s*\n\s*mode: notify\s*\n\s*delay: 24/.test(out2), out2);
+  ok('no stale second "delay:" line', (out2.match(/delay:/g) || []).length === 1, out2);
+})();
+
+(function () {
+  // Regression: a direct child of x-unraid (path.length 2) must still
+  // retract exactly as before — the new `inner` parameter defaults falsy.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      # webui:              # e.g. http://[IP]:8096/\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'a', ['x-unraid', 'webui'], 'http://[IP]:8096/');
+  ok('a direct-child placeholder still retracts', at >= 0 && Y.serialise(doc).indexOf('# webui:') < 0,
+     Y.serialise(doc));
+})();
+
+(function () {
+  // No scaffolded comment at all: the nested write lands cleanly and there
+  // is nothing to remove.
+  var src = 'services:\n  a:\n    image: alpine\n    x-unraid:\n      version: 1\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'a', ['x-unraid', 'update', 'mode'], 'notify');
+  ok('a nested write with no placeholder present succeeds', at >= 0, at);
+  ok('the real pair is written',
+     Y.serialise(doc).indexOf('mode: notify') >= 0, Y.serialise(doc));
+})();
+
+(function () {
+  // A sealed (anchored) x-unraid block refuses the nested write outright,
+  // the same guard addNested already applies before it ever reaches
+  // placeholder retraction — no partial damage.
+  var src = 'services:\n    web:\n        image: nginx\n' +
+            '        x-unraid: &meta\n            name: Thing\n' +
+            '    api:\n        image: api:1.0\n        x-unraid: *meta\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'update', 'mode'], 'notify');
+  ok('an anchored x-unraid: block refuses the nested insert', at === -1, at);
+  ok('...and the file comes back byte-identical', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

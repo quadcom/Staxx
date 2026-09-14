@@ -94,6 +94,21 @@ services:
       update:
         mode: bogus
         delay: notanumber
+  service-notify-only:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: false
+  service-old-notify-spelling:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        mode: notify
+  bad-notify:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: sideways
   built-ok:
     build:
       context: ./build-ok
@@ -104,6 +119,7 @@ x-unraid:
   update:
     mode: auto
     delay: 12
+    notify: true
 YAML
 );
 
@@ -118,8 +134,11 @@ register_shutdown_function(function () use ($scratch, $fixtureDir) {
 /* -------------------------------------------------------- 1. settings -- */
 
 $settings = staxx_update_settings();
-ok('settings: mode is one of off/notify/auto',
-   in_array($settings['mode'] ?? '', ['off', 'notify', 'auto'], true), $settings['mode'] ?? '');
+// PLAN_150: the three-way mode collapsed to two — 'off' and 'notify' never
+// behaved differently from 'manual', so staxx_update_settings() normalises
+// both on the way out and no caller sees anything but manual/auto.
+ok('settings: mode is one of manual/auto',
+   in_array($settings['mode'] ?? '', ['manual', 'auto'], true), $settings['mode'] ?? '');
 ok('settings: delay is an int', is_int($settings['delay'] ?? null));
 ok('settings: window is a bool', is_bool($settings['window'] ?? null));
 ok('settings: wstart/wend look like HH:MM',
@@ -137,11 +156,14 @@ ok('settings: cleanup is one of off/weekly',
 $pUnknown = staxx_update_policy('staxx-no-such-stack', 'x');
 ok('policy: an unknown stack falls back to the global setting, not an error',
    $pUnknown['from'] === 'global' && $pUnknown['mode'] === $settings['mode']
-   && $pUnknown['delay'] === $settings['delay'], json_encode($pUnknown));
+   && $pUnknown['delay'] === $settings['delay']
+   && $pUnknown['notify'] === ($settings['notify'] !== 'off'), json_encode($pUnknown));
 
+// service-mode writes the OLD 'off' spelling on purpose — proving it still
+// normalises to 'manual' is the whole point of PLAN_150's read-side change.
 $pService = staxx_update_policy($fixtureName, 'service-mode');
-ok('policy: a service-level mode wins over the stack and the global default',
-   $pService['mode'] === 'off' && $pService['from'] === 'service', json_encode($pService));
+ok('policy: a service-level mode wins over the stack and the global default, old "off" spelling reads as manual',
+   $pService['mode'] === 'manual' && $pService['from'] === 'service', json_encode($pService));
 ok('policy: a service-level delay travels with the service-level mode',
    $pService['delay'] === 5, json_encode($pService));
 
@@ -150,12 +172,34 @@ ok('policy: no service override falls back to the stack-level mode',
    $pStack['mode'] === 'auto' && $pStack['from'] === 'stack', json_encode($pStack));
 ok('policy: the stack-level delay travels with it',
    $pStack['delay'] === 12, json_encode($pStack));
+ok('policy: the stack-level notify travels with it too',
+   $pStack['notify'] === true, json_encode($pStack));
 
 $pBad = staxx_update_policy($fixtureName, 'bad-values');
 ok('policy: an unrecognised mode is ignored, not honoured',
    $pBad['mode'] !== 'bogus', json_encode($pBad));
 ok('policy: a non-numeric delay is ignored, not honoured',
    $pBad['delay'] !== 'notanumber' && is_int($pBad['delay']), json_encode($pBad));
+
+// notify is a scope-declaring key in its own right: a scope that sets only
+// notify must still inherit mode and delay from the level below it, never
+// fall all the way through to the global default for those two.
+$pNotifyOnly = staxx_update_policy($fixtureName, 'service-notify-only');
+ok('policy: a service declaring only notify still wins that scope',
+   $pNotifyOnly['from'] === 'service' && $pNotifyOnly['notify'] === false, json_encode($pNotifyOnly));
+ok('policy: …but inherits mode and delay from the stack, not the global default',
+   $pNotifyOnly['mode'] === 'auto' && $pNotifyOnly['delay'] === 12, json_encode($pNotifyOnly));
+
+// The OLD 'notify' spelling for mode, at service scope, on a service that
+// sets nothing else — proves normalisation happens independently of which
+// scope the old spelling was written at.
+$pOldSpelling = staxx_update_policy($fixtureName, 'service-old-notify-spelling');
+ok('policy: the old "notify" mode spelling also reads as manual',
+   $pOldSpelling['mode'] === 'manual' && $pOldSpelling['from'] === 'service', json_encode($pOldSpelling));
+
+$pBadNotify = staxx_update_policy($fixtureName, 'bad-notify');
+ok('policy: a notify value that is not really a boolean is ignored, falls through to the stack',
+   $pBadNotify['notify'] === true && $pBadNotify['from'] === 'stack', json_encode($pBadNotify));
 
 /* -------------------------------------------------- 3. the quiet window -- */
 

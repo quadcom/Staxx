@@ -121,6 +121,13 @@ console.log('\nA. No block at either level');
     return svc.value.keys[svc.value.keys.length - 1] === 'x-unraid';
   })());
   ok('A9 original lines all survive, in order', isSubsequence(text.split('\n'), r.yaml.split('\n')).ok);
+  // PLAN_150: the update block's commented example now has a third nested
+  // line (notify), and mode's own example value is 'manual' rather than
+  // the old 'notify' spelling, since off/notify and auto stopped meaning
+  // different things and the mode axis is now manual-vs-auto.
+  ok('A10 update block offers all three nested keys', /#   mode: manual/.test(r.yaml) &&
+     /#   delay: 24/.test(r.yaml) && /#   notify: true/.test(r.yaml));
+  ok('A11 mode line is not the old "notify" example value', !/#   mode: notify/.test(r.yaml));
 })();
 
 /* =========================================================================

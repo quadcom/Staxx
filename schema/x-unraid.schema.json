@@ -187,14 +187,18 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["off", "notify", "auto"],
-          "description": "off = never apply on its own. notify = show that an update was found but never apply it automatically. auto = apply it once the delay below has passed."
+          "enum": ["manual", "off", "notify", "auto"],
+          "description": "manual = never applied on its own; you press Update yourself. auto = applied once the delay below has passed. 'off' and 'notify' are the older spelling of 'manual' and are still accepted."
+        },
+        "notify": {
+          "type": "boolean",
+          "description": "Whether this stack (or service) is mentioned in update notifications. Absent means it follows the level below it — stack, then the server-wide setting."
         },
         "delay": {
           "type": "integer",
           "minimum": 0,
           "maximum": 720,
-          "description": "Hours to wait, after an update is first seen, before an 'auto' mode applies it."
+          "description": "Hours to wait, after an update is first seen, before an 'auto' mode applies it. 0 means installed as soon as an update is found."
         }
       },
       "additionalProperties": false

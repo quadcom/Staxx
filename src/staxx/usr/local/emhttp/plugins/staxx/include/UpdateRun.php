@@ -65,13 +65,23 @@ unset($staxx_update_tz);
 /**
  * @return array{mode:string, delay:int, window:bool, wstart:string, wend:string,
  *               notify:string, retain:int, cleanup:string}
+ *
+ * mode is always returned as 'manual' or 'auto' — the config key may still
+ * hold the older 'off'/'notify' spelling, normalised here rather than at
+ * every reader. (The 'notify' returned in this array is the unrelated
+ * server-wide notification setting, still off/found/applied; Phase 2 of
+ * PLAN_150 replaces it with three booleans and is not this file's job yet.)
  */
 function staxx_update_settings(): array {
   $cfg = staxx_cfg();
   $time = '/^([01][0-9]|2[0-3]):[0-5][0-9]$/';
 
+  // 'off' and 'notify' are the older three-way spelling — PLAN_150 found the
+  // one caller that reads mode only ever asks "=== 'auto'", so the two of
+  // them never behaved differently and both now read as 'manual'.
   $mode = (string)($cfg['UPDATE_MODE'] ?? 'notify');
-  if (!in_array($mode, ['off', 'notify', 'auto'], true)) $mode = 'notify';
+  if (!in_array($mode, ['manual', 'off', 'notify', 'auto'], true)) $mode = 'notify';
+  if ($mode === 'off' || $mode === 'notify') $mode = 'manual';
 
   $delay = $cfg['UPDATE_DELAY_HOURS'] ?? 24;
   $delay = (is_numeric($delay) && (int)$delay == $delay) ? (int)$delay : 24;
@@ -100,20 +110,53 @@ function staxx_update_settings(): array {
 }
 
 /**
- * The mode and delay that actually apply to one service, resolved service
- * first, then the stack itself, then the global default. A scope only wins
- * outright when it declares at least one of the two keys — a stack that sets
- * only 'update.delay' still inherits the global mode, it does not fall
- * through to the global delay too. An unrecognised mode or a non-numeric,
- * out-of-range delay is ignored at that scope exactly as it would be at the
- * global one, so a typo in a compose file cannot silently turn automatic
- * updates on (or off) for a service.
+ * Turns a raw x-unraid value into a real bool, or null when it is not one.
+ * staxx_yaml_flatten() always hands back a string (it reads YAML a line at a
+ * time and never types a scalar), but `docker compose config`'s own output —
+ * what staxx_compose_meta() actually parses when compose is installed — is a
+ * second route into the same array, so a genuine PHP bool is tolerated too
+ * rather than assumed away.
+ */
+function staxx_update_bool($raw): ?bool {
+  if (is_bool($raw)) return $raw;
+  if ($raw === 'true') return true;
+  if ($raw === 'false') return false;
+  return null;
+}
+
+/**
+ * The two independent axes that decide one service's behaviour — whether it
+ * is applied for you (mode) and whether it is named in update messages
+ * (notify) — resolved service first, then the stack itself, then the global
+ * default. A scope only wins outright when it declares at least one of the
+ * three keys — a stack that sets only 'update.delay' still inherits the
+ * global mode, it does not fall through to the global delay too, and a scope
+ * declaring only 'update.notify' still inherits mode and delay from further
+ * down. An unrecognised mode, a non-numeric or out-of-range delay, or a
+ * notify value that is not really a boolean is ignored at that scope exactly
+ * as it would be at the global one, so a typo in a compose file cannot
+ * silently turn automatic updates — or being mentioned in a notification —
+ * on or off for a service.
  *
- * @return array{mode:string, delay:int, from:string}
+ * mode is always returned as 'manual' or 'auto'. 'off' and 'notify' are the
+ * older three-way spelling, read from a hand-written file for good, but they
+ * never behaved differently from 'manual' — the only caller that reads mode
+ * asks solely whether it is 'auto' — so both normalise to 'manual' here and
+ * no caller downstream ever has to know the old spelling existed.
+ *
+ * notify has no compose-file global fallback of its own yet: for now it is
+ * derived from the existing server-wide UPDATE_NOTIFY setting (on for
+ * anything other than 'off'). Phase 2 of PLAN_150 replaces that setting with
+ * three real booleans and will revisit this derivation; nothing here should
+ * be read as the final shape of the global default.
+ *
+ * @return array{mode:string, delay:int, notify:bool, from:string}
  */
 function staxx_update_policy(string $stack, string $service): array {
   $global = staxx_update_settings();
-  $fallback = ['mode' => $global['mode'], 'delay' => $global['delay'], 'from' => 'global'];
+  $globalNotify = $global['notify'] !== 'off';
+  $fallback = ['mode' => $global['mode'], 'delay' => $global['delay'],
+               'notify' => $globalNotify, 'from' => 'global'];
 
   if (!staxx_valid_path($stack)) return $fallback;
 
@@ -126,7 +169,7 @@ function staxx_update_policy(string $stack, string $service): array {
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return $fallback;
 
-  $modes = ['off', 'notify', 'auto'];
+  $modes = ['manual', 'off', 'notify', 'auto'];
   $scopes = [
     'service' => (array)($meta['services'][$service]['x'] ?? []),
     'stack'   => (array)$meta['x'],
@@ -136,15 +179,18 @@ function staxx_update_policy(string $stack, string $service): array {
     $rawMode  = (string)($x['update.mode'] ?? '');
     $rawDelay = $x['update.delay'] ?? null;
 
-    $mode  = in_array($rawMode, $modes, true) ? $rawMode : null;
+    $mode = in_array($rawMode, $modes, true) ? $rawMode : null;
+    if ($mode === 'off' || $mode === 'notify') $mode = 'manual';
     $delay = (is_numeric($rawDelay) && (int)$rawDelay == $rawDelay
               && (int)$rawDelay >= 0 && (int)$rawDelay <= 720) ? (int)$rawDelay : null;
+    $notify = staxx_update_bool($x['update.notify'] ?? null);
 
-    if ($mode !== null || $delay !== null) {
+    if ($mode !== null || $delay !== null || $notify !== null) {
       return [
-        'mode'  => $mode ?? $global['mode'],
-        'delay' => $delay ?? $global['delay'],
-        'from'  => $from,
+        'mode'   => $mode ?? $global['mode'],
+        'delay'  => $delay ?? $global['delay'],
+        'notify' => $notify ?? $globalNotify,
+        'from'   => $from,
       ];
     }
   }

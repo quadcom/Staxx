@@ -3954,7 +3954,16 @@
   // runs. Silently does nothing if there is no map, no matching placeholder,
   // or removing it would leave the block with nothing under it at all: this
   // is a tidy-up, not something a write can fail over.
-  function removePlaceholder(doc, pair, key) {
+  //
+  // `inner` is set for a field one level deeper than a direct child of
+  // `pair` (update.mode, update.delay) — meta-scaffold.js writes such a
+  // field's placeholder as a comment INSIDE the outer block, indented two
+  // extra spaces past the plain "# key:" shape a direct child gets, because
+  // the nesting lives inside the comment text rather than in a real child
+  // block. Requiring those two extra spaces here is what stops a direct
+  // child's own placeholder (e.g. "# mode:", if one ever existed) from
+  // being mistaken for the nested one, and vice versa.
+  function removePlaceholder(doc, pair, key, inner) {
     if (hasUnreadTail(doc)) return;
     var map = pair.value;
     if (!map || map.kind !== 'map') return;
@@ -3980,7 +3989,15 @@
     for (i = pair.start + 1; i < end; i++) {
       var line = doc.lines[i];
       if (line.slice(0, prefix.length) !== prefix) continue;
-      if (!re.test(line.slice(prefix.length).replace(/^\s+/, ''))) continue;
+      var rest = line.slice(prefix.length);
+      if (inner) {
+        var lead = rest.match(/^\s*/)[0];
+        if (lead.length < 2) continue;
+        rest = rest.slice(lead.length);
+      } else {
+        rest = rest.replace(/^\s+/, '');
+      }
+      if (!re.test(rest)) continue;
       splice(doc, i, 1, []);
       return;
     }
@@ -3999,17 +4016,23 @@
     var at = insertChild(doc, pair, path[path.length - 1], value,
                          path.length === 1 ? 'x-unraid' : null, bare);
     if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
-    // Placeholder retraction is scoped to a direct child of x-unraid
-    // (path.length 2 — today, only the webui writer). A field nested a
-    // level deeper still (update.mode, update.delay) has its scaffolded
-    // comment sitting at the OUTER x-unraid block's indent, not the inner
-    // one this just created, so finding it needs a different search — out
-    // of scope for this tidy-up until something actually writes one of
-    // those fields.
+    // A direct child of x-unraid (path.length 2, e.g. webui) has its
+    // placeholder in the same block this just wrote into.
     else if (path.length === 2 && path[0] === 'x-unraid') {
       var fresh = ensurePath(doc, function () { return serviceMapOf(doc, service); },
                             path.slice(0, -1), 'x-unraid');
       if (fresh) removePlaceholder(doc, fresh, path[path.length - 1]);
+    }
+    // A field nested one level deeper still (update.mode, update.delay)
+    // writes into an inner block this call itself created — but
+    // meta-scaffold.js never wrote a placeholder comment there, because the
+    // nesting lives inside the comment text of the OUTER x-unraid block
+    // (see removePlaceholder's `inner` note). So the search has to re-derive
+    // that outer pair, not the one just written into.
+    else if (path.length === 3 && path[0] === 'x-unraid') {
+      var outer = ensurePath(doc, function () { return serviceMapOf(doc, service); },
+                             path.slice(0, 1), 'x-unraid');
+      if (outer) removePlaceholder(doc, outer, path[2], true);
     }
     return at;
   }
@@ -4087,9 +4110,17 @@
     if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
     var at = insertChild(doc, pair, path[path.length - 1], value, null, bare);
     if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
+    // Direct child of x-unraid: placeholder lives in the block just written.
     else if (path.length === 2 && path[0] === 'x-unraid') {
       var fresh = ensurePath(doc, function () { return rootPair(doc); }, path.slice(0, -1));
       if (fresh) removePlaceholder(doc, fresh, path[path.length - 1]);
+    }
+    // One level deeper still: the placeholder comment is nested inside the
+    // OUTER x-unraid block's text, not the inner block this call created —
+    // see removePlaceholder's `inner` note and addNested's matching branch.
+    else if (path.length === 3 && path[0] === 'x-unraid') {
+      var outer = ensurePath(doc, function () { return rootPair(doc); }, path.slice(0, 1));
+      if (outer) removePlaceholder(doc, outer, path[2], true);
     }
     return at;
   }

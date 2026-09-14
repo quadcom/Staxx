@@ -47,8 +47,9 @@
     { key: 'readme', word: 'a documentation page', hint: 'documentation page' },
     { key: 'author', word: 'an author', hint: '' },
     { key: 'update', word: 'an update policy', nested: [
-        { key: 'mode', value: 'notify', hint: 'off, notify or auto' },
-        { key: 'delay', value: '24', hint: 'hours to wait before auto applies one' }
+        { key: 'mode', value: 'manual', hint: 'manual or auto' },
+        { key: 'delay', value: '24', hint: 'hours to wait before auto applies one' },
+        { key: 'notify', value: 'true', hint: 'mention it in update messages' }
       ] }
   ];
 

@@ -142,7 +142,7 @@ NEGATIVE = [
         {"x-unraid": {"sections": {"web": {"healthcheck": {"after": "image", "lines": []}}}}},
     ),
     (
-        "stack update mode not one of off/notify/auto",
+        "stack update mode not one of manual/off/notify/auto",
         {"x-unraid": {"update": {"mode": "always"}}},
     ),
     (
@@ -156,6 +156,13 @@ NEGATIVE = [
     (
         "stack update delay below zero",
         {"x-unraid": {"update": {"delay": -1}}},
+    ),
+    (
+        # PLAN_150: notify is the new independent axis — whether this stack
+        # is mentioned in update messages — and must stay a real boolean,
+        # never the on/off-shaped string the old mode enum used.
+        "stack update notify given as a string, not a boolean",
+        {"x-unraid": {"update": {"notify": "true"}}},
     ),
     (
         "unknown key inside a stack update block",
@@ -186,8 +193,12 @@ NEGATIVE = [
         {"x-unraid": {"imported": {"from": "docker-image", "on": "2026-08-30", "id": 1234}}},
     ),
     (
-        "service update mode not one of off/notify/auto",
+        "service update mode not one of manual/off/notify/auto",
         service_doc(update={"mode": "hourly"}),
+    ),
+    (
+        "service update notify given as a string, not a boolean",
+        service_doc(update={"notify": "yes"}),
     ),
     (
         "unknown key inside a service update block",
@@ -321,7 +332,7 @@ POSITIVE = [
         "support": "https://forum.jellyfin.org",
         "readme": "https://github.com/jellyfin/jellyfin#readme",
         "author": "jellyfin",
-        "update": {"mode": "auto", "delay": 6},
+        "update": {"mode": "auto", "delay": 6, "notify": True},
     }}),
     ("every service key at once", service_doc(
         icon="./icon.png",
@@ -333,6 +344,17 @@ POSITIVE = [
         update={"mode": "notify", "delay": 12},
     )),
     ("stack update block with mode but no delay", {"x-unraid": {"update": {"mode": "off"}}}),
+    # PLAN_150: 'manual' is the new spelling of the mode that never applies
+    # anything on its own; 'off' and 'notify' (above and at C337) stay
+    # accepted for good, since a hand-written file using them still works.
+    ("stack update mode given as the new 'manual' spelling",
+     {"x-unraid": {"update": {"mode": "manual"}}}),
+    ("service update mode given as the new 'manual' spelling",
+     service_doc(update={"mode": "manual"})),
+    ("stack update notify set true", {"x-unraid": {"update": {"notify": True}}}),
+    ("stack update notify set false", {"x-unraid": {"update": {"notify": False}}}),
+    ("service update notify set true", service_doc(update={"notify": True})),
+    ("service update notify set false", service_doc(update={"notify": False})),
     ("a valid imported block for each of the four routes", {"x-unraid": {"imported": {
         "from": "unraid-template", "on": "2026-08-30",
     }}}),
