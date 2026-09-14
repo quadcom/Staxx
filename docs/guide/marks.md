@@ -63,6 +63,7 @@ it is checked that often.
 | Example | Mark | Meaning |
 |---|---|---|
 | <img src="../images/guide/marks-needs-review.png" alt="A drawing pin icon under a stack name"> | Drawing pin | One or more services is fixed to one exact build. Hover it to see which. Never shows an update mark — there is nothing to compare it against. |
+| Green circular arrows | Updates itself | This container will install an update on its own, whether that comes from its own setting or from following the server's. See [choosing how a container updates](update-policy.md). Never shown on a pinned container. |
 | Orange triangle | Drift since import | Only on a stack imported from Compose Manager. Its original file has changed since the day it was copied. Hover it to see what differs. |
 | Orange triangle | Ports do nothing | A service is on a network that gives it its own address, so the ports in the file are ignored. Hover it to see which service. |
 

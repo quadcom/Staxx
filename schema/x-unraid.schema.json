@@ -192,7 +192,7 @@
         },
         "notify": {
           "type": "boolean",
-          "description": "Whether this stack (or service) is mentioned in update notifications. Absent means it follows the level below it — stack, then the server-wide setting."
+          "description": "Whether this stack (or service) is mentioned in update notifications. Absent at every level means the server-wide setting decides. Note that whichever level sets ANY key in this block answers for all of them, and fills what it leaves unsaid from the server-wide setting rather than from the level below it."
         },
         "delay": {
           "type": "integer",

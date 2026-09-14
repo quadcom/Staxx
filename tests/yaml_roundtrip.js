@@ -10905,6 +10905,33 @@ console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields'
 })();
 
 (function () {
+  // Which scope a Default row says it follows. The resolution rule is that
+  // the first scope declaring ANY of the three keys answers for all three,
+  // filling what it left unsaid from the server-wide setting — so a service
+  // stating only notify has taken the stack out of the picture for mode too,
+  // and the When row must stop naming the stack. Getting this backwards puts
+  // a value on screen that nothing actually uses.
+  function policyOf(src, svc, field) {
+    var doc = Y.parse(src), form = Y.buildForm(doc);
+    var f = form.fields.filter(function (x) {
+      return x.service === svc && x.policy && x.policy.field === field;
+    })[0];
+    return f ? f.policy : null;
+  }
+
+  var stackOnly = 'x-unraid:\n  update:\n    mode: auto\nservices:\n  a:\n    image: x\n';
+  ok('a silent service follows the stack for When',
+     policyOf(stackOnly, 'a', 'mode').scope === 'stack');
+
+  var notifyOnly = 'x-unraid:\n  update:\n    mode: auto\n' +
+                   'services:\n  a:\n    image: x\n    x-unraid:\n      update:\n        notify: false\n';
+  ok('a service stating only notify no longer claims to follow the stack for When',
+     policyOf(notifyOnly, 'a', 'mode').scope === null);
+  ok('...and its Notify row reads as its own',
+     policyOf(notifyOnly, 'a', 'notify').scope === 'service');
+})();
+
+(function () {
   // An anchored (sealed) x-unraid: block refuses the write outright — no
   // partial damage, file comes back byte-identical.
   var src = 'services:\n' +

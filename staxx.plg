@@ -446,6 +446,22 @@ chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
 # could not be done.
 bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose || true
 
+# PLAN_150 phase 7: the one-pass conversion of the old update.mode spellings
+# ('off', 'notify') to the current one ('manual'). Runs here — install and
+# upgrade alike — rather than from apply_settings, so it never fires on an
+# ordinary settings save or a plain boot. Placed after ensure-compose above:
+# the pass needs docker compose to confirm a file was actually understood
+# before touching it, and on a first install that copy may not have existed
+# a moment ago. Idempotent and non-fatal by its own design (see
+# UpdateModeConvert.php) — nothing here may fail the rest of the install.
+php -r '
+require_once "/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php";
+$r = staxx_update_mode_convert_run();
+if ($r["converted"]) {
+  echo "StaXX tidied up the older update-setting spelling in " . count($r["converted"]) . " stack(s).\n";
+}
+' 2>&1 || echo "warning: the update-setting tidy-up could not run; it will be tried again at the next upgrade."
+
 echo ""
 echo "-----------------------------------------------------------"
 echo " StaXX has been installed."

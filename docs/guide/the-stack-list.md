@@ -199,6 +199,7 @@ Right-click the row to open it. Items appear in this order, and only when they a
 | Has no file | Start a compose file here |
 | Folders | Move to folder (a list), New folder…, Remove from folder (if filed) |
 | Boot | Autostart (on/off switch), Delay |
+| Updates | Updates (Default/Manual/Automatic), Notify me (Default/No/Yes) — see [choosing how a container updates](update-policy.md) |
 | Profiles | One switch per profile the file declares — see below |
 | Reference | What do these marks mean? |
 | Last | Remove stack |

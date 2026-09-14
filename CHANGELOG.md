@@ -23,6 +23,7 @@ before that were dates.
 - A container that updates itself now shows a small green mark beside its name in the stack list, so you can tell which ones will install a newer version on their own without opening each one to check.
 - Each container in the editor now has its own Updates box, with a "When" choice (Default, Manual or Automatic, with Immediate/Delayed once Automatic is picked) and a "Notify me" choice (Default, No or Yes), each explaining in plain words what it will actually do. Changing either takes effect straight away rather than waiting for Save. A pinned container shows why it cannot be changed with a one-click way to unpin it; a container built here from a recipe, or one with no image at all, says so too.
 - The same Updates and Notify me choices are now on a container's own right-click menu, and on a stack's, where one press sets every container in it. A stack whose containers do not all agree shows no tick until you set one.
+- A stack still carrying the old spelling of the update setting is tidied up to the new one automatically the next time StaXX is installed or updated, with a note in the editor saying so on a stack that was changed and nothing else about it altered. This runs once, keeps a copy of every file it touched, and reports which stacks it changed in a single notification.
 
 ## 00.04.00 — released 2026-09-14
 

@@ -62,6 +62,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Store.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -294,6 +295,10 @@ switch ($action) {
     // PLAN_85 — one icon per service, same omit-when-empty wire contract.
     $icons = staxx_service_icons_for_stack($name);
     if ($icons !== []) $reply['icons'] = $icons;
+    // PLAN_150 phase 7 — was this stack rewritten by the one-pass
+    // update.mode conversion? Omitted entirely when false, same wire
+    // contract as 'moved'/'watch'/'icons' just above.
+    if (staxx_update_convert_was_converted($name)) $reply['convertedUpdateMode'] = true;
     staxx_reply($reply);
 
   // ---- create a new stack, or overwrite an existing one ----

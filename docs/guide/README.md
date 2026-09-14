@@ -26,6 +26,9 @@ This guide is written in English only.
   the bottom.
 - **[Update checking](updates.md)** — answers what a check does, why images are asked about at
   different rates, what N to look at means, and how the countdown to an automatic install works.
+- **[Choosing how a container updates](update-policy.md)** — letting one container update itself, or
+  wait for you, and whether it is mentioned in update messages — set on its own page or from its
+  row.
 - **[Row marks and icons](marks.md)** — a quick key to every mark on the stacks page: running state,
   update state, and the rest.
 - **[File locations and the data store](where-things-live.md)** — what is in the data store, what is

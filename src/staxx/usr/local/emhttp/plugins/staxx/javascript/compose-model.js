@@ -2937,6 +2937,17 @@
     var ownDelayRaw = scalarWordOf(pairs.delay);
     var ownDelay = (ownDelayRaw !== null && /^\d+$/.test(ownDelayRaw)) ? Number(ownDelayRaw) : null;
 
+    // Whether the SERVICE's own block declares anything at all. The
+    // resolution rule is that the first scope declaring any of the three
+    // keys answers for all three, filling what it leaves unsaid from the
+    // server-wide setting rather than from the stack. So a service that
+    // states only `notify` has already taken the stack out of the picture
+    // for mode and delay too — a Default row that then said "follows this
+    // stack's setting" would be naming a value nothing actually uses.
+    var serviceSpeaks = modeRecognised !== null ||
+                        updateNotifyWord(scalarWordOf(pairs.notify)) !== null ||
+                        (scalarWordOf(pairs.delay) !== null && /^\d+$/.test(scalarWordOf(pairs.delay)));
+
     var modeChoice, modeScope, modeAuto, modeDelay;
     if (modeRecognised) {
       modeChoice = modeRecognised;
@@ -2945,7 +2956,7 @@
       modeDelay = modeRecognised === 'auto' ? ownDelay : null;
     } else {
       modeChoice = 'default';
-      modeScope = stackPolicy.mode ? 'stack' : null;
+      modeScope = (!serviceSpeaks && stackPolicy.mode) ? 'stack' : null;
       modeAuto = null;
       modeDelay = null;
     }
@@ -2987,7 +2998,7 @@
       notifyScope = 'service';
     } else {
       notifyChoice = 'default';
-      notifyScope = stackPolicy.notify !== null ? 'stack' : null;
+      notifyScope = (!serviceSpeaks && stackPolicy.notify !== null) ? 'stack' : null;
     }
 
     var notifySpot = notifyRecognised !== null ? scalarSpot(pairs.notify.value) : null;

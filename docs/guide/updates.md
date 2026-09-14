@@ -18,7 +18,7 @@ nothing.
 
 ## Check cadence
 
-![The Updates tab: Check for image updates with how often and time of day, What to do with what is found, a greyed-out When to install box, and Notify me](../images/guide/settings-image-updates.png)
+![The Updates tab: Check for image updates with how often and time of day, the Updates tick between Manual and Automatic, a greyed-out When to install box, and three Notify me switches](../images/guide/settings-image-updates.png)
 
 A check pass runs every hour, on its own, and only asks about the images that are due — most images
 sit that pass out. The daily or weekly choice in [settings](settings.md#image-updates) is when StaXX
@@ -136,9 +136,10 @@ Update and Pull images. See [the row menu](the-stack-list.md#the-row-menu) for h
 
 ![A running pill beside an update ready pill that carries a countdown chip reading 1h 41m](../images/guide/updates-countdown-chip.png)
 
-A countdown only appears when [settings](settings.md#image-updates) has "What to do with what is
-found" set to install it by itself. It starts the moment the new build was first seen — reloading
-the page does not restart it.
+A countdown only appears when [settings](settings.md#updates-tab) has **Updates** set to
+**Automatic** — either for the whole server, or for this one container on its own page or from its
+row menu; see [choosing how a container updates](update-policy.md). It starts the moment the new
+build was first seen — reloading the page does not restart it.
 
 The clock can keep ticking even when nothing is actually about to install. When that happens the row
 says why:

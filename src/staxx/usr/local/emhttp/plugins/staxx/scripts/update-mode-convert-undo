@@ -1,0 +1,25 @@
+#!/bin/bash
+# StaXX — undoes the PLAN_150 phase 7 one-pass conversion of the old
+# update.mode spellings ('off', 'notify') to 'manual'. Restores every file
+# the pass touched back to its exact original bytes, but only where that
+# file still reads exactly as the pass left it — anything hand-edited since
+# is reported and left alone, never overwritten.
+#
+# Not run automatically by anything; a deliberate, occasional command.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+php -r '
+require_once "/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php";
+$note = "";
+$r = staxx_update_mode_convert_undo($note);
+if ($note !== "") { echo $note . "\n"; exit(1); }
+echo "Restored: " . count($r["restored"]) . "\n";
+foreach ($r["restored"] as $e) echo "  " . $e["stack"] . "\n";
+if ($r["skipped"]) {
+  echo "Left alone: " . count($r["skipped"]) . "\n";
+  foreach ($r["skipped"] as $e) echo "  " . $e["stack"] . " — " . $e["reason"] . "\n";
+}
+'

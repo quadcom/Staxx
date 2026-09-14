@@ -599,6 +599,16 @@
   linkNote.id = 'staxx-link-note';
   linkNote.hidden = true;
   if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(linkNote, gapNote);
+  // PLAN_150 phase 7 — shown once, on a stack the upgrade-time conversion
+  // pass rewrote (see UpdateModeConvert.php). A plain hint, not a warning:
+  // nothing about the stack's behaviour changed, only the spelling of one
+  // word in its file, so this never uses the amber/error notes above.
+  var convertedNote = document.createElement('p');
+  convertedNote.className = 'staxx-hint';
+  convertedNote.id = 'staxx-converted-note';
+  convertedNote.hidden = true;
+  convertedNote.textContent = 'Update options have been upgraded to the newer form. Nothing about how this stack behaves has changed.';
+  if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(convertedNote, gapNote);
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
   var scaffoldNote = document.getElementById('staxx-scaffold-note');
@@ -14949,7 +14959,7 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons, adopt) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons, adopt, convertedUpdateMode) {
     closeMenu();
     clearError();
 
@@ -14979,6 +14989,10 @@
     // icon is meaningless against today's stack, so this is only ever what
     // the current `read` reply carried.
     serviceIcons = icons || {};
+    // PLAN_150 phase 7 — set once per open, never recomputed while editing:
+    // the flag names a rewrite that already happened, not something that can
+    // change as this session goes on.
+    if (convertedNote) convertedNote.hidden = !convertedUpdateMode;
 
     // PLAN_84 phase 5 — yesterday's stack's image lookup means nothing
     // against today's stack; a fresh session always re-asks once, which is
@@ -21510,7 +21524,7 @@
         tidyBad = outcome.bad;
       }
 
-      openEditor(res.name, body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
+      openEditor(res.name, body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons, false, res.convertedUpdateMode);
       // After openEditor(), not before — same reasoning as every other
       // arrival route's own notice.
       if (tidyNote) showYamlNotice(tidyNote, tidyBad);
