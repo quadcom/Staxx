@@ -34,12 +34,22 @@
  * register_shutdown_function() — the same promise tests/server/settings.php
  * makes for the config file it edits.
  *
- * Creates one throwaway stack of its own, "zzb1updrun", under the real
- * stack root — the same "zz…" fixture convention tests/server/files.php and
- * tests/server/import.php already use — and removes it again on exit. It is
- * never started: staying stopped is what makes it a safe, deterministic
- * fixture for "a stopped stack is never due", and its build-recipe services
- * are only ever read, never built. */
+ * Creates two throwaway stacks of its own, "zzb1updrun" and
+ * "zzb1updrun-allout", under the real stack root — the same "zz…" fixture
+ * convention tests/server/files.php and tests/server/import.php already
+ * use — and removes both again on exit. Neither is ever started: staying
+ * stopped is what makes the first a safe, deterministic fixture for "a
+ * stopped stack is never due", and its build-recipe services are only ever
+ * read, never built. The second exists purely so PLAN_150 item 3's
+ * "everyone opted out" case has a stack whose every service actually says
+ * no — the first fixture's stack-level 'notify: true' means it can never
+ * produce that answer on its own.
+ *
+ * PLAN_150 items 2/3 (failure notices, per-container filtering): the
+ * filtering itself is proved through staxx_update_found_containers() and
+ * staxx_update_queue_notify_names(), which only ever read state and compose
+ * files — staxx_update_notify() itself is called nowhere in those two
+ * functions, so proving the filtering never risks a real notification. */
 
 $scratch = '/tmp/staxx-updaterun-test.json';
 @unlink($scratch);
@@ -123,9 +133,34 @@ x-unraid:
 YAML
 );
 
-register_shutdown_function(function () use ($scratch, $fixtureDir) {
+// A second, tiny fixture stack purely for PLAN_150 item 3's "everyone opted
+// out" case — the main fixture's stack-level 'notify: true' means every
+// service in it inherits true unless it says otherwise, so it can never
+// produce an empty result on its own. This one sets every service's own
+// notify to false and declares no stack-level override at all.
+$fixtureName2 = 'zzb1updrun-allout';
+$fixtureDir2  = $root . '/' . $fixtureName2;
+@exec('rm -rf ' . escapeshellarg($fixtureDir2));
+mkdir($fixtureDir2, 0755, true);
+file_put_contents($fixtureDir2 . '/compose.yaml', <<<YAML
+services:
+  a:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: false
+  b:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: false
+YAML
+);
+
+register_shutdown_function(function () use ($scratch, $fixtureDir, $fixtureDir2) {
   @unlink($scratch);
   @exec('rm -rf ' . escapeshellarg($fixtureDir));
+  @exec('rm -rf ' . escapeshellarg($fixtureDir2));
   $lock = STAXX_UPDATE_DIR . '/lock';
   if (is_dir($lock)) @rmdir($lock);
   echo "fixture and scratch state removed\n";
@@ -145,8 +180,12 @@ ok('settings: wstart/wend look like HH:MM',
    preg_match('/^\d{2}:\d{2}$/', $settings['wstart'] ?? '') === 1
    && preg_match('/^\d{2}:\d{2}$/', $settings['wend'] ?? '') === 1,
    ($settings['wstart'] ?? '') . ' / ' . ($settings['wend'] ?? ''));
-ok('settings: notify is one of off/found/applied',
-   in_array($settings['notify'] ?? '', ['off', 'found', 'applied'], true), $settings['notify'] ?? '');
+// PLAN_150 item 2/3: the old single UPDATE_NOTIFY ladder is three independent
+// switches now — found, installed, failed — so this is three separate checks
+// rather than one enum membership test.
+ok('settings: notifyFound is a bool', is_bool($settings['notifyFound'] ?? null));
+ok('settings: notifyInstalled is a bool', is_bool($settings['notifyInstalled'] ?? null));
+ok('settings: notifyFailed is a bool', is_bool($settings['notifyFailed'] ?? null));
 ok('settings: retain is an int', is_int($settings['retain'] ?? null));
 ok('settings: cleanup is one of off/weekly',
    in_array($settings['cleanup'] ?? '', ['off', 'weekly'], true), $settings['cleanup'] ?? '');
@@ -154,10 +193,14 @@ ok('settings: cleanup is one of off/weekly',
 /* ---------------------------------------------------------- 2. policy -- */
 
 $pUnknown = staxx_update_policy('staxx-no-such-stack', 'x');
+// staxx_update_policy_fallback() ORs the three switches together for this
+// axis — "is this container ever mentioned at all" is one question, answered
+// yes the moment any one kind of message is switched on.
+$globalNotify = $settings['notifyFound'] || $settings['notifyInstalled'] || $settings['notifyFailed'];
 ok('policy: an unknown stack falls back to the global setting, not an error',
    $pUnknown['from'] === 'global' && $pUnknown['mode'] === $settings['mode']
    && $pUnknown['delay'] === $settings['delay']
-   && $pUnknown['notify'] === ($settings['notify'] !== 'off'), json_encode($pUnknown));
+   && $pUnknown['notify'] === $globalNotify, json_encode($pUnknown));
 
 // service-mode writes the OLD 'off' spelling on purpose — proving it still
 // normalises to 'manual' is the whole point of PLAN_150's read-side change.
@@ -601,17 +644,112 @@ if ($liveBusy) {
 // staxx_update_notify() is void and fires a real shell command — the only
 // safe way to exercise it here is to confirm it does nothing at all when the
 // setting is off, which is the refusal this whole feature leans on. It is
-// never called with the setting on, since that would send a real
-// notification through Unraid's own notify script on this box.
-if (($settings['notify'] ?? 'off') === 'off') {
+// never called with any switch on, since that would send a real notification
+// through Unraid's own notify script on this box. PLAN_150 item 2: failure
+// notices start ON by default, so this is now three switches to check, not
+// one — the call is safe only when all three are off.
+if (!$settings['notifyFound'] && !$settings['notifyInstalled'] && !$settings['notifyFailed']) {
   // No observable side effect to assert against directly; this simply
-  // confirms the call does not fatal and does not throw with the setting off.
+  // confirms the call does not fatal and does not throw with every switch off.
   staxx_update_notify('test', 'staxx updaterun test — should never be seen');
-  ok('notify: a call with the setting off does not error', true);
+  ok('notify: a call with every switch off does not error', true);
 } else {
-  skip('notify: a call with the setting off does not error',
-       "UPDATE_NOTIFY is currently '" . $settings['notify'] . "' on this box, and this file must not flip it just to test silence");
+  skip('notify: a call with every switch off does not error',
+       'at least one UPDATE_NOTIFY_* switch is currently on on this box, and this file must not '
+       . 'flip it just to test silence');
 }
+
+/* ------------------------------------------------------ 15. naming helpers -- */
+
+// Pure formatting, no state and no file reads — the shape every notice built
+// in this plan shares.
+ok('label: a service sharing the stack\'s own leaf name is named by the stack alone',
+   staxx_update_container_label('jellyfin', 'jellyfin') === 'jellyfin');
+ok('label: a service under a folder is compared against the folder path\'s leaf, not the whole path',
+   staxx_update_container_label('media/jellyfin', 'jellyfin') === 'media/jellyfin');
+ok('label: a differently-named service is named alongside its stack',
+   staxx_update_container_label('media/jellyfin', 'sonarr') === 'media/jellyfin (sonarr)');
+
+ok('name-or-count: one entry is named, singular wording',
+   staxx_update_name_or_count(['a'], 'stack updated', 'stacks updated') === '1 stack updated: a');
+ok('name-or-count: five entries are still named in full',
+   staxx_update_name_or_count(['a', 'b', 'c', 'd', 'e'], 'stack updated', 'stacks updated')
+   === '5 stacks updated: a, b, c, d, e');
+ok('name-or-count: six entries are just counted, not named',
+   staxx_update_name_or_count(['a', 'b', 'c', 'd', 'e', 'f'], 'stack updated', 'stacks updated')
+   === '6 stacks updated');
+
+/* -------------------------------------------- 16. found-message filtering -- */
+
+// staxx_update_stack_wants_notify() proved directly against hand-built meta
+// arrays first — no disk, no docker, the fastest possible proof of the OR
+// rule the two message-filtering functions both lean on.
+$metaAllOut = ['services' => ['a' => ['x' => ['update.notify' => false]],
+                               'b' => ['x' => ['update.notify' => false]]], 'x' => []];
+$metaMixed  = ['services' => ['a' => ['x' => ['update.notify' => false]],
+                               'b' => ['x' => ['update.notify' => true]]], 'x' => []];
+ok('stack-wants-notify: every service opted out means the stack is not named',
+   staxx_update_stack_wants_notify($metaAllOut, $settings) === false);
+ok('stack-wants-notify: one service opted in is enough to name the whole stack',
+   staxx_update_stack_wants_notify($metaMixed, $settings) === true);
+
+// staxx_update_found_containers() against the real fixture: its stack-level
+// notify is true, so every service that does not say otherwise is named,
+// and 'service-notify-only' (which explicitly opts out) is not — proving
+// the filter reaches individual services, not just whole stacks.
+// staxx_updates_pill_for_image() reads 'update' state from local/remote
+// digests actually differing, not from 'seen' alone.
+$foundImages = ['alpine:3.20' => ['local' => 'sha256:aaa', 'remote' => 'sha256:bbb']];
+$foundRefs = [
+  'alpine:3.20' => [
+    $fixtureName . '::stack-only',
+    $fixtureName . '::service-notify-only',
+  ],
+];
+$foundStackFiles = [$fixtureName => $fixtureDir . '/compose.yaml'];
+$found = staxx_update_found_containers($foundImages, $foundRefs, $foundStackFiles, $settings);
+ok('found-containers: a container with no override inherits the stack\'s "yes"',
+   in_array($fixtureName . ' (stack-only)', $found, true), json_encode($found));
+ok('found-containers: a container that opted itself out is never named',
+   !in_array($fixtureName . ' (service-notify-only)', $found, true), json_encode($found));
+
+// Every service in the second fixture opts out and it declares no stack
+// override, so nothing about it should ever be named — the "everyone opted
+// out, so nothing is sent" case item 3 asks for directly.
+$allOutImages = ['nginx:latest' => ['local' => 'sha256:ccc', 'remote' => 'sha256:ddd']];
+$allOutRefs = ['nginx:latest' => [$fixtureName2 . '::a', $fixtureName2 . '::b']];
+$allOutStackFiles = [$fixtureName2 => $fixtureDir2 . '/compose.yaml'];
+$allOutFound = staxx_update_found_containers($allOutImages, $allOutRefs, $allOutStackFiles, $settings);
+ok('found-containers: every container opting out leaves nothing to name',
+   $allOutFound === [], json_encode($allOutFound));
+
+/* ------------------------------------------- 17. queue-message filtering -- */
+
+// staxx_update_queue_notify_names() never calls staxx_update_notify() itself
+// — this proves the filtering a queue completion or failure message would
+// use, safely, however either switch is currently set on this box.
+$queueItemsMixed = [
+  ['stack' => $fixtureName, 'state' => 'done'],
+  ['stack' => $fixtureName2, 'state' => 'failed'],
+];
+$queueNames = staxx_update_queue_notify_names($queueItemsMixed, $settings);
+ok('queue-notify-names: a stack with at least one opted-in service is named as done',
+   in_array($fixtureName, $queueNames['done'], true), json_encode($queueNames));
+ok('queue-notify-names: a stack where every service opted out is never named as failed',
+   !in_array($fixtureName2, $queueNames['failed'], true), json_encode($queueNames));
+ok('queue-notify-names: an all-opted-out stack leaves the failed list empty',
+   $queueNames['failed'] === [], json_encode($queueNames));
+
+// An unknown stack (no compose file staxx_update_stack_files() can find)
+// falls back to the global default rather than being silently dropped —
+// the same "global default" the policy walk itself falls back to.
+$globalWants = staxx_update_policy_fallback($settings)['notify'];
+$queueUnknown = staxx_update_queue_notify_names(
+  [['stack' => 'staxx-no-such-stack', 'state' => 'done']], $settings
+);
+ok('queue-notify-names: an unknown stack falls back to the global default, not dropped or assumed',
+   (in_array('staxx-no-such-stack', $queueUnknown['done'], true)) === $globalWants,
+   json_encode($queueUnknown) . ' / global=' . ($globalWants ? 'true' : 'false'));
 
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);

@@ -109,6 +109,25 @@ $serverTimeZone = staxx_ident_timezone();
 // broken deploy is reported rather than silently matching nothing.
 $dbImagesTable = staxx_db_images_table();
 
+// PLAN_150 Phase 4b: the server-wide update defaults every editor's "Follows
+// your setting" note needs, handed over the same way as data-taken and
+// data-server-timezone above — read once here rather than fetched per
+// service, since every container's Updates fieldset needs the same answer.
+// Read through staxx_update_settings() rather than off the config keys, so
+// this cannot drift from what the update engine itself acts on — that
+// function is where an out-of-range delay falls back, and where the retired
+// off/notify spelling and the retired three-way notification choice are both
+// folded into the shapes everything downstream uses.
+$updateSet = staxx_update_settings();
+$updateSettingsForJs = [
+  'mode'   => $updateSet['mode'],                                     // 'manual' | 'auto'
+  'delay'  => $updateSet['delay'],
+  'quiet'  => $updateSet['window'],
+  'notify' => ['found'     => $updateSet['notifyFound'],
+               'installed' => $updateSet['notifyInstalled'],
+               'failed'    => $updateSet['notifyFailed']],
+];
+
 // Both assets carry the file's modification time in the URL. Without it an
 // edited stylesheet or script sits in the browser cache and the page appears
 // not to have changed at all — which costs a great deal of time to diagnose,
@@ -206,7 +225,8 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         refresh, which a fresh page load never makes on its own, so a port 443
         clash was invisible until something else redrew the table (2026-09-11). */ ?>
      data-taken="<?= htmlspecialchars(json_encode(staxx_import_taken_facts()), ENT_QUOTES) ?>"
-     <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>>
+     <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>
+     data-update-settings="<?= htmlspecialchars(json_encode($updateSettingsForJs), ENT_QUOTES) ?>">
 
   <!-- Only conditions that need acting on get a banner here. The standing
        "this is alpha" notice is gone: a banner shown on every visit stops

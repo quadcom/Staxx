@@ -2360,19 +2360,24 @@ function staxx_update_check(string $scope, bool $force): array {
   }
 
   // One notification for the whole pass, never one per image — see the
-  // matching reasoning on staxx_update_notify() itself. staxx_update_settings()
-  // and staxx_update_notify() both live in UpdateRun.php, which this file
-  // must never require (that would be circular), so both calls are guarded.
-  if ($newlyFound > 0 && function_exists('staxx_update_notify') && function_exists('staxx_update_settings')) {
-    if (staxx_update_settings()['notifyFound']) {
-      $waiting = 0;
-      foreach (array_keys($images) as $img) {
-        if (staxx_updates_pill_for_image($img, $images)['state'] === 'update') $waiting++;
+  // matching reasoning on staxx_update_notify() itself. staxx_update_settings(),
+  // staxx_update_notify() and staxx_update_found_containers() all live in
+  // UpdateRun.php, which this file must never require (that would be
+  // circular), so every one of them is guarded.
+  if ($newlyFound > 0 && function_exists('staxx_update_notify') && function_exists('staxx_update_settings')
+      && function_exists('staxx_update_found_containers') && function_exists('staxx_update_name_or_count')) {
+    $settings = staxx_update_settings();
+    if ($settings['notifyFound']) {
+      $wanted = staxx_update_found_containers($images, $refs, $stackFiles, $settings);
+
+      // An empty list here means every container that has an update waiting
+      // has opted itself out — nobody asked to hear about nothing.
+      if ($wanted !== []) {
+        staxx_update_notify(
+          'StaXX image updates found',
+          staxx_update_name_or_count($wanted, 'container has an update waiting', 'containers have an update waiting').'.'
+        );
       }
-      staxx_update_notify(
-        'StaXX image updates found',
-        $waiting.' image'.($waiting === 1 ? '' : 's').' '.($waiting === 1 ? 'has' : 'have').' an update waiting.'
-      );
     }
   }
 

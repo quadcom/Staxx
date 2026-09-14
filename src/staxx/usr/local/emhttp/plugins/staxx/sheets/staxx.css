@@ -10443,6 +10443,122 @@ dialog::backdrop {
 .staxx-flagopt input:checked ~ .staxx-tickmark--tick { display: inline-block; }
 .staxx-flagopt input:checked ~ .staxx-tickmark--cross { display: none; }
 
+/* PLAN_150 phase 4b — the editor's own Updates fieldset, one per service,
+ * drawn by updatesFieldsetHtml() rather than the generic .staxx-formgroup
+ * grid every other group uses. The tick marks themselves reuse .staxx-
+ * tickrow/.staxx-tickopt/.staxx-tickmark/.staxx-tickword above as-is — same
+ * marks, same spacing — so only the fieldset's own shape needs rules here.
+ * Values measured in the live session with Adrian on 2026-09-14, not
+ * re-derived: the legend's negative margin puts its centre exactly on the
+ * border. .staxx-scaffold is not needed on the tick rules themselves (that
+ * scoping already lives on the shared .staxx-tickopt input rule); a real
+ * <fieldset>/<legend> carries no button/input/select/textarea of its own for
+ * Unraid's .unapi reset to touch, so nothing here needs restating either. */
+.staxx-updates {
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.8rem;
+  padding: 0.4rem 1.4rem 1.2rem;
+  margin: 1.2rem 0;
+  min-width: 0;
+}
+.staxx-updates legend {
+  font-size: 1.3rem;
+  line-height: 1.6rem;
+  padding: 0 0.7rem;
+  margin: -1.36rem 0 0.9rem;
+  background-color: var(--sm-bg);
+  color: var(--sm-fg);
+}
+
+/* The two odd-state notices (pinned, locally-built, bare) — full brightness
+ * always, even when the rows below are dimmed: dimming the explanation along
+ * with the controls is how a grey box nobody can decode gets made. Lined up
+ * with the row labels via the same left padding an option row's own gap
+ * puts under them. */
+.staxx-upd-notice {
+  color: var(--sm-fg);
+  margin: 0 0 0.9rem;
+  padding-left: 1rem;
+}
+
+/* Pinned/bare dims the two rows but keeps their ticks showing, so what a
+ * setting would do stays readable even while it cannot be changed. */
+.staxx-updates--dim .staxx-upd-row {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.staxx-upd-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.6rem 1.6rem;
+  padding: 0.6rem 0 0.6rem 1rem;
+}
+.staxx-upd-row + .staxx-upd-row {
+  border-top: 0.1rem solid var(--sm-line);
+}
+.staxx-upd-label {
+  flex: 0 0 auto;
+  align-self: start;
+  line-height: 2.4rem;
+  font-size: 1.2rem;
+  color: var(--sm-fg);
+}
+.staxx-upd-options {
+  flex: 0 1 auto;
+}
+.staxx-upd-note {
+  flex: 1 1 20rem;
+  align-self: start;
+  line-height: 2.4rem;
+  font-size: 1.2rem;
+  color: var(--sm-muted);
+  margin: 0;
+}
+.staxx-upd-raw {
+  display: inline-flex;
+  align-items: center;
+  height: 2.4rem;
+  font-size: 1.2rem;
+  color: var(--sm-fg);
+}
+
+/* Immediate/Delayed — right-aligned under the When row's own options. Space
+ * is always reserved (visibility, never display: none) so nothing below it
+ * shifts when it appears — the opposite of the row menu's own animated
+ * version (phase 5), deliberately. */
+.staxx-upd-sub {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0 1.8rem;
+  margin-top: 0.2rem;
+  width: 100%;
+}
+
+/* A live phrase inside a note — opens Settings at the field it names. */
+.staxx-scaffold button.staxx-udlink {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--sm-muted);
+  border-bottom: 0.1rem dotted var(--sm-muted);
+  cursor: pointer;
+}
+.staxx-scaffold button.staxx-udlink:hover,
+.staxx-scaffold button.staxx-udlink:focus-visible {
+  color: var(--sm-accent);
+  border-bottom-color: var(--sm-accent);
+}
+
+@media (max-width: 45rem) {
+  .staxx-upd-row { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+  .staxx-upd-sub { justify-content: flex-start; }
+}
+
 /* The quiet-time pair sits half width each, under the quiet-time dropdown —
  * see settingsBlockHtml()'s halfGroup handling in stacks.js. Placed in the
  * install-timing block's right-hand grid column explicitly, since with only

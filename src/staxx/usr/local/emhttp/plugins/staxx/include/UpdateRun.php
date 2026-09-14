@@ -1371,22 +1371,47 @@ function staxx_update_queue_tick(): array {
     unset($item);
   }
 
-  // Every item finished, one way or another — send the one "applied" message
-  // for the whole pass, never one per stack, and only once per queue.
+  // Every item finished, one way or another — up to two messages for the
+  // whole pass, never one per stack, and only once per queue. Two separate
+  // messages rather than one combining both, because they are gated on two
+  // independent switches: someone with 'installed' off and 'failed' on must
+  // still hear that something broke, and someone the other way round must
+  // not be told about a success they asked not to hear about. Each message
+  // only ever describes its own subject, so there is nothing for the two to
+  // double up on.
   $terminal = true;
   foreach ($items as $item) {
     if (!in_array($item['state'] ?? '', ['done', 'failed', 'skipped'], true)) { $terminal = false; break; }
   }
-  if ($terminal && $changed && empty($queue['notified']) && staxx_update_settings()['notifyInstalled']) {
-    $done = 0; $failed = 0;
-    foreach ($items as $item) {
-      if ($item['state'] === 'done') $done++;
-      elseif ($item['state'] === 'failed') $failed++;
+  if ($terminal && $changed && empty($queue['notified'])) {
+    $settings = staxx_update_settings();
+    if ($settings['notifyInstalled'] || $settings['notifyFailed']) {
+      $names       = staxx_update_queue_notify_names($items, $settings);
+      $doneNames   = $names['done'];
+      $failedNames = $names['failed'];
+
+      if ($doneNames !== [] && $settings['notifyInstalled']) {
+        staxx_update_notify(
+          'StaXX image updates applied',
+          staxx_update_name_or_count($doneNames, 'stack updated', 'stacks updated').'.'
+        );
+      }
+      // A failed pull and a container that will not come back up both land
+      // here as 'failed' — the job's own exit code does not say which, so
+      // neither does this message; see the 'failed' state set above.
+      if ($failedNames !== [] && $settings['notifyFailed']) {
+        staxx_update_notify(
+          'StaXX update failed',
+          staxx_update_name_or_count($failedNames, 'stack failed to update', 'stacks failed to update')
+            . '. Open the job log to see why.'
+        );
+      }
     }
-    staxx_update_notify(
-      'StaXX image updates applied',
-      $done.' stack'.($done === 1 ? '' : 's').' updated'.($failed > 0 ? ', '.$failed.' failed' : '').'.'
-    );
+    // Set once the terminal state has been looked at, whether or not either
+    // switch was on — otherwise a queue left idle with both switches off
+    // would re-evaluate this block on every tick for no reason, and turning
+    // a switch on later while the same queue is still sitting there would
+    // fire a stale message for a run that finished earlier.
     $queue['notified'] = true;
   }
 
@@ -1489,6 +1514,129 @@ function staxx_update_notify(string $subject, string $body): void {
       .' -i '.escapeshellarg('normal'),
     10
   );
+}
+
+/**
+ * A stack name on its own when the service shares the stack's own leaf name
+ * — the ordinary shape of a one-service stack — otherwise the stack with the
+ * service named alongside it, since "jellyfin" on its own would not say
+ * which container inside a multi-service stack is meant.
+ */
+function staxx_update_container_label(string $stack, string $service): string {
+  $slash = strrpos($stack, '/');
+  $leaf  = $slash === false ? $stack : substr($stack, $slash + 1);
+  return $service === $leaf ? $stack : $stack.' ('.$service.')';
+}
+
+/**
+ * Names every entry when there are few enough to read comfortably in a
+ * single notification line, otherwise just says how many — an update
+ * message is read at a glance, not studied, so a list of fifteen containers
+ * is worse than no list at all. PLAN_150 items 2/3: this is the one place
+ * that decides "few enough" for every update notice, so the three messages
+ * that use it (found, installed, failed) never disagree on the cutoff.
+ */
+function staxx_update_name_or_count(array $names, string $singular, string $plural): string {
+  $n = count($names);
+  $word = $n === 1 ? $singular : $plural;
+  return $n <= 5 ? $n.' '.$word.': '.implode(', ', $names) : $n.' '.$word;
+}
+
+/**
+ * Whether any service in this stack's own compose file resolves to wanting
+ * a mention in an update message. The completion and failure notices below
+ * work a whole stack at a time — the queue always did, see
+ * staxx_update_queue_start() — so there is no single "the" service to ask;
+ * naming the stack when at least one service inside opted in is the honest
+ * reading of a per-container switch applied to a stack-level report.
+ */
+function staxx_update_stack_wants_notify(array $meta, array $global): bool {
+  foreach (array_keys((array)($meta['services'] ?? [])) as $svc) {
+    if (staxx_update_policy_from_meta($meta, $svc, $global)['notify']) return true;
+  }
+  return false;
+}
+
+/**
+ * Labels for every container whose image is currently sitting in "update
+ * waiting" AND whose own resolved say is yes — pulled out of
+ * staxx_update_check() so a test can prove the filtering (including the
+ * "everyone opted out" case) without ever calling staxx_update_notify().
+ * $refs and $stackFiles are staxx_update_images()/staxx_update_stack_files()'s
+ * own maps, already built once by the check pass this runs inside of, so
+ * nothing here re-scans the stack root — staxx_update_policy_from_meta() is
+ * used rather than staxx_update_policy() for the same reason.
+ *
+ * @param array $images staxx_update_state()'s own 'images' map
+ * @param array $refs image => ["stack::service", …]
+ * @param array $stackFiles stack name => compose file path
+ * @param array $global staxx_update_settings()'s return
+ * @return string[] container labels, de-duplicated
+ */
+function staxx_update_found_containers(array $images, array $refs, array $stackFiles, array $global): array {
+  $wanted    = [];
+  $metaCache = [];
+
+  foreach (array_keys($images) as $img) {
+    if (staxx_updates_pill_for_image($img, $images)['state'] !== 'update') continue;
+
+    foreach (($refs[$img] ?? []) as $ref) {
+      $parts    = explode('::', $ref, 2);
+      $refStack = $parts[0] ?? '';
+      $refSvc   = $parts[1] ?? '';
+
+      if (!isset($metaCache[$refStack])) {
+        $file = $stackFiles[$refStack] ?? '';
+        $metaCache[$refStack] = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+      }
+      $meta  = $metaCache[$refStack];
+      $wants = $meta['ok'] ? staxx_update_policy_from_meta($meta, $refSvc, $global)['notify']
+                           : staxx_update_policy_fallback($global)['notify'];
+      if ($wants) $wanted[] = staxx_update_container_label($refStack, $refSvc);
+    }
+  }
+
+  return array_values(array_unique($wanted));
+}
+
+/**
+ * Which of a queue's finished items (state 'done' or 'failed') resolve to
+ * wanting a mention, split by outcome — pulled out of
+ * staxx_update_queue_tick() so a test can prove the filtering (including the
+ * "everyone opted out" case) without ever calling staxx_update_notify(),
+ * which would fire a real notification on this box if either switch happens
+ * to be on. One scan of every stack's compose file, not one per queue item —
+ * a queue only ever holds a handful of due stacks, so this costs the same
+ * lookup the check pass already makes for the same reason.
+ *
+ * @param array $items staxx_update_queue_tick()'s own item list
+ * @param array $global staxx_update_settings()'s return
+ * @return array{done: string[], failed: string[]}
+ */
+function staxx_update_queue_notify_names(array $items, array $global): array {
+  $stackFiles = staxx_update_stack_files();
+  $metaCache  = [];
+  $doneNames   = [];
+  $failedNames = [];
+
+  foreach ($items as $item) {
+    $state = $item['state'] ?? '';
+    if ($state !== 'done' && $state !== 'failed') continue;
+
+    $stackName = (string)($item['stack'] ?? '');
+    if (!isset($metaCache[$stackName])) {
+      $file = $stackFiles[$stackName] ?? '';
+      $metaCache[$stackName] = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+    }
+    $meta  = $metaCache[$stackName];
+    $wants = $meta['ok'] ? staxx_update_stack_wants_notify($meta, $global)
+                         : staxx_update_policy_fallback($global)['notify'];
+    if (!$wants) continue;
+
+    if ($state === 'done') $doneNames[] = $stackName; else $failedNames[] = $stackName;
+  }
+
+  return ['done' => $doneNames, 'failed' => $failedNames];
 }
 
 /* ------------------------------------------------------------ locally built -- */

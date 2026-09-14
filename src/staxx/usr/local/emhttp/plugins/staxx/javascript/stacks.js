@@ -23,6 +23,18 @@
   // notice's "Add TZ=<zone>" button. Blank when the server-side read could
   // not find one; never guessed at from here.
   var SERVER_TZ = scaffold.dataset.serverTimezone || '';
+  // PLAN_150 Phase 4b — the server-wide update defaults (StacksPage.php),
+  // read once here the same way the facts above are: every "Follows your
+  // setting" note in the editor's Updates fieldset needs the same answer, so
+  // there is no reason to ask the server again per service. Falls back to
+  // the shape staxx_update_notify_map() itself defaults an empty config to,
+  // for the one page load where the attribute failed to parse.
+  var UPDATE_SETTINGS = { mode: 'manual', delay: 24, quiet: true,
+                           notify: { found: false, installed: false, failed: true } };
+  try {
+    var updSettingsRaw = JSON.parse(scaffold.dataset.updateSettings || '');
+    if (updSettingsRaw) UPDATE_SETTINGS = updSettingsRaw;
+  } catch (e) { /* keep the fallback above */ }
 
   var modal       = document.getElementById('staxx-modal');
   var modalTitle  = document.getElementById('staxx-modal-title');
@@ -833,6 +845,16 @@
   // class.
   var GROUPS = [
     { key: 'container', heading: 'Container', cls: 'staxx-formgroup--container', note: '(required)' },
+    // PLAN_150 phase 4b — always drawn, right after Container, on every
+    // service: no flag and no add, the same reason Container and Advanced
+    // have neither. Its own two fields (harvestUpdatePolicy(), compose-
+    // model.js) always exist, so `rows` here is never empty and this row
+    // never hits the "nothing to show" skip below. Rendered by its own
+    // function (updatesFieldsetHtml()) rather than the generic caption/
+    // fieldHtml() loop — the row shape (tick marks, a note, a reserved
+    // sub-line) does not fit the label/value/note grid every other group
+    // shares.
+    { key: 'updates', heading: 'Updates', cls: 'staxx-formgroup--updates' },
     // --mapped, not --pair: a port and a mount carry a third small box (the
     // protocol, the read/write mode) that a variable and a label do not, so
     // they take a five-track template while the other two keep the four.
@@ -958,6 +980,12 @@
     // it — an explicit rule beside this one is what still lands it in the
     // Container group, as the fourth row.
     if (f.target === 'x-unraid.webui') return 'container';
+    // The two per-container update-policy rows (PLAN_150 phase 4b) reach
+    // inside x-unraid the same way webui does, and carry the same reason for
+    // an explicit rule here: harvestUpdatePolicy() (compose-model.js) leaves
+    // f.fixed false for both, since they are not one of Container's four
+    // fixed rows either.
+    if (f.binder === 'policy') return 'updates';
     // A declaration belongs to no service, so it gets its own bucket per
     // kind rather than falling in with Advanced. A fold field carries this
     // same binder — it is bucketed here too if a caller does not filter it
@@ -3969,6 +3997,385 @@
              esc(info.description) + '</p>';
   }
 
+  /* =====================================================================
+   * PLAN_150 phase 4b — the Updates fieldset: two per-container rows (When,
+   * Notify me) built from the two 'policy' fields harvestUpdatePolicy()
+   * (compose-model.js) always pushes for every service. Kept apart from
+   * fieldHtml()/boxHtml() entirely — a tick row is not a text box, and
+   * neither of these two fields is ever offered a value the ordinary
+   * commit()/input-debounce path could write, since a tick has to reach the
+   * disk at once (see writeUpdatePolicy() below) rather than waiting for
+   * Save.
+   * ===================================================================== */
+
+  // The row ids the settings panel's own SETTINGS_ROWS gives these two keys
+  // (row.id = 'staxx-setting-' + key.toLowerCase().replace(/_/g, '-')) — the
+  // only two the plan's own note table ever turns into a live phrase (the
+  // "Follows your setting" lines are plain text, not links). Named here
+  // rather than looked up, since a live phrase needs its target before
+  // openSettings() is ever called.
+  var UPD_ROW_DELAY  = 'staxx-setting-update-delay-hours';
+  var UPD_ROW_WINDOW = 'staxx-setting-update-window';
+
+  function updOpenLink(rowId, text) {
+    return '<button type="button" class="staxx-udlink" data-open-settings="' + rowId + '">' + text + '</button>';
+  }
+
+  // What the When row's note says, in every combination — verbatim from
+  // PLAN_150's "What the note says" table. `f.policy.delay` is the file's
+  // own stated delay (only ever set when this service's own mode is 'auto');
+  // the server's UPDATE_DELAY_HOURS is what a Delayed note falls back to
+  // when the file itself says nothing.
+  function updateModeNoteHtml(f) {
+    var p = f.policy;
+    if (p.choice === 'manual') return 'You press Update yourself.';
+    if (p.choice === 'auto') {
+      var hours = p.delay !== null ? p.delay : UPDATE_SETTINGS.delay;
+      if (p.auto === 'immediate') {
+        return UPDATE_SETTINGS.quiet
+          ? 'Installed the moment it is found, in the ' + updOpenLink(UPD_ROW_WINDOW, 'quiet hours') + '.'
+          : 'Installed the moment it is found.';
+      }
+      var delayLink = updOpenLink(UPD_ROW_DELAY, hours + (hours === 1 ? ' hour' : ' hours'));
+      return UPDATE_SETTINGS.quiet
+        ? 'Waits ' + delayLink + ', then installs in the ' + updOpenLink(UPD_ROW_WINDOW, 'quiet hours') + '.'
+        : 'Waits ' + delayLink + ', then installs.';
+    }
+    // Default. The stack-scope case matters and is easy to get backwards —
+    // the file format still honours a hand-written stack-level block, so
+    // Default here means THAT block, not the server setting, whenever one
+    // is present (PLAN_150's own warning about this exact mistake).
+    if (p.scope === 'stack') {
+      return 'Follows this stack’s setting: ' + (p.stackChoice === 'auto' ? 'Automatic' : 'Manual');
+    }
+    return 'Follows your setting: ' + (UPDATE_SETTINGS.mode === 'auto' ? 'Automatic' : 'Manual');
+  }
+
+  // What the Notify me row's note says. The Default/some-on case lists what
+  // the server has on, in the order found, installed, fails, joined the same
+  // way the rest of this file lists things ("a, b, and c") — see the plan's
+  // own example, "when one is found, and when one fails".
+  function updateNotifyNoteHtml(f) {
+    var p = f.policy;
+    if (p.choice === 'no')  return 'Never mentioned in an update message.';
+    if (p.choice === 'yes') return 'Included in the update message.';
+    // Default. A stack-level notify: has no wording of its own in the plan's
+    // table, but the same reasoning as mode's stack case applies — a hand-
+    // written stack block is what Default follows, not the server default —
+    // so this borrows mode's phrasing rather than silently ignoring it.
+    if (p.scope === 'stack') {
+      return 'Follows this stack’s setting: ' + (p.stackChoice ? 'Yes' : 'No');
+    }
+    var n = UPDATE_SETTINGS.notify || {};
+    var parts = [];
+    if (n.found)     parts.push('when one is found');
+    if (n.installed) parts.push('when one is installed');
+    if (n.failed)    parts.push('when one fails');
+    if (!parts.length) return 'Follows your setting: no messages';
+    var joined = parts.length === 1 ? parts[0]
+      : parts.slice(0, -1).join(', ') + ', and ' + parts[parts.length - 1];
+    return 'Follows your setting: ' + joined;
+  }
+
+  // The control value string setPart() understands for this field's current
+  // state — 'default' | 'manual' | 'auto' | 'auto-immediate' for When,
+  // 'default' | 'no' | 'yes' for Notify me. Read back off the same value
+  // whenever the row is redrawn, so the radio a click just picked is the one
+  // still checked after the reparse it causes.
+  function policyValueOf(f) {
+    if (f.policy.field !== 'mode') return f.policy.choice;
+    if (f.policy.choice !== 'auto') return f.policy.choice;
+    return f.policy.auto === 'immediate' ? 'auto-immediate' : 'auto';
+  }
+
+  // One tick option, the same markup shape settingsControlHtml()'s 'ticks'
+  // control already draws (.staxx-tickopt/.staxx-tickmark/.staxx-tickword) —
+  // reused rather than duplicated, so both places share one set of rules for
+  // what a chosen/unchosen mark looks like.
+  function updTickOptionHtml(name, index, field, val, label, checkedVal) {
+    var checked = (val === checkedVal) ? ' checked' : '';
+    return '<label class="staxx-tickopt"><input type="radio" name="' + name + '" data-updpolicy="' +
+           esc(field) + '" data-row="' + index + '" value="' + esc(val) + '"' + checked + '>' +
+           '<svg class="staxx-tickmark" viewBox="0 0 16 16" aria-hidden="true">' +
+           '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+           '<span class="staxx-tickword">' + esc(label) + '</span></label>';
+  }
+
+  // One of the two rows (When / Notify me) inside the fieldset. `pinned`/
+  // `bare` only decide whether the row is drawn disabled (CSS, via the
+  // fieldset's own dim class) — the marks themselves are always drawn from
+  // the field's real state, pinned or not, so "what this would do" stays
+  // readable even while it cannot be changed (PLAN_150's own point about a
+  // grey box nobody can decode).
+  function updatePolicyRowHtml(f, index) {
+    var isMode = f.policy.field === 'mode';
+    var label  = isMode ? 'When' : 'Notify me';
+    var name   = 'staxx-updpolicy-' + f.policy.field + '-' + index;
+
+    if (f.policy.unreadable) {
+      return '<div class="staxx-upd-row" data-row="' + index + '">' +
+               '<span class="staxx-upd-label">' + esc(label) + '</span>' +
+               '<div class="staxx-upd-options"><span class="staxx-upd-raw">"' +
+                 esc(f.policy.unreadable.raw) + '"</span></div>' +
+               '<p class="staxx-upd-note">This compose file already sets this to a word StaXX does not ' +
+                 'recognise, so it is left exactly as written. Edit it in the Compose view.</p>' +
+             '</div>';
+    }
+
+    var value = policyValueOf(f);
+    var topValue = isMode && value === 'auto-immediate' ? 'auto' : value;
+    var options = isMode
+      ? [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']]
+      : [['default', 'Default'], ['no', 'No'], ['yes', 'Yes']];
+    var optsHtml = options.map(function (o) {
+      return updTickOptionHtml(name, index, f.policy.field, o[0], o[1], topValue);
+    }).join('');
+
+    var helpId = 'staxx-updhelp-' + index;
+    var help = isMode ? helpBtnHtml({ title: 'When' }, helpId) : '';
+    var helpPara = isMode ? '<p class="staxx-fieldhint staxx-fieldhelp" id="' + esc(helpId) + '" hidden>' +
+      'Whether StaXX installs a newer version for you, or waits for you to press Update. Default follows ' +
+      'your server-wide setting, so changing that changes this container too. Automatic can install as ' +
+      'soon as an update is found, or wait — the wait itself is set once for the whole server.</p>' : '';
+
+    // Immediate/Delayed — reserved space always in the markup (visibility,
+    // never display: none/hidden — PLAN_150 is explicit that nothing below
+    // this may shift when it appears), only for the When row.
+    var subHtml = '';
+    if (isMode) {
+      var subName = name + '-sub';
+      var subChecked = value === 'auto-immediate' ? 'auto-immediate' : 'auto';
+      subHtml = '<div class="staxx-upd-sub"' + (topValue === 'auto' ? '' : ' style="visibility:hidden"') + '>' +
+        updTickOptionHtml(subName, index, 'mode', 'auto-immediate', 'Immediate', subChecked) +
+        updTickOptionHtml(subName, index, 'mode', 'auto', 'Delayed', subChecked) +
+        '</div>';
+    }
+
+    var note = isMode ? updateModeNoteHtml(f) : updateNotifyNoteHtml(f);
+
+    return '<div class="staxx-upd-row" data-row="' + index + '">' +
+             '<span class="staxx-upd-label">' + esc(label) + help + '</span>' +
+             '<div class="staxx-upd-options">' +
+               '<div class="staxx-tickrow" role="radiogroup" aria-label="' + esc(label) + '">' + optsHtml + '</div>' +
+               subHtml +
+             '</div>' +
+             '<p class="staxx-upd-note">' + note + '</p>' +
+             helpPara +
+           '</div>';
+  }
+
+  // This service's image line and whether it has a build: key — read
+  // straight off the fields already built for it rather than re-parsed,
+  // since buildForm() has done that work already. serviceFlags()'s own
+  // 'build' flag is not reused here: it also counts a build key promoted to
+  // Advanced by a lock, which this needs too, but it is simpler to read the
+  // one field directly than to thread flags through another layer.
+  function serviceImageAndBuild(fields, name) {
+    var image = '', hasBuild = false;
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (f.service !== name) continue;
+      if (f.binder === 'setting' && f.target === 'image' && f.parts.value) image = f.parts.value.value;
+      // Every build leaf is always present as a field whether the file has a
+      // build: block or not — that is what lets typing into a blank box
+      // create the line (see GROUPS' own note on Build). So the field
+      // existing says nothing; only one actually holding something means
+      // this container is built here.
+      if ((f.target === 'build' || f.target.indexOf('build.') === 0) &&
+          f.parts.value && String(f.parts.value.value).trim() !== '') hasBuild = true;
+    }
+    return { image: image, pinned: image.indexOf('@') !== -1, hasBuild: hasBuild };
+  }
+
+  // The whole fieldset for one service — legend, the two odd-state notices
+  // (pinned/locally-built/bare), then the two rows. `rows` is the two
+  // harvestUpdatePolicy() field indices, in push order (mode, notify).
+  function updatesFieldsetHtml(svc, rows, fields) {
+    var info = serviceImageAndBuild(fields, svc.name);
+    var pinned = info.pinned;
+    var builtOnly = !pinned && info.hasBuild;
+    var bare = !pinned && !info.hasBuild && !String(info.image).trim();
+
+    var notice = '';
+    if (pinned) {
+      notice = '<p class="staxx-upd-notice">Pinned to one exact build, so it cannot move. ' +
+        '<button type="button" class="staxx-udlink" data-upd-unpin="' + esc(svc.name) + '">Unpin it</button> ' +
+        'to change this.</p>';
+    } else if (builtOnly) {
+      notice = '<p class="staxx-upd-notice">Built here from a recipe — rebuilds when the image it is ' +
+        'built from moves.</p>';
+    } else if (bare) {
+      notice = '<p class="staxx-upd-notice">This container has no image, so there is nothing to update.</p>';
+    }
+
+    var rowsHtml = rows.map(function (idx) { return updatePolicyRowHtml(fields[idx], idx); }).join('');
+
+    return '<fieldset class="staxx-updates' + ((pinned || bare) ? ' staxx-updates--dim' : '') + '">' +
+             '<legend>Updates</legend>' +
+             notice +
+             rowsHtml +
+           '</fieldset>';
+  }
+
+  // Finds this same row again by what it MEANS (service + which of the two
+  // fields), not by index — the index a click fired from can go stale across
+  // an `await` (a rename, an undo, anything else that reparses while the
+  // read/save round trip below is in flight), and a throwaway parse of the
+  // disk copy has its own field objects with their own ids regardless.
+  function policyFieldFor(fields, service, policyField) {
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (f.service === service && f.policy && f.policy.field === policyField) return f;
+    }
+    return null;
+  }
+
+  // Applies the SAME tick to the open document, in memory only — no save.
+  // This is the second of the two writes PLAN_150 asks for: the disk copy
+  // (writeUpdatePolicy() below) is written separately, on its own throwaway
+  // parse of what is on disk right now, specifically so that landing this
+  // one never carries any unsaved typing along with it. pushUndo() here
+  // snapshots the open document as it stood a moment ago, so Undo puts THAT
+  // back — it does not, and must not, un-write the file.
+  //
+  // `savedFingerprint`/`savedText` are set once the disk write already
+  // succeeded — see the refusal branch's own comment for what happens then,
+  // which is not "nothing changed" the way an ordinary refusal is.
+  // `savedText` is what the DISK write actually serialised (the throwaway
+  // parse's own output, "the file as it now stands with only this tick
+  // added"), never currentText() — the open box can hold more than that (an
+  // unrelated field someone is still typing into), and the dirty check has
+  // to keep comparing against what disk truly has, not against a snapshot
+  // that quietly folded an unrelated unsaved edit in as if it were saved.
+  function applyUpdatePolicyLocally(service, policyField, value, savedFingerprint, savedText) {
+    var f = policyFieldFor(MODEL.fields, service, policyField);
+    if (!f) {
+      showError('This row lost track of its place in the open document — reopen the stack to see the change.');
+      return;
+    }
+
+    pushUndo(policyField === 'mode'
+      ? 'changing when "' + service + '" updates itself'
+      : 'changing whether "' + service + '" is mentioned in update messages');
+
+    var ok = YAML.setPart(MODEL.doc, MODEL, f.id, 'value', value);
+    if (!ok) {
+      undoStack.pop(); updateUndo();
+      if (savedFingerprint) {
+        // The disk copy already has this change — only the OPEN document
+        // could not follow it (the person's own unsaved edit sits in a
+        // shape this field's write cannot safely reach). Silently doing
+        // nothing here would leave the box looking unchanged while the file
+        // underneath it already is, which is exactly the mismatch this
+        // whole feature exists to prevent. fingerprintAtOpen is deliberately
+        // NOT updated: the next ordinary Save now refuses as a conflict —
+        // safe, if inconvenient — rather than silently overwriting the
+        // change that just landed with whatever this copy still says.
+        showError('This was saved to the file, but the open copy could not be updated to match. ' +
+                   'Reopen the stack to see it — saving from here first would be refused, on purpose, ' +
+                   'rather than risk overwriting it.');
+      } else {
+        showError('That value cannot be written as it stands — edit this one in the Compose view.');
+      }
+      return;
+    }
+
+    yamlPane.value = YAML.serialise(MODEL.doc);
+    paintGutter();
+    paintInk();
+    reparse();
+    if (savedFingerprint) {
+      fingerprintAtOpen = savedFingerprint;
+      textAtOpen = savedText;
+    }
+  }
+
+  // The write side. A tick has to reach disk at once (Adrian's ruling,
+  // PLAN_150) rather than waiting for Save — but posting the WHOLE open
+  // document to do that would carry every other unsaved edit along with it,
+  // which is exactly what "Unsaved typing stays unsaved and untouched" rules
+  // out. So this is two separate writes, not one:
+  //
+  //   1. Read the stack fresh — the body as it is on disk right now, plus
+  //      its own fingerprint — and apply this one tick to a THROWAWAY parse
+  //      of THAT, never MODEL. Only this small, single-field edit is ever
+  //      posted to the server.
+  //   2. Once the server confirms it, apply the identical edit to the open
+  //      MODEL.doc, in memory only (applyUpdatePolicyLocally() above) — no
+  //      second save — so the row shows the new answer while anything else
+  //      still unsaved in the editor stays exactly as it was.
+  //
+  // A refusal at step 1 (the disk copy's own field cannot be read/written,
+  // or the server's fingerprint check declines) leaves the open document
+  // untouched — nothing has been written anywhere, so there is nothing to
+  // undo. A refusal at step 2 is a different case; see its own comment.
+  //
+  // A brand-new, never-saved stack (openedName === '') has no disk copy to
+  // read at all, so this skips straight to editing the open document only —
+  // the same "stays live until Save" behaviour every other field on a new
+  // stack already has, made an explicit branch rather than inferred from a
+  // failed read.
+  function writeUpdatePolicy(index, value) {
+    if (!MODEL || sanitised || fileOpen !== null) return;
+    var f = MODEL.fields[index];
+    if (!f || !f.policy || f.policy.unreadable) return;
+    var service = f.service, policyField = f.policy.field;
+
+    clearError();
+
+    if (!openedName) {
+      applyUpdatePolicyLocally(service, policyField, value, null);
+      return;
+    }
+
+    call('read', { name: openedName }).then(function (readRes) {
+      if (!readRes || !readRes.ok) {
+        showError((readRes && readRes.error) || 'Could not read the stack to change this setting.');
+        return;
+      }
+
+      var diskDoc  = YAML.parse(readRes.body);
+      var diskForm = YAML.buildForm(diskDoc, netDrivers(), envNameList());
+      diskForm.doc = diskDoc;
+      var diskField = policyFieldFor(diskForm.fields, service, policyField);
+      if (!diskField || diskField.policy.unreadable ||
+          !YAML.setPart(diskDoc, diskForm, diskField.id, 'value', value)) {
+        showError('That value cannot be written as it stands — edit this one in the Compose view.');
+        return;
+      }
+
+      var diskText = YAML.serialise(diskDoc);
+      call('save', { name: openedName, body: withEol(diskText, composeEol), 'new': '0',
+                      fingerprint: readRes.fingerprint }).then(function (saveRes) {
+        if (!saveRes || !saveRes.ok) {
+          // Nothing landed anywhere — the throwaway parse above is already
+          // discarded, and MODEL was never touched, so there is nothing to
+          // put back.
+          showError((saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
+          return;
+        }
+        serviceIcons = saveRes.icons || serviceIcons;
+        applyUpdatePolicyLocally(service, policyField, value,
+                                  saveRes.fingerprint || readRes.fingerprint, diskText);
+        paintServiceIcons();
+      });
+    });
+  }
+
+  formHost.addEventListener('change', function (event) {
+    var el = event.target;
+    if (el.dataset.updpolicy === undefined) return;
+    writeUpdatePolicy(el.dataset.row | 0, el.value);
+  });
+
+  formHost.addEventListener('click', function (event) {
+    var openBtn = event.target.closest('[data-open-settings]');
+    if (openBtn) { openSettings(openBtn.dataset.openSettings); return; }
+
+    var unpinBtn = event.target.closest('[data-upd-unpin]');
+    if (unpinBtn) { performUnpin(unpinBtn.dataset.updUnpin); return; }
+  });
+
   function fieldHtml(f, index) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
@@ -4660,6 +5067,15 @@
 
         for (var gi = 0; gi < groups.length; gi++) {
           var grp = groups[gi], rows = buckets[grp.key];
+          // PLAN_150 phase 4b — the Updates fieldset draws itself, rows and
+          // all: its shape (tick marks, a note, a reserved sub-line) does not
+          // fit the label/value/note grid the loop below builds for every
+          // other group. `rows` here is always the two harvestUpdatePolicy()
+          // fields, in the order it pushes them (mode, then notify).
+          if (grp.key === 'updates') {
+            out.push(updatesFieldsetHtml(svc, rows, form.fields));
+            continue;
+          }
           // A flagged group (health/resources/depends) shows exactly when its
           // tick is on, at zero rows or many — health and resources always
           // have every leaf as a field (harvestLeaves), so "zero rows" never
