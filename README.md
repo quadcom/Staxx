@@ -103,8 +103,8 @@ whether StaXX does what you need.
 - **The stacks page** shows every container, with live figures, health, update state and which
   ports you can actually reach at a glance — hover an update pill to see both versions, when it was
   last checked and when it is next due; see [what every mark means](docs/guide/marks.md).
-- **On a tablet-sized screen, the list becomes a row of cards** instead of a squeezed table, so
-  everything stays readable without turning the device sideways.
+- **It fits the screen it is on** — desktop, tablet or phone. The list turns from a table into
+  cards as the screen narrows, and the editor and settings come with it.
 - **The editor** shows one file three ways — form, file, or both side by side — with the author's
   comments turned into help text; see [editing a stack](docs/guide/editing-a-stack.md).
 - **Health checks** can be worked out for you: where nothing is watching a running container, StaXX
