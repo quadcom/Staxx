@@ -236,4 +236,58 @@ function staxx_store_create(string $path, string &$error): bool {
 
   return true;
 }
+
+/**
+ * Bring every stack on the boot-drive shelf back into the store — PLAN_103
+ * addendum, Phase 1. The one place anything writes FROM the shelf rather
+ * than to it; BootCopy.php's own rule 4 still holds, since that file never
+ * does this itself. Never overwrites a stack already in the store, and a
+ * shelf entry that fails staxx_valid_path() is skipped and named rather
+ * than guessed at — the flash drive cannot itself hold a case clash, so
+ * that trap has nothing to catch here.
+ *
+ * @return array{written: string[], skipped: array<string,string>}
+ */
+function staxx_boot_restore(): array {
+  $written = []; $skipped = [];
+  foreach (staxx_boot_scan() as $found) {
+    $rel = $found['rel'];
+    if (!staxx_valid_path($rel)) { $skipped[$rel] = 'not a valid stack name'; continue; }
+
+    $dest = staxx_stack_root().'/'.$rel;
+    if (is_dir($dest) && staxx_find_compose_file($dest) !== '') {
+      $skipped[$rel] = 'already in the data store';
+      continue;
+    }
+
+    if (!is_dir($dest) && !@mkdir($dest, 0755, true)) {
+      $skipped[$rel] = 'could not create its folder in the data store';
+      continue;
+    }
+
+    // The shelf holds nothing but plain files for a stack — its compose
+    // file, override and .env, whatever it happened to be named — so every
+    // regular file present is written back, rather than a fixed list of
+    // basenames that could drift from what staxx_boot_copy_stack() actually
+    // wrote.
+    $ok = true;
+    foreach ((array)@scandir($found['dir']) as $entry) {
+      if ($entry === '.' || $entry === '..') continue;
+      $src = $found['dir'].'/'.$entry;
+      if (!is_file($src)) continue;
+      $content = @file_get_contents($src);
+      if ($content === false || @file_put_contents($dest.'/'.$entry, $content) === false) {
+        $ok = false;
+        break;
+      }
+    }
+
+    if ($ok) $written[] = $rel;
+    else $skipped[$rel] = 'could not be written into the data store';
+  }
+  // A restore just changed the tree's shape, same as a save or a delete —
+  // see staxx_scan_stacks_reset()'s other call sites.
+  staxx_scan_stacks_reset();
+  return ['written' => $written, 'skipped' => $skipped];
+}
 ?>

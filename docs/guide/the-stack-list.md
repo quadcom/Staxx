@@ -71,13 +71,27 @@ folder get a row of titles of their own too.
 
 ![The State and Address columns over two running stacks, each address followed by its reachable port in orange](../images/guide/the-stack-list-ports.png)
 
-## On a tablet-sized window
+## On a tablet or a phone
 
 ![The stack list on a tablet-sized window: two folder rows, then stacks as cards three across, each with its icon, name, state pill, address and small graphs](../images/guide/the-stack-list-cards.png)
 
-Below desktop width, the list becomes cards instead of a table — three across, one card per stack,
-carrying its icon, name, state, address and its little graphs. A folder becomes a heading over its
-own row of cards rather than a row of its own.
+Below desktop width, the list becomes cards instead of a table — one card per stack, carrying its
+icon, name, state, address and its little graphs. A folder becomes a heading over its own row of
+cards rather than a row of its own. How many cards sit across depends on the width: three on a
+tablet held sideways or a small laptop, two on a tablet held upright, one on a phone.
+
+![The same folder on a tablet held upright: the Database heading, then its stacks as cards two across](../images/guide/the-stack-list-cards-two.png)
+
+![The Database folder on a phone: the heading gives its name, its update marker and its "6 stacks, 5 running" line the full width of the screen, with its six app icons on a line of their own beneath; then its stacks one card per row, each with the WebUI, Logs, Repo and CA buttons on a line of their own at a finger's size and the running chip on the line beneath them](../images/guide/the-stack-list-cards-phone.png)
+
+On a phone the card is laid out again for a thumb: the four small buttons take a line of their own
+at a size a finger can hit, and the state chips take the line beneath them, so an update chip or a
+"restart to apply" chip never crowds the name.
+
+The folder heading changes shape here too. Its name, its update marker and its "N stacks, N running"
+line take the full width, and the icons of the apps inside it drop onto their own line underneath
+rather than being squeezed into a column beside them. The heading also runs from one edge of the
+screen to the other, so it reads as a band across the page with its stacks sitting inside it.
 
 A stack running more than one service shows a cubes button in its corner. Tap it to see those
 services as cards of their own, without the page underneath changing shape.
@@ -170,8 +184,8 @@ it.
 
 ## The row menu
 
-![The whole stack menu open: the stack name at the top, then Start, a greyed-out Stop, Update, Pull images, Check this image again, Logs, Edit compose file, Fill in details, Export, the list of folders to move it to, New folder, Remove from folder, an Autostart switch, a Delay box, What do these marks mean, and Remove stack](../images/guide/the-stack-list-row-menu.png)
-Click the app picture to open it. Items appear in this order, and only when they apply.
+![The whole stack menu open, in two columns: the stack name across the top; on the left Start, a greyed-out Stop, Update, Pull images, Check this image again, Logs, then Edit compose file, Fill in details, Export, then an Autostart switch, a Delay box, What do these marks mean, and Remove stack; on the right the Move to folder list, New folder and Remove from folder](../images/guide/the-stack-list-row-menu.png)
+Right-click the row to open it. Items appear in this order, and only when they apply, in two columns: what you can do to the stack on the left, where it lives on the right.
 
 | Group | Items |
 |---|---|
@@ -185,8 +199,23 @@ Click the app picture to open it. Items appear in this order, and only when they
 | Has no file | Start a compose file here |
 | Folders | Move to folder (a list), New folder…, Remove from folder (if filed) |
 | Boot | Autostart (on/off switch), Delay |
+| Profiles | One switch per profile the file declares — see below |
 | Reference | What do these marks mean? |
 | Last | Remove stack |
+
+### Profiles
+
+Compose lets a file mark a service as belonging to a **profile** — an optional part of the stack
+that is left out unless that profile is switched on. Most files use none of this, and the menu shows
+nothing extra for them.
+
+When a file does declare profiles, a **Profiles** group appears under Autostart and Delay: one
+switch per profile, each off by default, with a note underneath — *A service tagged with a profile
+that is off will not start.* Switch one on and StaXX includes it the next time you start, stop,
+restart, update or recreate the stack. Nothing is switched on for you; a profile stays off until you
+turn it on yourself.
+
+![A stack's row menu with the Profiles group outlined: the Profiles heading, one switch labelled extras, and the line saying a service tagged with a profile that is off will not start](../images/guide/the-stack-list-profiles-menu.png)
 
 ### A service's own menu
 
@@ -218,6 +247,46 @@ Click its picture to open the folder menu.
 | Rename folder | Renames it in place. |
 | Delay | How long to wait before the next thing starts. |
 | Delete folder | Deletes the folder. Stacks inside are moved back to the top level first, not deleted. |
+
+## Acting on several stacks at once
+
+Press **Select** on the button row to switch the list into selection mode. Every stack row and every
+folder header gains a switch at its left edge, the same on/off glyph used for Autostart elsewhere.
+Switching a folder on or off switches every stack inside it; a folder with only some of its stacks on
+shows its switch on but dimmed.
+
+![The list in selection mode: the DEV-TESTING folder header with its switch on but dimmed, two stacks beneath it switched on and a third off, and the bar at the foot saying 2 stacks chosen, in the order shown, with Start, Stop, Restart, Check for updates and Update](../images/guide/the-stack-list-selection-mode.png)
+
+A bar appears at the foot of the list saying how many stacks are chosen, in the order shown, with
+five buttons: **Start**, **Stop**, **Restart**, **Check for updates** and **Update**. There is
+nothing here that removes or recreates a stack — those stay one-at-a-time actions on purpose.
+
+Press a button and each chosen stack runs on its own row, exactly as it does anywhere else on the
+page. One stack failing does not stop the rest, and the bar keeps a running tally as they finish,
+then a final line naming anything that failed.
+
+StaXX does not know which stacks depend on each other, so it runs them in the order shown on the
+list, not a guessed sensible order. If one stack needs another already running — a database before
+the app that uses it, say — put them in that order on the list, or start them one at a time.
+
+Press **Select** again, or the Escape key, to leave selection mode. Every switch clears; nothing is
+remembered between visits.
+
+### Finding a stack by name
+
+A search box sits on the button row, reading *Find a stack… (press /)*. Press `/` anywhere on the
+page — outside a text box — to jump straight to it.
+
+![The search box with "postgres" typed in it and a dropdown beneath listing two matches: postgresql17 in the Database folder, and PenPot_Complete matched through its penpot-postgres service](../images/guide/the-stack-list-find.png)
+
+Type part of a name and a dropdown opens beneath the box: one line per match, showing the stack's
+icon and name, its folder in grey, and, when the match was not the stack's own name, the service,
+container or image that matched instead. Press Enter to open the first match, use the arrow keys to
+move between them, or click one directly — any of these opens that stack for editing, the same as
+clicking its picture. Escape closes the dropdown and clears the box.
+
+Nothing on the list itself changes while you search — no folder opens or closes, nothing scrolls.
+When nothing matches, the dropdown says **Nothing called that**.
 
 ## Broken stacks
 

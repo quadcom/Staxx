@@ -19,6 +19,10 @@
   // below; the settings panel uses it to say a save will be refused rather
   // than let somebody find that out by trying.
   var STORE_REACHABLE = scaffold.dataset.storeReachable === '1';
+  // PLAN_72 — this server's own time zone (Unraid's ident.cfg), for the no-TZ
+  // notice's "Add TZ=<zone>" button. Blank when the server-side read could
+  // not find one; never guessed at from here.
+  var SERVER_TZ = scaffold.dataset.serverTimezone || '';
 
   var modal       = document.getElementById('staxx-modal');
   var modalTitle  = document.getElementById('staxx-modal-title');
@@ -47,7 +51,6 @@
   // adopt branch) can be swapped back on the next ordinary open. The PHP
   // only renders this text once, so there is no other copy to fall back to.
   var nameHintEl      = nameField ? nameField.querySelector('.staxx-name-hint') : null;
-  var nameHintDefault = nameHintEl ? nameHintEl.textContent : '';
   var yamlPane    = document.getElementById('staxx-yaml');
   var yamlNums    = document.getElementById('staxx-yamlnums');
   var yamlMarks   = document.getElementById('staxx-yamlmarks');
@@ -532,7 +535,11 @@
   // the one always present (the Docker Hub sign-in button only appears in
   // one of the two wordings the registry notice can take).
   if (scaffold && ticker) {
-    var stickyBlocks = scaffold.querySelectorAll('.staxx-notice[data-notice-kind]');
+    // The recovery cards (PLAN_103) share the notice styling but live in the
+    // grid area on purpose, so they are left where they are rather than
+    // folded into the ticker — folded, a five-paragraph card became one
+    // truncated line in the corner (seen 2026-09-11).
+    var stickyBlocks = scaffold.querySelectorAll('.staxx-notice[data-notice-kind]:not(.staxx-notice--card)');
     for (var sb = 0; sb < stickyBlocks.length; sb++) {
       (function (block) {
         var kind = block.dataset.noticeKind || 'warn';
@@ -587,6 +594,10 @@
   // ever shown alongside the quiet automatic lookup's own found-something
   // state, see showDetailOfferBar() further down.
   var scaffoldDismiss = document.getElementById('staxx-scaffold-dismiss');
+  // PLAN_145 Part 2 — the folded strip that stands in for the scaffold
+  // offer and the author's-example field notes once the dialog is narrower
+  // than a desktop. See syncNoteStrip() below for what it holds.
+  var noteStrip = document.getElementById('staxx-notestrip');
   // PLAN_106 phase 4: latches true the first time this editor session's
   // reparse() finds a flagged dollar sign, so the modal is offered once per
   // open rather than reopening itself on every keystroke reparse() already
@@ -1171,6 +1182,27 @@
   //
   // URLSearchParams sends application/x-www-form-urlencoded, which works. Do
   // not "modernise" this back to FormData.
+  // Fire-and-forget variant of call(), for the one case an ordinary fetch
+  // cannot cover: the page unloading. A fetch started during pagehide is
+  // cancelled along with the page before its response — or often its
+  // request — ever lands; sendBeacon (and, where it is missing, fetch's own
+  // keepalive flag) is what the browser is willing to let finish after the
+  // page is already gone. Same body shape as call() and the same reason:
+  // URLSearchParams posts application/x-www-form-urlencoded, which Unraid's
+  // CSRF prepend reads — never FormData (multipart POSTs hang on the box).
+  function beacon(action, fields) {
+    var data = new URLSearchParams();
+    data.append('csrf_token', CSRF);
+    data.append('action', action);
+    Object.keys(fields || {}).forEach(function (k) { data.append(k, fields[k]); });
+
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      return navigator.sendBeacon(ENDPOINT, data);
+    }
+    fetch(ENDPOINT, { method: 'POST', body: data, credentials: 'same-origin', keepalive: true });
+    return true;
+  }
+
   function call(action, fields, timeoutMs) {
     var data = new URLSearchParams();
     data.append('csrf_token', CSRF);
@@ -1889,7 +1921,43 @@
       // document has not changed just because the pane became visible.
       redrawDots();
     }
+    syncViewRow();
+    // PLAN_145 round 3 — Split is the one view the handle means anything in;
+    // restore a saved ratio (or leave the grid at its 1fr/1fr default) now
+    // that the pane is actually showing and has a real width to measure.
+    if (view === 'split') applySplit();
   }
+
+  // PLAN_145 round 2, Part A — below 96rem of dialog width the header's
+  // Form/Split/Compose group is hidden and replaced by one toggle inside the
+  // Configure tab (.staxx-viewrow, two copies in the markup, only one ever
+  // shown — see the comment on each in StacksPage.php). 960 = 96rem at the
+  // sheet's own 10px root, the same trap NOTESTRIP_BREAKPOINT above is kept
+  // beside its own CSS figure for: nothing here can read a container query's
+  // threshold back out, so it is restated rather than shared.
+  var VIEWROW_BREAKPOINT = 960;
+
+  function syncViewRow() {
+    var narrow = modal.getBoundingClientRect().width <= VIEWROW_BREAKPOINT;
+    var rows = modal.querySelectorAll('.staxx-viewrow');
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].hidden = !narrow;
+      var cb = rows[i].querySelector('.staxx-viewswitch');
+      // Split reads as unchecked here on purpose: below this width the CSS
+      // already collapses split to the form alone, and the stored view is
+      // left untouched (see setView()'s own narrow coercion) — so "checked"
+      // means "showing yaml", nothing else.
+      if (cb) cb.checked = (modalBody.dataset.view === 'yaml');
+    }
+  }
+
+  // Delegated: both copies of the toggle share one handler. Calls the same
+  // setView() the header's own Form/Compose buttons call — never a second,
+  // parallel way of deciding the view.
+  modal.addEventListener('change', function (event) {
+    if (!event.target.classList.contains('staxx-viewswitch')) return;
+    setView(event.target.checked ? 'yaml' : 'form');
+  });
 
   // The dialog's own width now glides between Form and Split (CSS transition),
   // so the gutter's highlight bands — positioned with inline pixel values —
@@ -1899,6 +1967,10 @@
   modal.addEventListener('transitionend', function (e) {
     if (e.target === modal && e.propertyName === 'width' &&
         modalBody.dataset.view !== 'form') { syncGutter(); repaintMark(); }
+    // The Form/Split glide is the one width change this dialog makes on its
+    // own (everything else is the window being dragged), so it is one of the
+    // two places PLAN_145's note strip has to recheck the dialog's own width.
+    if (e.target === modal && e.propertyName === 'width') syncNoteStrip();
   });
 
   // Crossing the threshold with the editor open. Only Split has to move, and
@@ -1907,6 +1979,110 @@
   NARROW.addEventListener('change', function () {
     if (modal.open && modalBody.dataset.view === 'split') setView('form');
   });
+
+  // PLAN_145 Part 2 — NARROW (above) only ever tracks the 45rem VIEWPORT
+  // breakpoint, a different figure for a different purpose; the note strip
+  // folds against the DIALOG's own width (130rem container query in
+  // staxx.css), which a window resize changes continuously with no
+  // transition to catch. A ResizeObserver on the dialog itself is the one
+  // reliable way to notice that: there was no existing per-dialog resize
+  // path to hang this from, whatever an earlier reading of the code hoped.
+  // PLAN_145 round 2, Part A: the view-row toggle folds at its own width the
+  // same way the note strip does, so it rides the same observer rather than
+  // opening a second one against the same element.
+  if (window.ResizeObserver) {
+    // PLAN_145 round 3: applySplit() re-clamps --staxx-split against the
+    // dialog's current width, the same width this observer already exists to
+    // notice a window drag or the Form/Split glide change continuously.
+    new ResizeObserver(function () { if (modal.open) { syncNoteStrip(); syncViewRow(); applySplit(); } }).observe(modal);
+  }
+
+  // PLAN_145 round 3, Part B — the drag handle between the form and the
+  // compose panes in Split view. --staxx-split is a px value written onto
+  // .staxx-modal-body; the split grid's first track reads it and falls back
+  // to 1fr when it is absent (see .staxx-modal-body in the stylesheet). The
+  // handle itself lives between the two panes in the markup, one grid track
+  // wide (0.8rem — SPLIT_HANDLE below is that same figure in px, since a
+  // dialog-width calculation done here has no rem to read).
+  var SPLIT_RATIO_KEY = 'staxx.splitRatio';
+  var SPLIT_HANDLE = 8;    // 0.8rem at the sheet's 10px root — the handle's own track
+  var SPLIT_FLOOR = 240;   // Adrian's agreed minimum width for either pane
+
+  // Called on dialog open, on entering Split, and from the ResizeObserver
+  // above — the three moments the form pane's width needs re-deciding. A
+  // saved ratio (not a px value) is what survives a window of a different
+  // size opening later with the same proportion.
+  function applySplit() {
+    var handle = document.getElementById('staxx-splitter');
+    if (!handle) return;
+    var bodyW = modalBody.getBoundingClientRect().width;
+    if (!bodyW) return;   // dialog not actually laid out yet — nothing to clamp against
+    var ratio = null;
+    try {
+      var saved = localStorage.getItem(SPLIT_RATIO_KEY);
+      if (saved) ratio = parseFloat(saved);
+    } catch (e) { /* a private window throws on localStorage access */ }
+    if (!ratio || !isFinite(ratio)) { modalBody.style.removeProperty('--staxx-split'); return; }
+    var track = bodyW - SPLIT_HANDLE;
+    var w = Math.max(SPLIT_FLOOR, Math.min(ratio * track, track - SPLIT_FLOOR));
+    if (isFinite(w) && w > 0) modalBody.style.setProperty('--staxx-split', w + 'px');
+  }
+
+  function initSplitter() {
+    var handle = document.getElementById('staxx-splitter');
+    if (!handle) return;
+    var dragging = false, startX = 0, startW = 0, moved = false;
+
+    handle.addEventListener('pointerdown', function (e) {
+      var formPane = modal.querySelector('.staxx-pane--form');
+      if (!formPane) return;
+      startW = formPane.getBoundingClientRect().width;
+      startX = e.clientX;
+      dragging = true;
+      moved = false;
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    // Every move, not throttled to a frame — the pane's own content (the
+    // compose textarea) does not repaint mid-drag, only the grid track does,
+    // so there is nothing here expensive enough to need rationing.
+    handle.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      if (dx !== 0) moved = true;
+      var bodyW = modalBody.getBoundingClientRect().width;
+      var w = Math.max(SPLIT_FLOOR, Math.min(startW + dx, bodyW - SPLIT_HANDLE - SPLIT_FLOOR));
+      modalBody.style.setProperty('--staxx-split', w + 'px');
+    });
+
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      if (!moved) return;   // a plain click, not a drag — nothing to save or repaint
+      var bodyW = modalBody.getBoundingClientRect().width;
+      var formPane = modal.querySelector('.staxx-pane--form');
+      var w = formPane ? formPane.getBoundingClientRect().width : 0;
+      if (w) {
+        try { localStorage.setItem(SPLIT_RATIO_KEY, String(w / (bodyW - SPLIT_HANDLE))); }
+        catch (e) { /* private window — the ratio just does not survive this open */ }
+      }
+      // The gutter's highlight bands are positioned in pixels against the
+      // compose pane, which the drag just resized — the same repaint the
+      // view switch runs when a pane's width changes under it.
+      paintGutter(); paintInk(); syncGutter(); repaintMark(); redrawDots();
+    }
+    handle.addEventListener('pointerup', endDrag);
+    handle.addEventListener('pointercancel', endDrag);
+
+    // Back to the middle: drop the override and the saved ratio together, so
+    // a later open starts from the grid's own 1fr/1fr default again.
+    handle.addEventListener('dblclick', function () {
+      modalBody.style.removeProperty('--staxx-split');
+      try { localStorage.removeItem(SPLIT_RATIO_KEY); } catch (e) {}
+      paintGutter(); paintInk(); syncGutter(); repaintMark(); redrawDots();
+    });
+  }
+  initSplitter();
 
   /* ---- the form, drawn from the parsed file ---- */
 
@@ -1948,7 +2124,12 @@
   // refreshed by refreshRows() (see 'taken' on that reply); never fetched by
   // the editor itself. clashSpots is what applyClashAdvice() below fills each
   // pass, the clash sibling of movedSpots just above.
-  var TAKEN = { ports: [], paths: [] };
+  // PLAN_73 adds a third member, 'host' — ports the machine itself is
+  // listening on, not tied to any container — riding the same reply.
+  var TAKEN = { ports: [], paths: [], host: [] };
+  // Seeded from the page itself so the first open already knows what is
+  // taken; every 'rows' reply overwrites it wholesale after that.
+  try { TAKEN = JSON.parse(scaffold.dataset.taken || '') || TAKEN; } catch (e) { /* keep the empty shape */ }
   var clashSpots = [];
 
   // PLAN_70 stage 2 — every field taking part in a connection detectLinks()
@@ -2007,6 +2188,39 @@
     return na === nb || na.indexOf(nb + '/') === 0 || nb.indexOf(na + '/') === 0;
   }
 
+  // PLAN_73 — a host listener (from `ss`) only clashes with a published port
+  // when the two addresses could actually collide: "every address"
+  // (0.0.0.0, *, [::], or nothing at all) clashes with anything, otherwise
+  // only an identical address does. Container facts carry no address at all
+  // (see staxx_import_taken_facts()'s own note on why — deduped per
+  // container, not per address), so they read as an implicit wildcard here
+  // too, leaving today's container-clash behaviour exactly as it was.
+  function isWildcardAddr(a) {
+    a = String(a || '').trim();
+    return a === '' || a === '0.0.0.0' || a === '*' || a === '::' || a === '[::]';
+  }
+  function normAddr(a) {
+    a = String(a || '').trim();
+    if (a.charAt(0) === '[' && a.charAt(a.length - 1) === ']') a = a.slice(1, -1);
+    return a;
+  }
+  function addrsClash(a, b) {
+    if (isWildcardAddr(a) || isWildcardAddr(b)) return true;
+    return normAddr(a) === normAddr(b);
+  }
+
+  // The address a published port was given in the compose file, read
+  // straight off the source line at the spot hostPorts() already found —
+  // "127.0.0.1:8080:80" carries an address before the host port; "8080:80"
+  // does not, and compose then binds every address, the same as an explicit
+  // wildcard. Never guessed beyond what is actually written on the line.
+  function minePortAddr(text, p) {
+    var line = String(text).split('\n')[p.line] || '';
+    var before = line.slice(0, p.col).replace(/^\s*-\s*/, '').replace(/^["']/, '').trim();
+    if (before.charAt(before.length - 1) === ':') before = before.slice(0, -1);
+    return before;
+  }
+
   // Every clash between one compose file's own published ports / bind-mount
   // host paths and what TAKEN already holds elsewhere — shared by the live
   // editor's marks (applyClashAdvice() below) and the start guard (run()),
@@ -2050,10 +2264,29 @@
     };
     YAML.hostPorts(text).forEach(function (p) {
       if (netKindOf && netKindOf[p.service] === 'other') return;
+      var hitContainer = false;
       TAKEN.ports.forEach(function (t) {
         if (isOwn(t) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
+        hitContainer = true;
         out.push({ kind: 'port', line: p.line, col: p.col, len: p.len,
                    mine: p.port, proto: p.proto, container: t.container });
+      });
+      // A container fact already naming the holder wins outright — never
+      // also tell the user "the server itself" holds a port a container
+      // plainly does (PLAN_73's own rule on this).
+      if (hitContainer) return;
+      var mineAddr = minePortAddr(text, p);
+      // One line per holder, not per socket: nginx listens on 443 at the
+      // LAN address and at loopback, and two hits for one port read as two
+      // problems when there is one.
+      var seenHolder = {};
+      (TAKEN.host || []).forEach(function (t) {
+        if (t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
+        if (!addrsClash(mineAddr, t.addr)) return;
+        if (seenHolder[t.holder]) return;
+        seenHolder[t.holder] = true;
+        out.push({ kind: 'port', line: p.line, col: p.col, len: p.len,
+                   mine: p.port, proto: p.proto, host: true, holder: t.holder });
       });
     });
     YAML.hostPaths(text).forEach(function (p) {
@@ -2376,7 +2609,12 @@
   // redraw. Joined at render time in choiceFor(), the same way IMAGES/
   // imageOptions() below is never folded into the image vocab either.
   var netLoaded  = false;
-  var NETWORKS   = [];      // [name, label] pairs found on this server, beyond netmode's own
+  // [name, label] pairs found on this server, beyond netmode's own. The
+  // label can now differ from the name — a network another stack's compose
+  // created carries "(created by the <x> stack)" so picking one in the
+  // dropdown says whose it is, while the value stays the bare name a
+  // declaration actually needs (PLAN_147).
+  var NETWORKS   = [];
 
   // Every network name the server reported, unfiltered — unlike NETWORKS
   // above, bridge/host/none stay in here because a declared network's `name`
@@ -2388,6 +2626,15 @@
   var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
   var netPresent = Object.create(null);      // name -> true; a plain {} would read a network literally named "constructor" as already present
   var netDriver  = {};      // name -> driver, for working out a service's network kind
+
+  // name -> owning project, or '' for a hand-made network. Filled in the
+  // same netLoad() loop as netDriver above. A service's own network row
+  // (fromChoice()) and a declared network's own name dropdown (netChoices())
+  // both read this, because that is where someone actually picks a network
+  // to join — not just network_mode's dropdown, which NETWORKS already
+  // labels — so the "whose network is this" answer needs to reach both
+  // places rather than only the first one PLAN_147 touched.
+  var netProject = {};
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
@@ -2451,7 +2698,18 @@
     }
 
     var split = splitServerNets(taken);
-    return split.bridge.concat(split.others, split.host, split.none);
+    // A compose-created network gets the same "created by" wording here as
+    // it does on a service's own network row — this dropdown is where a
+    // freshly-added network's name is chosen in the first place, so it
+    // needs telling apart from a hand-made one too (PLAN_147). bridge/host/
+    // none are never compose-created, so only "others" needs relabelling.
+    var others = [];
+    for (var i = 0; i < split.others.length; i++) {
+      var name = split.others[i][0];
+      var project = netProject[name];
+      others.push([name, project ? name + ' (created by the ' + project + ' stack)' : name]);
+    }
+    return split.bridge.concat(others, split.host, split.none);
   }
 
   // Guards commit()'s networks branch (PLAN_64): true only for a name that
@@ -2530,7 +2788,14 @@
       for (var t = 0; t < names.length; t++) taken[names[t]] = true;
       var others = splitServerNets(taken).others;
       for (var o = 0; o < others.length; o++) {
-        options.push([others[o][0], others[o][0] + ' (on this server, not in this file yet)']);
+        // A compose-created network says whose it is here too, not only in
+        // network_mode's own dropdown (NETWORKS) — this row is the one
+        // Noah actually uses to join another stack's network (PLAN_147).
+        var otherProject = netProject[others[o][0]];
+        var otherLabel = otherProject
+          ? others[o][0] + ' (created by the ' + otherProject + ' stack, not in this file yet)'
+          : others[o][0] + ' (on this server, not in this file yet)';
+        options.push([others[o][0], otherLabel]);
       }
 
       // Phase C: the same box also carries the "join no network at all"
@@ -3367,7 +3632,10 @@
       var cl = f.clashAdvice;
       out += '<p class="staxx-fieldnote">' +
              (cl.kind === 'port'
-               ? 'Port ' + esc(cl.mine) + '/' + esc(cl.proto) + ' is already published by "' + esc(cl.container) + '".'
+               ? (cl.host
+                   ? 'Port ' + esc(cl.mine) + '/' + esc(cl.proto) + ' is already held by the server itself' +
+                     (cl.holder ? ' (' + esc(cl.holder) + ')' : '') + ' — this will not start.'
+                   : 'Port ' + esc(cl.mine) + '/' + esc(cl.proto) + ' is already published by "' + esc(cl.container) + '".')
                : '"' + esc(cl.mine) + '" is already used by "' + esc(cl.container) + '".') +
              '</p>';
     }
@@ -3405,7 +3673,10 @@
         if (f.watchAdvice[wi].side === 'added') wAdded++; else wDropped++;
       }
       if (wAdded) {
-        out += '<p class="staxx-fieldnote">' +
+        // data-note="author" (PLAN_145 Part 2): so the below-desktop note
+        // strip can collect this one by attribute rather than by matching
+        // its English sentence, which a wording change would silently break.
+        out += '<p class="staxx-fieldnote" data-note="author">' +
           (wAdded === 1 ? 'The author\'s published example also sets this.'
                         : 'The author\'s published example also sets ' + wAdded + ' more things here.') +
           '</p>';
@@ -3428,6 +3699,21 @@
         image: f.watchAdvice[0].image, service: f.service, setting: f.watchAdvice[0].setting
       }) + '</p>';
     }
+    // PLAN_72 — a restart policy left blank. Common in files pasted from the
+    // internet, and costly: the container never comes back after a reboot or
+    // a crash. "unless-stopped" is the right answer nearly always, so it is
+    // offered outright rather than merely named — never applied silently,
+    // and dismissible per stack/service the same way a watch finding is.
+    if (f.binder === 'setting' && f.target === 'restart' && !f.locked && emptyValue(f)) {
+      var restartNoteId = 'restart:' + openedName + ':' + f.service;
+      if (!fieldNoticeDismissed(restartNoteId)) {
+        out += '<p class="staxx-fieldnote">Without a restart policy this container stays down after a ' +
+               'reboot or a crash. "unless-stopped" brings it back unless you stopped it yourself. ' +
+               '<button type="button" class="staxx-declfix" data-restart-fix="1" ' +
+               'title="Sets restart: unless-stopped.">Use unless-stopped</button>' +
+               fieldNoticeDismissBtn(restartNoteId) + '</p>';
+      }
+    }
     return out;
   }
 
@@ -3439,6 +3725,62 @@
     return '<div class="staxx-advice" data-advice="1"' + (text ? '' : ' hidden') + '>' +
              text +
            '</div>';
+  }
+
+  // PLAN_72 — the shared Dismiss for the two field-level "you have not set
+  // this" notices (restart policy, time zone), one per stack+service so
+  // dismissing it on one container never silences it on another. Kept in
+  // localStorage rather than the server round trip watchSkip() makes: unlike
+  // a watch finding, nothing here comes from comparing files, so there is
+  // nothing for the server to remember on the stack's behalf, and the
+  // dismissal only ever needs to survive THIS browser reopening the page.
+  function loadFieldNoticeDismissed() {
+    try {
+      var raw = window.localStorage.getItem('staxx.fieldnotice.dismissed');
+      return raw ? JSON.parse(raw) || {} : {};
+    } catch (e) { return {}; }
+  }
+
+  function fieldNoticeDismissed(id) {
+    return !!loadFieldNoticeDismissed()[id];
+  }
+
+  function dismissFieldNotice(id) {
+    try {
+      var map = loadFieldNoticeDismissed();
+      map[id] = true;
+      window.localStorage.setItem('staxx.fieldnotice.dismissed', JSON.stringify(map));
+    } catch (e) { /* a dismissal not remembered is not a failure worth surfacing */ }
+  }
+
+  function fieldNoticeDismissBtn(id) {
+    return ' <button type="button" class="staxx-declfix" data-notice-dismiss="1" ' +
+      'data-notice-id="' + esc(id) + '" ' +
+      'title="Stops offering this for this service.">Dismiss</button>';
+  }
+
+  // PLAN_72 — no TZ (or TIMEZONE) variable set on a service's Environment
+  // group: Adrian's own case, a container quietly running on UTC. Grafted
+  // onto the group as a whole rather than a field, since there is no field
+  // for a variable the file does not have. zone is this server's own, read
+  // once at page load (StacksPage.php -> data-server-timezone); blank when
+  // it could not be read, in which case the button adds a bare "TZ=" for the
+  // person to fill in rather than naming a zone StaXX does not actually know.
+  function envTzNoticeHtml(svcName, rows, fields) {
+    for (var i = 0; i < rows.length; i++) {
+      var t = (fields[rows[i]].target || '').toUpperCase();
+      if (t === 'TZ' || t === 'TIMEZONE') return '';
+    }
+    var noteId = 'tz:' + openedName + ':' + svcName;
+    if (fieldNoticeDismissed(noteId)) return '';
+    var zone = SERVER_TZ || '';
+    var sentence = 'No time zone is set, so this container runs on UTC — its clock, schedules and ' +
+      'log times will not match the server\'s.' + (zone ? ' The server is on ' + esc(zone) + '.' : '');
+    return '<p class="staxx-fieldnote">' + sentence +
+           ' <button type="button" class="staxx-declfix" data-tz-fix="1" ' +
+           'data-service="' + esc(svcName) + '" data-tz-zone="' + esc(zone) + '" ' +
+           'title="Adds TZ=' + esc(zone) + ' to this service\'s environment.">Add TZ=' + esc(zone) + '</button>' +
+           fieldNoticeDismissBtn(noteId) + '</p>';
   }
 
   // Everything else on a declaration — internal:, driver_opts: and the rest —
@@ -4344,6 +4686,14 @@
               if (portNoteHere.present) out.push(portsRestoreHtml(svc.name));
             }
           }
+          // PLAN_72 — no TZ/TIMEZONE set on this service at all: a group-level
+          // note, since there is no field yet for a variable the file does not
+          // have, unlike the restart-policy note above which sits on a field
+          // that is already there just empty.
+          if (grp.key === 'env') {
+            var tzNote = envTzNoticeHtml(svc.name, rows, form.fields);
+            if (tzNote) out.push(tzNote);
+          }
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) {
             out.push(fieldHtml(form.fields[rows[r]], rows[r]));
@@ -4616,6 +4966,7 @@
       scaffoldNote.textContent = '';
       scaffoldNote.dataset.mode = '';
       if (scaffoldDismiss) scaffoldDismiss.hidden = true;
+      syncNoteStrip();
       return;
     }
 
@@ -4643,6 +4994,7 @@
     }
     scaffoldNote.hidden = false;
     if (scaffoldDismiss) scaffoldDismiss.hidden = true;
+    syncNoteStrip();
   }
 
   if (scaffoldNote) scaffoldNote.addEventListener('click', function () {
@@ -4667,7 +5019,180 @@
     scaffoldNote.hidden = true;
     scaffoldNote.textContent = '';
     scaffoldNote.dataset.mode = '';
+    syncNoteStrip();
   });
+
+  /* ---- PLAN_145 Part 2: the folded note strip ----------------------------
+   *
+   * Below desktop width the scaffold offer bar, every author's-example field
+   * note, and #staxx-watch-note are folded into one line, "▸ N notes", so
+   * the form is not pushed below the fold by prose nobody asked to read yet.
+   *
+   * ONLY ADVICE FOLDS (Adrian's rule, settled live round 2, 2026-09-13): the
+   * three named above are the whole list — things worth knowing, never
+   * things that need an answer. Every other warning in this dialog
+   * (#staxx-error, #staxx-missing, #staxx-makepaths, #staxx-inusepaths,
+   * #staxx-clash-note, #staxx-link-note, #staxx-required-note) stays visible
+   * in full at every width: folding away the reason a save failed would be
+   * worse than the height it costs.
+   *
+   * The scaffold bar and the field notes stay put and are only marked
+   * hidden — the strip is built fresh from their text each time this runs,
+   * same as round 1. #staxx-watch-note is different: it carries its own
+   * per-finding Dismiss buttons, each read by a click handler bound directly
+   * to the node itself (see paintWatchNote() above), so copying its text
+   * into a strip item would draw dead buttons. It is physically moved into
+   * the strip instead — watchNoteHome remembers where it came from — and
+   * moved back the moment the strip collapses or the dialog widens back out.
+   * Above desktop the originals are unhidden (or, for the watch note,
+   * restored to .staxx-modal-foot) and the strip goes empty — none of them
+   * ever show in both places at once.
+   */
+
+  // 1300 is 130rem at the sheet's own 10px root (see the .staxx-modal
+  // container query in staxx.css) — kept next to that figure in a comment
+  // rather than shared as a value, since nothing here can read a CSS
+  // custom property's used pixel value back out.
+  var NOTESTRIP_BREAKPOINT = 1300;
+  var noteStripFolded = [];   // originals (scaffold bar, field notes) currently hidden by the strip
+  var syncingNoteStrip = false;
+  var watchNoteHome = null;   // {parent, next}: set only while #staxx-watch-note is living inside the strip
+
+  // Puts #staxx-watch-note back exactly where it was before it moved into
+  // the strip. A no-op once already home — every caller can reach for this
+  // unconditionally rather than checking first.
+  function restoreWatchNoteHome() {
+    if (!watchNoteHome) return;
+    if (watchNoteHome.next && watchNoteHome.next.parentNode === watchNoteHome.parent) {
+      watchNoteHome.parent.insertBefore(watchNote, watchNoteHome.next);
+    } else {
+      watchNoteHome.parent.appendChild(watchNote);
+    }
+    watchNoteHome = null;
+  }
+
+  function renderNoteStrip(items, watchSpanCount) {
+    var open = noteStrip.dataset.open === '1';
+    var count = items.length + watchSpanCount;
+    // Whatever else this call does, #staxx-watch-note only ever belongs
+    // inside the strip while there is something in it to show — a refresh
+    // that emptied it out (paintWatchNote(), a Dismiss click) has to land
+    // here too, not only the user closing the strip by hand, or the node
+    // is left detached: a moment ago the innerHTML write below would have
+    // discarded it outright, not merely hidden it.
+    if (!watchSpanCount) restoreWatchNoteHome();
+    if (!open) {
+      noteStrip.innerHTML = '<button type="button" class="staxx-notestrip__toggle">' +
+        '▸ ' + count + (count === 1 ? ' note' : ' notes') + '</button>';
+      noteStrip.querySelector('.staxx-notestrip__toggle').addEventListener('click', function () {
+        noteStrip.dataset.open = '1';
+        renderNoteStrip(items, watchSpanCount);
+      });
+      return;
+    }
+    var html = '<div class="staxx-notestrip__items">';
+    for (var i = 0; i < items.length; i++) {
+      html += items[i].cb
+        ? '<button type="button" class="staxx-notestrip__item" data-i="' + i + '">' + esc(items[i].text) + '</button>'
+        : '<p class="staxx-notestrip__item">' + esc(items[i].text) + '</p>';
+    }
+    html += '</div><button type="button" class="staxx-notestrip__close" aria-label="Collapse the notes">' +
+      '×</button>';
+    noteStrip.innerHTML = html;
+    var btns = noteStrip.querySelectorAll('.staxx-notestrip__item[data-i]');
+    for (var b = 0; b < btns.length; b++) {
+      // Closed over the item its own data-i names, not the loop variable —
+      // the usual stale-closure trap in a plain for loop.
+      (function (item) {
+        btns[b].addEventListener('click', function () { item.cb(); });
+      })(items[parseInt(btns[b].dataset.i, 10)]);
+    }
+    // #staxx-watch-note moves in here, after the built items — an
+    // appendChild of the real node (captured home on the first move only),
+    // never a rebuild, so its Dismiss buttons keep working.
+    if (watchSpanCount && watchNote) {
+      if (!watchNoteHome) watchNoteHome = { parent: watchNote.parentNode, next: watchNote.nextSibling };
+      noteStrip.querySelector('.staxx-notestrip__items').appendChild(watchNote);
+      watchNote.hidden = false;
+    }
+    noteStrip.querySelector('.staxx-notestrip__close').addEventListener('click', function () {
+      // Collapsing only folds the strip back up — the notes underneath are
+      // untouched, so a "Not now"-style dismissal still has to be the
+      // original bar's own button, reached by opening the strip again.
+      noteStrip.dataset.open = '0';
+      renderNoteStrip(items, watchSpanCount);
+    });
+  }
+
+  function syncNoteStrip() {
+    if (!noteStrip || syncingNoteStrip) return;   // defensive: no strip in this markup, or already mid-run
+    syncingNoteStrip = true;
+    try {
+      // Undo the previous pass first. reparse() rebuilds the form pane's
+      // markup wholesale, so a remembered field note may already be gone
+      // from the document by the time this runs again — unhiding a
+      // detached node is harmless, which makes "restore, then recollect"
+      // simpler than tracking whether each one survived.
+      for (var i = 0; i < noteStripFolded.length; i++) noteStripFolded[i].hidden = false;
+      noteStripFolded = [];
+
+      var below = modal.getBoundingClientRect().width <= NOTESTRIP_BREAKPOINT;
+      if (!below) {
+        restoreWatchNoteHome();
+        noteStrip.hidden = true;
+        noteStrip.innerHTML = '';
+        delete noteStrip.dataset.open;
+        return;
+      }
+
+      var items = [];
+      if (scaffoldNote && !scaffoldNote.hidden) {
+        items.push({ text: scaffoldNote.textContent, cb: function () { scaffoldNote.click(); } });
+        noteStripFolded.push(scaffoldNote);
+        // Its "Not now" cross stands beside the bar, not inside it, so it has
+        // to fold and unfold with the bar or a lone x is left floating (seen
+        // in the phone-width guide shot, 2026-09-13).
+        if (scaffoldDismiss && !scaffoldDismiss.hidden) noteStripFolded.push(scaffoldDismiss);
+      }
+      // data-note="author" (set where the note is written, PLAN_62's watch-
+      // advice block above) rather than matching the English sentence — a
+      // wording change should not silently stop this collecting it.
+      var authorNotes = modalBody.querySelectorAll('.staxx-pane--form .staxx-fieldnote[data-note="author"]:not([hidden])');
+      for (var j = 0; j < authorNotes.length; j++) {
+        // Plain text, not a button: this note has no click action of its own
+        // (checked directly — it carries no delegated handler anywhere in
+        // this file), so the strip shows it as a paragraph, not a button.
+        items.push({ text: authorNotes[j].textContent, cb: null });
+        noteStripFolded.push(authorNotes[j]);
+      }
+
+      // Counted by its own <span> children, one per sentence — see
+      // paintWatchNote() above — rather than as a single item, so "3 notes"
+      // means three things worth reading, not "the offer bar, a field note,
+      // and one more thing however long".
+      var watchSpanCount = 0;
+      if (watchNote && !watchNote.hidden) {
+        var watchKids = watchNote.children;
+        for (var s = 0; s < watchKids.length; s++) {
+          if (watchKids[s].tagName === 'SPAN') watchSpanCount++;
+        }
+      }
+
+      if (!items.length && !watchSpanCount) {
+        restoreWatchNoteHome();
+        noteStrip.hidden = true;
+        noteStrip.innerHTML = '';
+        delete noteStrip.dataset.open;
+        return;
+      }
+
+      for (var k = 0; k < noteStripFolded.length; k++) noteStripFolded[k].hidden = true;
+      renderNoteStrip(items, watchSpanCount);
+      noteStrip.hidden = false;
+    } finally {
+      syncingNoteStrip = false;
+    }
+  }
 
   // A file the parser cannot read as a mapping at all has no services, which
   // renderForm() would otherwise draw as an almost-empty form — reading as
@@ -4753,7 +5278,10 @@
       // single marker's tooltip does not want.
       list = list.concat(clashSpots.map(function (h) {
         return { line: h.line, level: 'warn', message: h.kind === 'port'
-          ? 'Port ' + h.mine + '/' + h.proto + ' is already used by "' + h.container + '".'
+          ? (h.host
+              ? 'Port ' + h.mine + '/' + h.proto + ' is already held by the server itself' +
+                (h.holder ? ' (' + h.holder + ')' : '') + ' — this will not start.'
+              : 'Port ' + h.mine + '/' + h.proto + ' is already used by "' + h.container + '".')
           : '"' + h.mine + '" is already used by "' + h.container + '".' };
       }));
     }
@@ -4860,7 +5388,10 @@
     if (!hits.length) { clashNote.hidden = true; clashNote.textContent = ''; return; }
     var first = hits[0], extra = hits.length - 1;
     var lead = first.kind === 'port'
-      ? 'Port ' + first.mine + '/' + first.proto + ' is already used by "' + first.container + '".'
+      ? (first.host
+          ? 'Port ' + first.mine + '/' + first.proto + ' is already held by the server itself' +
+            (first.holder ? ' (' + first.holder + ')' : '') + ' — this will not start.'
+          : 'Port ' + first.mine + '/' + first.proto + ' is already used by "' + first.container + '".')
       : '"' + first.mine + '" is already used by "' + first.container + '".';
     clashNote.textContent = lead +
       (extra ? '  And ' + extra + ' more clash' + (extra > 1 ? 'es' : '') + ' with what is already running.' : '');
@@ -5988,7 +6519,12 @@
   function paintWatchNote(leftover) {
     if (!watchNote) return;
     var groups = watchLeftoverSentences(leftover);
-    if (!watchNotes.length && !groups.length) { watchNote.hidden = true; watchNote.innerHTML = ''; return; }
+    if (!watchNotes.length && !groups.length) {
+      watchNote.hidden = true;
+      watchNote.innerHTML = '';
+      syncNoteStrip();   // PLAN_145 round 2 — the strip must notice this one emptied out too
+      return;
+    }
     var lines = watchNotes.map(function (l) { return '<span>' + esc(l) + '</span>'; })
       .concat(groups.map(function (g) {
         var wSrc = watchHomeSourceNote(g.home_from);
@@ -5997,6 +6533,10 @@
       }));
     watchNote.innerHTML = lines.join('<br>');
     watchNote.hidden = false;
+    // PLAN_145 round 2 Part C: the one choke point every caller of this
+    // function goes through, so a watch-note refresh re-collects the strip
+    // rather than leaving a stale count or a since-changed node behind it.
+    syncNoteStrip();
   }
 
   // Drops one dismissed finding out of watchFacts so every surface (this
@@ -6105,6 +6645,12 @@
     updateRequired();
     updateMissing();
     updateScaffoldNote();
+    // updateScaffoldNote() already calls syncNoteStrip(), but the form pane's
+    // markup was just rebuilt from scratch (line above), which is the other
+    // half of what the strip collects — a fresh pass over the author-example
+    // notes it just painted, not only the offer bar.
+    syncNoteStrip();
+    syncViewRow();   // PLAN_145 round 2 — same settle point, a second toggle to keep in sync
     maybeOfferDollarFixes();   // PLAN_106 phase 4 — latched, so this is a no-op after the first call
     checkImageSettle();   // PLAN_84 phase 5 — the automatic "fill in details" trigger
     relint();
@@ -7357,6 +7903,82 @@
     var watchDismiss = event.target.closest('[data-watch-dismiss]');
     if (watchDismiss) {
       watchSkip(watchDismiss.dataset.watchImage, watchDismiss.dataset.watchService, watchDismiss.dataset.watchSetting);
+      return;
+    }
+
+    // PLAN_72 — "Use unless-stopped" beside the no-restart-policy note
+    // (adviceText()). The field already exists (empty), so this is one
+    // ordinary value write, the same path a typed edit takes — never applied
+    // silently: the button IS the offer, and there is still Undo below it.
+    var restartFix = event.target.closest('[data-restart-fix]');
+    if (restartFix) {
+      var rfRow = restartFix.closest('.staxx-fieldrow');
+      var rfField = rfRow && MODEL.fields[rfRow.dataset.row | 0];
+      if (!rfField) return;
+      flushPending();
+      pushUndo('setting a restart policy for "' + rfField.service + '"');
+      var rfOk = YAML.setPart(MODEL.doc, MODEL, rfField.id, 'value', 'unless-stopped');
+      if (!rfOk) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That could not be written — set it in the Compose view instead.');
+        return;
+      }
+      yamlPane.value = YAML.serialise(MODEL.doc);
+      paintGutter();
+      paintInk();
+      refreshRanges();
+      return;
+    }
+
+    // PLAN_72 — "Add TZ=<zone>" beside the no-time-zone note (envTzNoticeHtml()
+    // in renderForm()). Unlike the restart fix above there is no existing
+    // field to write through — the variable is not in the file at all — so
+    // this goes the same way the Environment group's own "+ Variable" button
+    // does (YAML.addItem), then fills in the name and value it just created.
+    // Each of those three writes reads the document afresh through
+    // YAML.buildForm()/fieldAtLine(): writeScalar() re-parses doc.root on
+    // every write but never rebuilds MODEL.fields, so reusing MODEL itself
+    // between them would hand the second and third write a spot computed
+    // against text that write already changed — see PLAN_66 on why a stale
+    // spot is refused rather than guessed through. Line numbers do not move
+    // between these three writes (each rewrites the one line already there),
+    // only the text on it, so the same `tzLine` finds it every time.
+    var tzFix = event.target.closest('[data-tz-fix]');
+    if (tzFix) {
+      var tzService = tzFix.dataset.service, tzZone = tzFix.dataset.tzZone || '';
+      flushPending();
+      pushUndo('adding a time zone for "' + tzService + '"');
+      var tzLine = YAML.addItem(MODEL.doc, MODEL, tzService, 'env', '', '');
+      if (tzLine < 0) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That list is written in a way the form cannot add to — add it in the Compose view instead.');
+        return;
+      }
+      var tzForm1 = YAML.buildForm(MODEL.doc);
+      var tzId1   = YAML.fieldAtLine(tzForm1, tzLine);
+      var tzOk1   = tzId1 && YAML.setPart(MODEL.doc, tzForm1, tzId1, 'name', 'TZ');
+      var tzForm2 = tzOk1 && YAML.buildForm(MODEL.doc);
+      var tzId2   = tzOk1 && YAML.fieldAtLine(tzForm2, tzLine);
+      var tzOk2   = tzId2 && YAML.setPart(MODEL.doc, tzForm2, tzId2, 'value', tzZone);
+      if (!tzOk2) {
+        restoreUndo();
+        setYamlStatus('That could not be written — add it in the Compose view instead.');
+        return;
+      }
+      structuralEdit(tzLine, 'Added a time zone for "' + tzService + '". Undo is at the bottom if that was wrong.');
+      return;
+    }
+
+    // PLAN_72 — Dismiss on either of the two notices above. Client-side only
+    // (fieldNoticeDismissed()/dismissFieldNotice()): neither notice comes from
+    // comparing this file against anything else, so there is nothing for the
+    // server to remember on the stack's behalf, unlike watchSkip() above.
+    var noticeDismiss = event.target.closest('[data-notice-dismiss]');
+    if (noticeDismiss) {
+      dismissFieldNotice(noticeDismiss.dataset.noticeId);
+      reparse();
       return;
     }
 
@@ -13191,15 +13813,22 @@
       ALL_NETS = [];
       netPresent = Object.create(null);
       netDriver = {};
+      netProject = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
-        var name = nets[n].name, driver = nets[n].driver;
+        var name = nets[n].name, driver = nets[n].driver, project = nets[n].project;
         if (!name) continue;
         ALL_NETS.push([name, name]);
         netPresent[name] = true;
         netDriver[name] = driver;
+        netProject[name] = project || '';
         if (known[name]) continue;
-        NETWORKS.push([name, name]);
+        // A compose-created network is offered too, marked with the stack
+        // that made it — hiding it just sent people into the YAML by hand
+        // to join a database or reverse-proxy network they can see with
+        // `docker network ls` (PLAN_147).
+        var label = project ? name + ' (created by the ' + project + ' stack)' : name;
+        NETWORKS.push([name, label]);
         known[name] = true;
       }
 
@@ -13773,10 +14402,13 @@
     // on every other open, or a locked box would silently survive into the
     // next "Add stack".
     nameInput.readOnly = !!adopt;
+    // The hint line is empty and hidden on every other open (PLAN_145 dropped
+    // the standing sentence); the adopt case is the one that still needs it.
     if (nameHintEl) {
       nameHintEl.textContent = adopt
         ? 'This folder has no compose file yet — saving here writes one, so the name cannot be changed.'
-        : nameHintDefault;
+        : '';
+      nameHintEl.hidden = !adopt;
     }
     nameField.hidden = false;
 
@@ -13855,6 +14487,10 @@
 
     lockScroll(true);
     modal.showModal();
+    // PLAN_145 round 3 — only now does the dialog have a real width to
+    // measure a saved split ratio against; setView() above ran while it was
+    // still closed, so a fresh open must re-apply it here.
+    applySplit();
 
     // Put the open stack in the address bar the same way #settings already
     // does, so a refresh reopens it — replaceState, never pushState, or Back
@@ -13997,6 +14633,11 @@
   function closeEditor() {
     stopManage();
     if (modal.open) modal.close();
+    // The adoption sweep skips the open stack, and until now ran only at
+    // page load — so an icon address pasted in the editor stayed a URL until
+    // the next reload. Closing is the moment the stack becomes eligible;
+    // the delay lets the save's row refresh fetch the picture first.
+    setTimeout(iconAdoptSweep, 1500);
   }
 
   // Resolves false when the user backed out, so callers can abandon whatever
@@ -15752,7 +16393,10 @@
     if (clash) {
       keyHelp.innerHTML = '<strong>Already in use</strong><p>' +
         (clash.kind === 'port'
-          ? 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already published by "' + esc(clash.container) + '".'
+          ? (clash.host
+              ? 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already held by the server itself' +
+                (clash.holder ? ' (' + esc(clash.holder) + ')' : '') + ' — this will not start.'
+              : 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already published by "' + esc(clash.container) + '".')
           : '"' + esc(clash.mine) + '" is already used by "' + esc(clash.container) + '".') +
         '</p>';
       placeCaretPanel(keyHelp, lc.line, lc.col, false);
@@ -17275,7 +17919,10 @@
   function clashLineHtml(c) {
     var lead = c.stack ? '<strong>' + esc(c.stack) + '</strong>: ' : '';
     return '<li>' + lead + (c.kind === 'port'
-      ? 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already published by "' + esc(c.container) + '".'
+      ? (c.host
+          ? 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already held by the server itself' +
+            (c.holder ? ' (' + esc(c.holder) + ')' : '') + ' — this will not start.'
+          : 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already published by "' + esc(c.container) + '".')
       : '"' + esc(c.mine) + '" is already used by "' + esc(c.container) + '".') + '</li>';
   }
 
@@ -17290,11 +17937,15 @@
   // stopped" one — rather than a generic "are you sure" that says both
   // regardless.
   function confirmClash(clashes, onGo) {
-    var ports = clashes.filter(function (c) { return c.kind === 'port'; });
+    var ports = clashes.filter(function (c) { return c.kind === 'port' && !c.host; });
+    var hostPorts = clashes.filter(function (c) { return c.kind === 'port' && c.host; });
     var paths = clashes.filter(function (c) { return c.kind === 'path'; });
     var warn = '';
     if (paths.length) warn += '<p>Two containers writing the same folder can corrupt what is in it.</p>';
     if (ports.length) warn += '<p>The container that has that port now will have to be stopped.</p>';
+    // PLAN_73 — a host listener is not a container and cannot be stopped the
+    // same way, so this gets its own sentence rather than the one above.
+    if (hostPorts.length) warn += '<p>This will not start while the server itself is using that port.</p>';
 
     askConfirm({
       title: 'This clashes with something already running',
@@ -19500,6 +20151,7 @@
       'entry and own page — review them?';
     scaffoldNote.hidden = false;
     if (scaffoldDismiss) scaffoldDismiss.hidden = false;
+    syncNoteStrip();
   }
 
   // Debounced the same 400ms the compose pane's own settle timer uses (see
@@ -19687,6 +20339,12 @@
       // survives the swap; this puts the markers back on the new rows.
       restoreFailures();
       restoreBusy();
+      // Selection marks are page state, not markup the server knows about
+      // (PLAN_78) — the swap above just erased every one of them, so put
+      // them back exactly as restoreFailures()/restoreBusy() do for their
+      // own markers. Selection itself (which names are chosen) already
+      // survived, since selectedStacks holds names, not row references.
+      if (selectMode) paintSelectMarks();
 
       // Every row in the fresh markup starts with no tabindex at all, the
       // same situation the very first page load was in — rebuild the
@@ -19705,7 +20363,7 @@
       // never 'state'. Re-applied against whatever is open right now, so a
       // clash this resolves elsewhere (or a fresh one docker just picked up)
       // clears or appears on its own rather than waiting for the next edit.
-      TAKEN = res.taken || { ports: [], paths: [] };
+      TAKEN = res.taken || { ports: [], paths: [], host: [] };
       if (MODEL) applyClashAdvice();
       // PLAN_70 stage 2 — same call site, same reason: nothing this refresh
       // touches changes what a connection is, but every other pass that
@@ -19812,6 +20470,10 @@
         }
       } else {
         iconsRounds = 0;
+        // A picture that has just landed in the cache may be the one a
+        // pasted address is waiting on — offer it to the adoption sweep now
+        // rather than at the next page load.
+        iconAdoptSweep();
       }
     });
   }
@@ -19867,6 +20529,9 @@
   // at the end, counts the whole run rather than just its last round.
   var iconAdoptStacks = {};
   var iconAdoptCount = 0;
+  // PLAN_146: set when any item written this run replaced a pasted address
+  // rather than filling in a blank field, so the summary notice can say so.
+  var iconAdoptHadUrl = false;
 
   // Writing this key does not change the fingerprint compose hashes a
   // service by (checked on the server with `docker compose config
@@ -19880,8 +20545,20 @@
       // form: null, the same as writeProjectLink() above — this write never
       // has a live editor form to hand, since it may not even be the stack
       // the editor has open right now.
-      var at = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file);
-      if (at < 0) return;   // could not write safely — skip, never force it
+      var ok;
+      if (item.was) {
+        // PLAN_146: the field already holds the pasted address, so this is a
+        // rewrite in place — replaceNested keeps the line's own comment and
+        // quoting — followed by appending the address to that comment rather
+        // than dropping it. Either step failing (a stale spot, a shape it
+        // will not touch) skips the whole item; a value changed with its
+        // address lost would be worse than leaving it for next round.
+        ok = YAML.replaceNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) &&
+             YAML.appendNestedComment(doc, null, item.service, ['x-unraid', 'icon'], 'was ' + item.was);
+      } else {
+        ok = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) >= 0;
+      }
+      if (!ok) return;   // could not write safely — skip, never force it
 
       return call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
                              fingerprint: res.fingerprint }).then(function (r) {
@@ -19890,6 +20567,7 @@
         if (!r || !r.ok) return;
         iconAdoptStacks[item.stack] = true;
         iconAdoptCount++;
+        if (item.was) iconAdoptHadUrl = true;
       });
     });
   }
@@ -19909,7 +20587,11 @@
     iconAdoptBusy = true;
     // A stack open in the editor right now is left alone this round, so a
     // save never lands underneath it.
-    call('icon-todo', { skip: openedName }, 30000).then(function (res) {
+    // Skip the stack under edit only while the editor is actually open:
+    // openedName is never cleared on close (save() still needs it), so
+    // passing it unconditionally kept skipping the stack somebody had JUST
+    // closed — the one whose pasted icon they were waiting on (2026-09-11).
+    call('icon-todo', { skip: modal.open ? openedName : '' }, 30000).then(function (res) {
       // Held until the writes finish, not released here: this flag is what
       // stops a second sweep starting while files are mid-save.
       if (!res || !res.ok) { iconAdoptBusy = false; return; }
@@ -19929,9 +20611,10 @@
         }
         iconAdoptRounds = 0;
         if (iconAdoptCount > 0) {
-          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks));
+          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks), iconAdoptHadUrl);
           iconAdoptCount = 0;
           iconAdoptStacks = {};
+          iconAdoptHadUrl = false;
           refreshRows();   // the changed stacks re-render from their files
         }
       });
@@ -19943,7 +20626,7 @@
   // PLAN_139 folded this into notices.add(): repeat runs coalesce onto one
   // entry there by construction (same kind, same text hashes to the same
   // id) rather than this function needing to track and replace its own copy.
-  function showIconAdoptSummary(services, stackNames) {
+  function showIconAdoptSummary(services, stackNames, hadUrl) {
     var svcText = services + (services === 1 ? ' service' : ' services');
     // Name the stacks rather than just counting them (card 01a08d13) — "one
     // stack" told nobody which one to go and check.
@@ -19952,10 +20635,14 @@
     if (stackNames.length > shown.length) {
       namesText += ' and ' + (stackNames.length - shown.length) + ' more';
     }
+    // PLAN_146: said plainly rather than folded silently into the same
+    // count — a pasted address being swapped for a local copy is a bigger
+    // change to a file than merely filling in a blank field.
+    var urlText = hadUrl ? ', and a pasted address was replaced by a local copy' : '';
     notices.add({
       kind: 'good',
       text: 'StaXX found icons for ' + svcText + ' and saved them into these stacks: ' +
-            namesText + '. Each stack’s earlier compose file is kept in its history, so ' +
+            namesText + urlText + '. Each stack’s earlier compose file is kept in its history, so ' +
             'this can be undone from the stack’s History.',
       sticky: false
     });
@@ -20427,7 +21114,13 @@
   // naming the folder: the label on screen is a container's name, not the
   // folder's, so a message about the folder has to say so or it names
   // something the person cannot see anywhere on the page.
-  function confirmRemoveHtml(name, label, dir, entries) {
+  // `mounts` is {binds: [host path, …], named: [volume name, …]} read from
+  // the compose file at the moment the dialog opens (see removeStack()) —
+  // PLAN_78's second companion. Named separately from `entries` above:
+  // those are files INSIDE the stack's own folder, going into the zip;
+  // these are paths and volumes OUTSIDE it, which the archive never touches
+  // and this dialog exists to say so plainly.
+  function confirmRemoveHtml(name, label, dir, entries, mounts) {
     var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
     var html = '<p>Its containers are stopped and removed.' + where + '</p>' +
       '<p>Nothing is deleted: the whole folder is zipped up and kept in <code>' + esc(dir) +
@@ -20440,6 +21133,25 @@
         '<ul class="staxx-confirm-list">' + entries.map(extraLine).join('') + '</ul>';
     } else {
       html += '<p>The folder holds just the compose file, and that goes into the zip too.</p>';
+    }
+
+    var binds = (mounts && mounts.binds) || [];
+    var named = (mounts && mounts.named) || [];
+    html += '<p>StaXX keeps this stack’s compose file in the archive and does not touch any ' +
+      'of these — they stay on the server exactly as they are.</p>';
+    if (binds.length || named.length) {
+      html += '<ul class="staxx-confirm-list">' +
+        binds.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') +
+        named.map(function (v) {
+          return '<li>' + esc(v) + ' <span class="staxx-hint">(a volume Docker manages)</span></li>';
+        }).join('') +
+        '</ul>';
+    } else {
+      html += '<p>' + esc('none') + '</p>';
+    }
+    if (named.length) {
+      html += '<p>A volume Docker manages is only removed by Docker’s own clean-up; StaXX never ' +
+        'runs that.</p>';
     }
     return html;
   }
@@ -20467,7 +21179,23 @@
 
     confirmMsg.textContent = '';
 
-    call('archive', { name: name }).then(function (plan) {
+    // Read alongside the archive dry-run rather than after it: the compose
+    // file's own mounts have nothing to do with what staxx_archive() worked
+    // out, so there is no reason to wait for one before asking for the
+    // other. A read that fails (file gone, compose broken) just means an
+    // empty mounts list rather than a refusal — the removal itself does not
+    // depend on this list being complete.
+    var mountsPromise = call('read', { name: name }).then(function (res) {
+      var text = res && res.ok ? res.body : '';
+      var seen = {}, binds = [];
+      YAML.hostPaths(text).forEach(function (h) {
+        if (!seen[h.path]) { seen[h.path] = 1; binds.push(h.path); }
+      });
+      return { binds: binds, named: YAML.namedVolumes(text) };
+    });
+
+    Promise.all([call('archive', { name: name }), mountsPromise]).then(function (results) {
+      var plan = results[0], mounts = results[1];
       if (!plan.ok && !plan.needsConfirm) {
         failed('Could not remove ' + label, plan.error);
         return;
@@ -20475,7 +21203,7 @@
 
       var dir = plan.dir || '';
       var entries = plan.entries || [];
-      var bodyHtml = confirmRemoveHtml(name, label, dir, entries);
+      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts);
 
       // Asks the one question, retrying in place on a failure so Go still
       // works as a retry — the same shape the old two-stage delete used,
@@ -21550,6 +22278,7 @@
     manageInst = manageMod.create({
       host: manageHost,
       call: call,
+      beacon: beacon,
       esc: esc,
       bytes: bytes,
       onRun: manageOnRun,
@@ -22895,9 +23624,34 @@
             'drive, which Unraid already backs up on its own — with its override and its .env ' +
             'file, if it has them, so the copy is a complete definition. Losing the data store then ' +
             'never means losing the definition of every container you run. Nothing else in the ' +
-            'stack\'s folder is copied, and StaXX never reads the copies back ' +
-            'while the store is present — restoring from them is always your own choice. Turning ' +
+            'stack\'s folder is copied, and nothing is ever written back into the data store from ' +
+            'the copies on its own — if the store is ever lost, StaXX offers to bring them back, and ' +
+            'that is always your own choice. Turning ' +
             'this off leaves any copies already there as they are.'
+    },
+    {
+      // PLAN_103 addendum, Phase 3: a change made outside StaXX (the compose
+      // file edited by hand, the container recreated at a command line) has
+      // to reach the flash copy some other way, since nothing above catches
+      // it. Nested under BOOT_COPY the same way PLACEMENT_RULES nests under
+      // STORE_ROOT — it only means anything while that switch is on.
+      key: 'BOOT_COPY_MODE', control: 'choice', label: 'Keeping the copies current', tab: 'storage',
+      within: 'BOOT_COPY',
+      choices: [
+        ['scheduled', 'On a schedule'],
+        ['live',      'Live']
+      ],
+      help: 'StaXX copies a stack to the flash drive whenever you save, start or update it here. ' +
+            'A change made outside StaXX — editing the file by hand and recreating the container ' +
+            'at a command line — is caught one of two ways. ' +
+            '<strong>On a schedule</strong> (default) — once an hour StaXX compares every stack ' +
+            'with its copy and rewrites the ones that differ. Nothing runs in the background ' +
+            'between sweeps. A change made outside StaXX can be up to an hour behind on the flash ' +
+            'drive. <strong>Live</strong> — StaXX keeps a small process running that watches ' +
+            'Docker and refreshes a stack\'s copy the moment its container is recreated, however ' +
+            'that was done. The copy is never more than a second behind. The cost is one process ' +
+            'that runs all the time, restarted for you at array start; a daily sweep still runs ' +
+            'as a safety net for anything it missed while it was down.'
     },
     {
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu', tab: 'general',
@@ -23354,13 +24108,14 @@
     // The crypt state readout belongs inside CRYPT_MODE's own box, under its
     // dropdown, rather than after it — see settingsCryptBox() above.
     var cryptHtml = row.key === 'CRYPT_MODE' ? '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>' : '';
-    // PLAN_134: a row.within row (so far only PLACEMENT_RULES) is drawn here,
+    // PLAN_134: a row.within row (PLACEMENT_RULES under STORE_ROOT, and now
+    // BOOT_COPY_MODE under BOOT_COPY — PLAN_103 addendum) is drawn here,
     // inside its host's own box, rather than laid out as a field of its own
     // — the layout loop above already skips it. Sits before derivedLine so
     // the switch reads as governing the folder button just above it, ahead
     // of the derived-folder lines beneath.
     var withinHtml = '';
-    if (row.key === 'STORE_ROOT' && values) {
+    if (values) {
       withinHtml = SETTINGS_ROWS.filter(function (r) { return r.within === row.key; })
         .map(function (subRow) {
           return '<div class="staxx-within" data-key="' + esc(subRow.key) + '">' +
@@ -23687,7 +24442,10 @@
 
   // One table row per registry host — the counts in their own columns, and
   // whatever is worth saying beyond the numbers (an assumed allowance, a
-  // downloads-left figure, a refused free form) in a trailing note column.
+  // downloads-left figure, a refused free form) returned separately as this
+  // row's note rather than baked into a trailing column: a narrow phone
+  // panel has no room for a sixth column, and two registries reporting the
+  // same thing would otherwise repeat the same sentence twice.
   // docker.io is named "Docker Hub" throughout, since nobody who set the
   // sign-in fields above thinks of it any other way; every other host is
   // shown by its own address.
@@ -23720,10 +24478,13 @@
       notes.unshift('Stopped answering ' + timeAgoWords(row.refusedAt) + ' ago.');
     }
 
-    return '<tr><td>' + name + '</td>' +
-           '<td>' + row.askedHour + '</td><td>' + row.askedDay + '</td>' +
-           '<td>' + row.paidHour + '</td><td>' + row.paidDay + '</td>' +
-           '<td class="staxx-stats-note">' + notes.join(' ') + '</td></tr>';
+    return { name: name, note: notes.join(' '), row: row };
+  }
+
+  // Turns the note text ('' for none) into the sup-marker HTML for the
+  // registry name, using markers already handed out in markerByNote.
+  function spendMarkerSup(note, markerByNote) {
+    return note && markerByNote[note] ? '<sup>' + markerByNote[note] + '</sup>' : '';
   }
 
   function loadSpendReadout() {
@@ -23734,11 +24495,41 @@
         box.textContent = 'Could not read the figures just now.';
         return;
       }
-      box.innerHTML = res.spend.length
-        ? '<table class="staxx-stats"><thead><tr><th>Registry</th><th>Asks this hour</th>' +
-          '<th>Asks today</th><th>Counted this hour</th><th>Counted today</th><th></th></tr></thead>' +
-          '<tbody>' + res.spend.map(spendHostRow).join('') + '</tbody></table>'
-        : '<p>No registry has been asked yet. Figures appear after the first check.</p>';
+      if (!res.spend.length) {
+        box.innerHTML = '<p>No registry has been asked yet. Figures appear after the first check.</p>';
+        return;
+      }
+
+      var hosts = res.spend.map(spendHostRow);
+
+      // Markers in order of first appearance, one per distinct wording —
+      // so two registries reporting the same thing share a single footnote
+      // instead of the sentence being repeated once per row.
+      var markers = ['*', '**', '***', '****', '*****', '******'];
+      var markerByNote = {};
+      var order = [];
+      hosts.forEach(function (h) {
+        if (h.note && !markerByNote[h.note]) {
+          markerByNote[h.note] = markers[order.length] || markers[markers.length - 1];
+          order.push(h.note);
+        }
+      });
+
+      var rows = hosts.map(function (h) {
+        return '<tr><td>' + h.name + spendMarkerSup(h.note, markerByNote) + '</td>' +
+               '<td>' + h.row.askedHour + '</td><td>' + h.row.askedDay + '</td>' +
+               '<td>' + h.row.paidHour + '</td><td>' + h.row.paidDay + '</td></tr>';
+      }).join('');
+
+      var foot = order.length
+        ? '<div class="staxx-stats-foot">' +
+          order.map(function (note) { return '<div>' + markerByNote[note] + ' ' + note + '</div>'; }).join('') +
+          '</div>'
+        : '';
+
+      box.innerHTML = '<table class="staxx-stats"><thead><tr><th>Registry</th><th>Asks this hour</th>' +
+        '<th>Asks today</th><th>Counted this hour</th><th>Counted today</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>' + foot;
     });
   }
 
@@ -25131,6 +25922,56 @@
       });
   }
 
+  /* ---- profiles menu group (PLAN_69) ---------------------------------
+   *
+   * Only offered when the file itself declares at least one profile — most
+   * stacks declare none, so the common case gains nothing to look at. The
+   * flat list, not a hover-out branch: the menu has no branches today, and a
+   * branch would need hover timing, edge placement and a touch fallback for
+   * a group of two or three rows.
+   *
+   * `d.profiles` and `d.profilesActive` are semicolon-joined lists rendered
+   * server-side (see StacksTable.php) and rebuilt from the compose file on
+   * every render, so a profile the file no longer names never appears here
+   * even before anything is saved.
+   */
+  function addProfilesMenuItems(d, name) {
+    var declared = (d.profiles || '').split(';').filter(function (p) { return p !== ''; });
+    if (!declared.length) return;
+    var active = (d.profilesActive || '').split(';').filter(function (p) { return p !== ''; });
+
+    menuSeparator('Profiles');
+    declared.forEach(function (p) {
+      menuItem(p, active.indexOf(p) !== -1 ? 'toggle-on' : 'toggle-off', function (b) {
+        var turningOn = active.indexOf(p) === -1;
+        var next = turningOn ? active.concat([p]) : active.filter(function (x) { return x !== p; });
+        // Disabled for the round trip, same reason as the Autostart switch:
+        // a second click before the first lands could send the opposite of
+        // what was meant.
+        b.disabled = true;
+        call('profiles', { name: name, set: '1', names: next.join(';') }).then(function (r) {
+          if (!r.ok) { b.disabled = false; failed('Could not change which profiles are switched on', r.error); return; }
+          // Written back onto the row itself, not left for the table redraw
+          // to deliver — see addBootMenuItem()'s own comment for why.
+          active = r.active || next;
+          d.profilesActive = active.join(';');
+          var glyph = b.querySelector('.fa');
+          if (glyph) {
+            glyph.classList.toggle('fa-toggle-on', active.indexOf(p) !== -1);
+            glyph.classList.toggle('fa-toggle-off', active.indexOf(p) === -1);
+          }
+          b.disabled = false;
+          // The Manage tab shows the same file's profiles independently, and
+          // must not wait for a reload to notice this changed.
+          if (manageInst) manageInst.refreshProfiles(name);
+          if (menu.hidden) refreshRows(); else menuRedraw = true;
+        });
+      }, { keepOpen: true });
+    });
+    menuItem('A service tagged with a profile that is off will not start.', 'info-circle',
+      function () {}, { disabled: true });
+  }
+
   function buildStackMenu(d) {
     var name    = d.stack;
     // What the row says, which is not always the folder name. Commands take the
@@ -25364,6 +26205,7 @@
     }
     addBootMenuItem(d, name, '');
     addBootWaitField(d, 'stack', name);
+    addProfilesMenuItems(d, name);
 
     // Same window.open() pattern as "What changed" above — an outward link,
     // not an action, so it sits with the informational items rather than
@@ -25743,6 +26585,445 @@
       });
     });
   }
+
+  /* =====================================================================
+   * PLAN_78 — choosing several stacks across folders, and acting on them
+   * together.
+   *
+   * Selection is page state only: never written anywhere, cleared the
+   * moment the mode is left and on every reload. The mark on each row is
+   * the Autostart glyph (toggle-on/toggle-off) rather than a tick box, so
+   * the list keeps one idiom for "on or off" instead of growing a second
+   * one just for this — Adrian's call, PLAN_78's "Decisions" section.
+   * ===================================================================== */
+
+  var selectMode = false;
+  var selectedStacks = {};   // stack name -> true
+
+  var selectBtn = document.getElementById('staxx-select-btn');
+  var selectBar = document.getElementById('staxx-select-bar');
+
+  // Every stack name in the grid, in the order the rows are actually
+  // drawn — "the order shown", which the bar states rather than pretending
+  // a better one exists (that is the connections-between-stacks work,
+  // still to come).
+  function allStackNames() {
+    var out = [];
+    if (rowsHost) {
+      Array.prototype.forEach.call(
+        rowsHost.querySelectorAll('.staxx-stack-row[data-stack-row]'),
+        function (r) { out.push(r.dataset.stackRow); }
+      );
+    }
+    return out;
+  }
+
+  function selectedNamesInOrder() {
+    return allStackNames().filter(function (n) { return selectedStacks[n]; });
+  }
+
+  function folderMemberNames(id) {
+    var out = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.staxx-stack-row[data-in-folder="' + id + '"]'),
+      function (r) { out.push(r.dataset.stackRow); }
+    );
+    return out;
+  }
+
+  function buildSelectMark(on, dim) {
+    var mark = document.createElement('button');
+    mark.type = 'button';
+    mark.className = 'staxx-selectmark' + (dim ? ' staxx-selectmark--some' : '');
+    mark.setAttribute('aria-pressed', on ? 'true' : 'false');
+    mark.title = on ? 'Chosen — click to leave it out' : 'Click to choose it';
+    mark.innerHTML = '<i class="fa fa-toggle-' + (on ? 'on' : 'off') + '"></i>';
+    return mark;
+  }
+
+  function toggleStackSelected(name) {
+    if (selectedStacks[name]) delete selectedStacks[name];
+    else selectedStacks[name] = true;
+    paintSelectMarks();
+  }
+
+  // A folder's switch acts on every stack it holds. Clicking a switch that
+  // is on but dimmed (some, not all, chosen) completes it rather than
+  // clearing it — the same sense a tri-state parent box reads in — and
+  // clicking a fully-on switch clears the lot.
+  function toggleFolderSelected(id) {
+    var members = folderMemberNames(id);
+    var onCount = members.filter(function (n) { return selectedStacks[n]; }).length;
+    var turnOn = onCount < members.length;
+    members.forEach(function (n) {
+      if (turnOn) selectedStacks[n] = true; else delete selectedStacks[n];
+    });
+    paintSelectMarks();
+  }
+
+  // Repaints every mark from scratch — cheap enough to call after any
+  // change, and the only way to stay correct once refreshRows() has thrown
+  // the old rows away and rebuilt them without a single one of these on
+  // them (see the call to this in refreshRows() above).
+  function paintSelectMarks() {
+    if (!rowsHost) return;
+    Array.prototype.forEach.call(
+      rowsHost.querySelectorAll('.staxx-selectmark'), function (m) { m.remove(); }
+    );
+
+    Array.prototype.forEach.call(
+      rowsHost.querySelectorAll('.staxx-stack-row[data-stack-row]'), function (row) {
+        var box = row.querySelector('.staxx-namebox');
+        if (!box) return;
+        var name = row.dataset.stackRow;
+        var mark = buildSelectMark(!!selectedStacks[name], false);
+        mark.addEventListener('click', function (event) {
+          event.stopPropagation();
+          toggleStackSelected(name);
+        });
+        box.insertBefore(mark, box.firstChild);
+      }
+    );
+
+    Array.prototype.forEach.call(
+      rowsHost.querySelectorAll('.staxx-folder-row[data-folder-row]'), function (row) {
+        var box = row.querySelector('.staxx-namebox');
+        if (!box) return;
+        var id      = row.dataset.folderRow;
+        var members = folderMemberNames(id);
+        var onCount = members.filter(function (n) { return selectedStacks[n]; }).length;
+        var mark = buildSelectMark(onCount > 0, onCount > 0 && onCount < members.length);
+        mark.addEventListener('click', function (event) {
+          event.stopPropagation();
+          toggleFolderSelected(id);
+        });
+        box.insertBefore(mark, box.firstChild);
+      }
+    );
+
+    paintSelectBar();
+  }
+
+  function setSelectMode(on) {
+    if (selectMode === on) return;
+    selectMode = on;
+    selectedStacks = {};
+    if (scaffold)  scaffold.classList.toggle('staxx-selecting', on);
+    if (selectBtn) selectBtn.classList.toggle('staxx-btn--active', on);
+    if (on) {
+      paintSelectMarks();
+    } else {
+      if (rowsHost) {
+        Array.prototype.forEach.call(
+          rowsHost.querySelectorAll('.staxx-selectmark'), function (m) { m.remove(); }
+        );
+      }
+      paintSelectBar();
+    }
+  }
+
+  if (selectBtn) {
+    selectBtn.addEventListener('click', function () { setSelectMode(!selectMode); });
+  }
+
+  function paintSelectBar() {
+    if (!selectBar) return;
+    if (!selectMode) { selectBar.hidden = true; selectBar.innerHTML = ''; return; }
+
+    var names = selectedNamesInOrder();
+    if (!names.length) {
+      selectBar.hidden = false;
+      selectBar.innerHTML = '<span class="staxx-selectbar-text">' +
+        esc('Choose stacks below, in the order shown.') + '</span>';
+      return;
+    }
+
+    var disabled = CAN_RUN ? '' : ' disabled';
+    selectBar.hidden = false;
+    selectBar.innerHTML =
+      '<span class="staxx-selectbar-text" data-select-count>' +
+        esc(names.length + (names.length === 1 ? ' stack chosen' : ' stacks chosen') +
+            ', in the order shown.') +
+      '</span>' +
+      '<div class="staxx-buttons staxx-buttons--inline">' +
+        '<button type="button" class="staxx-btn" data-bulk="up"' + disabled + '>' + esc('Start') + '</button>' +
+        '<button type="button" class="staxx-btn" data-bulk="down"' + disabled + '>' + esc('Stop') + '</button>' +
+        '<button type="button" class="staxx-btn" data-bulk="restart"' + disabled + '>' + esc('Restart') + '</button>' +
+        '<button type="button" class="staxx-btn" data-bulk="check"' + disabled + '>' + esc('Check for updates') + '</button>' +
+        '<button type="button" class="staxx-btn" data-bulk="update"' + disabled + '>' + esc('Update') + '</button>' +
+      '</div>';
+  }
+
+  if (selectBar) {
+    selectBar.addEventListener('click', function (event) {
+      var btn = event.target.closest('[data-bulk]');
+      if (!btn || btn.disabled) return;
+      var names = selectedNamesInOrder();
+      if (!names.length) return;
+      runBulkVerb(names, btn.dataset.bulk);
+    });
+  }
+
+  function paintBulkTally(doneCount, total, failCount) {
+    var line = selectBar && selectBar.querySelector('[data-select-count]');
+    if (!line) return;
+    line.textContent = doneCount + ' of ' + total + ' done' +
+      (failCount ? ', ' + failCount + ' failed' : '');
+  }
+
+  function paintBulkSummary(verbWord, total, failCount, failedLabels) {
+    var line = selectBar && selectBar.querySelector('[data-select-count]');
+    if (!line) return;
+    var text = total + ' ' + verbWord + (failCount ? ', ' + failCount + ' failed' : '');
+    if (failCount) text += ': ' + failedLabels.join(', ');
+    line.textContent = text;
+  }
+
+  // Start/stop/restart, one job per stack fired together — cheap, no pulls,
+  // exactly what folderRunNow() above already does over a folder's own
+  // members. run()'s own clash guard still runs per stack for 'up'.
+  function runBulkTogether(names, verb) {
+    var total = names.length, doneCount = 0, failCount = 0, failedLabels = [];
+    names.forEach(function (name) {
+      run(name, verb, function (job) {
+        doneCount++;
+        if (job.exit !== 0 && job.exit !== null) { failCount++; failedLabels.push(stackLabel(name)); }
+        paintBulkTally(doneCount, total, failCount);
+        if (doneCount === total) paintBulkSummary(VERB_PAST[verb] || 'run', total, failCount, failedLabels);
+      });
+    });
+  }
+
+  // Checking, one stack at a time through the same single-stack scope the
+  // row menu's own "check again" already uses (runUpdateCheck() above) —
+  // never a new scope shape, since that scope already takes one stack's
+  // own path.
+  function runBulkCheck(names) {
+    var total = names.length, doneCount = 0;
+    function next(i) {
+      if (i >= total) { paintBulkSummary('checked', total, 0, []); return; }
+      var name = names[i];
+      var rows = stackRows(name);
+      if (rows.length) setBusy(rows, 'Checking…');
+      runUpdateCheck(name, stackLabel(name), function () {
+        if (rows.length) clearBusy(rows);
+        doneCount++;
+        paintBulkTally(doneCount, total, 0);
+        next(i + 1);
+      });
+    }
+    next(0);
+  }
+
+  // Polls the one queue this stack's own single-stack update was started
+  // on, the same poll pollQueueOnce() above already runs, until it is no
+  // longer live — see openUpdateQueueConfirm() for the shape this scope
+  // already takes. Only ever one queue at a time is asked for, since the
+  // caller below waits for this to finish before starting the next stack.
+  function waitForQueueDone(name, cb) {
+    var timer = setInterval(function () {
+      call('update-queue', {}).then(function (res) {
+        if (!res.ok) return;
+        applyQueue(res.queue);
+        if (queueIsLive(res.queue)) return;
+        clearInterval(timer);
+        var item = (res.queue.items || []).filter(function (it) { return it.stack === name; })[0];
+        cb(!!(item && item.state === 'failed'), (item && item.job) || '');
+      });
+    }, 1500);
+  }
+
+  // Updating, the same one-at-a-time queue a folder's own "Update this
+  // folder" already runs — just started once per chosen stack in turn,
+  // since the queue's own scope has no shape for an arbitrary cross-folder
+  // list. A stack with nothing waiting is not a failure, only nothing to
+  // do, same as a folder update silently passing over one with no update.
+  function runBulkUpdate(names) {
+    var total = names.length, doneCount = 0, failCount = 0, failedLabels = [];
+    function next(i) {
+      if (i >= total) { paintBulkSummary('updated', total, failCount, failedLabels); return; }
+      var name = names[i];
+      var rows = stackRows(name);
+      if (rows.length) setBusy(rows, 'Updating…');
+      call('update-queue-start', { scope: name, stopped: '0' }).then(function (res) {
+        if (!res.ok) {
+          if (rows.length) clearBusy(rows);
+          doneCount++;
+          paintBulkTally(doneCount, total, failCount);
+          next(i + 1);
+          return;
+        }
+        applyQueue(res.queue);
+        waitForQueueDone(name, function (itemFailed, jobId) {
+          if (rows.length) clearBusy(rows);
+          doneCount++;
+          if (itemFailed) {
+            failCount++;
+            failedLabels.push(stackLabel(name));
+            markFailed(rows, 'update', jobId);
+          }
+          paintBulkTally(doneCount, total, failCount);
+          refreshStateSoon();
+          next(i + 1);
+        });
+      });
+    }
+    next(0);
+  }
+
+  function runBulkVerb(names, verb) {
+    if (verb === 'check')  { runBulkCheck(names);  return; }
+    if (verb === 'update') { runBulkUpdate(names); return; }
+    runBulkTogether(names, verb);
+  }
+
+  /* --------------------------------------------------------- finding a stack -
+   * PLAN_78's companion feature. Independent of selection mode — this never
+   * alters the list, it only opens what was found, the same way clicking a
+   * stack's own icon does. Matched against the rows already on the page
+   * (see findEntries()); nothing here is fetched.
+   */
+
+  var findInput = document.getElementById('staxx-find-input');
+  var findDrop  = document.getElementById('staxx-find-drop');
+  var findCurrentMatches = [];
+  var findActiveIndex = -1;
+
+  function findEntries() {
+    var out = [];
+    if (!rowsHost) return out;
+    Array.prototype.forEach.call(
+      rowsHost.querySelectorAll('.staxx-stack-row[data-stack-row]'), function (row) {
+        var name    = row.dataset.stackRow;
+        var iconBtn = row.querySelector('.staxx-icon');
+        var extras  = [];
+        if (row.dataset.soleService)  extras.push(row.dataset.soleService);
+        if (row.dataset.imageDeclared) extras.push(row.dataset.imageDeclared);
+        Array.prototype.forEach.call(
+          document.querySelectorAll('.staxx-container-row[data-in-stack="' + name + '"]'),
+          function (kid) {
+            if (kid.dataset.service)   extras.push(kid.dataset.service);
+            if (kid.dataset.container) extras.push(kid.dataset.container);
+            var img = kid.querySelector('.staxx-image-text');
+            if (img && img.textContent) extras.push(img.textContent);
+          }
+        );
+        out.push({
+          name: name, label: stackLabel(name), folder: row.dataset.inFolder || '',
+          iconHtml: iconBtn ? iconBtn.innerHTML : '', extras: extras
+        });
+      }
+    );
+    return out;
+  }
+
+  function stackFindMatches(query) {
+    var q = query.trim().toLowerCase();
+    if (!q) return [];
+    var out = [];
+    findEntries().forEach(function (e) {
+      if (e.label.toLowerCase().indexOf(q) >= 0) { out.push({ entry: e, extra: null }); return; }
+      var hit = e.extras.filter(function (x) { return x && x.toLowerCase().indexOf(q) >= 0; })[0];
+      if (hit) out.push({ entry: e, extra: hit });
+    });
+    return out;
+  }
+
+  function closeFindDrop() {
+    if (findDrop) { findDrop.hidden = true; findDrop.innerHTML = ''; }
+    findActiveIndex = -1;
+  }
+
+  function setFindActive(i) {
+    if (!findDrop) return;
+    Array.prototype.forEach.call(
+      findDrop.querySelectorAll('.staxx-search-hit'),
+      function (h, idx) { h.classList.toggle('staxx-search-hit--active', idx === i); }
+    );
+    findActiveIndex = i;
+  }
+
+  function paintFindDrop(matches) {
+    if (!findDrop) return;
+    if (!matches.length) {
+      findDrop.innerHTML = '<div class="staxx-search-empty">' + esc('Nothing called that') + '</div>';
+      findDrop.hidden = false;
+      findActiveIndex = -1;
+      return;
+    }
+    findDrop.innerHTML = matches.map(function (m, i) {
+      var folderHtml = m.entry.folder
+        ? ' <span class="staxx-search-folder">' + esc(m.entry.folder) + '</span>' : '';
+      var extraHtml = m.extra
+        ? ' <span class="staxx-search-extra">' + esc(m.extra) + '</span>' : '';
+      return '<button type="button" class="staxx-search-hit" data-find-index="' + i + '">' +
+        '<span class="staxx-search-icon">' + m.entry.iconHtml + '</span>' +
+        '<span class="staxx-search-text">' + esc(m.entry.label) + folderHtml + extraHtml + '</span>' +
+        '</button>';
+    }).join('');
+    findDrop.hidden = false;
+    findActiveIndex = -1;
+  }
+
+  function findOpen(name) {
+    editStack(name, stackLabel(name));
+    closeFindDrop();
+  }
+
+  if (findInput) {
+    findInput.addEventListener('input', function () {
+      findCurrentMatches = stackFindMatches(findInput.value);
+      paintFindDrop(findCurrentMatches);
+    });
+
+    findInput.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        findInput.value = '';
+        closeFindDrop();
+        findInput.blur();
+        return;
+      }
+      if (event.key === 'Enter') {
+        var pick = findCurrentMatches[findActiveIndex >= 0 ? findActiveIndex : 0];
+        if (pick) findOpen(pick.entry.name);
+        return;
+      }
+      if (event.key === 'ArrowDown' && findCurrentMatches.length) {
+        event.preventDefault();
+        setFindActive(findActiveIndex < findCurrentMatches.length - 1 ? findActiveIndex + 1 : 0);
+      }
+      if (event.key === 'ArrowUp' && findCurrentMatches.length) {
+        event.preventDefault();
+        setFindActive(findActiveIndex > 0 ? findActiveIndex - 1 : findCurrentMatches.length - 1);
+      }
+    });
+  }
+
+  if (findDrop) {
+    findDrop.addEventListener('click', function (event) {
+      var hit = event.target.closest('[data-find-index]');
+      if (!hit) return;
+      var pick = findCurrentMatches[Number(hit.dataset.findIndex)];
+      if (pick) findOpen(pick.entry.name);
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!findDrop || findDrop.hidden) return;
+    if (event.target === findInput || findDrop.contains(event.target)) return;
+    closeFindDrop();
+  });
+
+  // Escape leaves selection mode from anywhere on the page; '/' focuses the
+  // find box unless a field already has focus, so typing "/" as a real
+  // character (a path, a URL) is never hijacked.
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && selectMode) { setSelectMode(false); return; }
+    if (event.key !== '/') return;
+    var tag = (event.target && event.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (event.target && event.target.isContentEditable)) return;
+    if (findInput) { event.preventDefault(); findInput.focus(); findInput.select(); }
+  });
 
   // point (PLAN_44 A3): {x, y} in viewport coordinates, for a right-click
   // opening the menu at the pointer instead of against the trigger's own
@@ -26821,6 +28102,48 @@
     var el = event.target.closest('button');
     if (!el) return;
 
+    // PLAN_103 addendum — the two recovery cards' own buttons. Checked ahead
+    // of everything else below for the same reason the adopt-fix button
+    // is: these ids only ever exist inside the empty-grid cards, so there is
+    // nothing else here for them to collide with.
+    if (el.id === 'staxx-recovery-choose' || el.id === 'staxx-recovery-elsewhere') {
+      if (window.StaxxFirstRun) window.StaxxFirstRun.open();
+      return;
+    }
+    if (el.id === 'staxx-recovery-showme') {
+      call('shelf-list', {}).then(function (res) {
+        if (!res.ok) { showInfo('The flash-drive copies', esc(res.error || 'Could not read the shelf.')); return; }
+        var list = (res.stacks || []).slice().sort(function (a, b) {
+          return (b.mtime || 0) - (a.mtime || 0);
+        });
+        var rows = list.map(function (s) {
+          var when = s.mtime ? new Date(s.mtime * 1000).toLocaleString() : 'an unknown time';
+          return '<li><strong>' + esc(s.name) + '</strong> — ' + esc(when) + '</li>';
+        }).join('');
+        showInfo('The flash-drive copies', '<ul class="staxx-confirm-list">' + (rows || '<li>Nothing on the shelf.</li>') + '</ul>');
+      });
+      return;
+    }
+    if (el.id === 'staxx-recovery-bring-back') {
+      el.disabled = true;
+      call('restore-shelf', {}, 30000).then(function (res) {
+        el.disabled = false;
+        if (!res.ok) { showInfo('Bringing stacks back', esc(res.error || 'Could not restore from the shelf.')); return; }
+        var written = res.written || [];
+        var skipped = res.skipped || {};
+        var lines = written.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('');
+        var skipLines = Object.keys(skipped).map(function (n) {
+          return '<li>' + esc(n) + ' — ' + esc(skipped[n]) + '</li>';
+        }).join('');
+        var html = '<p>' + written.length + ' stack' + (written.length === 1 ? '' : 's') + ' brought back.</p>'
+                  + (lines ? '<ul class="staxx-confirm-list">' + lines + '</ul>' : '')
+                  + (skipLines ? '<p>Skipped:</p><ul class="staxx-confirm-list">' + skipLines + '</ul>' : '');
+        showInfo('Bringing stacks back', html);
+        refreshRows();
+      });
+      return;
+    }
+
     // PLAN_102 phase 2b — the red "no compose file" sentence is itself the
     // fix now (see staxx_render_rows()'s !$s['hasFile'] branch). Checked
     // before every other button case below so nothing broader — the row's
@@ -26986,6 +28309,100 @@
     menu.dataset.owner = menuOwnerKey(trigger);
     openMenu(trigger, { x: event.clientX, y: event.clientY });
   });
+
+  // PLAN_145 — Unraid's own external-link question (webGui's
+  // BodyInlineJS.php) is bound on `document` and shows an ordinary page
+  // element, which a <dialog> opened with showModal() always paints over —
+  // so clicking one of our own external links (the selfh.st icon lookup,
+  // a project's repo, …) from inside the editor left the question sitting
+  // unseen underneath it. Bound on the scaffold in the CAPTURE phase so it
+  // runs before Unraid's document-level handler, and gated on being inside
+  // one of our open dialogs — outside a dialog Unraid's own question already
+  // shows correctly and stays Unraid's to ask.
+  // A plain split-and-match rather than a regex against the whole cookie
+  // string — cookies are name=value pairs joined by "; ", which is simple
+  // enough to walk by hand.
+  function allowedDomainsCookie() {
+    var parts = document.cookie.split(';');
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i].replace(/^\s+/, '');
+      var prefixLen = 'allowedDomains='.length;
+      if (part.slice(0, prefixLen) !== 'allowedDomains=') continue;
+      var raw = part.slice(prefixLen);
+      // Tolerant of either encoding: Unraid's cookie plugin percent-encodes
+      // the JSON, but nothing here should break if some other write leaves
+      // it raw.
+      try { return JSON.parse(decodeURIComponent(raw)); } catch (e1) {
+        try { return JSON.parse(raw); } catch (e2) { return {}; }
+      }
+    }
+    return {};
+  }
+
+  // Written in the exact shape Unraid's own handler reads back, so its
+  // document-level listener honours what we set here everywhere on the
+  // page, not just inside our dialogs — one memory, not two. Built as an
+  // array and joined, rather than one concatenated string, purely so the
+  // cookie's own "name=" fields never sit next to a semicolon in the source
+  // text (an undeclared-name scan reads that shape as a bare assignment).
+  function allowDomainForever(host) {
+    var domains = allowedDomainsCookie();
+    domains[host] = true;
+    var cookieParts = [
+      'allowedDomains=' + encodeURIComponent(JSON.stringify(domains)),
+      'expires=' + new Date(Date.now() + 3650 * 86400000).toUTCString(),
+      'path=/'
+    ];
+    document.cookie = cookieParts.join('; ');
+  }
+
+  // The same hosts Unraid's own handler waves through without asking —
+  // BodyInlineJS.php — kept identical so a link never gets asked about here
+  // that Unraid itself would have opened silently.
+  function externalLinkExempt(href) {
+    return /^https?:\/\/[^.]*\.(my)?unraid\.net\//.test(href) ||
+      href.indexOf('https://unraid.net') === 0 ||
+      href.indexOf('http://lime-technology.com') === 0;
+  }
+
+  scaffold.addEventListener('click', function (event) {
+    var dialogEl = event.target.closest('dialog[open]');
+    if (!dialogEl) return;
+    var link = event.target.closest('a[href]');
+    if (!link || link.classList.contains('localURL')) return;
+    var href = link.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) return;
+    var host;
+    try { host = new URL(href, location.href).hostname; } catch (e) { return; }
+    if (host === location.hostname || externalLinkExempt(href) || allowedDomainsCookie()[host]) return;
+
+    // Unraid's own handler is bound on `document`; stopping the click here,
+    // on the scaffold, keeps it from ever reaching that handler and showing
+    // its own copy of the question underneath the dialog a moment later.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    askConfirm({
+      title: 'External Link',
+      bodyHtml: '<p>Clicking OK will take you to a 3rd party website not associated with Lime Technology.</p>' +
+        '<p>' + esc(href) + '</p>' +
+        '<label class="staxx-sectionrow"><input type="checkbox" id="staxx-extlink-ack"> ' +
+        'Always allow ' + esc(host) + '</label>',
+      goLabel: 'OK'
+    }).then(function (go) {
+      var ack = confirmBody.querySelector('#staxx-extlink-ack');
+      var allow = !!(ack && ack.checked);
+      closeConfirm();
+      if (!go) return;
+      if (allow) allowDomainForever(host);
+      // Popup blockers return null rather than throwing, so a blocked tab is
+      // silent unless it is said out loud here — Unraid shows a banner for
+      // the same case.
+      if (!window.open(href, '_blank', 'noopener')) {
+        showInfo('External Link', esc('The browser blocked the new tab. Allow pop-ups for this page and try again.'));
+      }
+    });
+  }, true);
 
   document.addEventListener('click', function (event) {
     if (menu.hidden) return;

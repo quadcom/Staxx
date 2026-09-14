@@ -1,6 +1,9 @@
 <?php
 /* PLAN_140 — staxx_missing_external_networks() itself, against fake network
- * lists, and the refusal it feeds inside staxx_start_job().
+ * lists, and the refusal it feeds inside staxx_start_job(). PLAN_147 adds
+ * cases for a compose-created network: it must count as present, and
+ * staxx_docker_networks() itself must carry the `project` field that makes
+ * that possible.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
  * blank, so the refusal cases (which need a real, on-disk stack for
@@ -100,6 +103,44 @@ $m = staxx_missing_external_networks(
   "services:\n  web:\n    image: busybox\n", []
 );
 ok('a file with no networks: block reports nothing', $m === []);
+
+// PLAN_147 — a compose-created network (carrying a project label) counts
+// as present, not just a hand-made one. Before this plan the label was used
+// to drop the network from the list entirely, so this case would have
+// reported it missing.
+$m = staxx_missing_external_networks(
+  "networks:\n  proxy_default:\n    external: true\n",
+  [['name' => 'proxy_default', 'driver' => 'bridge', 'project' => 'proxy']]
+);
+ok('a compose-created network in the fake list is not reported missing', $m === []);
+
+/* ---------------------------------------- the real list, PLAN_147 -------- */
+
+// staxx_docker_networks() itself: every entry must carry all three keys, and
+// — since every stack's own default network is compose-created — at least
+// one entry on a box with any stack running must show a non-empty project.
+// Skipped rather than failed when Docker is not running, or when nothing
+// compose-created exists yet, since this reads whatever is really there
+// rather than asserting a particular network's name.
+if (!staxx_docker_running()) {
+  echo "skip   staxx_docker_networks() shape check (docker not running)\n";
+} else {
+  $real = staxx_docker_networks();
+  $shapeOk = true;
+  $sawProject = false;
+  foreach ($real as $n) {
+    if (!array_key_exists('name', $n) || !array_key_exists('driver', $n) || !array_key_exists('project', $n)) {
+      $shapeOk = false;
+    }
+    if (($n['project'] ?? '') !== '') $sawProject = true;
+  }
+  ok('every staxx_docker_networks() entry carries name, driver and project', $shapeOk);
+  if ($sawProject) {
+    ok('at least one real network shows a non-empty project', true);
+  } else {
+    echo "skip   no compose-created network found on this box right now\n";
+  }
+}
 
 /* ------------------------------------------------------- the refusal ---- */
 

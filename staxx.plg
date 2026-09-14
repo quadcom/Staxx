@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.03.00">
+<!ENTITY version              "00.04.00">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "c23afb373cf521e12ee3ead0d4557e30">
-<!ENTITY packageSHA256        "81dc4e0368eae77a3ab4d9aa6627ba4a97cc60233ed7ad6f12ad9bb7a1071a8e">
+<!ENTITY packageMD5           "05d943a450a3754cd8c0c286c37e6919">
+<!ENTITY packageSHA256        "2482b3602f5feae2bc6548dc88bc29db36148f0941974730dc654f37fa11391e">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,40 @@
 >
 
 <CHANGES>
+###00.04.00
+- The stack list no longer jumps about when an update finishes: the columns stay where they are instead of sliding sideways and back, the folder headings keep their height, and the "N to look at" markers stay put instead of disappearing until the next reload.
+- A link to an outside site clicked from inside the stack editor now asks Unraid's "external link" question where you can see it, over the editor instead of underneath it, and remembers "always allow" the same way Unraid does.
+- An icon you point at by web address is now downloaded once and kept with the stack, and the file is updated to point at that copy with the original address kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
+- A stack whose compose file spells Docker Hub out by name, as `docker.io/user/app`, no longer shows "not installed" while it is plainly running. StaXX now treats that spelling as the same registry Docker does, so the image it pulled is recognised as its own.
+- A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
+- The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.
+- The editor's clash warning now also notices a port the server itself is already using, such as the web interface on 80 and 443, and says what is holding it when it can.
+- You can now choose any set of stacks across folders and start, stop, restart, check or update them together, each reporting on its own row; and find a stack by typing part of its name, service, container or image into the toolbar's search box (press `/` to jump to it).
+- Removing a stack now lists the folders and volumes it used and says plainly that they are left in place.
+- If the data store is ever lost, StaXX now offers to bring every stack back from the copies it keeps on the flash drive; and those copies now stay current when a stack is changed outside StaXX, either on an hourly schedule or live, chosen on the settings page.
+- Turning the live flash-copy setting back off now properly stops everything it started, instead of leaving a small Docker-watching process running in the background with no way to stop it short of a reboot.
+- Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
+- A stack can now join a network that another stack created. The editor's network dropdown lists those networks, marked with the stack that made them, and Start no longer refuses a stack whose external network exists but was made by Compose.
+- On a phone or a narrow window the stack list is now one card per row, with the buttons at a size a finger can hit and the status chips on their own line; on a tablet held upright it is two cards per row; and the old phone layout that used to break the cards between roughly 600 and 720px is gone.
+- On a phone or a narrow window the settings window now fills the screen, its tabs wrap onto two rows so every one of them can be reached, and the help text under each setting fits the window instead of being cut off at the right edge.
+- On a phone, a folder heading now gives its name, its update marker and its "N stacks · N running" line the full width, with its apps' icons on their own line underneath instead of squeezed into a narrow column beside them; and the list itself now runs edge to edge instead of sitting as a card with its own margins.
+- The stack editor now fits a phone: a two-line header, a switch at the top of the Configure tab to show the compose file instead of the form, and the advice notes folded into one line you tap to read. The sentence under the stack name explaining that it is a folder is gone at every width.
+- The editor no longer repeats the "saved exactly as written" sentence under the buttons — that promise is already in the readme and did not need a line of footer on every open.
+- In the editor's side-by-side view you can now drag the divider between the form and the compose file to change the split, it remembers where you put it, and a double-click puts it back in the middle; and on a window narrower than a desktop the editor no longer shrinks to half width when you switch to the form.
+- The update-check activity table on the settings page now fits a narrow window instead of running wider than the panel; and a note that applies to more than one registry is now written once underneath the table, with a mark beside the registries it belongs to, instead of being repeated in a squeezed column.
+
+###00.04.00_dev20260913
+- A link to an outside site clicked from inside the stack editor now asks Unraid's "external link" question where you can see it, over the editor instead of underneath it, and remembers "always allow" the same way Unraid does.
+- An icon you point at by web address is now downloaded once and kept with the stack, and the file is updated to point at that copy with the original address kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
+- A stack whose compose file spells Docker Hub out by name, as `docker.io/user/app`, no longer shows "not installed" while it is plainly running. StaXX now treats that spelling as the same registry Docker does, so the image it pulled is recognised as its own.
+- A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
+- The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.
+- The editor's clash warning now also notices a port the server itself is already using, such as the web interface on 80 and 443, and says what is holding it when it can.
+- You can now choose any set of stacks across folders and start, stop, restart, check or update them together, each reporting on its own row; and find a stack by typing part of its name, service, container or image into the toolbar's search box (press `/` to jump to it).
+- Removing a stack now lists the folders and volumes it used and says plainly that they are left in place.
+- If the data store is ever lost, StaXX now offers to bring every stack back from the copies it keeps on the flash drive; and those copies now stay current when a stack is changed outside StaXX, either on an hourly schedule or live, chosen on the settings page.
+- Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
+- A stack can now join a network that another stack created. The editor's network dropdown lists those networks, marked with the stack that made them, and Start no longer refuses a stack whose external network exists but was made by Compose.
 ###00.03.00
 - The copy of a container that "Take over and start" sets aside is no longer offered in the Import window or reported as a container found outside any stack. It is your way back if the new stack fails, not something to bring in again.
 - A stack that points at a network your server no longer has (most often because Unraid renamed it when bridging was switched on) is now refused before Start, Restart, Update, Recreate or Rebuild download anything, with the network's name and the nearest one the server does have. The stack editor shows the same message under the network and offers a one-press **Use br0.2**-style button that renames it everywhere in the file, as one undoable edit. Pull images is not refused.
@@ -436,7 +470,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.03.00-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.04.00_dev20260913-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>

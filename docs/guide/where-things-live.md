@@ -78,6 +78,19 @@ rest of its settings, because the data store lives on a drive pool that has not 
 says so on screen, and shows its shipped defaults in the meantime. It corrects itself once the array
 finishes starting.
 
+## Copies on the flash drive
+
+Every stack's compose file, override and `.env` is also copied to the flash drive, at
+`/boot/staxx/stacks/<the stack's own path>`. Unraid backs the whole flash drive up on its own, so
+this copy leaves the machine without you doing anything.
+
+The copies are refreshed whenever you save, start or update a stack here, and — depending on the
+choice made on the Storage settings tab — either once an hour or the moment a change is made outside
+StaXX. A copy can be a little behind a file you edited by hand until then.
+
+If the data store is ever lost, StaXX offers to bring every stack back from these copies. See
+[If the data store is lost](recovery-and-redundancy.md).
+
 ## What this never does
 
 - It never moves or deletes your data on its own — moving the store is always something you press.

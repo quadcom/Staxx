@@ -29,6 +29,11 @@ Along the top sits one tab per container in the stack, plus **All**. Each contai
 
 Beside the tabs sits a switch, and five buttons — **Stop**, **Start**, **Restart**, **Recreate**, **Update** — that act on either this one container or the whole stack, depending on which way the switch is set.
 
+When the stack's file declares any compose **profiles** — optional parts of the stack that only
+start when switched on — a **Profiles** line sits directly beneath that button row, one switch per
+profile, with the same note as on the row menu: *A service tagged with a profile that is off will
+not start.* A stack whose file declares no profiles shows nothing here.
+
 ## The Log pane
 
 Reading follows the container's own output as it arrives, keeping up to 4,000 lines before quietly dropping the oldest and saying so once. A few controls sit above it:

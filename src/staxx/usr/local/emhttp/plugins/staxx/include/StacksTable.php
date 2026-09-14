@@ -520,6 +520,19 @@ function staxx_watch_count_for_stack(string $stack): int {
 }
 
 /**
+ * PLAN_144 — lifted out of the folder render so action.php's `updates` reply
+ * can sum the same stacks the table did; two call sites computing this
+ * separately is how the reply used to contradict the pill the table drew.
+ */
+function staxx_watch_count_for_folder(string $folder): int {
+  $count = 0;
+  foreach (staxx_scan_stacks()['stacks'] as $watchStack) {
+    if (strpos($watchStack['rel'], $folder.'/') === 0) $count += staxx_watch_count_for_stack($watchStack['rel']);
+  }
+  return $count;
+}
+
+/**
  * Overlays a "N to look at" pill onto one already computed by
  * staxx_updates_for_row()/staxx_updates_for_folder() — the same way PLAN_61's
  * 'moved' is promoted only from 'current' (see
@@ -688,15 +701,24 @@ function staxx_service_icons_for_stack(string $stack): array {
  *
  * Skips, quietly, each for its own reason: a stack in $skip (the editor is
  * open on it right now); a stack whose compose file did not parse; a service
- * that already records an icon (never overwritten, ever); a service with no
- * image; an image staxx_icon_match() cannot place; and a copy that failed
- * for any reason. None of those stop the walk — only the cap does.
+ * that already records an icon (never overwritten, ever, unless it is the
+ * pasted-address case below); a service with no image; an image
+ * staxx_icon_match() cannot place; and a copy that failed for any reason.
+ * None of those stop the walk — only the cap does.
+ *
+ * PLAN_146 added the second qualifying case: an icon field already holding a
+ * `http(s)://` address whose picture StaXX has already fetched into its
+ * cache. Not yet fetched is left alone this round — the same "picked up
+ * later" shape an unmatched image already gets — and a fetch StaXX tried and
+ * failed at stays a visibly dead link rather than being swapped for nothing.
+ * Such an item carries `was`, the address exactly as the author typed it,
+ * so the browser can keep it in a comment rather than dropping it.
  *
  * Same call, same arguments, as the grid's own child rows (see
  * staxx_stack_tile()) — what gets recorded is exactly what the grid was
  * already showing, never a fresh guess.
  *
- * @return array<int, array{stack:string, service:string, file:string}>
+ * @return array<int, array{stack:string, service:string, file:string, was?:string}>
  */
 function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
   $skip   = array_flip($skip);
@@ -713,24 +735,41 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
     if (!$meta['ok']) continue;
 
     foreach ($meta['services'] as $svc => $svcMeta) {
-      if (trim((string)($svcMeta['x']['icon'] ?? '')) !== '') continue;
+      $icon = trim((string)($svcMeta['x']['icon'] ?? ''));
+      $url  = '';
+      $was  = '';
 
-      $image = trim((string)($svcMeta['image'] ?? ''));
-      if ($image === '') continue;
+      if ($icon === '') {
+        $image = trim((string)($svcMeta['image'] ?? ''));
+        if ($image === '') continue;
 
-      // $s['rel'], not the leaf: a stack row's 'name' IS its path under the
-      // root, and that is what the grid hands staxx_icon_match() as its last
-      // candidate. Passing the leaf here instead would let a stack inside a
-      // folder match something the grid never showed, and recording that
-      // would change what it looks like — the one thing this must not do.
-      $ref = staxx_icon_match($image, $svc, $s['rel']);
-      if ($ref === '') continue;
+        // $s['rel'], not the leaf: a stack row's 'name' IS its path under
+        // the root, and that is what the grid hands staxx_icon_match() as
+        // its last candidate. Passing the leaf here instead would let a
+        // stack inside a folder match something the grid never showed, and
+        // recording that would change what it looks like — the one thing
+        // this must not do.
+        $ref = staxx_icon_match($image, $svc, $s['rel']);
+        if ($ref === '') continue;
+      } elseif (preg_match('#^https?://#i', $icon)) {
+        $ref = 'url-'.md5(staxx_icon_raw_url($icon));
+        // Not cached yet, or a download already known to fail: leave the
+        // field alone. staxx_icon_missed() is checked first because it is
+        // the cheap answer — no filesystem probe needed.
+        if (staxx_icon_missed($ref) || staxx_icon_url($ref) === '') continue;
+        $url = staxx_icon_raw_url($icon);
+        $was = $icon;
+      } else {
+        continue;
+      }
 
       $error = '';
-      $written = staxx_icon_adopt($ref, $s['dir'], $error);
+      $written = staxx_icon_adopt($ref, $s['dir'], $error, $url);
       if ($written === '') continue;
 
-      $out[] = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+      $item = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+      if ($was !== '') $item['was'] = $was;
+      $out[] = $item;
       if (count($out) >= $cap) { $cutoff = true; break 2; }
     }
   }
@@ -1536,6 +1575,75 @@ function staxx_header_row_html(): string {
 }
 
 /**
+ * The two "bring my stacks back" cards, PLAN_103 addendum Phase 1. Centred
+ * in the grid area rather than the top notice slot other banners use — see
+ * staxx_render_rows()'s own `if (!$rows)` branch for when each is chosen.
+ * Card text is exact: agreed word for word with Adrian on 2026-09-11.
+ *
+ * @param string $kind  'missing' (card one) or 'empty' (card two)
+ * @param array  $shelf staxx_boot_shelf_summary()'s own shape; only needed
+ *                       (and only fetched by the caller) for 'empty'.
+ */
+function staxx_boot_recovery_card(string $kind, array $shelf = []): string {
+  $storePath = staxx_store_root();
+  $shelfPath = staxx_boot_copy_root();
+  $count     = $shelf['count'] ?? 0;
+
+  if ($kind === 'missing') {
+    $buttons = '';
+    $offer   = '';
+    if ($count > 0) {
+      $offer = '<p>'
+             . sprintf(
+                 _('If the drive that held it is gone for good, choose a new place for the data store. Copies of %s on the flash drive at %s, and StaXX will offer to bring them back into the new store as soon as you have chosen it.'),
+                 ($count === 1 ? '1 stack are' : $count.' stacks are'),
+                 '<code>'.htmlspecialchars($shelfPath).'</code>'
+               )
+             . '</p>';
+      $buttons = '<div class="staxx-buttons staxx-buttons--inline">'
+               . '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-recovery-choose">'._('Choose a new place for the data store').'</button>'
+               . '<button type="button" class="staxx-btn" id="staxx-recovery-showme" data-kind="missing">'._('Show me the copies').'</button>'
+               . '</div>';
+    }
+    return '<div class="staxx-row" role="row"><div class="staxx-cell staxx-recovery-cell" role="gridcell">'
+         . '<div class="staxx-notice staxx-notice--card" data-notice-kind="warn">'
+         . '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i>'
+         . '<h3>'._('StaXX cannot reach its data store.').'</h3>'
+         . '<p>'.sprintf(_('It was at %s, and that place is not there right now.'), '<code>'.htmlspecialchars($storePath).'</code>').'</p>'
+         . '<p>'._('If the array is still starting, this puts itself right in a moment and nothing has been lost.').'</p>'
+         . $offer
+         . '<p>'._('Its settings lived in the old store, so a new one starts from the shipped defaults, the same as a first install. If the old place ever comes back, StaXX stays with the new one and ignores it.').'</p>'
+         . $buttons
+         . '</div></div></div>';
+  }
+
+  // 'empty' — card two. Only ever drawn when $shelf['count'] > 0, guaranteed
+  // by the caller, so no empty-shelf branch is needed here.
+  $newest = $shelf['newest'] ?? null;
+  $oldest = $shelf['oldest'] ?? null;
+  $dateFmt = 'j F Y \a\t H:i';
+  $newestTxt = $newest !== null ? date($dateFmt, $newest) : _('an unknown time');
+  $oldestTxt = $oldest !== null ? date('j F Y', $oldest) : _('an unknown time');
+  $countTxt  = $count === 1 ? _('1 stack is') : $count.' '._('stacks are');
+
+  return '<div class="staxx-row" role="row"><div class="staxx-cell staxx-recovery-cell" role="gridcell">'
+       . '<div class="staxx-notice staxx-notice--card" data-notice-kind="info">'
+       . '<i class="fa fa-life-ring" aria-hidden="true"></i>'
+       . '<h3>'.sprintf(_('Your data store is empty, but copies of %s on the flash drive.'), $countTxt).'</h3>'
+       . '<p>'.sprintf(_('StaXX keeps a copy of every stack\'s compose file at %s. The newest is from %s, the oldest from %s.'),
+                        '<code>'.htmlspecialchars($shelfPath).'</code>', htmlspecialchars($newestTxt), htmlspecialchars($oldestTxt)).'</p>'
+       . '<p>'.sprintf(_('They will be written into the data store at %s, the place chosen in Settings. Nothing is started until you choose to, and any stack already there is left alone.'),
+                        '<code>'.htmlspecialchars($storePath).'</code>').'</p>'
+       . '<div class="staxx-buttons staxx-buttons--inline">'
+       . '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-recovery-bring-back">'.sprintf(_('Bring back %s'), $count === 1 ? '1 stack' : $count.' stacks').'</button>'
+       . '<button type="button" class="staxx-btn" id="staxx-recovery-showme" data-kind="empty">'._('Show me what is there').'</button>'
+       . '<button type="button" class="staxx-btn" id="staxx-recovery-elsewhere">'._('Put the data store somewhere else first').'</button>'
+       . '</div>'
+       . '<p class="staxx-hint">'._('Or leave them where they are: this offer goes away once the store holds a stack.').'</p>'
+       . '</div></div></div>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -1549,10 +1657,16 @@ function staxx_header_row_html(): string {
  * A stack with only one service is not expandable and gets neither a group nor
  * any child rows, exactly as before — see $expandable below.
  *
- * @param array $rows   from staxx_folder_layout()
- * @param bool  $canRun whether docker and compose are both usable
+ * @param array $rows            from staxx_folder_layout()
+ * @param bool  $canRun          whether docker and compose are both usable
+ * @param bool  $storeReachable  PLAN_103 addendum: whether the store is not
+ *                                just chosen but actually there right now —
+ *                                staxx_store_reachable(). Decides which of
+ *                                the two recovery cards, if either, replaces
+ *                                an empty grid; see the `if (!$rows)` branch
+ *                                below.
  */
-function staxx_render_rows(array $rows, bool $canRun): string {
+function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = true): string {
   // Gathered once, up front, rather than per row: staxx_autostart_state()
   // reads Unraid's own boot file and the live container labels, and $rows
   // does not carry the stack list itself — only each stack row does.
@@ -1592,6 +1706,22 @@ function staxx_render_rows(array $rows, bool $canRun): string {
   ob_start();
 
   if (!$rows):
+    if (!$storeReachable):
+      // PLAN_103 addendum, card one — replaces the small top-of-page banner
+      // from PLAN_97 Phase 4 (staxx_settings_degraded()'s notice in
+      // StacksPage.php, which is now silent for this condition on purpose;
+      // its slot stays empty). Shown while STORE_ROOT is set but the folder
+      // is not there right now. The shelf is read here too — describing
+      // itself to a person is one of the two reasons rule 1 permits.
+      echo staxx_boot_recovery_card('missing', staxx_boot_shelf_summary());
+    else:
+      $shelf = staxx_boot_shelf_summary();
+      if ($shelf['count'] > 0):
+        // Card two — the store is reachable and empty, and the shelf has
+        // something to offer. Never shown while the store is unreachable:
+        // the branch above already took that case.
+        echo staxx_boot_recovery_card('empty', $shelf);
+      else:
 ?>
         <div class="staxx-row staxx-empty-row" role="row">
           <span class="staxx-cell" role="gridcell">
@@ -1599,6 +1729,8 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           </span>
         </div>
 <?
+      endif;
+    endif;
   endif;
 
   // Whether a <div class="staxx-group staxx-group--folder"> is currently
@@ -1643,11 +1775,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // image of its own to check.
       $fUpdate = staxx_updates_for_folder($row['id']);
       // PLAN_62 Stage 3 — summed the same way, over the same stacks.
-      $fWatch = 0;
-      foreach (staxx_scan_stacks()['stacks'] as $watchStack) {
-        if (strpos($watchStack['rel'], $row['id'].'/') === 0) $fWatch += staxx_watch_count_for_stack($watchStack['rel']);
-      }
-      $fUpdate = staxx_watch_apply_pill($fUpdate, $fWatch);
+      $fUpdate = staxx_watch_apply_pill($fUpdate, staxx_watch_count_for_folder($row['id']));
 ?>
       <div class="staxx-group staxx-group--folder" role="presentation" data-folder-group="<?= htmlspecialchars($row['id']) ?>">
         <div class="staxx-row staxx-folder-row" role="row" aria-level="1"
@@ -1977,6 +2105,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-boot-wait="<?= $sWait ?>"
                         data-interleaved="<?= $sInterleaved ? '1' : '0' ?>"
                         data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
+                        <?php /* PLAN_69 — semicolon-joined, same shape as every other
+                                 multi-value data attribute on this button. Absent
+                                 rather than empty when the file declares none, so the
+                                 menu's own check for "any profiles at all" is a plain
+                                 truthiness test on the attribute. */ ?>
+                        <?= $s['profiles'] ? 'data-profiles="'.htmlspecialchars(implode(';', $s['profiles'])).'"' : '' ?>
+                        <?= $s['profilesActive'] ? 'data-profiles-active="'.htmlspecialchars(implode(';', $s['profilesActive'])).'"' : '' ?>
                         aria-haspopup="menu" aria-expanded="false"
                         title="<?= _('Stack actions') ?>">
                   <?= $s['parses']

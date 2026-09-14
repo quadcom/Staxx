@@ -1156,7 +1156,7 @@ switch ($action) {
     staxx_autostart_sync($stacks);
     $reply = [
       'ok'      => true,
-      'html'    => staxx_render_rows(staxx_folder_layout($stacks), staxx_can_run()),
+      'html'    => staxx_render_rows(staxx_folder_layout($stacks), staxx_can_run(), staxx_store_reachable()),
       // The "Move to folder" list in the context menu is built from this, so it
       // has to travel with the rows or it goes stale after a folder is added.
       // A folder's id IS its name — staxx_folder_names() returns plain
@@ -1203,9 +1203,14 @@ switch ($action) {
     $touched = (string)($_POST['stack'] ?? '');
     if ($touched !== '') staxx_update_refresh_after_run($touched, (string)($_POST['service'] ?? ''));
 
+    // PLAN_144 — the table overlays a "N to look at" pill on whole-stack and
+    // folder entries (staxx_watch_apply_pill()); doing the same here stops
+    // this reply contradicting a pill the table already drew, which is what
+    // was stripping every chip after the first refresh. Service rows are
+    // left alone — the table never overlays those either.
     $rows = [];
     foreach (staxx_list_stacks() as $s) {
-      $rows[$s['name']] = staxx_updates_for_row($s['name']);
+      $rows[$s['name']] = staxx_watch_apply_pill(staxx_updates_for_row($s['name']), staxx_watch_count_for_stack($s['name']));
       if ($s['file'] === '') continue;
       $meta = staxx_compose_meta($s['file']);
       if (!$meta['ok']) continue;
@@ -1215,7 +1220,7 @@ switch ($action) {
     }
     $folders = [];
     foreach (staxx_folder_names() as $f) {
-      $folders[$f] = staxx_updates_for_folder($f);
+      $folders[$f] = staxx_watch_apply_pill(staxx_updates_for_folder($f), staxx_watch_count_for_folder($f));
     }
     staxx_reply([
       'ok'      => true,
@@ -2265,6 +2270,28 @@ switch ($action) {
     }
     staxx_reply(['ok' => true]);
 
+  // PLAN_69 — which of this stack's compose profiles are switched on. Get
+  // always rebuilds the declared list from the file itself, so a profile the
+  // file no longer names is never offered back; set narrows whatever it is
+  // given to that same declared list, so a stale name cannot be written.
+  case 'profiles':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $file     = staxx_find_compose_file(staxx_stack_dir($name));
+    $declared = $file !== '' ? staxx_declared_profiles($file) : [];
+
+    if (($_POST['set'] ?? '') === '1') {
+      $names = array_values(array_filter(
+        array_map('trim', explode(';', (string)($_POST['names'] ?? ''))),
+        fn($n) => $n !== ''
+      ));
+      if (!staxx_profiles_write($name, $names, $declared)) {
+        staxx_reply(['ok' => false, 'error' => 'Could not save which profiles are switched on.']);
+      }
+    }
+    staxx_reply(['ok' => true, 'declared' => $declared, 'active' => staxx_profiles_active($name, $declared)]);
+
   // Run one command across every stack in a folder.
   case 'folder-run':
     $verb  = (string)($_POST['verb'] ?? '');
@@ -2353,6 +2380,20 @@ switch ($action) {
    * up being the same button.
    */
   case 'store-create':
+    // PLAN_103 addendum: this action is now reachable from the full page too
+    // (the recovery cards' "choose a new place" / "put it somewhere else
+    // first" buttons), not only from the true first-run screen — so a
+    // reachable store already holding a stack must be refused, or the
+    // button would let somebody silently point StaXX at an empty folder and
+    // strand what they already had. Checked before anything else: a store
+    // that cannot be replaced needs no path validation to say so.
+    if (staxx_store_reachable() && staxx_list_stacks() !== []) {
+      staxx_reply([
+        'ok'    => false,
+        'error' => 'The current data store already holds a stack, so it cannot be replaced from '
+                 . 'here. Move or remove your stacks first, or change the location from Settings.',
+      ]);
+    }
     // Normalised once here, then handed on: staxx_store_create() re-validates
     // the same value on its own account, but staxx_cfg() caches the config
     // for the life of the request, so staxx_store_root() would still read the
@@ -2362,6 +2403,21 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'path' => $norm]);
+
+  /* ---- the boot-drive shelf, PLAN_103 addendum Phase 1 --------------------
+   * Both actions read or write /boot/staxx, never the store, except that
+   * restore-shelf's whole job is writing INTO the store from the shelf —
+   * the one place anything does that; see staxx_boot_restore()'s own note.
+   */
+
+  /* ---- what is on the shelf, for the recovery cards and their "show me" list -- */
+  case 'shelf-list':
+    staxx_reply(['ok' => true] + staxx_boot_shelf_summary());
+
+  /* ---- bring every shelf stack that is not already in the store back ---- */
+  case 'restore-shelf':
+    $result = staxx_boot_restore();
+    staxx_reply(['ok' => true] + $result);
 
   /* ---------------------------------------------------- moving the stacks --
    * Relocating the data store to a new location. See Relocate.php for the

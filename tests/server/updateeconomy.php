@@ -141,6 +141,19 @@ ok('...but staxx_hub_repo_path() still rewrites ghcr to Hub\'s own path (form ed
 ok('...and the same for lscr',
    staxx_hub_repo_path('lscr.io/linuxserver/sonarr') === 'linuxserver/sonarr');
 
+/* Docker Hub spelled out by host is still Docker Hub. Docker records the
+ * pulled digest WITHOUT the host, so a reference written "docker.io/…" has
+ * to resolve to the same repo path or its own local image never matches —
+ * which read a running stack as "not installed" (2026-09-11). */
+ok('docker.io/user/app is Hub\'s user/app, host dropped',
+   staxx_hub_repo_path('docker.io/etiennecollin/unifi-voucher-manager:latest') === 'etiennecollin/unifi-voucher-manager');
+ok('docker.io/nginx is Hub\'s library/nginx',
+   staxx_hub_repo_path('docker.io/nginx') === 'library/nginx');
+ok('index.docker.io is the same registry by another name',
+   staxx_hub_repo_path('index.docker.io/user/app:1.0') === 'user/app');
+ok('a genuinely foreign host still declines',
+   staxx_hub_repo_path('quay.io/user/app') === '');
+
 /* A host with a port is not mistaken for a tag. */
 ok('a host with a port keeps the port on the host, not as a tag',
    staxx_registry_ref('reg.example.com:5000/team/app')

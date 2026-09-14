@@ -477,13 +477,19 @@ function staxx_docker_running(): bool {
  * which still work with an empty list — so a Docker that is down is not an
  * error here, just nothing extra to offer.
  *
- * A network compose made for a stack of its own is left out. Those come and
- * go with the stack that owns them, so offering "multi-tier_default" as
- * somewhere to attach a container is offering a name that may not exist
- * tomorrow. They are told apart by the label compose stamps on them, not by
- * their "_default" name, which anyone is free to use by hand.
+ * A network compose made for a stack of its own is included, not hidden —
+ * PLAN_147. Two callers need the full truth: the start-time check
+ * (staxx_missing_external_networks()) has to see a compose-created network
+ * as present, because joining a network another stack made (a shared
+ * database, a reverse proxy) is a normal compose pattern, and refusing to
+ * start over a network Docker plainly has was simply wrong; and the
+ * dropdown offering them, labelled with the owning stack, is what saves
+ * someone typing the name into the YAML by hand. The owning project is read
+ * out of the label compose stamps on these networks
+ * (`com.docker.compose.project=<name>`) and returned as `project`, blank
+ * for a network nobody's compose file made.
  *
- * @return array<int, array{name:string, driver:string}>
+ * @return array<int, array{name:string, driver:string, project:string}>
  */
 function staxx_docker_networks(): array {
   if (!staxx_docker_running()) return [];
@@ -498,8 +504,16 @@ function staxx_docker_networks(): array {
     if ($line === '') continue;
     [$name, $driver, $labels] = array_pad(explode('|', $line, 3), 3, '');
     $name = trim($name);
-    if ($name === '' || strpos($labels, 'com.docker.compose.project') !== false) continue;
-    $networks[] = ['name' => $name, 'driver' => trim($driver)];
+    if ($name === '') continue;
+    $project = '';
+    foreach (explode(',', $labels) as $pair) {
+      $pair = trim($pair);
+      if (strpos($pair, 'com.docker.compose.project=') === 0) {
+        $project = substr($pair, strlen('com.docker.compose.project='));
+        break;
+      }
+    }
+    $networks[] = ['name' => $name, 'driver' => trim($driver), 'project' => $project];
   }
   return $networks;
 }
@@ -603,6 +617,16 @@ function staxx_hub_repo_path(string $image): string {
   if ($colon !== false && ($slash === false || $colon > $slash)) $repo = substr($repo, 0, $colon);
 
   $parts = explode('/', $repo);
+  // Docker Hub written out by its host name IS Docker Hub — compose files
+  // pasted from the internet spell it "docker.io/user/app" often enough,
+  // and docker itself records the pulled digest without the host. Treated
+  // as a foreign registry this returned '', the local digest never matched,
+  // and a running stack read as "not installed" for ever (Unifi Voucher
+  // Manager on Adrian's box, 2026-09-11).
+  if (count($parts) > 1 && in_array($parts[0], ['docker.io', 'index.docker.io', 'registry-1.docker.io'], true)) {
+    array_shift($parts);
+    $repo = implode('/', $parts);
+  }
   if (count($parts) === 3 && $parts[1] === 'linuxserver' && in_array($parts[0], ['lscr.io', 'ghcr.io'], true)) {
     $repo = $parts[1].'/'.$parts[2];
   } elseif (strpos($parts[0], '.') !== false || strpos($parts[0], ':') !== false) {
@@ -1528,6 +1552,20 @@ function staxx_server_timezone(): string {
   // "Region/City", or one of the bare names also shipped (UTC, GMT, ...).
   if (!preg_match('#^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$#D', $zone)) return '';
   return $zone;
+}
+
+/**
+ * This server's timezone as Unraid's own identity config names it —
+ * PLAN_72's no-TZ notice, read once per page render and handed to the
+ * browser in StacksPage.php's config handoff. Deliberately a plain file
+ * read rather than staxx_server_timezone()'s readlink above: that one is
+ * a per-request AJAX cost (staxx_image_facts()), this one runs on every
+ * page load, so it must never shell out. '' when the file is missing or
+ * the key is not set — nothing downstream may guess a timezone from that.
+ */
+function staxx_ident_timezone(): string {
+  $vals = @parse_ini_file('/boot/config/ident.cfg') ?: [];
+  return trim((string)($vals['timeZone'] ?? ''));
 }
 
 /**

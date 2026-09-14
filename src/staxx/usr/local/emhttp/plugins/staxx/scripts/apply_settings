@@ -218,6 +218,19 @@ elif [[ -n "${store_root}" ]]; then
   echo "The data store is not reachable yet, so the existing image-update schedule was left as it is."
 fi
 
+# PLAN_103 addendum: BOOT_COPY/BOOT_COPY_MODE now live in the store too, so
+# an unreadable store is treated the same as UPDATE_CHECK above — leave
+# whatever cron line and listener are already in place rather than silently
+# dropping back to shipped defaults on a boot that beat the pool to it.
+boot_copy="true"
+boot_copy_mode="scheduled"
+if [[ "${store_cfg_readable}" == "true" ]]; then
+  boot_copy=$(sed -n 's/^[[:space:]]*BOOT_COPY[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  boot_copy="${boot_copy:-true}"
+  boot_copy_mode=$(sed -n 's/^[[:space:]]*BOOT_COPY_MODE[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  boot_copy_mode="${boot_copy_mode:-scheduled}"
+fi
+
 CRON_FILE="${CFG_DIR}/${PLUGIN}.cron"
 
 if [[ "${skip_cron_rewrite}" != "true" ]]; then
@@ -298,6 +311,30 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
     echo "Image cleanup will run weekly, Sunday at 03:30."
   fi
 
+  # PLAN_103 addendum: BOOT_COPY_MODE's own line. "scheduled" gets a
+  # dedicated hourly sweep — offset from the top of the hour, and
+  # independent of the image-update jitter above, since comparing a stack
+  # with its flash copy costs no network and has no rate limit to spread
+  # out. "live" runs no hourly sweep of its own — the listener started
+  # below does that in real time — but still gets a once-a-day backstop,
+  # reusing update_check_time so there is one settled hour to remember
+  # rather than two, for whatever happened while the listener was down.
+  if [[ "${boot_copy}" == "true" ]]; then
+    if [[ "${boot_copy_mode}" == "live" ]]; then
+      if [[ "${update_check_time}" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]]; then
+        sweep_hour="${BASH_REMATCH[1]#0}";   sweep_hour="${sweep_hour:-0}"
+        sweep_minute="${BASH_REMATCH[2]#0}"; sweep_minute="${sweep_minute:-0}"
+      else
+        sweep_hour="4"; sweep_minute="0"
+      fi
+      cron_lines+=("${sweep_minute} ${sweep_hour} * * * ${PLUGIN_DIR}/scripts/boot-sweep.sh &> /dev/null")
+      echo "The flash copies are kept current live; a daily sweep at ${update_check_time} covers anything missed while it was down."
+    else
+      cron_lines+=("42 * * * * ${PLUGIN_DIR}/scripts/boot-sweep.sh &> /dev/null")
+      echo "The flash copies are compared with the data store once an hour, at :42."
+    fi
+  fi
+
   cron_content=$(printf '%s\n' "${cron_lines[@]}")
 
   # Compare before writing: the flash drive has finite write cycles, and this
@@ -311,6 +348,33 @@ fi
 # guarded, because a settings save must succeed even if this is missing or fails.
 if [[ -x /usr/local/sbin/update_cron ]]; then
   /usr/local/sbin/update_cron || true
+fi
+
+# PLAN_103 addendum's live listener — the plugin's first always-on process,
+# so it only ever runs while BOOT_COPY and BOOT_COPY_MODE both say it should.
+# This script is what re-runs at every boot (see the header note above), which
+# is what "restarted for you at array start" in the settings text means —
+# there is no separate boot hook to add. Same detach shape as the events
+# watcher started from action.php: setsid, stdin/stdout/stderr all
+# disconnected. Stopped, not merely left alone, the moment either setting
+# says otherwise, so switching back to "scheduled" actually takes.
+BOOT_WATCH_DIR="/tmp/staxx/bootwatch"
+BOOT_WATCH_SCRIPT="${PLUGIN_DIR}/scripts/boot-watch.sh"
+boot_watch_pid=""
+[[ -f "${BOOT_WATCH_DIR}/watcher.pid" ]] && boot_watch_pid=$(cat "${BOOT_WATCH_DIR}/watcher.pid" 2>/dev/null || true)
+boot_watch_alive="false"
+[[ -n "${boot_watch_pid}" && -d "/proc/${boot_watch_pid}" ]] && boot_watch_alive="true"
+
+if [[ "${boot_copy}" == "true" && "${boot_copy_mode}" == "live" ]]; then
+  if [[ "${boot_watch_alive}" != "true" && -f "${BOOT_WATCH_SCRIPT}" ]]; then
+    mkdir -p "${BOOT_WATCH_DIR}"
+    setsid sh "${BOOT_WATCH_SCRIPT}" "${BOOT_WATCH_DIR}" </dev/null >/dev/null 2>&1 &
+    echo "The live flash-copy listener has been started."
+  fi
+elif [[ "${boot_watch_alive}" == "true" ]]; then
+  kill "${boot_watch_pid}" 2>/dev/null || true
+  rm -rf "${BOOT_WATCH_DIR}"
+  echo "The live flash-copy listener has been stopped."
 fi
 
 echo "StaXX settings applied."

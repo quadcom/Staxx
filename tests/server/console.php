@@ -3,6 +3,23 @@
  * verbs, the scope-refusal rule that already protected `config` and
  * `remove`, and the offset-tailing job log reader.
  *
+ * PLAN_69 adds one more section, near the end: staxx_profile_flags(), which
+ * decides the `--profile` flags a stack-scope compose invocation carries.
+ * Unlike everything above it, that section needs a real compose file on
+ * disk with a real `profiles:` list — declared profiles are read off it with
+ * `docker compose config`, a read-only render, never `up` or `down` — so it
+ * points STORE_ROOT at /tmp/zzc69-store the same way tests/server/review.php
+ * does, and refuses to run if that redirection did not take:
+ *
+ *     CFG=/boot/config/plugins/staxx/staxx.cfg
+ *     cp $CFG /tmp/cfg.bak
+ *     grep -q "^STORE_ROOT=" $CFG \
+ *       && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzc69-store\"#" $CFG \
+ *       || echo "STORE_ROOT=\"/tmp/zzc69-store\"" >> $CFG
+ *     php /tmp/console.php; RC=$?
+ *     cp /tmp/cfg.bak $CFG
+ *     exit $RC
+ *
  * PLAN_44 phase 3 adds the log pane's follower — staxx_log_start(),
  * staxx_log_read(), staxx_log_stop() and staxx_log_reap() — covered further
  * down under "log follower".
@@ -825,6 +842,71 @@ $err = '';
 ok('chown: a relative path is refused',
    !staxx_cfile_chown($noStack, 'a', 'app/data', '99:100', $err)
    && stripos($err, 'absolute path') !== false, $err);
+
+/* ---------------------------------------------------- PLAN_69: profiles --- */
+//
+// Needs STORE_ROOT redirected — see this file's own header. Refuses outright
+// rather than risk touching a real store if that redirection did not take.
+
+$profRoot = staxx_stack_root();
+if ($profRoot !== '/tmp/zzc69-store/stacks') {
+  echo "FAIL   the temporary store is not in place (got $profRoot) — skipping the profiles section\n";
+  $fails++;
+} else {
+  $profRel  = 'zzc69profiles';
+  $noneRel  = 'zzc69noprofiles';
+  $profDir  = $profRoot.'/'.$profRel;
+  $noneDir  = $profRoot.'/'.$noneRel;
+  @exec('rm -rf '.escapeshellarg($profDir).' '.escapeshellarg($noneDir));
+
+  mkdir($profDir, 0755, true);
+  file_put_contents($profDir.'/compose.yaml',
+    "services:\n"
+  . "  a:\n"
+  . "    image: alpine:3.20\n"
+  . "    profiles:\n"
+  . "      - opt-a\n"
+  . "  b:\n"
+  . "    image: alpine:3.20\n"
+  . "    profiles:\n"
+  . "      - opt-b\n"
+  . "  c:\n"
+  . "    image: alpine:3.20\n");
+
+  mkdir($noneDir, 0755, true);
+  file_put_contents($noneDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+
+  $profFile = staxx_find_compose_file($profDir);
+  $noneFile = staxx_find_compose_file($noneDir);
+
+  $declared = staxx_declared_profiles($profFile);
+  ok('every profile any service declares is found, sorted', $declared === ['opt-a', 'opt-b']);
+
+  ok('a file with no profiles: anywhere declares none',
+     staxx_declared_profiles($noneFile) === []);
+
+  // Nothing switched on yet — the record file has never been written.
+  ok('nothing is active before anything is saved',
+     staxx_profiles_active($profRel, $declared) === []);
+
+  staxx_profiles_write($profRel, ['opt-b', 'gone'], $declared);
+  ok('a name the file does not declare is dropped at write time',
+     staxx_profiles_active($profRel, $declared) === ['opt-b']);
+
+  ok('stack-scope up carries --profile for each active name',
+     staxx_profile_flags($profRel, 'up', [], $profFile) === " --profile 'opt-b'");
+  ok('stack-scope down (Stop) carries the same flags as up',
+     staxx_profile_flags($profRel, 'down', [], $profFile) === " --profile 'opt-b'");
+
+  ok('a verb that never brings anything up or down carries none',
+     staxx_profile_flags($profRel, 'pull', [], $profFile) === '');
+  ok('service scope never carries a profile flag, whatever is active',
+     staxx_profile_flags($profRel, 'up', ['a'], $profFile) === '');
+  ok('a stack with no declared profiles carries none, even asked for up',
+     staxx_profile_flags($noneRel, 'up', [], $noneFile) === '');
+
+  @exec('rm -rf '.escapeshellarg($profDir).' '.escapeshellarg($noneDir));
+}
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

@@ -174,7 +174,7 @@ Four rules run through the whole set:
 | `bundle` | The `.staxx` bundle importer's refusals — a crafted entry name, a planted record-folder file, a bad marker, an oversized or unreadable bundle — plus the two accept cases and the write into a fresh store | `STORE_ROOT` (only the two write cases) |
 | `clash` | Two stacks claiming the same compose project name — the list-time detector, the state guard that stops a dormant twin reading as the running one, the delete guard that refuses to tear down a project it does not own, and the one check every creation door calls | `STORE_ROOT` at `/tmp` |
 | `compose_ensure` | Whether StaXX installs its own Docker Compose only when none already answers, verifies it against the pinned checksum, and removes only what it installed | opt-in live case `STAXX_LIVE_COMPOSE=1` |
-| `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the job-log tailer, the log follower and the shell — no real session is ever opened | — |
+| `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the compose-profile flags, the job-log tailer, the log follower and the shell — no real session is ever opened | `STORE_ROOT` at `/tmp` |
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
@@ -188,6 +188,7 @@ Four rules run through the whole set:
 | `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
 | `meta-cache` | The on-disk memory behind reading a compose file's metadata, keyed on contents plus version | — |
 | `moves` | Noticing when a catalogue app's template has moved registries | backs up three real files |
+| `networks` | Spotting the networks a compose file names that this server does not have, against fake network lists, and the refusal that check feeds into the job runner | `STORE_ROOT` at `/tmp` |
 | `override` | Two-file compose support, the strict pairing rule, and what it feeds | `STORE_ROOT` at `/tmp` |
 | `paths` | Making and checking volume paths, including how one outside `/mnt` is judged | `STORE_ROOT` |
 | `pending` | The restart-pending comparison — what is running against what the file now says — and above all its refusals | — |

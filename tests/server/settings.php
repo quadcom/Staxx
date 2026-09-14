@@ -188,6 +188,16 @@ $err = '';
 $v = staxx_settings_validate('UPDATE_CHECK', $keys['UPDATE_CHECK'], '', $err);
 ok('rejects UPDATE_CHECK ""', $v === '' && $err !== '', $err);
 
+// PLAN_103 addendum — BOOT_COPY_MODE. The generic 'choice' loop above already
+// proves "scheduled" and "live" are both accepted; only the refusal is worth
+// spelling out here, the same pattern as UPDATE_CHECK just above.
+$err = '';
+$v = staxx_settings_validate('BOOT_COPY_MODE', $keys['BOOT_COPY_MODE'], 'hourly', $err);
+ok('rejects BOOT_COPY_MODE "hourly"', $v === '' && $err !== '', $err);
+$err = '';
+$v = staxx_settings_validate('BOOT_COPY_MODE', $keys['BOOT_COPY_MODE'], '', $err);
+ok('rejects BOOT_COPY_MODE ""', $v === '' && $err !== '', $err);
+
 // UPDATE_CHECK_TIME — weighted towards refusals, since the shape (HH:MM,
 // leading zero, 24-hour) has far more ways to be wrong than right.
 $goodTimes = ['04:00', '23:59'];

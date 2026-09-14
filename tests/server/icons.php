@@ -33,6 +33,14 @@
  * Also covers PLAN_105: staxx_service_icon() no longer takes a stack-level
  * icon at all, so a service with none of its own now has only its image
  * name left to resolve from, and a service's own stated icon still wins.
+ *
+ * Also covers PLAN_146: staxx_icon_adopt() given a pasted URL's `url-<hash>`
+ * reference names the copy from the URL's own filename instead of the hash,
+ * falls back to the hash when the URL has none, and still refuses a name
+ * clash exactly as the ordinary case does. staxx_icon_adopt_sweep()'s own
+ * decision not to offer a URL still marked missed is checked at the same
+ * field-level as PLAN_105's case above, for the same reason given there —
+ * the walk itself needs the real store root, which this file does not move.
  */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
@@ -126,6 +134,66 @@ check('a different file already under that name is refused',
 
 check('and is left completely untouched',
   md5_file($clashPath) === $before);
+
+/* ---- PLAN_146 — a pasted URL adopts under its own filename ---- */
+
+// A throwaway cache entry under a real `url-<hash>` reference, the shape
+// staxx_icon_resolve() actually assigns — not the plain collection ref the
+// cases above use.
+$urlNamed = 'https://cdn.example.com/png/My-Icon.PNG?x=1';
+$refNamed = 'url-'.md5($urlNamed);
+$cacheNamed = staxx_icon_store_dir().'/'.$refNamed.'.png';
+register_shutdown_function(function () use ($cacheNamed) { @unlink($cacheNamed); });
+@mkdir(staxx_icon_store_dir(), 0755, true);
+file_put_contents($cacheNamed, $pngBytes);
+
+$namedDir = $scratch.'/url-named';
+@mkdir($namedDir, 0755, true);
+$error = '';
+$file = staxx_icon_adopt($refNamed, $namedDir, $error, $urlNamed);
+check('a cached URL reference adopts under the URL’s own filename, lower-cased',
+  $file === './'.STAXX_RECORD_DIR.'/my-icon.png' &&
+  is_file($namedDir.'/'.STAXX_RECORD_DIR.'/my-icon.png'));
+
+// No path segment worth keeping — falls back to the hash, the same shape
+// every other reference in this file already adopts under.
+$urlBare = 'https://example.com';
+$refBare = 'url-'.md5($urlBare);
+$cacheBare = staxx_icon_store_dir().'/'.$refBare.'.png';
+register_shutdown_function(function () use ($cacheBare) { @unlink($cacheBare); });
+file_put_contents($cacheBare, $pngBytes);
+
+$bareDir = $scratch.'/url-bare';
+@mkdir($bareDir, 0755, true);
+$expectFallback = 'icon-'.substr(md5($urlBare), 0, 8).'.png';
+$error = '';
+$file = staxx_icon_adopt($refBare, $bareDir, $error, $urlBare);
+check('a URL with no usable filename adopts under the hash fallback',
+  $file === './'.STAXX_RECORD_DIR.'/'.$expectFallback &&
+  is_file($bareDir.'/'.STAXX_RECORD_DIR.'/'.$expectFallback));
+
+// A different picture already saved under the URL-derived name is refused,
+// exactly as the plain-reference clash case above — never overwritten.
+$clashNamedDir = $scratch.'/url-clash';
+$clashNamedPath = $clashNamedDir.'/'.STAXX_RECORD_DIR.'/my-icon.png';
+@mkdir(dirname($clashNamedPath), 0755, true);
+file_put_contents($clashNamedPath, 'not the same bytes at all');
+$beforeClash = md5_file($clashNamedPath);
+
+$error = '';
+check('a different picture already under the URL-derived name is refused, and named',
+  staxx_icon_adopt($refNamed, $clashNamedDir, $error, $urlNamed) === '' && $error !== '');
+check('and is left completely untouched',
+  md5_file($clashNamedPath) === $beforeClash);
+
+// staxx_icon_adopt_sweep() skips a URL still marked missed even though its
+// picture is sitting in the cache — the same "not yet fetched, try again
+// later" shape an unmatched image already gets. The walk itself needs the
+// real store root (see the file header), so this checks the field-level
+// fact the walk's own condition relies on, the way PLAN_105's case does.
+staxx_icon_mark_missed($refNamed);
+check('a URL marked missed is not offered, even though its picture is cached',
+  staxx_icon_missed($refNamed) && staxx_icon_url($refNamed) !== '');
 
 /* ---- PLAN_105 — the stack has no icon of its own ---- */
 // staxx_service_icon() (in StacksTable.php, already required above) no

@@ -35,6 +35,9 @@ the data store later from the Storage tab of the settings panel; StaXX copies ev
 copy, and only then removes the original. See [file locations and the data store](where-things-live.md) for
 what goes in the folder.
 
+If copies from an earlier data store are on the flash drive, StaXX offers to bring them back as soon
+as a place is chosen — see [if the data store is lost](recovery-and-redundancy.md).
+
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).

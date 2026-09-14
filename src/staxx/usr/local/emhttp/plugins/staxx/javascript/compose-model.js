@@ -4178,6 +4178,48 @@
     return replaceScalarAt(doc, function () { return rootPair(doc); }, path, value);
   }
 
+  /**
+   * Appends a note to the comment already on one scalar's line, keeping
+   * whatever was there ahead of it, rather than replacing it — PLAN_146,
+   * for recording where a pasted icon address came from once its picture is
+   * copied into the stack. Unlike setComment() (the env-var note field with
+   * its -!S/-!R markers) this writes a plain "# ..." comment and works from
+   * the same path walk as replaceScalarAt() rather than a form field, since
+   * the background icon sweep that calls it has no form to hand.
+   *
+   * Refuses (false) on an absent leaf, one that is not a plain scalar, or a
+   * line that has moved since it was read (spotStale()).
+   */
+  function appendComment(doc, getPair, path, note) {
+    var pair = getPair();
+    for (var i = 0; pair && i < path.length - 1; i++) {
+      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+      pair = map ? map.pairs[path[i]] : null;
+    }
+    var parent = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
+    var leaf = parent ? parent.pairs[path[path.length - 1]] : null;
+    if (!leaf || !leaf.value || leaf.value.kind !== 'scalar') return false;
+
+    var at = commentSpot(leaf.value, doc.lines);
+    if (!at || spotStale(doc, at)) return false;
+
+    // Whatever was already on the line — pad and all — rides ahead of the
+    // new note untouched; only a genuinely empty tail falls back to the
+    // spot's own default pad.
+    var existing = at.text.replace(/[ \t]+$/, '');
+    var suffix = (existing ? '  ' : (at.pad || '  ')) + '# ' + note;
+
+    var line = doc.lines[at.line];
+    doc.lines[at.line] = line.slice(0, at.col) + existing + suffix;
+    splice(doc, 0, 0, []);
+    return true;
+  }
+
+  /** appendComment against a service's own x-unraid block. */
+  function appendNestedComment(doc, form, service, path, note) {
+    return appendComment(doc, function () { return serviceMapOf(doc, service); }, path, note);
+  }
+
   // Builds the canonical flow-list text for healthcheck.test — the one shape
   // writeTest() ever writes, whatever shape the file used before. Every
   // element is JSON-encoded rather than run through emitScalar: emitScalar's
@@ -8318,6 +8360,60 @@
     return out;
   }
 
+  /**
+   * namedVolumes(text) -> string[] of the distinct Docker-managed volume
+   * names a service's volumes: list refers to (first-seen order, no
+   * duplicates) — the mirror image of hostPaths(): a bind mount is a real
+   * folder on the server, one of these is not, so PLAN_78's removal dialog
+   * needs both lists to say plainly which is which. Walks the same
+   * services -> volumes: shape hostPaths() does, for the same reason: no
+   * line/column is needed here, so it does not share that function's body.
+   */
+  function namedVolumes(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
+        if (c.kind !== 'seq' || !c.sub) continue;
+
+        var inServiceVolumes = stack.length >= 3 &&
+          stack[stack.length - 1].key === 'volumes' &&
+          stack[stack.length - 3].key === 'services';
+        if (!inServiceVolumes) continue;
+
+        var name = null;
+        if (c.sub.kind === 'key') {
+          var r = readVolumeItem(lines, i, c);
+          if (r.source && (r.type === null || r.type === 'volume') && !isHostPathLike(r.source.text)) {
+            name = r.source.text;
+          }
+          i = r.next - 1;
+        } else {
+          var scanned = scanEntryText(line, c.contentCol);
+          if (scanned) {
+            var bits = splitOutsideVars(scanned.text);
+            if (bits.length >= 2 && !isHostPathLike(bits[0])) name = bits[0];
+          }
+        }
+        if (name && out.indexOf(name) < 0) out.push(name);
+      }
+    } catch (e) {
+      return [];
+    }
+    return out;
+  }
+
   // A published port that names a real number/range, not a ${...} variable
   // compose only fills in at run time — the same reasoning isHostPathLike()
   // gives, and for the same reason: unresolvable is left out, not guessed.
@@ -9844,6 +9940,10 @@
     // and no existing writer had, because these fields are not form fields.
     replaceNested: replaceNested,
     replaceRootNested: replaceRootNested,
+    // PLAN_146: appends a note to a scalar's existing line comment (a pasted
+    // icon address, once its picture is copied into the stack) instead of
+    // replacing it — the address must never simply vanish.
+    appendNestedComment: appendNestedComment,
     // PLAN_34 phase 5: turns a service's networks: from a list of names into
     // a map of them, so an entry gains somewhere to hang a fixed or hardware
     // address — see the function's own comment for why it is whole-block.
@@ -9926,6 +10026,10 @@
     // Every host-side path of a volume mount — see the "Host paths" section
     // above. Used to check the folder actually exists on the server.
     hostPaths: hostPaths,
+    // Every named-volume reference the same list makes — PLAN_78's removal
+    // dialog, which has to say which of a stack's mounts are folders left on
+    // the server and which are volumes only Docker's own clean-up removes.
+    namedVolumes: namedVolumes,
     // Every published host-side port under services -> ports:, its sibling
     // just below the same section. Used to check the port is not already
     // taken by another container.

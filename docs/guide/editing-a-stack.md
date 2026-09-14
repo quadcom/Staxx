@@ -90,6 +90,16 @@ for your own reference. Nothing in it ever runs.
 **Moving a service onto one of those networks** asks first, and comments the ports out in the same
 step. **Moving it back off** offers to bring the ports back live, exactly as they were written.
 
+## Port and path clashes
+
+If a port or a folder path this stack wants is already claimed by another container, StaXX warns you
+in the form, naming which one holds it. The warning also checks the server itself — if the port is
+already held by something running on the server rather than another container, it says so instead:
+*Port 443 is already held by the server itself (nginx) — this will not start.* The name in brackets
+is left out when StaXX cannot tell what is holding it. Either way this is only ever a warning, never
+a refusal — you can still save and try your luck, but the container is unlikely to start until the
+clash is fixed.
+
 ## Health check offer
 
 Press **Work out a health check** in the Health check group. StaXX tries the check out inside the
@@ -99,6 +109,24 @@ running container first, then shows you what it found and what the check actuall
 
 Nothing is written until you say yes. StaXX never touches a service that already has a check of its
 own. See [what every mark means](marks.md) for what a health check is and how StaXX decides on one.
+
+## Things the form points out
+
+A few boxes carry a note when something common and costly has been left out, each offering the
+sensible value in one press:
+
+- **No restart policy.** *Without a restart policy this container stays down after a reboot or a
+  crash. "unless-stopped" brings it back unless you stopped it yourself.* Press **Use
+  unless-stopped** to set it.
+- **No time zone.** *No time zone is set, so this container runs on UTC — its clock, schedules and
+  log times will not match the server's. The server is on \<zone>.* Press **Add TZ=\<zone>** to add
+  it.
+- **A dependency with no health check.** Where one service waits on another that has no health
+  check of its own, StaXX says so and offers to work one out — see Health check offer, below.
+
+Every one of these is an offer, never something StaXX applies on its own. Press its button and the
+box is filled in on the form; you still have to press **Save**. Press **Dismiss** instead and that
+note stays gone in this browser, even after a reload.
 
 ## Tidying a file into StaXX's layout
 
@@ -152,6 +180,18 @@ line below it — so a refusal is something you will actually notice.
   changed.
 - **It is not a second copy of your file.** The form is a view drawn from the file itself — the file
   you started with is still the same file, in the same place, readable in any text editor.
+
+## The icon
+
+A service's icon field takes a name from the selfh.st icon collection, a picture kept with the
+stack, or a web address. Paste a web address and StaXX downloads the picture once, keeps a copy in
+the stack's own folder, and updates the file to point at that copy, with the address you pasted
+kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
+The change is announced in the same notice that reports a matched icon.
+
+The field's selfh.st link opens that collection in a new tab. The first time you open a third-party
+site from StaXX, Unraid asks whether you trust it; tick **Always allow** and it will not ask about
+that site again.
 
 ## Fill in details
 

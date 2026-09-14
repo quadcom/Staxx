@@ -687,5 +687,33 @@ if ($tplA === null || $tplB === null) {
   staxx_import_templates(true);
 }
 
+// PLAN_73 — staxx_parse_ss_listeners() against canned `ss -ltunpH` text, not
+// the real machine, so what survives and how it is labelled is proved rather
+// than merely observed. One line per case ss can actually produce: a
+// container's own published port (docker-proxy, must be dropped since the
+// container fact already names it), a loopback-only listener with a real
+// process name, and a wildcard listener with no process column at all (what
+// a non-root run of ss would look like, even though this page always runs
+// as root).
+$ssSample = implode("\n", [
+  'tcp   LISTEN 0      511          0.0.0.0:8080       0.0.0.0:*    users:(("docker-proxy",pid=111,fd=6))',
+  'tcp   LISTEN 0      128        127.0.0.1:5432        0.0.0.0:*    users:(("postgres",pid=222,fd=3))',
+  'tcp   LISTEN 0      511             [::]:443            [::]:*    users:(("nginx",pid=333,fd=6))',
+  'tcp   LISTEN 0      128                *:9999             *:*',
+]);
+$ssParsed = staxx_parse_ss_listeners($ssSample);
+
+$byPort = [];
+foreach ($ssParsed as $row) $byPort[$row['port']] = $row;
+
+ok('a docker-proxy line never survives the parse', !isset($byPort['8080']));
+ok('a loopback listener survives, named', ($byPort['5432']['addr'] ?? null) === '127.0.0.1'
+   && ($byPort['5432']['holder'] ?? null) === 'postgres');
+ok('an IPv6 wildcard listener survives, brackets stripped', ($byPort['443']['addr'] ?? null) === '::'
+   && ($byPort['443']['holder'] ?? null) === 'nginx');
+ok('a listener with no process column survives unnamed', ($byPort['9999']['addr'] ?? null) === '*'
+   && ($byPort['9999']['holder'] ?? '') === '');
+ok('exactly the three genuine host listeners survive', count($ssParsed) === 3, count($ssParsed).' rows');
+
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

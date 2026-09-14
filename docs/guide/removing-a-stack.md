@@ -15,7 +15,7 @@ wrote to appdata — is never touched.
 
 ## Remove stack
 
-![The lower half of a stack's row menu, with Remove stack at the bottom outlined](../images/guide/removing-a-stack-menu-item.png)
+![A stack's row menu, laid out in two columns, with Remove stack at the bottom of the left column outlined](../images/guide/removing-a-stack-menu-item.png)
 
 Open the stack's own menu and choose **Remove stack**, near the bottom, on its own below a
 separator.
@@ -33,6 +33,12 @@ The dialog is titled **Remove "\<name>"?** and says, in order:
   stays exactly where it is.
 - What else is going into the zip, besides the compose file itself. If the folder holds nothing
   more than that, the dialog says so plainly instead.
+- Every folder and named volume the stack's file uses, read from the file as the dialog opens —
+  folders shown by their path on your server, named volumes by name with *(a volume Docker
+  manages)* after them, or **none** when the file names no volumes at all. Above the list, a line
+  saying plainly that none of these are touched — they stay on the server exactly as they are. When
+  a named volume is listed, a line underneath adds that a volume Docker manages is only ever removed
+  by Docker's own clean-up, never by StaXX.
 
 Press **Remove and archive** to go ahead.
 

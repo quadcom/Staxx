@@ -65,6 +65,13 @@ function staxx_settings_keys(): array {
     // definition. Not in STAXX_FLASH_KEYS: this only ever gates a copy step,
     // it is never needed before the store is reachable.
     'BOOT_COPY'           => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // PLAN_103 addendum — how a change made outside StaXX still reaches the
+    // shelf above: an hourly sweep, or a small process that watches Docker
+    // and refreshes a copy the moment its container is recreated. Not in
+    // STAXX_FLASH_KEYS for the same reason BOOT_COPY is not: it only ever
+    // decides how a background pass behaves, never needed before the store
+    // is reachable.
+    'BOOT_COPY_MODE'      => ['type' => 'choice', 'default' => 'scheduled', 'choices' => ['scheduled', 'live']],
     /* Does the folder picker narrow itself down when choosing where the
      * stacks live, and are the placement rules refusals or warnings?
      *

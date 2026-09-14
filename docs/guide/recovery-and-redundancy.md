@@ -1,6 +1,6 @@
 # Recovery and redundancy
 
-<!-- index: 75 | how to return to an earlier version of a stack's file, or to an earlier build of one of its images, what each list holds, and why some things cannot be gone back to. -->
+<!-- index: 75 | how to return to an earlier version of a stack's file, or to an earlier build of one of its images, what each list holds, why some things cannot be gone back to, and bringing every stack back if the data store is lost. -->
 
 Two different things live here. **History** undoes your own edits to the file. **Versions** undoes
 an app's own update. Both sit in the [stack editor](the-stack-editor.md), beside Configure.
@@ -134,6 +134,32 @@ request could point a service at any image on the server — not only one it has
 Two [settings](settings.md) decide how much is available: how many previous versions of each image
 are kept, and whether images left behind by updating are removed automatically. That second one
 only ever removes an image nothing is running and no recorded version still needs.
+
+## If the data store is lost
+
+StaXX keeps a plain copy of every stack's compose file on the flash drive (see
+[where things live](where-things-live.md)). If the data store itself is ever lost — a dead pool,
+nothing else — StaXX offers to bring every stack back from those copies.
+
+**The data store's folder is missing.** A card explains this and offers **Choose a new place for
+the data store**, which opens the same dialog as a first install. If the flash drive holds any
+copies, a **Show me the copies** button lists them before you choose anywhere.
+
+![The card shown when the data store's folder is missing: StaXX cannot reach its data store, where it was, that the array may still be starting, that copies of the stacks are on the flash drive, and two buttons, Choose a new place for the data store and Show me the copies](../images/guide/recovery-and-redundancy-store-missing.png)
+
+**The data store exists but is empty.** A card offers **Bring back *N* stacks**, which writes every
+stack on the flash drive into the store. **Show me what is there** lists them first, with the date
+of each copy. **Put the data store somewhere else first** opens the same dialog again, for a store
+you would rather point elsewhere.
+
+![The card shown when the data store exists but is empty: copies of the stacks are on the flash drive, with the newest and oldest dates, where they will be written, and three buttons, Bring back the stacks, Show me what is there and Put the data store somewhere else first](../images/guide/recovery-and-redundancy-store-empty.png)
+
+![The flash-drive copies list: each stack by its path with the date and time of its copy, and an OK button](../images/guide/recovery-and-redundancy-show-me.png)
+
+Nothing is started by either card — a restored stack sits exactly as an imported one does, ready to
+open and start when you choose to. A restored stack starts a fresh history of its own, since none of
+the versions kept while it lived in the old store came along with it. Neither card is offered once
+the data store holds at least one stack.
 
 ## What this never does
 

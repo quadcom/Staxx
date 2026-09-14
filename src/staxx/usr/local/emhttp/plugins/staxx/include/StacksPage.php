@@ -25,6 +25,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // database images table to the browser below — see db-images.json's own
 // header for why there is now one copy read by both sides.
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';   // staxx_import_taken_facts(), for the first clash check
 
 // PLAN_97 Phase 1: nothing below this point may run with an unchosen data
 // store — staxx_list_stacks(), staxx_autostart_sync() and staxx_folder_layout()
@@ -97,6 +98,10 @@ $unmanagedCount = count($projects[''] ?? []);
 $vars = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
 $csrf = (string)($vars['csrf_token'] ?? '');
 
+// PLAN_72: the server's own time zone, for the no-TZ notice's "Add TZ=<zone>"
+// button — read once here rather than in the browser, which never shells out.
+$serverTimeZone = staxx_ident_timezone();
+
 // PLAN_70 stage 5: the well-known database images table, handed to the
 // browser rather than duplicated into javascript/db-images.js. Left out of
 // the markup entirely when the file failed to load — db-images.js treats a
@@ -161,6 +166,15 @@ endif;
      collide with anything below — see the comment on $manageCssFile above. A
      missing file 404s quietly; nothing here depends on it loading. -->
 <link rel="stylesheet" href="<?= $manageCssTag ?>">
+<!-- PLAN_103 addendum: the first-run dialog's own stylesheet, now needed
+     here too — the recovery cards open the very same dialog rather than a
+     second picker. See first-run.js's own gate for why it is safe to load
+     unconditionally on this page as well as the true first-run screen. -->
+<?
+$firstRunCssFile = STAXX_ROOT.'/sheets/first-run.css';
+$firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
+?>
+<link rel="stylesheet" href="<?= $assets ?>/sheets/first-run.css?v=<?= is_file($firstRunCssFile) ? filemtime($firstRunCssFile) : '0' ?>">
 
 <!-- `unapi` is Unraid's own opt-out marker, not a styling class. Its only
      appearances in webGui/styles are inside :not(.unapi *) guards on 88 rules
@@ -185,6 +199,13 @@ endif;
      )), ENT_QUOTES) ?>"
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
      data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
+     data-server-timezone="<?= htmlspecialchars($serverTimeZone) ?>"
+     <?php /* PLAN_65/73 — the ports, paths and host listeners already in use,
+        handed over once at render so the editor's clash check has facts on the
+        very first open. Before this the facts arrived only with a 'rows'
+        refresh, which a fresh page load never makes on its own, so a port 443
+        clash was invisible until something else redrew the table (2026-09-11). */ ?>
+     data-taken="<?= htmlspecialchars(json_encode(staxx_import_taken_facts()), ENT_QUOTES) ?>"
      <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>>
 
   <!-- Only conditions that need acting on get a banner here. The standing
@@ -193,23 +214,13 @@ endif;
 
        Deliberately not Unraid's .notice class. Borrowing a stock class means
        inheriting layout rules we do not control and cannot see change. -->
-  <? if (staxx_settings_degraded()): ?>
-    <!-- PLAN_97 Phase 4: the store is chosen but not there right now — almost
-         always the array still starting, since the store normally lives on a
-         pool. This is NOT the first-run panel above: a store already exists
-         and must not be replaced, so this says wait rather than offering a
-         chooser. Settings, icons and state all live in the store now, so
-         nothing here can be read; what is on screen is the shipped defaults
-         rather than what was actually chosen. Nothing is lost — it comes
-         back on its own once the store is reachable again. -->
-    <div class="staxx-notice" data-notice-kind="warn" data-notice-sticky="1">
-      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
-      <div>
-        <strong><?= _('StaXX cannot reach its data store right now.') ?></strong>
-        <?= _('Its settings live there, so what is shown here is the shipped defaults rather than what you chose. Nothing has been lost — this puts itself right once the array finishes starting.') ?>
-      </div>
-    </div>
-  <? endif; ?>
+  <!-- PLAN_97 Phase 4's "cannot reach its data store" banner used to sit
+       here. PLAN_103 addendum, Phase 1: that condition (staxx_settings_
+       degraded()) now draws card one — the accent-lined, centred card with
+       the offer to bring the shelf back — in the grid area instead, where
+       staxx_render_rows() has room to say more than one line and offer a
+       way out. This slot deliberately stays empty for that condition;
+       nothing else changed for the notices below. -->
 
   <? if ($csrf === ''): ?>
     <!-- Unraid's own CSRF check rejects every POST this page makes once
@@ -321,7 +332,22 @@ endif;
          reason #staxx-page-notice below never got one — that one already
          moves the page under it with scrollIntoView(). -->
     <div id="staxx-notices" class="staxx-ticker" role="status" aria-live="polite" hidden></div>
+    <!-- PLAN_78 — find a stack by typing part of its name, service,
+         container or image. Matched against the rows already on the page
+         (see findEntries() in stacks.js); nothing here is fetched. The
+         dropdown is built and positioned entirely in script. -->
+    <div class="staxx-search" id="staxx-search">
+      <input type="text" class="staxx-input" id="staxx-find-input" autocomplete="off"
+             placeholder="<?= _('Find a stack… (press /)') ?>" aria-label="<?= _('Find a stack') ?>">
+      <div class="staxx-search-drop" id="staxx-find-drop" hidden></div>
+    </div>
     <div class="staxx-buttons staxx-buttons--inline">
+      <!-- PLAN_78 — toggles selection mode; the marks it puts on every row
+           and folder header, and the bar of verbs at the foot of the list,
+           are both painted entirely by stacks.js. -->
+      <button type="button" class="staxx-btn" id="staxx-select-btn">
+        <i class="fa fa-check-square-o"></i> <?= _('Select') ?>
+      </button>
       <button type="button" class="staxx-btn" id="staxx-settings-btn">
         <i class="fa fa-cog"></i> <?= _('Settings') ?>
       </button>
@@ -384,9 +410,15 @@ endif;
       <!-- Rendered by the same function the JSON endpoint calls, so a row that
            arrives without a page load is identical to one that arrived with
            it. See include/StacksTable.php. -->
-      <div class="staxx-body" id="staxx-rows" role="rowgroup"><?= staxx_render_rows($rows, $canRun) ?></div>
+      <div class="staxx-body" id="staxx-rows" role="rowgroup"><?= staxx_render_rows($rows, $canRun, staxx_store_reachable()) ?></div>
     </div>
   </div>
+
+  <!-- PLAN_78 — the bar of verbs for whatever is chosen in selection mode.
+       Hidden and empty outside that mode; painted entirely by
+       paintSelectBar() in stacks.js, the same way #staxx-update-queue above
+       is painted by its own script rather than carrying markup here. -->
+  <div class="staxx-selectbar" id="staxx-select-bar" hidden></div>
 
   <!-- One menu, reused by every row, and attached to the page rather than to a
        table cell. A menu nested inside the scrolling table container would be
@@ -419,15 +451,22 @@ endif;
            file, and calling it a folder made it read as the folder in the
            list — which is a different thing sitting one level above it. That
            one is shown beside it, as context, and is changed with "Move to
-           folder". The hint is a visible line rather than a title attribute,
-           because a tooltip cannot be reached on a phone and this sentence is
-           the one that tells the two apart. -->
+           folder". The explaining sentence that used to sit under the input
+           was dropped 2026-09-13 (Adrian: not needed any more) — the label
+           already says "Stack name" and the folder chip beside it gives the
+           context, at every width, not just the phone width the sentence was
+           originally written for. -->
       <label class="staxx-modal-name" id="staxx-name-field">
         <span><?= _('Stack name') ?></span>
         <span class="staxx-name-folder" id="staxx-name-folder" hidden></span>
         <input type="text" id="staxx-name" spellcheck="false" <?= $nofill ?>
                placeholder="<?= _('jellyfin') ?>">
-        <span class="staxx-name-hint"><?= _("The folder that holds this stack's compose file. Renaming it moves the folder.") ?></span>
+        <!-- Empty and hidden except while adopting a folder that has no
+             compose file yet: then stacks.js writes the one sentence that
+             explains why the name box is locked (the folder itself is the
+             thing being repaired). The standing sentence that used to live
+             here is gone — see the comment above. -->
+        <span class="staxx-name-hint" id="staxx-name-hint" hidden></span>
       </label>
 
       <div class="staxx-modal-tools">
@@ -631,6 +670,23 @@ endif;
     <div class="staxx-modal-body" data-view="split">
 
       <div class="staxx-pane staxx-pane--form">
+        <!-- PLAN_145 round 2, Part A: below 96rem of dialog width the header's
+             Form/Split/Compose group is hidden (three buttons made the tab
+             strip jump height against Manage) and this one toggle takes its
+             place, styled like the autostart switch. Two copies exist — this
+             one and the matching one at the top of .staxx-pane--yaml below —
+             so it is at the top of whichever pane is actually showing, rather
+             than one node being moved between panes at render time. Neither
+             pane is itself the scroller (#staxx-form and the compose textarea
+             scroll on their own), so this row stays put at the top rather
+             than scrolling away with the content. Shown/hidden and kept in
+             sync with the current view by stacks.js's syncViewRow(); see
+             .staxx-viewrow in the stylesheet for the width it hides below. -->
+        <div class="staxx-viewrow" hidden>
+          <label class="staxx-switch"><input type="checkbox" role="switch" class="staxx-viewswitch">
+            <span class="staxx-switch-track" aria-hidden="true"></span>
+            <span class="staxx-switch-text"><?= _('Show the compose file') ?></span></label>
+        </div>
         <!-- Why the form is locked, shown only while a companion file's tab is
              open. It sits above #staxx-form rather than inside it because
              reparse() replaces that element's contents wholesale, and it would
@@ -646,7 +702,25 @@ endif;
         </div>
       </div>
 
+      <!-- PLAN_145 round 3, Part B: the drag handle between the two panes in
+           Split view. Only shown there — CSS hides it in Form/Compose and in
+           the band below 96rem where Split does not exist at all — and only
+           moves the form pane's width; the compose pane always takes what is
+           left. stacks.js's initSplitter() drives it and applySplit() sets
+           --staxx-split, the custom property the split grid's first track
+           reads (see .staxx-modal-body in the stylesheet). -->
+      <div class="staxx-splitter" id="staxx-splitter" role="separator" aria-orientation="vertical"
+           title="<?= _('Drag to resize. Double-click to reset.') ?>"></div>
+
       <div class="staxx-pane staxx-pane--yaml">
+        <!-- PLAN_145 round 2, Part A: the second copy of the toggle above —
+             see the comment on the first one, in .staxx-pane--form, for why
+             there are two. -->
+        <div class="staxx-viewrow" hidden>
+          <label class="staxx-switch"><input type="checkbox" role="switch" class="staxx-viewswitch">
+            <span class="staxx-switch-track" aria-hidden="true"></span>
+            <span class="staxx-switch-text"><?= _('Show the compose file') ?></span></label>
+        </div>
         <!-- Always visible now, not only when there is more than one tab —
              it also carries the New file and Add a file controls, and
              hiding the strip would hide those with it. Filled by script
@@ -831,6 +905,12 @@ endif;
            pressing the manual button afterwards does not pay for the lookup
            twice. Never shown for a brand-new stack, which is scaffolded
            automatically before this pane is painted. -->
+      <!-- PLAN_145 Part 2: below desktop width, this bar and every author's-
+           example field note fold into one line here instead — built and
+           torn down by stacks.js's syncNoteStrip(), never written to by
+           PHP. Hidden by default; nothing shows in it above desktop width. -->
+      <div class="staxx-notestrip" id="staxx-notestrip" hidden></div>
+
       <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
       <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
               title="<?= _('Not now') ?>" hidden>&times;</button>
@@ -854,8 +934,14 @@ endif;
       <button type="button" class="staxx-required" id="staxx-required-note" hidden></button>
 
       <div class="staxx-modal-actions">
+        <!-- The standing sentence that used to open this paragraph — "Saved
+             exactly as written…" — was dropped 2026-09-13 at Adrian's
+             request: it only restated rule 1 from CLAUDE.md, already
+             promised in the readme, and did not need a line of footer on
+             every single open. The paragraph stays, because the flash-drive
+             warning below is a live caution, not a promise, and still needs
+             somewhere to render — it is usually empty. -->
         <p class="staxx-hint staxx-modal-note">
-          <?= _('Saved exactly as written — comments, spacing and ordering are kept as they are. This stays a standard compose file that runs anywhere.') ?>
           <? if (strpos($root, '/boot/') === 0): ?>
             <span class="staxx-hint--warn">
               <i class="fa fa-exclamation-triangle"></i>
@@ -1559,5 +1645,12 @@ endif;
      while it is still being written; a missing src would only be a 404. -->
 <? if (is_file($manageJsFile)): ?>
 <script src="<?= $manageJsTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_103 addendum: the first-run dialog, now also loaded on the full
+     page so the recovery cards can open it (window.StaxxFirstRun.open()) —
+     see first-run.js's own gate for why it does nothing else on load here.
+     Must come before stacks.js, which reads that global. -->
+<? if (is_file($firstRunJsFile)): ?>
+<script src="<?= $assets ?>/javascript/first-run.js?v=<?= filemtime($firstRunJsFile) ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>

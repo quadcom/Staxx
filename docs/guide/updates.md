@@ -118,7 +118,7 @@ rather than shown empty, when there is nothing to put in it.
 
 ## Update items on the row menu
 
-![A stack's row menu open, showing Restart, Stop, Update, Pull images, Check this image again, Skip this version, Logs, Edit compose file, Fill in details and Export](../images/guide/updates-row-menu.png)
+![A stack's row menu open, in two columns: on the left Restart, Stop, Update, Pull images, Check this image again, Skip this version, Logs, then Edit compose file, Fill in details and Export; on the right the Move to folder list](../images/guide/updates-row-menu.png)
 
 A stack's own menu — and a single container's, within a stack — carries these items alongside
 Update and Pull images. See [the row menu](the-stack-list.md#the-row-menu) for how to open it.

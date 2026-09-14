@@ -130,6 +130,11 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
   }
 
   $dir = dirname($file);
+  // Only the config folder INSIDE a store that exists — never the store root
+  // itself. A recursive mkdir here quietly invented an empty store at the old
+  // path the moment its pool went missing, which is exactly the case the
+  // recovery card (PLAN_103) has to be able to see (found 2026-09-11).
+  if (!staxx_store_reachable()) { $error = 'The data store is not reachable right now.'; return false; }
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
     $error = 'Could not create '.$dir;
     return false;

@@ -108,7 +108,7 @@ only you can start, exactly as described below — nothing here can ever set one
 
 ## Cutting a stable release
 
-Four things must say the same number before anything is built. The build checks all four and refuses
+Five things must say the same number before anything is built. The build checks all five and refuses
 if they disagree, but doing them in this order means it never has to.
 
 1. **Decide the number.** Patch = fixes only. Minor = new features, nothing on disk changes shape.
@@ -123,6 +123,10 @@ if they disagree, but doing them in this order means it never has to.
      `Unreleased`.
    - `staxx.plg` — set `<!ENTITY version>` to the new number, and add a `###<version>` section at the
      top of the `<CHANGES>` block. That block is what Unraid's Plugin Manager shows.
+   - `README.md` — set the `> Version **[…]**` line near the top to the new number, in the same
+     commit as the entity above. It names the version dev is heading towards, not the dated tag, so
+     it takes the same number as `<!ENTITY version>`. Done here because the merge below carries it
+     to `main`, and the build refuses a stable release whose readme line disagrees.
    - Push `dev`.
 
 3. **Merge `dev` into `main`.** Expect a conflict in `README.md` whenever the development banner's
@@ -152,7 +156,8 @@ if they disagree, but doing them in this order means it never has to.
    `git cherry-pick -x <the "Stamp staxx.plg" commit>` — it touches only the version, the two
    checksums and the package name, never the branch entity, so it is safe to carry across.
 
-9. **Set dev's manifest to the *next* version you are heading towards**, and push. See the gotcha
+9. **Set dev's manifest, and its readme line, to the *next* version you are heading towards**, and
+   push. Both `<!ENTITY version>` and `README.md`'s version line move together — see the gotcha
    below.
 
 10. **Mirror it onto the feedback board.** That board is the only one of the three changelogs that
@@ -180,6 +185,7 @@ Both live in files that merge freely, and both are wrong the moment a merge carr
 |---|---|---|
 | The development banner in `README.md` | present | removed |
 | `<!ENTITY branch>` in `staxx.plg` | `dev` | `main` |
+| `README.md`'s `> Version **[…]**` line | the version dev is heading towards | the version just released |
 
 The banner is cosmetic. **The branch entity is not** — it decides which branch an installed plugin
 polls for updates, so `dev` reaching main's manifest would quietly start offering development builds
@@ -198,8 +204,47 @@ version just released, so the next dev build would come out as `00.02.00_dev...`
 already out. It still sorts correctly and nothing breaks — but the name claims to be heading
 somewhere it has already arrived.
 
-**So step 9 above is not optional.** After a stable release, set dev's `<!ENTITY version>` to the
-next version you intend, and the dev builds after it will be named honestly.
+**So step 9 above is not optional.** After a stable release, set dev's `<!ENTITY version>` and
+`README.md`'s version line to the next version you intend, and both the dev builds and the readme
+after it will be named honestly.
+
+## Cutting a hotfix
+
+For a bug that people on the **stable** channel have and cannot wait for. Going through `dev` would
+hand them every unreleased feature along with the fix, so the fix travels on its own instead.
+Decided with Adrian on 2026-09-12, the day Noah's network report came in.
+
+1. **Branch from `main`**, never from `dev`: `git checkout -b hotfix/<what> main`. Make the fix
+   there. If the same fix already exists on `dev`, cherry-pick that one commit rather than writing it
+   twice. Deploy and test it on the box as usual.
+
+2. **Give it a release section of its own, on the branch.** `main`'s changelog has no `Unreleased`
+   section, so add a new heading at the top — `## <version> — released <date>` — with the fix's
+   bullet under it. Set `<!ENTITY version>` and `README.md`'s version line to the new patch number,
+   and add the `###<version>` section to the manifest's `<CHANGES>` block. A hotfix is a **patch**:
+   `00.03.00` becomes `00.03.01`.
+
+3. **Merge the branch into `main`, push, and tag.** The tag push runs the ordinary stable release,
+   with every one of its checks. Nothing else goes into the merge — a hotfix carrying anything
+   beyond the fix is a release that skipped the development channel.
+
+4. **Merge the same branch into `dev`.** The branch, not `main`. Merging `main` back would drag the
+   release bookkeeping — the changelog heading, the manifest stamp, the readme line — into files
+   `dev` is editing for the *next* release, and every one of them would conflict for no gain. The
+   branch alone carries just the fix, which conflicts with nothing.
+
+5. **Add one bullet to `dev`'s `## Unreleased` section** saying the fix shipped in the hotfix, for
+   example `- Fixed in 00.03.01: …`. The next stable release's notes are built from that section, so
+   without this line the fix is in the code but missing from the story.
+
+6. **Move `dev`'s base number if it has been overtaken.** If `dev` was heading towards the number the
+   hotfix just used, set `<!ENTITY version>` and the readme line to the next one, the same way as
+   step 9 of a stable release.
+
+One gap to know about rather than fix: a dev build named `00.03.01_dev…` sorts *above* the hotfix
+`00.03.01`, so somebody on the development channel is never offered the hotfix itself. They get the
+fix in the next dev build after step 4, which is the same one-way street the two channels always
+have.
 
 ## Why dev can never run ahead of main
 

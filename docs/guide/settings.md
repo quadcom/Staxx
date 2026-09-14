@@ -41,13 +41,14 @@ reloads for you and says so.
 
 ## Storage tab
 
-![The Storage tab in full: the Data store box holding the folder's path and its folder button, the Protect me from myself switch turned on with its one-line explanation, the three folders derived from the path and the Move the data store and Check these are in your backup links; then Copies on the flash drive with its dropdown; then the Archived stacks list of zips with dates and sizes](../images/guide/settings-storage-tab.png)
+![The Storage tab in full: the Data store box holding the folder's path and its folder button, the Protect me from myself switch turned on with its one-line explanation, the three folders derived from the path and the Move the data store and Check these are in your backup links; then Copies on the flash drive with its dropdown, and beneath it the Keeping the copies current choice between On a schedule and Live; then the Archived stacks list of zips with dates and sizes](../images/guide/settings-storage-tab.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
 | Data store | A folder path | blank | The folder where StaXX keeps your stacks and the copies of ones you have removed. Type a path, pick one with the folder button, or use **Move the data store** to have StaXX move everything for you. See [file locations](where-things-live.md). |
 | Protect me from myself | On / Off | On | With this setting on, the folder picker will not let you choose a store location that could result in the loss of your data. With it off, the picker presents every storage location on your system, whether or not it could lose your files. Even with it off, two places are never allowed: anywhere that is wiped when the server restarts, and the top level of a whole share such as appdata, where every folder inside it would be mistaken for a stack. |
-| Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save a stack a copy of its file is also written to the flash drive, which Unraid already backs up. If the data store were ever lost, you would still have the definition of everything you run. StaXX only writes these copies; it never reads them back on its own. With it off, no copies are written. |
+| Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save, start or update a stack here a copy of its file is also written to the flash drive, which Unraid already backs up. If the data store were ever lost, StaXX offers to bring every stack back from these copies — see [if the data store is lost](recovery-and-redundancy.md). With it off, no copies are written. |
+| Keeping the copies current | On a schedule / Live | On a schedule | How a change made outside StaXX — the file edited by hand and the container recreated at a command line — still reaches the copy above. **On a schedule** compares every stack with its copy once an hour and rewrites the ones that differ; a change made this way can be up to an hour behind. **Live** keeps a small process running that refreshes a stack's copy the moment its container is recreated, however that was done, at the cost of one process that runs all the time; a daily sweep still runs as a backstop. Only means anything while the setting above is on. |
 | Archived stacks | — | — | Shows the zip of every stack you have removed, with its date and size. Nothing here can be changed. See [removing a stack](removing-a-stack.md). |
 
 Two links sit under the Data store box:
@@ -75,7 +76,7 @@ Two links sit under the Data store box:
 
 This tab is explained fully in [checking for updates](updates.md).
 
-![The Updates tab in full: Check for image updates with How often and Time of day, What to do with what is found, the When to install box with the delay, the quiet-time switch and the quiet time's start and end, Notify me, Previous image releases to keep, Remove old images automatically, and the Update-check activity table with one row per registry](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, What to do with what is found, the When to install box with the delay, the quiet-time switch and the quiet time's start and end, Notify me, Previous image releases to keep, Remove old images automatically, and the Update-check activity table with one row per registry, two of them marked with an asterisk against a note written once beneath the table](../images/guide/settings-updates-tab.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
@@ -88,7 +89,7 @@ This tab is explained fully in [checking for updates](updates.md).
 | Notify me | Never / When a check finds something / That, and again once installed | Never | When StaXX sends you an Unraid notification: never, when a check finds something waiting, or that and again once an update has installed. One message per check, never one per container. |
 | Previous image releases to keep | 0 to 5 | 2 | How many older versions of each image stay on disk after an update, so you can put one back. See [version history](recovery-and-redundancy.md). |
 | Remove old images automatically | No / Yes, once a week | No | With this on, once a week StaXX removes downloaded images that nothing is running and that are no longer kept for putting back. It never removes anything else. With it off, old images stay until you remove them yourself. |
-| Update-check activity | — | — | Shows, for each place StaXX asks about updates, how many times it has asked this hour and today, how many of those counted against that place's limit, and a note where something looks wrong. Look here when a row keeps saying `could not check`. See [checking for updates](updates.md#docker-hubs-limit). |
+| Update-check activity | — | — | Shows, for each place StaXX asks about updates, how many times it has asked this hour and today, how many of those counted against that place's limit. Where there is something to say about a place — that it sets no limit of its own, say, or that it has stopped answering — the row is marked with an asterisk and the note is written once underneath the table, so a note that applies to several places is only said once. Look here when a row keeps saying `could not check`. See [checking for updates](updates.md#docker-hubs-limit). |
 
 ## Registries and security tab
 
