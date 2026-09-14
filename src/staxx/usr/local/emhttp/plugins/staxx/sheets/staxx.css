@@ -94,6 +94,12 @@
   --sm-accent: var(--orange-500, #ff8c2f);
   --sm-danger: var(--red-500, #e53935);
   --sm-good:   var(--green-500, #43a047);
+  /* PLAN_150 phase 6 — the "updates itself" row mark's own green, kept apart
+     from --sm-good (the running-state dot, already green on every row): this
+     one has to read as a different fact at a glance, not a shade of the same
+     one. A literal, not a theme token, because it is the only green this mark
+     may ever be. */
+  --sm-update: #3fb950;
 
   /* No dependable Unraid token exists for these, so they are literals chosen
      to sit correctly on both light and dark themes. */
@@ -1306,7 +1312,12 @@ div.title.staxx-has-titlebar {
    is invalid, since a unitless zero is not a length. */
 .staxx-namebox {
   display: flex;
-  align-items: center;
+  /* PLAN_150 phase 6, measured 2026-09-14: was `center`. .staxx-nameinfo can
+     now run to several lines once a row carries a few marks under its name
+     (see below), and centring against that whole block floated the icon and
+     toggle beside it away from the name itself — pinning both to the top
+     keeps the name where it always was. */
+  align-items: flex-start;
   gap: 1rem;
   min-width: 0;
   padding-left: calc(var(--sm-indent-base, 0rem) + var(--sm-indent-step, 0rem));
@@ -1316,11 +1327,28 @@ div.title.staxx-has-titlebar {
   font-weight: 600;
 }
 
+/* PLAN_150 phase 6, measured 2026-09-14: this used to stack every mark down
+   the left in a column. The new green "updates itself" mark (.staxx-updatemark
+   below) can join the boot bolt, the drift triangle, the pin and the port
+   mark on the same row, and a column of four ran the cell tall on a server
+   with several such rows. Row + wrap instead: the name and the sub-line each
+   claim their own full line (flex: 0 0 100% below) and the marks between them
+   flow left to right, wrapping only when they run out of room. */
 .staxx-nameinfo {
   display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.85rem;
   min-width: 0;
+}
+
+/* The name and the sub-line each take the whole width, so the marks that sit
+   between them (in source order) land on their own line rather than
+   crowding onto either. 0.85rem of column gap above is what keeps a run of
+   several marks from reading as one blob. */
+.staxx-nameinfo > .staxx-name-text,
+.staxx-nameinfo > .staxx-sub {
+  flex: 0 0 100%;
 }
 
 /* A flex column stretches its items to the column's width, which drew a
@@ -1345,6 +1373,19 @@ div.title.staxx-has-titlebar {
    flex line rather than this stacked one. */
 .staxx-stacks .staxx-folder-row .staxx-nameinfo {
   min-height: 7.6rem;
+  /* PLAN_150 phase 6 kept this one stacked: the row-and-wrap change below is
+     for the new green "updates itself" mark, which a folder heading never
+     carries, and .staxx-folder-name (unlike .staxx-name-text) has no
+     flex: 0 0 100% rule to keep it on its own line if this were left row. */
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+/* ...and a full-width basis means a full-HEIGHT one once the direction above
+   is column, which would give the folder's sub-line the whole reserved
+   7.6rem. Put it back to sizing itself. */
+.staxx-stacks .staxx-folder-row .staxx-nameinfo > .staxx-sub {
+  flex: 0 1 auto;
 }
 
 .staxx-sub {
@@ -3543,6 +3584,21 @@ div.title.staxx-has-titlebar {
   display: inline-flex;
   align-items: center;
   color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+/* PLAN_150 phase 6 — the mark for a container (or, on a stack row, at least
+   one of its services — the same any-one-qualifies rule as .staxx-pinmark
+   above) that will install a newer image, or rebuild, without being asked.
+   Same icon-only shape as the marks above; --sm-update is its own colour
+   because this is a fact worth noticing, not a warning like
+   .staxx-driftmark/.staxx-imgmismatch/.staxx-portmark and not a quiet aside
+   like .staxx-pinmark. */
+.staxx-updatemark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-update);
   font-size: 1.1rem;
 }
 

@@ -32,6 +32,10 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // For staxx_compose_gpu_vendors() — the page renders rows without going
 // through action.php, which is the only other place Devices.php was pulled in.
 require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
+// For staxx_update_policy_from_meta() — the "updates itself" row mark, same
+// reason as Devices.php above: the page renders rows without going through
+// action.php, which is the only other place UpdateRun.php was pulled in.
+require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -935,6 +939,11 @@ function staxx_stack_children(array $s): array {
       // What the file asks for, kept alongside docker's answer below so a
       // reader can be told the two disagree — never re-read here.
       'declared' => (string)($declared[$service]['image'] ?? ''),
+      // PLAN_150 phase 6 — whether this service builds its own image, so the
+      // "updates itself" row mark can tell a build-only service (it rebuilds
+      // when its base image moves) apart from one with neither an image nor
+      // a build, which cannot be updated at all.
+      'build' => (bool)($declared[$service]['build'] ?? false),
       'icon'  => (string)($declared[$service]['x']['icon'] ?? ''),
       // Read here rather than only where it is drawn, so a service that has
       // never run still has one — declared[$service] is the compose file's
@@ -1494,6 +1503,40 @@ function staxx_pin_mark_html(array $kids): string {
 }
 
 /**
+ * PLAN_150 phase 6 — whether one service will install a newer image for
+ * itself, unattended: the resolved mode is 'auto', AND it is not pinned to
+ * an exact build (a pin means the image cannot move, so the mark would be a
+ * lie regardless of what its own mode setting says), AND it has something
+ * that could ever move at all — an image, or a build context that rebuilds
+ * when its own base image does. A service with neither can never update, so
+ * it never earns the mark either, whatever its resolved mode says.
+ *
+ * Takes $meta directly rather than calling staxx_update_policy() itself:
+ * that function's own file lookup walks staxx_list_stacks() to find the
+ * file by name, which the row table has already found once for every one of
+ * its (potentially hundreds of) rows — see staxx_update_policy_from_meta().
+ */
+function staxx_service_updates_itself(array $meta, string $service, string $declaredImage, bool $hasBuild, array $global): bool {
+  if (strpos($declaredImage, '@') !== false) return false;
+  if ($declaredImage === '' && !$hasBuild) return false;
+  return staxx_update_policy_from_meta($meta, $service, $global)['mode'] === 'auto';
+}
+
+/**
+ * The green circular-arrows row mark for a container that updates itself —
+ * see staxx_service_updates_itself() for what earns it. #3fb950 is the only
+ * green anywhere on the page, chosen deliberately apart from the accent
+ * orange and the amber mark colours, which both mean "your attention" —
+ * this one means the opposite, that nothing here needs pressing.
+ */
+function staxx_update_mark_html(): string {
+  $title = _('Updates itself.');
+  return '<span class="staxx-updatemark" title="'.htmlspecialchars($title).'">'
+       . '<i class="fa fa-refresh"></i>'
+       . '<span class="staxx-sr">'.htmlspecialchars($title).'</span></span>';
+}
+
+/**
  * PLAN_104 — the mark for a stack with at least one service on a macvlan or
  * ipvlan network that still carries a live `ports:` key. A container with its
  * own address on the LAN cannot have a port published for it, so those ports
@@ -1702,6 +1745,12 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
       $macvlanNames[$net['name']] = true;
     }
   }
+
+  // PLAN_150 phase 6 — once per render for the same reason as the two
+  // above: it only reads the config file (memoised by staxx_cfg()), but
+  // every row's "updates itself" mark asks it, so there is no reason to ask
+  // twice let alone hundreds of times.
+  $updateGlobal = staxx_update_settings();
 
   ob_start();
 
@@ -2152,6 +2201,23 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
                      data attributes above rather than printed here. -->
                 <span class="staxx-name-text"><?= htmlspecialchars($s['leaf']) ?></span>
                 <?= staxx_boot_mark_html($sWait, $sTitle) ?>
+                <?php
+                  // A stack stands for several containers, so it earns the
+                  // mark the same way it earns the pin mark just below —
+                  // ANY service qualifying is enough to say so here, even
+                  // when its siblings do not. $meta is read once more from
+                  // the same cached call the portmark below already makes.
+                  $sMeta = $s['parses'] ? staxx_compose_meta($s['file']) : ['services' => [], 'x' => []];
+                  $sAutoUpdates = false;
+                  foreach ($kids as $kid) {
+                    if (staxx_service_updates_itself($sMeta, $kid['service'],
+                          (string)($kid['declared'] ?? ''), (bool)($kid['build'] ?? false), $updateGlobal)) {
+                      $sAutoUpdates = true;
+                      break;
+                    }
+                  }
+                ?>
+                <? if ($sAutoUpdates): ?><?= staxx_update_mark_html() ?><? endif; ?>
                 <? if ($s['handover'] ?? false): ?>
                   <!-- A handover has switched the old container off and set it
                        aside, and this stack is running in its place — see the
@@ -2421,6 +2487,15 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
               <span class="staxx-nameinfo">
                 <span class="staxx-name-text"><?= htmlspecialchars($kid['service']) ?></span>
                 <?= staxx_boot_mark_html($cWait, $cTitle) ?>
+                <?php
+                  // This one container's own answer, not the stack's "any" —
+                  // see staxx_service_updates_itself()'s own comment.
+                  $kidMeta = $s['parses'] ? staxx_compose_meta($s['file']) : ['services' => [], 'x' => []];
+                ?>
+                <? if (staxx_service_updates_itself($kidMeta, $kid['service'],
+                        (string)($kid['declared'] ?? ''), (bool)($kid['build'] ?? false), $updateGlobal)): ?>
+                  <?= staxx_update_mark_html() ?>
+                <? endif; ?>
                 <? if ($kid['name'] !== '' && $kid['name'] !== $kid['service']): ?>
                   <span class="staxx-sub"><?= htmlspecialchars($kid['name']) ?></span>
                 <? endif; ?>

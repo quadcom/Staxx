@@ -156,25 +156,48 @@ function staxx_update_bool($raw): ?bool {
  */
 function staxx_update_policy(string $stack, string $service): array {
   $global = staxx_update_settings();
-  $globalNotify = $global['notifyFound'] || $global['notifyInstalled'] || $global['notifyFailed'];
-  $fallback = ['mode' => $global['mode'], 'delay' => $global['delay'],
-               'notify' => $globalNotify, 'from' => 'global'];
 
-  if (!staxx_valid_path($stack)) return $fallback;
+  if (!staxx_valid_path($stack)) return staxx_update_policy_fallback($global);
 
   $file = '';
   foreach (staxx_list_stacks() as $s) {
     if ($s['name'] === $stack) { $file = $s['file']; break; }
   }
-  if ($file === '') return $fallback;
+  if ($file === '') return staxx_update_policy_fallback($global);
 
   $meta = staxx_compose_meta($file);
-  if (!$meta['ok']) return $fallback;
+  if (!$meta['ok']) return staxx_update_policy_fallback($global);
+
+  return staxx_update_policy_from_meta($meta, $service, $global);
+}
+
+/** The global-only answer, when there is nothing more specific to read. */
+function staxx_update_policy_fallback(array $global): array {
+  $globalNotify = $global['notifyFound'] || $global['notifyInstalled'] || $global['notifyFailed'];
+  return ['mode' => $global['mode'], 'delay' => $global['delay'],
+          'notify' => $globalNotify, 'from' => 'global'];
+}
+
+/**
+ * The service → stack → global walk itself, split out of
+ * staxx_update_policy() so a caller that already holds a stack's
+ * staxx_compose_meta() result — the row table renders one per stack already,
+ * see staxx_stack_children() — can resolve every one of its services without
+ * staxx_update_policy()'s own staxx_list_stacks() scan, which the row table
+ * cannot afford to repeat per service on a server with hundreds of rows.
+ *
+ * @param array $meta staxx_compose_meta()'s return for one stack
+ * @param array $global staxx_update_settings()'s return
+ * @return array{mode:string, delay:int, notify:bool, from:string}
+ */
+function staxx_update_policy_from_meta(array $meta, string $service, array $global): array {
+  $fallback = staxx_update_policy_fallback($global);
+  $globalNotify = $fallback['notify'];
 
   $modes = ['manual', 'off', 'notify', 'auto'];
   $scopes = [
     'service' => (array)($meta['services'][$service]['x'] ?? []),
-    'stack'   => (array)$meta['x'],
+    'stack'   => (array)($meta['x'] ?? []),
   ];
 
   foreach ($scopes as $from => $x) {

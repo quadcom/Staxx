@@ -20,6 +20,7 @@ before that were dates.
 
 - The warning that live updates aren't connected now appears in the notices area beside the search box instead of as a bar across the top of the list.
 - The Settings panel's update options are simpler: Updates is now a plain Manual/Automatic choice, and Notify me is three separate switches — one for a found update, one for an installed one, and one for a failed one, the last one on by default for everybody. Quiet time is now a pick-list in half-hour steps, and sits half width under its own "only during a quiet time" question.
+- A container that updates itself now shows a small green mark beside its name in the stack list, so you can tell which ones will install a newer version on their own without opening each one to check.
 
 ## 00.04.00 — released 2026-09-14
 

@@ -1689,7 +1689,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 7;   // 7: each service gained a 'profiles' list (PLAN_69)
+const STAXX_META_VERSION = 8;   // 8: each service gained a 'build' flag (PLAN_150 phase 6)
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1762,7 +1762,8 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
  *                                            firstPort:array{target?:string,published?:string,count?:int},
- *                                            netMode:string, networks:string[], healthcheck:bool}>}
+ *                                            netMode:string, networks:string[], healthcheck:bool,
+ *                                            build:bool}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = false): array {
   static $cache = [];
@@ -1841,7 +1842,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+                                      'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
     }
 
     // Which networks this service names, regardless of what else is nested
@@ -1888,6 +1889,14 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       // `healthcheck: {disable: true}` on its own is not that, the same
       // reading applied to an image's own ["NONE"].
       $meta['services'][$service]['healthcheck'] = true;
+    } elseif ($parts[2] === 'build') {
+      // PLAN_150 phase 6 — whether this service builds its own image, whether
+      // written as a bare path (`build: ./app`, count 3) or a mapping
+      // (`build: {context: ...}`, count >= 4). Riding along on this loop
+      // rather than a second read: the row mark needs to tell "no image and
+      // no build, so nothing here can ever update" apart from a build-only
+      // service, which genuinely can (it rebuilds when its base image moves).
+      $meta['services'][$service]['build'] = true;
     }
   }
 
@@ -1897,7 +1906,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+                                      'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -1918,7 +1927,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+                                      'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
     }
     $meta['services'][$service]['profiles'] = $profiles;
   }
