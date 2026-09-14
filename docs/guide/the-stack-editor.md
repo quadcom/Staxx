@@ -13,7 +13,7 @@ This is the window that opens when you click [a stack's picture](the-stack-list.
 | Part | What it does |
 |---|---|
 | Title | The stack's name, or **New stack** while making one. |
-| Stack name box | The folder that holds this stack's file. The hint underneath it reads: "The folder that holds this stack's compose file. Renaming it moves the folder." |
+| Stack name box | The folder that holds this stack's file. Renaming it moves the folder. The folder it sits in, if any, is shown in grey beside it. |
 | Sanitise | Hides every value marked sensitive, so a screenshot does not leak them. See [Sanitise mode](hiding-your-values.md). |
 | Password | Opens the password generator, and a hashing tool beside it. See [password generator and hashing tool](passwords-and-hashes.md). |
 | Fill in details | Looks up this stack's icon, links, description and more from the image, its catalogue entry and its own page. |
@@ -32,7 +32,11 @@ Three buttons switch how you see the same file.
 | Split | The form on one side, the raw compose file on the other. |
 | Compose | Only the raw file, as text. |
 
-Split is the normal view on a wide window, and Form on a narrow one. Split's button is not shown at all on a narrow window — there is no room for two panes side by side. Opening a file that is not the compose file itself (a `.env` file, say) always shows it beside the form, never in place of it, so Form on its own is not offered while one is open.
+![The bar between the form and the compose file in Split view, outlined, with a small grip mark in its middle](../images/guide/the-stack-editor-divider.png)
+
+In Split, drag the bar between the two panes to give one side more room. The position is remembered in your browser, so the editor opens where you left it. Double-click the bar to put it back in the middle.
+
+Split is the normal view on a wide window. On a narrower one — a tablet held upright, or a phone — there is no room for two panes side by side, so the three buttons are not shown at all. A switch at the top of the Configure tab, **Show the compose file**, swaps the form for the raw file and back instead. Opening a file that is not the compose file itself (a `.env` file, say) always shows it beside the form, never in place of it, so Form on its own is not offered while one is open.
 
 ## The four tabs
 
@@ -103,7 +107,7 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 
 ## The buttons along the bottom
 
-![The buttons along the bottom of the editor: Tidy this file, a greyed-out Undo, Save and Save and start](../images/guide/the-stack-editor-footer.png)
+![The foot of the editor: an offer bar about details that were found, a bar about folders that do not exist yet, then Tidy this file, a greyed-out Undo, Save and Save and start](../images/guide/the-stack-editor-footer.png)
 
 | Button | What it does | Unavailable when |
 |---|---|---|
@@ -111,6 +115,19 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 | Undo | Puts back the last change this button covers — adding or removing an entry. | Sanitise is on, a non-compose file is open, or there is nothing to undo. |
 | Save | Writes the file. | Sanitise is on. |
 | Save and start | Writes the file, then starts the stack. | Sanitise is on, a required field is still blank, a `REPLACE-ME` placeholder remains, or the server has no working Compose or Docker. |
+
+## On a phone or a narrow window
+
+![The editor on a phone: Edit stack with Close in the top-right corner, the stack name line, then Sanitise, Password, Fill in details and Outline, the four tabs, a Show the compose file switch at the top of the form, and at the foot a folded line reading 1 note above the Save buttons](../images/guide/the-stack-editor-phone.png)
+
+Below desktop width the editor rearranges itself rather than shrinking:
+
+| Part | What changes |
+|---|---|
+| Header | Two lines: the title and the stack name, then the tools. On a phone, **Close** sits in the top-right corner. |
+| Views | The Form, Split and Compose buttons are gone. The **Show the compose file** switch at the top of the Configure tab swaps the form for the raw file and back. |
+| Notes | Advice — the details-found offer and the "author's published example also sets…" lines — folds into one line at the foot reading *N notes*. Tap it to read them, and the cross to fold them away again. Nothing is dismissed by folding. Warnings that need an answer, such as a folder that does not exist yet, stay in full. |
+| The window | On a tablet held upright, or a phone, the editor fills the screen. |
 
 ## Messages you may see
 

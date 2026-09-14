@@ -11526,9 +11526,11 @@ dialog::backdrop {
   }
   /* Two lines of content now, so the heading needs a card's breathing room
      rather than the table row's 4px/5px; square corners because this reads
-     as a band across the page, not another card. */
+     as a band across the page, not another card. First values sat too tight
+     against the icon strip; settled live with Adrian on 2026-09-14 so the
+     icons clear the edges rather than sitting against them. */
   .staxx-stacks .staxx-folder-row {
-    padding: 1.2rem 1.4rem 1.3rem;
+    padding: 1.8rem 2.2rem 2rem;
     border-radius: 0;
   }
 }

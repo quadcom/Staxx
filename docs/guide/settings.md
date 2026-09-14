@@ -76,7 +76,7 @@ Two links sit under the Data store box:
 
 This tab is explained fully in [checking for updates](updates.md).
 
-![The Updates tab in full: Check for image updates with How often and Time of day, What to do with what is found, the When to install box with the delay, the quiet-time switch and the quiet time's start and end, Notify me, Previous image releases to keep, Remove old images automatically, and the Update-check activity table with one row per registry](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, What to do with what is found, the When to install box with the delay, the quiet-time switch and the quiet time's start and end, Notify me, Previous image releases to keep, Remove old images automatically, and the Update-check activity table with one row per registry, two of them marked with an asterisk against a note written once beneath the table](../images/guide/settings-updates-tab.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
@@ -89,7 +89,7 @@ This tab is explained fully in [checking for updates](updates.md).
 | Notify me | Never / When a check finds something / That, and again once installed | Never | When StaXX sends you an Unraid notification: never, when a check finds something waiting, or that and again once an update has installed. One message per check, never one per container. |
 | Previous image releases to keep | 0 to 5 | 2 | How many older versions of each image stay on disk after an update, so you can put one back. See [version history](recovery-and-redundancy.md). |
 | Remove old images automatically | No / Yes, once a week | No | With this on, once a week StaXX removes downloaded images that nothing is running and that are no longer kept for putting back. It never removes anything else. With it off, old images stay until you remove them yourself. |
-| Update-check activity | — | — | Shows, for each place StaXX asks about updates, how many times it has asked this hour and today, how many of those counted against that place's limit, and a note where something looks wrong. Look here when a row keeps saying `could not check`. See [checking for updates](updates.md#docker-hubs-limit). |
+| Update-check activity | — | — | Shows, for each place StaXX asks about updates, how many times it has asked this hour and today, how many of those counted against that place's limit. Where there is something to say about a place — that it sets no limit of its own, say, or that it has stopped answering — the row is marked with an asterisk and the note is written once underneath the table, so a note that applies to several places is only said once. Look here when a row keeps saying `could not check`. See [checking for updates](updates.md#docker-hubs-limit). |
 
 ## Registries and security tab
 

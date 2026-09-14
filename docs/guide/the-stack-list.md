@@ -71,13 +71,27 @@ folder get a row of titles of their own too.
 
 ![The State and Address columns over two running stacks, each address followed by its reachable port in orange](../images/guide/the-stack-list-ports.png)
 
-## On a tablet-sized window
+## On a tablet or a phone
 
 ![The stack list on a tablet-sized window: two folder rows, then stacks as cards three across, each with its icon, name, state pill, address and small graphs](../images/guide/the-stack-list-cards.png)
 
-Below desktop width, the list becomes cards instead of a table — three across, one card per stack,
-carrying its icon, name, state, address and its little graphs. A folder becomes a heading over its
-own row of cards rather than a row of its own.
+Below desktop width, the list becomes cards instead of a table — one card per stack, carrying its
+icon, name, state, address and its little graphs. A folder becomes a heading over its own row of
+cards rather than a row of its own. How many cards sit across depends on the width: three on a
+tablet held sideways or a small laptop, two on a tablet held upright, one on a phone.
+
+![The same folder on a tablet held upright: the Database heading, then its stacks as cards two across](../images/guide/the-stack-list-cards-two.png)
+
+![The Database folder on a phone: the heading gives its name, its update marker and its "6 stacks, 5 running" line the full width of the screen, with its six app icons on a line of their own beneath; then its stacks one card per row, each with the WebUI, Logs, Repo and CA buttons on a line of their own at a finger's size and the running chip on the line beneath them](../images/guide/the-stack-list-cards-phone.png)
+
+On a phone the card is laid out again for a thumb: the four small buttons take a line of their own
+at a size a finger can hit, and the state chips take the line beneath them, so an update chip or a
+"restart to apply" chip never crowds the name.
+
+The folder heading changes shape here too. Its name, its update marker and its "N stacks, N running"
+line take the full width, and the icons of the apps inside it drop onto their own line underneath
+rather than being squeezed into a column beside them. The heading also runs from one edge of the
+screen to the other, so it reads as a band across the page with its stacks sitting inside it.
 
 A stack running more than one service shows a cubes button in its corner. Tap it to see those
 services as cards of their own, without the page underneath changing shape.
@@ -170,8 +184,8 @@ it.
 
 ## The row menu
 
-![The whole stack menu open: the stack name at the top, then Start, a greyed-out Stop, Update, Pull images, Check this image again, Logs, Edit compose file, Fill in details, Export, the list of folders to move it to, New folder, Remove from folder, an Autostart switch, a Delay box, What do these marks mean, and Remove stack](../images/guide/the-stack-list-row-menu.png)
-Click the app picture to open it. Items appear in this order, and only when they apply.
+![The whole stack menu open, in two columns: the stack name across the top; on the left Start, a greyed-out Stop, Update, Pull images, Check this image again, Logs, then Edit compose file, Fill in details, Export, then an Autostart switch, a Delay box, What do these marks mean, and Remove stack; on the right the Move to folder list, New folder and Remove from folder](../images/guide/the-stack-list-row-menu.png)
+Right-click the row to open it. Items appear in this order, and only when they apply, in two columns: what you can do to the stack on the left, where it lives on the right.
 
 | Group | Items |
 |---|---|
@@ -262,6 +276,8 @@ remembered between visits.
 
 A search box sits on the button row, reading *Find a stack… (press /)*. Press `/` anywhere on the
 page — outside a text box — to jump straight to it.
+
+![The search box with "postgres" typed in it and a dropdown beneath listing two matches: postgresql17 in the Database folder, and PenPot_Complete matched through its penpot-postgres service](../images/guide/the-stack-list-find.png)
 
 Type part of a name and a dropdown opens beneath the box: one line per match, showing the stack's
 icon and name, its folder in grey, and, when the match was not the stack's own name, the service,

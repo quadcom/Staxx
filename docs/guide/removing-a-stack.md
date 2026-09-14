@@ -15,7 +15,7 @@ wrote to appdata — is never touched.
 
 ## Remove stack
 
-![The lower half of a stack's row menu, with Remove stack at the bottom outlined](../images/guide/removing-a-stack-menu-item.png)
+![A stack's row menu, laid out in two columns, with Remove stack at the bottom of the left column outlined](../images/guide/removing-a-stack-menu-item.png)
 
 Open the stack's own menu and choose **Remove stack**, near the bottom, on its own below a
 separator.
