@@ -64,13 +64,15 @@ unset($staxx_update_tz);
 
 /**
  * @return array{mode:string, delay:int, window:bool, wstart:string, wend:string,
- *               notify:string, retain:int, cleanup:string}
+ *               notifyFound:bool, notifyInstalled:bool, notifyFailed:bool,
+ *               retain:int, cleanup:string}
  *
  * mode is always returned as 'manual' or 'auto' — the config key may still
  * hold the older 'off'/'notify' spelling, normalised here rather than at
- * every reader. (The 'notify' returned in this array is the unrelated
- * server-wide notification setting, still off/found/applied; Phase 2 of
- * PLAN_150 replaces it with three booleans and is not this file's job yet.)
+ * every reader. The three notifyXxx booleans are the server-wide switches
+ * for being told about a found update, an installed one, and a failed one —
+ * see staxx_update_notify_map() (Defines.php) for how a config that still
+ * only has the retired UPDATE_NOTIFY choice is read.
  */
 function staxx_update_settings(): array {
   $cfg = staxx_cfg();
@@ -95,8 +97,7 @@ function staxx_update_settings(): array {
   $wend = (string)($cfg['UPDATE_WINDOW_END'] ?? '05:00');
   if (!preg_match($time, $wend)) $wend = '05:00';
 
-  $notify = (string)($cfg['UPDATE_NOTIFY'] ?? 'off');
-  if (!in_array($notify, ['off', 'found', 'applied'], true)) $notify = 'off';
+  $notify = staxx_update_notify_map($cfg);
 
   $retain = $cfg['UPDATE_RETAIN'] ?? 2;
   $retain = (is_numeric($retain) && (int)$retain == $retain) ? (int)$retain : 2;
@@ -106,7 +107,8 @@ function staxx_update_settings(): array {
   if ($cleanup !== 'weekly') $cleanup = 'off';
 
   return ['mode' => $mode, 'delay' => $delay, 'window' => $window, 'wstart' => $wstart,
-          'wend' => $wend, 'notify' => $notify, 'retain' => $retain, 'cleanup' => $cleanup];
+          'wend' => $wend, 'notifyFound' => $notify['found'], 'notifyInstalled' => $notify['installed'],
+          'notifyFailed' => $notify['failed'], 'retain' => $retain, 'cleanup' => $cleanup];
 }
 
 /**
@@ -145,16 +147,16 @@ function staxx_update_bool($raw): ?bool {
  * no caller downstream ever has to know the old spelling existed.
  *
  * notify has no compose-file global fallback of its own yet: for now it is
- * derived from the existing server-wide UPDATE_NOTIFY setting (on for
- * anything other than 'off'). Phase 2 of PLAN_150 replaces that setting with
- * three real booleans and will revisit this derivation; nothing here should
- * be read as the final shape of the global default.
+ * derived from the three server-wide notify switches — on if any one of
+ * "found", "installed" or "failed" is on. A container is either mentioned in
+ * whichever messages the server sends, or it is not; there is no per-
+ * container say yet in which of the three it is mentioned in.
  *
  * @return array{mode:string, delay:int, notify:bool, from:string}
  */
 function staxx_update_policy(string $stack, string $service): array {
   $global = staxx_update_settings();
-  $globalNotify = $global['notify'] !== 'off';
+  $globalNotify = $global['notifyFound'] || $global['notifyInstalled'] || $global['notifyFailed'];
   $fallback = ['mode' => $global['mode'], 'delay' => $global['delay'],
                'notify' => $globalNotify, 'from' => 'global'];
 
@@ -1352,7 +1354,7 @@ function staxx_update_queue_tick(): array {
   foreach ($items as $item) {
     if (!in_array($item['state'] ?? '', ['done', 'failed', 'skipped'], true)) { $terminal = false; break; }
   }
-  if ($terminal && $changed && empty($queue['notified']) && staxx_update_settings()['notify'] === 'applied') {
+  if ($terminal && $changed && empty($queue['notified']) && staxx_update_settings()['notifyInstalled']) {
     $done = 0; $failed = 0;
     foreach ($items as $item) {
       if ($item['state'] === 'done') $done++;
@@ -1447,12 +1449,14 @@ function staxx_update_apply_pass(): array {
 
 /**
  * One message through Unraid's own notifier — never one per container.
- * Silent whenever the setting is 'off'; a caller that only wants to notify
- * on its own tier (queue completion needs 'applied' specifically, not just
- * 'found') checks staxx_update_settings()['notify'] itself before calling.
+ * Silent when all three notify switches are off; a caller that only wants
+ * to notify on its own tier (queue completion needs "installed"
+ * specifically, not just "found") checks the relevant
+ * staxx_update_settings() switch itself before calling.
  */
 function staxx_update_notify(string $subject, string $body): void {
-  if (staxx_update_settings()['notify'] === 'off') return;
+  $s = staxx_update_settings();
+  if (!$s['notifyFound'] && !$s['notifyInstalled'] && !$s['notifyFailed']) return;
 
   staxx_sh(
     '/usr/local/emhttp/webGui/scripts/notify'

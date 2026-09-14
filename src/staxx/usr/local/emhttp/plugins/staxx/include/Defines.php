@@ -276,6 +276,49 @@ function staxx_cfg_bool(string $key): bool {
 }
 
 /**
+ * The three server-wide notify switches (PLAN_150 Phase 2), folding in the
+ * retired UPDATE_NOTIFY three-way choice for a config that has never been
+ * through the new settings panel. Shared between staxx_settings_read()
+ * (Settings.php, what the panel shows) and staxx_update_settings()
+ * (UpdateRun.php, what the update engine actually acts on), so an old config
+ * reads the same answer in both places rather than the panel showing "off"
+ * while the engine still behaves as "applied" underneath it.
+ *
+ * default.cfg deliberately does not define the three new keys, so their
+ * absence from the merged config means exactly "this store has never saved
+ * the new panel" — the moment it is saved once (the settings page posts
+ * every field on every save), all three land explicitly and this function
+ * stops looking at the retired key at all. A fresh install with no retired
+ * value either gets found=false, installed=false, failed=true, which is
+ * also what the retired 'off' mapped to.
+ *
+ * UPDATE_NOTIFY_FAILED starts on even for a retired-key config: nobody who
+ * asked to hear about updates meant "but not when one breaks".
+ *
+ * @return array{found:bool, installed:bool, failed:bool}
+ */
+function staxx_update_notify_map(array $cfg): array {
+  if (array_key_exists('UPDATE_NOTIFY_FOUND', $cfg)
+      || array_key_exists('UPDATE_NOTIFY_INSTALLED', $cfg)
+      || array_key_exists('UPDATE_NOTIFY_FAILED', $cfg)) {
+    return [
+      'found'     => (string)($cfg['UPDATE_NOTIFY_FOUND'] ?? 'false') === 'true',
+      'installed' => (string)($cfg['UPDATE_NOTIFY_INSTALLED'] ?? 'false') === 'true',
+      'failed'    => (string)($cfg['UPDATE_NOTIFY_FAILED'] ?? 'true') === 'true',
+    ];
+  }
+
+  $old = (string)($cfg['UPDATE_NOTIFY'] ?? 'off');
+  if (!in_array($old, ['off', 'found', 'applied'], true)) $old = 'off';
+
+  return [
+    'found'     => $old === 'found' || $old === 'applied',
+    'installed' => $old === 'applied',
+    'failed'    => true,
+  ];
+}
+
+/**
  * Where a request that wants StaXX's own view of the world should land —
  * '/StaXX' once either the header-menu button or the Docker-tab takeover is
  * on, '/Docker/Stacks' otherwise. Matches the marker-file test Stacks.page

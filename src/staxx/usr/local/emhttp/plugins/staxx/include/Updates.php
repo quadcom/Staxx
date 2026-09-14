@@ -2364,8 +2364,7 @@ function staxx_update_check(string $scope, bool $force): array {
   // and staxx_update_notify() both live in UpdateRun.php, which this file
   // must never require (that would be circular), so both calls are guarded.
   if ($newlyFound > 0 && function_exists('staxx_update_notify') && function_exists('staxx_update_settings')) {
-    $notify = staxx_update_settings()['notify'];
-    if ($notify === 'found' || $notify === 'applied') {
+    if (staxx_update_settings()['notifyFound']) {
       $waiting = 0;
       foreach (array_keys($images) as $img) {
         if (staxx_updates_pill_for_image($img, $images)['state'] === 'update') $waiting++;

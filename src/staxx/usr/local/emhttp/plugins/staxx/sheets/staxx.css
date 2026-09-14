@@ -10328,6 +10328,78 @@ dialog::backdrop {
   margin-bottom: 0;
 }
 
+/* PLAN_150 Phase 2 — the 'ticks' (pick-one) and 'flags' (independent on/off)
+ * settings controls. Real radio/checkbox inputs behind the marks, hidden the
+ * same way .staxx-switch above hides its own checkbox, so both stay
+ * keyboard-reachable and read correctly to a screen reader without hand-built
+ * ARIA. Values measured in a live session with Adrian on 2026-09-14 — not
+ * re-derived. */
+.staxx-tickrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 2.2rem;
+}
+.staxx-tickopt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.4rem;
+  line-height: 2.4rem;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+/* .staxx-scaffold prefix (0,2,1): same reasoning as .staxx-switch input
+   above — ties the marker's own input reset, which sets opacity:1. */
+.staxx-scaffold .staxx-tickopt input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.staxx-tickmark {
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+  color: var(--sm-line); /* unchosen default */
+}
+.staxx-tickmark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.staxx-tickword { color: var(--sm-muted); font-weight: 400; }
+/* Chosen: a ticks option that is picked, or a flags option that is on. */
+.staxx-tickopt input:checked ~ .staxx-tickmark { color: var(--sm-accent); }
+.staxx-tickopt input:checked ~ .staxx-tickword { color: var(--sm-fg); font-weight: 600; }
+.staxx-tickopt input:focus-visible ~ .staxx-tickmark {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.15rem;
+  border-radius: 0.3rem;
+}
+/* A flags option carries two marks and shows exactly one at a time — off is
+   always the red cross, never a faded tick, since off is a real answer here
+   rather than "nothing chosen yet". These come after the generic rules above
+   so they win on the marks they touch. */
+.staxx-flagopt .staxx-tickmark--tick { display: none; }
+.staxx-flagopt .staxx-tickmark--cross { display: inline-block; color: var(--sm-danger); }
+.staxx-flagopt input:checked ~ .staxx-tickmark--tick { display: inline-block; }
+.staxx-flagopt input:checked ~ .staxx-tickmark--cross { display: none; }
+
+/* The quiet-time pair sits half width each, under the quiet-time dropdown —
+ * see settingsBlockHtml()'s halfGroup handling in stacks.js. Placed in the
+ * install-timing block's right-hand grid column explicitly, since with only
+ * three items in a two-column grid the third would otherwise fall under the
+ * first (the delay field), not the second (the dropdown it belongs under). */
+.staxx-subfield-halfrow { display: flex; gap: 1.2rem; }
+.staxx-subfield--half { flex: 1 1 0; min-width: 0; }
+.staxx-field[data-key="install-timing"] .staxx-subfield-halfrow { grid-column: 2; }
+/* settingsLockQuietTimes() in stacks.js — greys just this pair when "only
+   install during a quiet time" says No, independently of the block-wide lock
+   above (which greys everything when Updates itself is Manual). */
+.staxx-subfield-halfrow--locked { opacity: .45; pointer-events: none; }
+
 /* The update-check activity table (SPEND_READOUT) — one row per registry,
  * the counts right-aligned since they are what the eye is comparing. */
 .staxx-stats {

@@ -43,7 +43,8 @@ foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT',
           'SHELL_WARNED', 'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK',
           'UPDATE_CHECK_TIME', 'UPDATE_MODE', 'UPDATE_DELAY_HOURS',
           'UPDATE_WINDOW', 'UPDATE_WINDOW_START', 'UPDATE_WINDOW_END',
-          'UPDATE_NOTIFY', 'UPDATE_RETAIN', 'UPDATE_CLEANUP'] as $k) {
+          'UPDATE_NOTIFY_FOUND', 'UPDATE_NOTIFY_INSTALLED', 'UPDATE_NOTIFY_FAILED',
+          'UPDATE_RETAIN', 'UPDATE_CLEANUP'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
@@ -96,6 +97,26 @@ ok('rejects HEADER_MENU "yes"', $v === '' && $err !== '', $err);
 $err = '';
 $v = staxx_settings_validate('ICON_FETCH', $keys['ICON_FETCH'], '', $err);
 ok('rejects ICON_FETCH ""', $v === '' && $err !== '', $err);
+
+// PLAN_150 Phase 2 — UPDATE_MODE still validates the two retired spellings
+// (a config already carrying one must not fail validation if it is ever
+// posted back), but only ever writes 'manual'/'auto' from the panel itself.
+foreach (['off', 'notify', 'manual', 'auto'] as $good) {
+  $err = '';
+  $v = staxx_settings_validate('UPDATE_MODE', $keys['UPDATE_MODE'], $good, $err);
+  ok('accepts UPDATE_MODE '.var_export($good, true), $v === $good, $err);
+}
+$err = '';
+$v = staxx_settings_validate('UPDATE_MODE', $keys['UPDATE_MODE'], 'sometimes', $err);
+ok('rejects an unrecognised UPDATE_MODE', $v === '' && $err !== '', $err);
+
+// The three notify switches are each a plain true/false choice, same as any
+// other boolean setting.
+foreach (['UPDATE_NOTIFY_FOUND', 'UPDATE_NOTIFY_INSTALLED', 'UPDATE_NOTIFY_FAILED'] as $k) {
+  $err = '';
+  $v = staxx_settings_validate($k, $keys[$k], 'maybe', $err);
+  ok('rejects '.$k.' "maybe"', $v === '' && $err !== '', $err);
+}
 
 // A good root under a real share whose parent exists. Deliberately NOT
 // directly under /mnt any more, which this case used to use: /mnt is a tmpfs
@@ -576,6 +597,82 @@ EOT;
 [$out3, $code3] = staxx_test_child($flashIni3, $child3);
 if (trim($out3) !== '') echo $out3;
 ok('Phase 4 child 3 (no store chosen: unchosen, not degraded)', $code3 === 0);
+
+// Child 4 — PLAN_150 Phase 2's old-config mapping. A store whose settings
+// file still only carries the retired UPDATE_MODE/UPDATE_NOTIFY spellings
+// (nothing has ever saved through the new panel) must read exactly as that
+// retired value meant, in BOTH staxx_settings_read() — what the panel shows —
+// and staxx_update_notify_map()/staxx_update_settings() — what the update
+// engine actually acts on — or the two would disagree the moment someone
+// opens Settings without touching anything.
+$storeDir4 = '/tmp/zzb1-settings-child4-'.getmypid();
+@exec('rm -rf '.escapeshellarg($storeDir4));
+mkdir($storeDir4.'/config', 0755, true);
+file_put_contents($storeDir4.'/config/staxx.cfg',
+  'UPDATE_MODE="off"'."\n"
+  .'UPDATE_NOTIFY="applied"'."\n");
+register_shutdown_function(function () use ($storeDir4) {
+  @exec('rm -rf '.escapeshellarg($storeDir4));
+});
+$flashIni4 = 'STORE_ROOT="'.$storeDir4.'"'."\n";
+
+$child4 = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+require '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
+$fails = 0;
+function check($cond, $label) { global $fails; if (!$cond) { echo "FAIL child: $label\n"; $fails++; } }
+
+// The retired three-way UPDATE_MODE spelling — 'off' and 'notify' never
+// behaved differently, both read as 'manual'.
+$u = staxx_update_settings();
+check($u['mode'] === 'manual', "UPDATE_MODE 'off' is read by the engine as manual, got {$u['mode']}");
+check($u['notifyFound'] === true, 'UPDATE_NOTIFY "applied" is read as found=true by the engine');
+check($u['notifyInstalled'] === true, 'UPDATE_NOTIFY "applied" is read as installed=true by the engine');
+check($u['notifyFailed'] === true, 'the failed switch starts on even for a retired-key config');
+
+require '/usr/local/emhttp/plugins/staxx/include/Settings.php';
+$read = staxx_settings_read();
+check($read['UPDATE_MODE'] === 'manual', "the panel shows UPDATE_MODE as manual, not the retired spelling, got {$read['UPDATE_MODE']}");
+check($read['UPDATE_NOTIFY_FOUND'] === 'true', 'the panel shows found=true from the retired key');
+check($read['UPDATE_NOTIFY_INSTALLED'] === 'true', 'the panel shows installed=true from the retired key');
+check($read['UPDATE_NOTIFY_FAILED'] === 'true', 'the panel shows failed=true from the retired key');
+
+exit($fails ? 1 : 0);
+EOT;
+
+[$out4, $code4] = staxx_test_child($flashIni4, $child4);
+if (trim($out4) !== '') echo $out4;
+ok('Phase 2 child 4 (retired UPDATE_MODE/UPDATE_NOTIFY: engine and panel agree)', $code4 === 0);
+
+// Child 5 — a store with none of the retired keys at all (a genuinely fresh
+// install) gets the new defaults: nothing on except the failed switch.
+$storeDir5 = '/tmp/zzb1-settings-child5-'.getmypid();
+@exec('rm -rf '.escapeshellarg($storeDir5));
+mkdir($storeDir5.'/config', 0755, true);
+file_put_contents($storeDir5.'/config/staxx.cfg', '');
+register_shutdown_function(function () use ($storeDir5) {
+  @exec('rm -rf '.escapeshellarg($storeDir5));
+});
+$flashIni5 = 'STORE_ROOT="'.$storeDir5.'"'."\n";
+
+$child5 = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+require '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
+$fails = 0;
+function check($cond, $label) { global $fails; if (!$cond) { echo "FAIL child: $label\n"; $fails++; } }
+
+$u = staxx_update_settings();
+check($u['mode'] === 'manual', 'a fresh config defaults to manual');
+check($u['notifyFound'] === false, 'a fresh config starts with found off');
+check($u['notifyInstalled'] === false, 'a fresh config starts with installed off');
+check($u['notifyFailed'] === true, 'a fresh config still starts with failed on');
+
+exit($fails ? 1 : 0);
+EOT;
+
+[$out5, $code5] = staxx_test_child($flashIni5, $child5);
+if (trim($out5) !== '') echo $out5;
+ok('Phase 2 child 5 (fresh config: manual, found/installed off, failed on)', $code5 === 0);
 
 staxx_test_restore_cfg();
 

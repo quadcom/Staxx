@@ -120,12 +120,23 @@ function staxx_settings_keys(): array {
     // service can override it — PLAN_45 Part G), and the rest of the update
     // pipeline's settings. None of these are read at page load either, so
     // none belong in $reload — the panel just closes on save.
-    'UPDATE_MODE'         => ['type' => 'choice', 'default' => 'notify', 'choices' => ['off', 'notify', 'auto']],
+    // 'off' and 'notify' are read as 'manual' — see staxx_update_settings()
+    // (UpdateRun.php) for why the three-way choice never behaved
+    // differently. Kept in `choices` only so a value already sitting in an
+    // old config still validates if it is ever posted back; the panel
+    // itself only ever offers the two real choices.
+    'UPDATE_MODE'         => ['type' => 'choice', 'default' => 'manual', 'choices' => ['off', 'notify', 'manual', 'auto']],
     'UPDATE_DELAY_HOURS'  => ['type' => 'number', 'default' => '24', 'min' => 0, 'max' => 720],
     'UPDATE_WINDOW'       => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
     'UPDATE_WINDOW_START' => ['type' => 'time',   'default' => '03:00'],
     'UPDATE_WINDOW_END'   => ['type' => 'time',   'default' => '05:00'],
-    'UPDATE_NOTIFY'       => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'found', 'applied']],
+    // Replaces the old three-way UPDATE_NOTIFY choice (PLAN_150 Phase 2).
+    // staxx_update_notify_map() (Defines.php) is what actually decides these
+    // three for a config that still only has the retired key — the defaults
+    // below are what a config with none of that history gets.
+    'UPDATE_NOTIFY_FOUND'     => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    'UPDATE_NOTIFY_INSTALLED' => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    'UPDATE_NOTIFY_FAILED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
     'UPDATE_CLEANUP'      => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'weekly']],
     // The password generator's own choices (PLAN_74 Part A) — a preference
@@ -155,11 +166,24 @@ function staxx_settings_keys(): array {
  * @return array<string, string>
  */
 function staxx_settings_read(): array {
-  $cfg = staxx_cfg();
-  $out = [];
+  $cfg    = staxx_cfg();
+  $notify = staxx_update_notify_map($cfg);
+  $out    = [];
   foreach (staxx_settings_keys() as $key => $spec) {
+    // The three notify keys are resolved together, not read straight off the
+    // config, so a config that has never been through this panel still shows
+    // what its retired UPDATE_NOTIFY value actually meant — see
+    // staxx_update_notify_map()'s own comment for why.
+    if ($key === 'UPDATE_NOTIFY_FOUND')     { $out[$key] = $notify['found']     ? 'true' : 'false'; continue; }
+    if ($key === 'UPDATE_NOTIFY_INSTALLED') { $out[$key] = $notify['installed'] ? 'true' : 'false'; continue; }
+    if ($key === 'UPDATE_NOTIFY_FAILED')    { $out[$key] = $notify['failed']    ? 'true' : 'false'; continue; }
+
     $v = trim((string)($cfg[$key] ?? ''));
     $v = $v !== '' ? $v : $spec['default'];
+    // The retired three-way spelling still lives in some configs' files;
+    // read it as its modern equivalent so the panel never has to offer a
+    // choice that no longer exists.
+    if ($key === 'UPDATE_MODE' && ($v === 'off' || $v === 'notify')) $v = 'manual';
     // The token itself never leaves the server once saved — the panel only
     // needs to know whether one is set, not what it is.
     if ($key === 'HUB_TOKEN') $v = $v !== '' ? STAXX_HUB_TOKEN_MASK : '';

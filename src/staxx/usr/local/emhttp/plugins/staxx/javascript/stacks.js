@@ -23781,21 +23781,22 @@
             'leaves your server. Pinned images are never looked at.'
     },
     {
-      key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found', tab: 'updates',
+      // PLAN_150 Phase 2: the old three-way choice never behaved differently
+      // for 'off' and 'notify' (the update engine only ever asked whether it
+      // was 'auto'), so the third option is gone rather than relabelled.
+      key: 'UPDATE_MODE', control: 'ticks', label: 'Updates', tab: 'updates',
       choices: [
-        ['off',    'Nothing — just show it on the row'],
-        ['notify', 'Wait for you to press Update, on the row\'s badge or its menu'],
-        ['auto',   'Install it by itself once the delay below has passed']
+        ['manual', 'Manual'],
+        ['auto',   'Automatic']
       ],
-      help: 'The default for every stack. A stack or a service can set its own in its compose ' +
+      help: 'The default for every container. A container can set its own in its compose ' +
             'file, and that wins over this.'
     },
     {
       key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing', tab: 'updates',
       block: 'install-timing', sublabel: 'Delay, in hours (0–720)',
-      help: 'Only used when the setting above is "Install it by itself". How long an update ' +
-            'sits on its row, counting down, before it installs itself. In hours, 0 to 720 ' +
-            '(30 days).'
+      help: 'Only used when the setting above is Automatic. How long an update sits on its ' +
+            'row, counting down, before it installs itself. In hours, 0 to 720 (30 days).'
     },
     {
       key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time', tab: 'updates',
@@ -23808,25 +23809,34 @@
             'waits for them to open rather than installing itself in the middle of anything.'
     },
     {
-      key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts', tab: 'updates',
-      block: 'install-timing', sublabel: 'Quiet time starts',
+      // PLAN_150 Phase 2: half-hourly pick-lists rather than clock inputs —
+      // quiet hours is a rough intention, nobody needs 3:07 — and moved to
+      // half width under the dropdown above (see settingsBlockHtml()'s
+      // halfGroup handling and settingsLockQuietTimes() below).
+      key: 'UPDATE_WINDOW_START', control: 'halfhour', label: 'Quiet time starts', tab: 'updates',
+      block: 'install-timing', sublabel: 'Quiet time starts', halfGroup: 'quiet-times',
       help: 'A 24-hour time, such as 03:00. The quiet time is allowed to run past midnight ' +
             'into the next day.'
     },
     {
-      key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends', tab: 'updates',
-      block: 'install-timing', sublabel: 'Quiet time ends',
+      key: 'UPDATE_WINDOW_END', control: 'halfhour', label: 'Quiet time ends', tab: 'updates',
+      block: 'install-timing', sublabel: 'Quiet time ends', halfGroup: 'quiet-times',
       help: 'A 24-hour time, such as 05:00.'
     },
     {
-      key: 'UPDATE_NOTIFY', control: 'choice', label: 'Notify me', tab: 'updates',
-      choices: [
-        ['off',     'Never'],
-        ['found',   'When a check finds something waiting'],
-        ['applied', 'That, and again once it has actually been installed']
-      ],
-      help: 'Sent through Unraid\'s own notification system — one message per check or per ' +
-            'queue finishing, never one per container.'
+      // PLAN_150 Phase 2: replaces the single UPDATE_NOTIFY three-way choice
+      // with three independent switches, one row each, sharing the
+      // 'notify-me' block so they draw on one line — see SETTINGS_BLOCKS.
+      key: 'UPDATE_NOTIFY_FOUND', control: 'flags', label: 'One is found', tab: 'updates',
+      block: 'notify-me'
+    },
+    {
+      key: 'UPDATE_NOTIFY_INSTALLED', control: 'flags', label: 'One is installed', tab: 'updates',
+      block: 'notify-me'
+    },
+    {
+      key: 'UPDATE_NOTIFY_FAILED', control: 'flags', label: 'One fails', tab: 'updates',
+      block: 'notify-me'
     },
     {
       key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous image releases to keep', tab: 'updates',
@@ -23917,10 +23927,16 @@
     },
     'install-timing': {
       tab: 'updates', label: 'When to install',
-      help: 'Only used when the setting above is “Install it by itself”. An update sits ' +
-            'on its row counting down the delay; if the delay runs out outside the quiet hours, ' +
-            'it waits for them to open rather than installing in the middle of anything. The ' +
-            'quiet time may run past midnight.'
+      help: 'Only used when Updates above is set to Automatic. An update sits on its row ' +
+            'counting down the delay; if the delay runs out outside the quiet hours, it waits ' +
+            'for them to open rather than installing in the middle of anything. The quiet time ' +
+            'may run past midnight.'
+    },
+    'notify-me': {
+      tab: 'updates', label: 'Notify me',
+      help: 'Sent through Unraid\'s own notification system — one message per check or per ' +
+            'queue finishing, never one per container. A container can take itself out in its ' +
+            'compose file.'
     },
     'hub-access': {
       tab: 'registries', label: 'Docker Hub access',
@@ -23944,6 +23960,25 @@
   // so a block's subgrid (several rows sharing one titled box, see
   // SETTINGS_BLOCKS above) can reuse it without the label/help/shots wrapper
   // that a full-width field also carries.
+  // Shared by the 'halfhour' control below. "HH:MM" (24-hour, what the
+  // server actually stores) to and from minutes since midnight, plus the
+  // "3:00 am" / "12:30 pm" label a quiet-time pick-list shows.
+  function staxxHHMMToMinutes(hhmm) {
+    var m = /^([0-9]{1,2}):([0-9]{2})$/.exec(hhmm || '');
+    if (!m) return 0;
+    return (parseInt(m[1], 10) || 0) * 60 + (parseInt(m[2], 10) || 0);
+  }
+  function staxxMinutesToHHMM(mins) {
+    var h = Math.floor(mins / 60), mm = mins % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+  function staxxMinutesToClock(mins) {
+    var h = Math.floor(mins / 60), mm = mins % 60;
+    var ampm = h < 12 ? 'am' : 'pm';
+    var h12 = h % 12 || 12;
+    return h12 + ':' + (mm < 10 ? '0' : '') + mm + ' ' + ampm;
+  }
+
   function settingsControlHtml(row, value) {
     if (row.control === 'readout') {
       // Nothing to save here — a static report filled in by loadSpendReadout()
@@ -23968,6 +24003,51 @@
                '>' + esc(o[1]) + '</option>';
       }).join('');
       return '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
+    } else if (row.control === 'ticks') {
+      // A pick-one row drawn as marks rather than a dropdown — real radio
+      // inputs behind them (hidden the same way .staxx-switch hides its
+      // checkbox) so it stays keyboard-reachable and reads correctly to a
+      // screen reader without inventing ARIA by hand. settingsControlValue()
+      // reads the checked one back by its shared `name`.
+      var tickOpts = row.choices.map(function (o, i) {
+        var checked = (o[0] === value) ? ' checked' : '';
+        return '<label class="staxx-tickopt"><input type="radio" name="' + row.id + '" ' +
+               'id="' + row.id + '-' + i + '" value="' + esc(o[0]) + '"' + checked + '>' +
+               '<svg class="staxx-tickmark" viewBox="0 0 16 16" aria-hidden="true">' +
+               '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+               '<span class="staxx-tickword">' + esc(o[1]) + '</span></label>';
+      }).join('');
+      return '<div class="staxx-tickrow" role="radiogroup" aria-label="' + esc(row.label) + '">' +
+             tickOpts + '</div>';
+    } else if (row.control === 'flags') {
+      // One independent on/off switch, drawn the same way as a tick option
+      // but with a checkbox: orange tick when on, red cross when off — never
+      // a faded tick, since off is a real answer here, not "unset".
+      var flagChecked = value === 'true' ? ' checked' : '';
+      return '<label class="staxx-tickopt staxx-flagopt"><input type="checkbox" id="' + row.id +
+             '" data-on="true" data-off="false"' + flagChecked + '>' +
+             '<svg class="staxx-tickmark staxx-tickmark--tick" viewBox="0 0 16 16" aria-hidden="true">' +
+             '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+             '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
+             '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
+             '<span class="staxx-tickword">' + esc(row.label) + '</span></label>';
+    } else if (row.control === 'halfhour') {
+      // 48 entries, half an hour apart — quiet hours is a rough intention,
+      // not something needing minute precision. A value already saved off
+      // the half hour (hand-edited, or from before this control existed)
+      // gets an extra entry of its own so it still shows rather than
+      // silently snapping to the nearest slot.
+      var mins = staxxHHMMToMinutes(value);
+      var slots = [];
+      for (var m = 0; m < 1440; m += 30) slots.push(m);
+      if (slots.indexOf(mins) === -1) slots.push(mins);
+      slots.sort(function (a, b) { return a - b; });
+      var hourOpts = slots.map(function (slotMins) {
+        var hhmm = staxxMinutesToHHMM(slotMins);
+        return '<option value="' + hhmm + '"' + (hhmm === value ? ' selected' : '') + '>' +
+               staxxMinutesToClock(slotMins) + '</option>';
+      }).join('');
+      return '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + hourOpts + '</select>';
     } else if (row.control === 'text' || row.control === 'password' || row.control === 'time' ||
                row.control === 'number') {
       // Docker Hub username/token — an ordinary box, and a masked one. Wears
@@ -24153,24 +24233,55 @@
   function settingsBlockHtml(blockId, values) {
     var def = SETTINGS_BLOCKS[blockId];
     if (!def) return '';
-    var subfields = SETTINGS_ROWS.filter(function (row) {
-      return row.block === blockId;
-    }).map(function (row) {
+    var rows = SETTINGS_ROWS.filter(function (row) { return row.block === blockId; });
+    // A block that is nothing but independent on/off switches (Notify me)
+    // draws as one tick row rather than the usual two-column grid of small
+    // labelled boxes — the switches carry their own labels already.
+    var allFlags = rows.length > 0 && rows.every(function (row) { return row.control === 'flags'; });
+
+    var seenHalf = {};
+    var subfields = rows.map(function (row) {
+      if (row.control === 'flags') return settingsControlHtml(row, values[row.key] || '');
+
+      if (row.halfGroup) {
+        // Two or more subfields sharing one halfGroup sit side by side at
+        // half width, in the one grid cell their group occupies — see the
+        // install-timing block's quiet-time fields, styled to sit under the
+        // quiet-time dropdown above them, and settingsLockQuietTimes() for
+        // how that pair greys out on its own.
+        if (seenHalf[row.halfGroup]) return '';
+        seenHalf[row.halfGroup] = true;
+        var halfFields = rows.filter(function (r) { return r.halfGroup === row.halfGroup; })
+          .map(function (r) {
+            return '<label class="staxx-subfield staxx-subfield--half">' +
+                   '<span class="staxx-sublabel">' + esc(r.sublabel) + '</span>' +
+                   settingsControlHtml(r, values[r.key] || '') + '</label>';
+          }).join('');
+        return '<div class="staxx-subfield-halfrow" data-group="' + esc(row.halfGroup) + '">' +
+               halfFields + '</div>';
+      }
+
       return '<label class="staxx-subfield"><span class="staxx-sublabel">' + esc(row.sublabel) + '</span>' +
              settingsControlHtml(row, values[row.key] || '') + '</label>';
     }).join('');
     return '<div class="staxx-field" data-key="' + esc(blockId) + '">' +
              '<span>' + esc(def.label) + '</span>' +
              '<span class="staxx-hint">' + def.help + '</span>' +
-             '<div class="staxx-subgrid">' + subfields + '</div>' +
+             '<div class="' + (allFlags ? 'staxx-tickrow' : 'staxx-subgrid') + '">' + subfields + '</div>' +
            '</div>';
   }
 
   function settingsControlValue(row) {
+    // A ticks row has no single element of its own — read the checked radio
+    // out of the group by its shared `name` instead.
+    if (row.control === 'ticks') {
+      var checkedTick = document.querySelector('input[name="' + row.id + '"]:checked');
+      return checkedTick ? checkedTick.value : '';
+    }
     var el = document.getElementById(row.id);
     if (!el) return '';
-    // A toggle's real value is one of its two data-* strings, not the
-    // checkbox's own on/off state.
+    // A toggle's (and a flag's) real value is one of its two data-*
+    // strings, not the checkbox's own on/off state.
     return el.type === 'checkbox' ? (el.checked ? el.dataset.on : el.dataset.off) : el.value;
   }
 
@@ -24775,6 +24886,7 @@
       loadSpendReadout();
       settingsLockTakeover();
       settingsLockTiming();
+      settingsLockQuietTimes();
       SETTINGS_ROWS.forEach(function (row) {
         if (row.control === 'list') settingsListDraw(document.getElementById(row.id));
       });
@@ -24881,12 +24993,29 @@
   // full row of disabled controls left in view read as broken rather than
   // as beside the point.
   function settingsLockTiming() {
-    var mode = document.getElementById('staxx-setting-update-mode');
+    // UPDATE_MODE is a tick row now, not one <select> — read the checked
+    // radio out of the group by its shared name instead of an element id.
+    var mode = document.querySelector('input[name="staxx-setting-update-mode"]:checked');
     var field = document.querySelector('.staxx-field[data-key="install-timing"]');
     if (!mode || !field) return;
     var locked = mode.value !== 'auto';
     field.classList.toggle('staxx-field--locked', locked);
     Array.prototype.forEach.call(field.querySelectorAll('select, input'), function (el) {
+      el.disabled = locked;
+    });
+  }
+
+  // PLAN_150 Phase 2: the quiet-time fields grey on their own, one level
+  // narrower than the block-wide lock above — they only mean nothing when
+  // the "only install during a quiet time" dropdown itself says No, which
+  // can be true while Updates is still Automatic.
+  function settingsLockQuietTimes() {
+    var win = document.getElementById('staxx-setting-update-window');
+    var halfrow = document.querySelector('.staxx-subfield-halfrow[data-group="quiet-times"]');
+    if (!win || !halfrow) return;
+    var locked = win.value === 'false';
+    halfrow.classList.toggle('staxx-subfield-halfrow--locked', locked);
+    Array.prototype.forEach.call(halfrow.querySelectorAll('select'), function (el) {
       el.disabled = locked;
     });
   }
@@ -24918,7 +25047,8 @@
 
     settingsBody.addEventListener('change', function (event) {
       if (event.target && event.target.id === 'staxx-setting-header-menu') settingsLockTakeover();
-      if (event.target && event.target.id === 'staxx-setting-update-mode') settingsLockTiming();
+      if (event.target && event.target.name === 'staxx-setting-update-mode') settingsLockTiming();
+      if (event.target && event.target.id === 'staxx-setting-update-window') settingsLockQuietTimes();
     });
 
     // Enter in a list control's add box adds, same as pressing the button —
