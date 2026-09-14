@@ -51,7 +51,6 @@
   // adopt branch) can be swapped back on the next ordinary open. The PHP
   // only renders this text once, so there is no other copy to fall back to.
   var nameHintEl      = nameField ? nameField.querySelector('.staxx-name-hint') : null;
-  var nameHintDefault = nameHintEl ? nameHintEl.textContent : '';
   var yamlPane    = document.getElementById('staxx-yaml');
   var yamlNums    = document.getElementById('staxx-yamlnums');
   var yamlMarks   = document.getElementById('staxx-yamlmarks');
@@ -595,6 +594,10 @@
   // ever shown alongside the quiet automatic lookup's own found-something
   // state, see showDetailOfferBar() further down.
   var scaffoldDismiss = document.getElementById('staxx-scaffold-dismiss');
+  // PLAN_145 Part 2 — the folded strip that stands in for the scaffold
+  // offer and the author's-example field notes once the dialog is narrower
+  // than a desktop. See syncNoteStrip() below for what it holds.
+  var noteStrip = document.getElementById('staxx-notestrip');
   // PLAN_106 phase 4: latches true the first time this editor session's
   // reparse() finds a flagged dollar sign, so the modal is offered once per
   // open rather than reopening itself on every keystroke reparse() already
@@ -1918,7 +1921,43 @@
       // document has not changed just because the pane became visible.
       redrawDots();
     }
+    syncViewRow();
+    // PLAN_145 round 3 — Split is the one view the handle means anything in;
+    // restore a saved ratio (or leave the grid at its 1fr/1fr default) now
+    // that the pane is actually showing and has a real width to measure.
+    if (view === 'split') applySplit();
   }
+
+  // PLAN_145 round 2, Part A — below 96rem of dialog width the header's
+  // Form/Split/Compose group is hidden and replaced by one toggle inside the
+  // Configure tab (.staxx-viewrow, two copies in the markup, only one ever
+  // shown — see the comment on each in StacksPage.php). 960 = 96rem at the
+  // sheet's own 10px root, the same trap NOTESTRIP_BREAKPOINT above is kept
+  // beside its own CSS figure for: nothing here can read a container query's
+  // threshold back out, so it is restated rather than shared.
+  var VIEWROW_BREAKPOINT = 960;
+
+  function syncViewRow() {
+    var narrow = modal.getBoundingClientRect().width <= VIEWROW_BREAKPOINT;
+    var rows = modal.querySelectorAll('.staxx-viewrow');
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].hidden = !narrow;
+      var cb = rows[i].querySelector('.staxx-viewswitch');
+      // Split reads as unchecked here on purpose: below this width the CSS
+      // already collapses split to the form alone, and the stored view is
+      // left untouched (see setView()'s own narrow coercion) — so "checked"
+      // means "showing yaml", nothing else.
+      if (cb) cb.checked = (modalBody.dataset.view === 'yaml');
+    }
+  }
+
+  // Delegated: both copies of the toggle share one handler. Calls the same
+  // setView() the header's own Form/Compose buttons call — never a second,
+  // parallel way of deciding the view.
+  modal.addEventListener('change', function (event) {
+    if (!event.target.classList.contains('staxx-viewswitch')) return;
+    setView(event.target.checked ? 'yaml' : 'form');
+  });
 
   // The dialog's own width now glides between Form and Split (CSS transition),
   // so the gutter's highlight bands — positioned with inline pixel values —
@@ -1928,6 +1967,10 @@
   modal.addEventListener('transitionend', function (e) {
     if (e.target === modal && e.propertyName === 'width' &&
         modalBody.dataset.view !== 'form') { syncGutter(); repaintMark(); }
+    // The Form/Split glide is the one width change this dialog makes on its
+    // own (everything else is the window being dragged), so it is one of the
+    // two places PLAN_145's note strip has to recheck the dialog's own width.
+    if (e.target === modal && e.propertyName === 'width') syncNoteStrip();
   });
 
   // Crossing the threshold with the editor open. Only Split has to move, and
@@ -1936,6 +1979,110 @@
   NARROW.addEventListener('change', function () {
     if (modal.open && modalBody.dataset.view === 'split') setView('form');
   });
+
+  // PLAN_145 Part 2 — NARROW (above) only ever tracks the 45rem VIEWPORT
+  // breakpoint, a different figure for a different purpose; the note strip
+  // folds against the DIALOG's own width (130rem container query in
+  // staxx.css), which a window resize changes continuously with no
+  // transition to catch. A ResizeObserver on the dialog itself is the one
+  // reliable way to notice that: there was no existing per-dialog resize
+  // path to hang this from, whatever an earlier reading of the code hoped.
+  // PLAN_145 round 2, Part A: the view-row toggle folds at its own width the
+  // same way the note strip does, so it rides the same observer rather than
+  // opening a second one against the same element.
+  if (window.ResizeObserver) {
+    // PLAN_145 round 3: applySplit() re-clamps --staxx-split against the
+    // dialog's current width, the same width this observer already exists to
+    // notice a window drag or the Form/Split glide change continuously.
+    new ResizeObserver(function () { if (modal.open) { syncNoteStrip(); syncViewRow(); applySplit(); } }).observe(modal);
+  }
+
+  // PLAN_145 round 3, Part B — the drag handle between the form and the
+  // compose panes in Split view. --staxx-split is a px value written onto
+  // .staxx-modal-body; the split grid's first track reads it and falls back
+  // to 1fr when it is absent (see .staxx-modal-body in the stylesheet). The
+  // handle itself lives between the two panes in the markup, one grid track
+  // wide (0.8rem — SPLIT_HANDLE below is that same figure in px, since a
+  // dialog-width calculation done here has no rem to read).
+  var SPLIT_RATIO_KEY = 'staxx.splitRatio';
+  var SPLIT_HANDLE = 8;    // 0.8rem at the sheet's 10px root — the handle's own track
+  var SPLIT_FLOOR = 240;   // Adrian's agreed minimum width for either pane
+
+  // Called on dialog open, on entering Split, and from the ResizeObserver
+  // above — the three moments the form pane's width needs re-deciding. A
+  // saved ratio (not a px value) is what survives a window of a different
+  // size opening later with the same proportion.
+  function applySplit() {
+    var handle = document.getElementById('staxx-splitter');
+    if (!handle) return;
+    var bodyW = modalBody.getBoundingClientRect().width;
+    if (!bodyW) return;   // dialog not actually laid out yet — nothing to clamp against
+    var ratio = null;
+    try {
+      var saved = localStorage.getItem(SPLIT_RATIO_KEY);
+      if (saved) ratio = parseFloat(saved);
+    } catch (e) { /* a private window throws on localStorage access */ }
+    if (!ratio || !isFinite(ratio)) { modalBody.style.removeProperty('--staxx-split'); return; }
+    var track = bodyW - SPLIT_HANDLE;
+    var w = Math.max(SPLIT_FLOOR, Math.min(ratio * track, track - SPLIT_FLOOR));
+    if (isFinite(w) && w > 0) modalBody.style.setProperty('--staxx-split', w + 'px');
+  }
+
+  function initSplitter() {
+    var handle = document.getElementById('staxx-splitter');
+    if (!handle) return;
+    var dragging = false, startX = 0, startW = 0, moved = false;
+
+    handle.addEventListener('pointerdown', function (e) {
+      var formPane = modal.querySelector('.staxx-pane--form');
+      if (!formPane) return;
+      startW = formPane.getBoundingClientRect().width;
+      startX = e.clientX;
+      dragging = true;
+      moved = false;
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    // Every move, not throttled to a frame — the pane's own content (the
+    // compose textarea) does not repaint mid-drag, only the grid track does,
+    // so there is nothing here expensive enough to need rationing.
+    handle.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      if (dx !== 0) moved = true;
+      var bodyW = modalBody.getBoundingClientRect().width;
+      var w = Math.max(SPLIT_FLOOR, Math.min(startW + dx, bodyW - SPLIT_HANDLE - SPLIT_FLOOR));
+      modalBody.style.setProperty('--staxx-split', w + 'px');
+    });
+
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      if (!moved) return;   // a plain click, not a drag — nothing to save or repaint
+      var bodyW = modalBody.getBoundingClientRect().width;
+      var formPane = modal.querySelector('.staxx-pane--form');
+      var w = formPane ? formPane.getBoundingClientRect().width : 0;
+      if (w) {
+        try { localStorage.setItem(SPLIT_RATIO_KEY, String(w / (bodyW - SPLIT_HANDLE))); }
+        catch (e) { /* private window — the ratio just does not survive this open */ }
+      }
+      // The gutter's highlight bands are positioned in pixels against the
+      // compose pane, which the drag just resized — the same repaint the
+      // view switch runs when a pane's width changes under it.
+      paintGutter(); paintInk(); syncGutter(); repaintMark(); redrawDots();
+    }
+    handle.addEventListener('pointerup', endDrag);
+    handle.addEventListener('pointercancel', endDrag);
+
+    // Back to the middle: drop the override and the saved ratio together, so
+    // a later open starts from the grid's own 1fr/1fr default again.
+    handle.addEventListener('dblclick', function () {
+      modalBody.style.removeProperty('--staxx-split');
+      try { localStorage.removeItem(SPLIT_RATIO_KEY); } catch (e) {}
+      paintGutter(); paintInk(); syncGutter(); repaintMark(); redrawDots();
+    });
+  }
+  initSplitter();
 
   /* ---- the form, drawn from the parsed file ---- */
 
@@ -3526,7 +3673,10 @@
         if (f.watchAdvice[wi].side === 'added') wAdded++; else wDropped++;
       }
       if (wAdded) {
-        out += '<p class="staxx-fieldnote">' +
+        // data-note="author" (PLAN_145 Part 2): so the below-desktop note
+        // strip can collect this one by attribute rather than by matching
+        // its English sentence, which a wording change would silently break.
+        out += '<p class="staxx-fieldnote" data-note="author">' +
           (wAdded === 1 ? 'The author\'s published example also sets this.'
                         : 'The author\'s published example also sets ' + wAdded + ' more things here.') +
           '</p>';
@@ -4816,6 +4966,7 @@
       scaffoldNote.textContent = '';
       scaffoldNote.dataset.mode = '';
       if (scaffoldDismiss) scaffoldDismiss.hidden = true;
+      syncNoteStrip();
       return;
     }
 
@@ -4843,6 +4994,7 @@
     }
     scaffoldNote.hidden = false;
     if (scaffoldDismiss) scaffoldDismiss.hidden = true;
+    syncNoteStrip();
   }
 
   if (scaffoldNote) scaffoldNote.addEventListener('click', function () {
@@ -4867,7 +5019,180 @@
     scaffoldNote.hidden = true;
     scaffoldNote.textContent = '';
     scaffoldNote.dataset.mode = '';
+    syncNoteStrip();
   });
+
+  /* ---- PLAN_145 Part 2: the folded note strip ----------------------------
+   *
+   * Below desktop width the scaffold offer bar, every author's-example field
+   * note, and #staxx-watch-note are folded into one line, "▸ N notes", so
+   * the form is not pushed below the fold by prose nobody asked to read yet.
+   *
+   * ONLY ADVICE FOLDS (Adrian's rule, settled live round 2, 2026-09-13): the
+   * three named above are the whole list — things worth knowing, never
+   * things that need an answer. Every other warning in this dialog
+   * (#staxx-error, #staxx-missing, #staxx-makepaths, #staxx-inusepaths,
+   * #staxx-clash-note, #staxx-link-note, #staxx-required-note) stays visible
+   * in full at every width: folding away the reason a save failed would be
+   * worse than the height it costs.
+   *
+   * The scaffold bar and the field notes stay put and are only marked
+   * hidden — the strip is built fresh from their text each time this runs,
+   * same as round 1. #staxx-watch-note is different: it carries its own
+   * per-finding Dismiss buttons, each read by a click handler bound directly
+   * to the node itself (see paintWatchNote() above), so copying its text
+   * into a strip item would draw dead buttons. It is physically moved into
+   * the strip instead — watchNoteHome remembers where it came from — and
+   * moved back the moment the strip collapses or the dialog widens back out.
+   * Above desktop the originals are unhidden (or, for the watch note,
+   * restored to .staxx-modal-foot) and the strip goes empty — none of them
+   * ever show in both places at once.
+   */
+
+  // 1300 is 130rem at the sheet's own 10px root (see the .staxx-modal
+  // container query in staxx.css) — kept next to that figure in a comment
+  // rather than shared as a value, since nothing here can read a CSS
+  // custom property's used pixel value back out.
+  var NOTESTRIP_BREAKPOINT = 1300;
+  var noteStripFolded = [];   // originals (scaffold bar, field notes) currently hidden by the strip
+  var syncingNoteStrip = false;
+  var watchNoteHome = null;   // {parent, next}: set only while #staxx-watch-note is living inside the strip
+
+  // Puts #staxx-watch-note back exactly where it was before it moved into
+  // the strip. A no-op once already home — every caller can reach for this
+  // unconditionally rather than checking first.
+  function restoreWatchNoteHome() {
+    if (!watchNoteHome) return;
+    if (watchNoteHome.next && watchNoteHome.next.parentNode === watchNoteHome.parent) {
+      watchNoteHome.parent.insertBefore(watchNote, watchNoteHome.next);
+    } else {
+      watchNoteHome.parent.appendChild(watchNote);
+    }
+    watchNoteHome = null;
+  }
+
+  function renderNoteStrip(items, watchSpanCount) {
+    var open = noteStrip.dataset.open === '1';
+    var count = items.length + watchSpanCount;
+    // Whatever else this call does, #staxx-watch-note only ever belongs
+    // inside the strip while there is something in it to show — a refresh
+    // that emptied it out (paintWatchNote(), a Dismiss click) has to land
+    // here too, not only the user closing the strip by hand, or the node
+    // is left detached: a moment ago the innerHTML write below would have
+    // discarded it outright, not merely hidden it.
+    if (!watchSpanCount) restoreWatchNoteHome();
+    if (!open) {
+      noteStrip.innerHTML = '<button type="button" class="staxx-notestrip__toggle">' +
+        '▸ ' + count + (count === 1 ? ' note' : ' notes') + '</button>';
+      noteStrip.querySelector('.staxx-notestrip__toggle').addEventListener('click', function () {
+        noteStrip.dataset.open = '1';
+        renderNoteStrip(items, watchSpanCount);
+      });
+      return;
+    }
+    var html = '<div class="staxx-notestrip__items">';
+    for (var i = 0; i < items.length; i++) {
+      html += items[i].cb
+        ? '<button type="button" class="staxx-notestrip__item" data-i="' + i + '">' + esc(items[i].text) + '</button>'
+        : '<p class="staxx-notestrip__item">' + esc(items[i].text) + '</p>';
+    }
+    html += '</div><button type="button" class="staxx-notestrip__close" aria-label="Collapse the notes">' +
+      '×</button>';
+    noteStrip.innerHTML = html;
+    var btns = noteStrip.querySelectorAll('.staxx-notestrip__item[data-i]');
+    for (var b = 0; b < btns.length; b++) {
+      // Closed over the item its own data-i names, not the loop variable —
+      // the usual stale-closure trap in a plain for loop.
+      (function (item) {
+        btns[b].addEventListener('click', function () { item.cb(); });
+      })(items[parseInt(btns[b].dataset.i, 10)]);
+    }
+    // #staxx-watch-note moves in here, after the built items — an
+    // appendChild of the real node (captured home on the first move only),
+    // never a rebuild, so its Dismiss buttons keep working.
+    if (watchSpanCount && watchNote) {
+      if (!watchNoteHome) watchNoteHome = { parent: watchNote.parentNode, next: watchNote.nextSibling };
+      noteStrip.querySelector('.staxx-notestrip__items').appendChild(watchNote);
+      watchNote.hidden = false;
+    }
+    noteStrip.querySelector('.staxx-notestrip__close').addEventListener('click', function () {
+      // Collapsing only folds the strip back up — the notes underneath are
+      // untouched, so a "Not now"-style dismissal still has to be the
+      // original bar's own button, reached by opening the strip again.
+      noteStrip.dataset.open = '0';
+      renderNoteStrip(items, watchSpanCount);
+    });
+  }
+
+  function syncNoteStrip() {
+    if (!noteStrip || syncingNoteStrip) return;   // defensive: no strip in this markup, or already mid-run
+    syncingNoteStrip = true;
+    try {
+      // Undo the previous pass first. reparse() rebuilds the form pane's
+      // markup wholesale, so a remembered field note may already be gone
+      // from the document by the time this runs again — unhiding a
+      // detached node is harmless, which makes "restore, then recollect"
+      // simpler than tracking whether each one survived.
+      for (var i = 0; i < noteStripFolded.length; i++) noteStripFolded[i].hidden = false;
+      noteStripFolded = [];
+
+      var below = modal.getBoundingClientRect().width <= NOTESTRIP_BREAKPOINT;
+      if (!below) {
+        restoreWatchNoteHome();
+        noteStrip.hidden = true;
+        noteStrip.innerHTML = '';
+        delete noteStrip.dataset.open;
+        return;
+      }
+
+      var items = [];
+      if (scaffoldNote && !scaffoldNote.hidden) {
+        items.push({ text: scaffoldNote.textContent, cb: function () { scaffoldNote.click(); } });
+        noteStripFolded.push(scaffoldNote);
+        // Its "Not now" cross stands beside the bar, not inside it, so it has
+        // to fold and unfold with the bar or a lone x is left floating (seen
+        // in the phone-width guide shot, 2026-09-13).
+        if (scaffoldDismiss && !scaffoldDismiss.hidden) noteStripFolded.push(scaffoldDismiss);
+      }
+      // data-note="author" (set where the note is written, PLAN_62's watch-
+      // advice block above) rather than matching the English sentence — a
+      // wording change should not silently stop this collecting it.
+      var authorNotes = modalBody.querySelectorAll('.staxx-pane--form .staxx-fieldnote[data-note="author"]:not([hidden])');
+      for (var j = 0; j < authorNotes.length; j++) {
+        // Plain text, not a button: this note has no click action of its own
+        // (checked directly — it carries no delegated handler anywhere in
+        // this file), so the strip shows it as a paragraph, not a button.
+        items.push({ text: authorNotes[j].textContent, cb: null });
+        noteStripFolded.push(authorNotes[j]);
+      }
+
+      // Counted by its own <span> children, one per sentence — see
+      // paintWatchNote() above — rather than as a single item, so "3 notes"
+      // means three things worth reading, not "the offer bar, a field note,
+      // and one more thing however long".
+      var watchSpanCount = 0;
+      if (watchNote && !watchNote.hidden) {
+        var watchKids = watchNote.children;
+        for (var s = 0; s < watchKids.length; s++) {
+          if (watchKids[s].tagName === 'SPAN') watchSpanCount++;
+        }
+      }
+
+      if (!items.length && !watchSpanCount) {
+        restoreWatchNoteHome();
+        noteStrip.hidden = true;
+        noteStrip.innerHTML = '';
+        delete noteStrip.dataset.open;
+        return;
+      }
+
+      for (var k = 0; k < noteStripFolded.length; k++) noteStripFolded[k].hidden = true;
+      renderNoteStrip(items, watchSpanCount);
+      noteStrip.hidden = false;
+    } finally {
+      syncingNoteStrip = false;
+    }
+  }
 
   // A file the parser cannot read as a mapping at all has no services, which
   // renderForm() would otherwise draw as an almost-empty form — reading as
@@ -6194,7 +6519,12 @@
   function paintWatchNote(leftover) {
     if (!watchNote) return;
     var groups = watchLeftoverSentences(leftover);
-    if (!watchNotes.length && !groups.length) { watchNote.hidden = true; watchNote.innerHTML = ''; return; }
+    if (!watchNotes.length && !groups.length) {
+      watchNote.hidden = true;
+      watchNote.innerHTML = '';
+      syncNoteStrip();   // PLAN_145 round 2 — the strip must notice this one emptied out too
+      return;
+    }
     var lines = watchNotes.map(function (l) { return '<span>' + esc(l) + '</span>'; })
       .concat(groups.map(function (g) {
         var wSrc = watchHomeSourceNote(g.home_from);
@@ -6203,6 +6533,10 @@
       }));
     watchNote.innerHTML = lines.join('<br>');
     watchNote.hidden = false;
+    // PLAN_145 round 2 Part C: the one choke point every caller of this
+    // function goes through, so a watch-note refresh re-collects the strip
+    // rather than leaving a stale count or a since-changed node behind it.
+    syncNoteStrip();
   }
 
   // Drops one dismissed finding out of watchFacts so every surface (this
@@ -6311,6 +6645,12 @@
     updateRequired();
     updateMissing();
     updateScaffoldNote();
+    // updateScaffoldNote() already calls syncNoteStrip(), but the form pane's
+    // markup was just rebuilt from scratch (line above), which is the other
+    // half of what the strip collects — a fresh pass over the author-example
+    // notes it just painted, not only the offer bar.
+    syncNoteStrip();
+    syncViewRow();   // PLAN_145 round 2 — same settle point, a second toggle to keep in sync
     maybeOfferDollarFixes();   // PLAN_106 phase 4 — latched, so this is a no-op after the first call
     checkImageSettle();   // PLAN_84 phase 5 — the automatic "fill in details" trigger
     relint();
@@ -14062,10 +14402,13 @@
     // on every other open, or a locked box would silently survive into the
     // next "Add stack".
     nameInput.readOnly = !!adopt;
+    // The hint line is empty and hidden on every other open (PLAN_145 dropped
+    // the standing sentence); the adopt case is the one that still needs it.
     if (nameHintEl) {
       nameHintEl.textContent = adopt
         ? 'This folder has no compose file yet — saving here writes one, so the name cannot be changed.'
-        : nameHintDefault;
+        : '';
+      nameHintEl.hidden = !adopt;
     }
     nameField.hidden = false;
 
@@ -14144,6 +14487,10 @@
 
     lockScroll(true);
     modal.showModal();
+    // PLAN_145 round 3 — only now does the dialog have a real width to
+    // measure a saved split ratio against; setView() above ran while it was
+    // still closed, so a fresh open must re-apply it here.
+    applySplit();
 
     // Put the open stack in the address bar the same way #settings already
     // does, so a refresh reopens it — replaceState, never pushState, or Back
@@ -19804,6 +20151,7 @@
       'entry and own page — review them?';
     scaffoldNote.hidden = false;
     if (scaffoldDismiss) scaffoldDismiss.hidden = false;
+    syncNoteStrip();
   }
 
   // Debounced the same 400ms the compose pane's own settle timer uses (see
@@ -24094,7 +24442,10 @@
 
   // One table row per registry host — the counts in their own columns, and
   // whatever is worth saying beyond the numbers (an assumed allowance, a
-  // downloads-left figure, a refused free form) in a trailing note column.
+  // downloads-left figure, a refused free form) returned separately as this
+  // row's note rather than baked into a trailing column: a narrow phone
+  // panel has no room for a sixth column, and two registries reporting the
+  // same thing would otherwise repeat the same sentence twice.
   // docker.io is named "Docker Hub" throughout, since nobody who set the
   // sign-in fields above thinks of it any other way; every other host is
   // shown by its own address.
@@ -24127,10 +24478,13 @@
       notes.unshift('Stopped answering ' + timeAgoWords(row.refusedAt) + ' ago.');
     }
 
-    return '<tr><td>' + name + '</td>' +
-           '<td>' + row.askedHour + '</td><td>' + row.askedDay + '</td>' +
-           '<td>' + row.paidHour + '</td><td>' + row.paidDay + '</td>' +
-           '<td class="staxx-stats-note">' + notes.join(' ') + '</td></tr>';
+    return { name: name, note: notes.join(' '), row: row };
+  }
+
+  // Turns the note text ('' for none) into the sup-marker HTML for the
+  // registry name, using markers already handed out in markerByNote.
+  function spendMarkerSup(note, markerByNote) {
+    return note && markerByNote[note] ? '<sup>' + markerByNote[note] + '</sup>' : '';
   }
 
   function loadSpendReadout() {
@@ -24141,11 +24495,41 @@
         box.textContent = 'Could not read the figures just now.';
         return;
       }
-      box.innerHTML = res.spend.length
-        ? '<table class="staxx-stats"><thead><tr><th>Registry</th><th>Asks this hour</th>' +
-          '<th>Asks today</th><th>Counted this hour</th><th>Counted today</th><th></th></tr></thead>' +
-          '<tbody>' + res.spend.map(spendHostRow).join('') + '</tbody></table>'
-        : '<p>No registry has been asked yet. Figures appear after the first check.</p>';
+      if (!res.spend.length) {
+        box.innerHTML = '<p>No registry has been asked yet. Figures appear after the first check.</p>';
+        return;
+      }
+
+      var hosts = res.spend.map(spendHostRow);
+
+      // Markers in order of first appearance, one per distinct wording —
+      // so two registries reporting the same thing share a single footnote
+      // instead of the sentence being repeated once per row.
+      var markers = ['*', '**', '***', '****', '*****', '******'];
+      var markerByNote = {};
+      var order = [];
+      hosts.forEach(function (h) {
+        if (h.note && !markerByNote[h.note]) {
+          markerByNote[h.note] = markers[order.length] || markers[markers.length - 1];
+          order.push(h.note);
+        }
+      });
+
+      var rows = hosts.map(function (h) {
+        return '<tr><td>' + h.name + spendMarkerSup(h.note, markerByNote) + '</td>' +
+               '<td>' + h.row.askedHour + '</td><td>' + h.row.askedDay + '</td>' +
+               '<td>' + h.row.paidHour + '</td><td>' + h.row.paidDay + '</td></tr>';
+      }).join('');
+
+      var foot = order.length
+        ? '<div class="staxx-stats-foot">' +
+          order.map(function (note) { return '<div>' + markerByNote[note] + ' ' + note + '</div>'; }).join('') +
+          '</div>'
+        : '';
+
+      box.innerHTML = '<table class="staxx-stats"><thead><tr><th>Registry</th><th>Asks this hour</th>' +
+        '<th>Asks today</th><th>Counted this hour</th><th>Counted today</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>' + foot;
     });
   }
 

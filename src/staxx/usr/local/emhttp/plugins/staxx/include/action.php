@@ -1203,9 +1203,14 @@ switch ($action) {
     $touched = (string)($_POST['stack'] ?? '');
     if ($touched !== '') staxx_update_refresh_after_run($touched, (string)($_POST['service'] ?? ''));
 
+    // PLAN_144 — the table overlays a "N to look at" pill on whole-stack and
+    // folder entries (staxx_watch_apply_pill()); doing the same here stops
+    // this reply contradicting a pill the table already drew, which is what
+    // was stripping every chip after the first refresh. Service rows are
+    // left alone — the table never overlays those either.
     $rows = [];
     foreach (staxx_list_stacks() as $s) {
-      $rows[$s['name']] = staxx_updates_for_row($s['name']);
+      $rows[$s['name']] = staxx_watch_apply_pill(staxx_updates_for_row($s['name']), staxx_watch_count_for_stack($s['name']));
       if ($s['file'] === '') continue;
       $meta = staxx_compose_meta($s['file']);
       if (!$meta['ok']) continue;
@@ -1215,7 +1220,7 @@ switch ($action) {
     }
     $folders = [];
     foreach (staxx_folder_names() as $f) {
-      $folders[$f] = staxx_updates_for_folder($f);
+      $folders[$f] = staxx_watch_apply_pill(staxx_updates_for_folder($f), staxx_watch_count_for_folder($f));
     }
     staxx_reply([
       'ok'      => true,

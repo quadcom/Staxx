@@ -520,6 +520,19 @@ function staxx_watch_count_for_stack(string $stack): int {
 }
 
 /**
+ * PLAN_144 — lifted out of the folder render so action.php's `updates` reply
+ * can sum the same stacks the table did; two call sites computing this
+ * separately is how the reply used to contradict the pill the table drew.
+ */
+function staxx_watch_count_for_folder(string $folder): int {
+  $count = 0;
+  foreach (staxx_scan_stacks()['stacks'] as $watchStack) {
+    if (strpos($watchStack['rel'], $folder.'/') === 0) $count += staxx_watch_count_for_stack($watchStack['rel']);
+  }
+  return $count;
+}
+
+/**
  * Overlays a "N to look at" pill onto one already computed by
  * staxx_updates_for_row()/staxx_updates_for_folder() — the same way PLAN_61's
  * 'moved' is promoted only from 'current' (see
@@ -1762,11 +1775,7 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
       // image of its own to check.
       $fUpdate = staxx_updates_for_folder($row['id']);
       // PLAN_62 Stage 3 — summed the same way, over the same stacks.
-      $fWatch = 0;
-      foreach (staxx_scan_stacks()['stacks'] as $watchStack) {
-        if (strpos($watchStack['rel'], $row['id'].'/') === 0) $fWatch += staxx_watch_count_for_stack($watchStack['rel']);
-      }
-      $fUpdate = staxx_watch_apply_pill($fUpdate, $fWatch);
+      $fUpdate = staxx_watch_apply_pill($fUpdate, staxx_watch_count_for_folder($row['id']));
 ?>
       <div class="staxx-group staxx-group--folder" role="presentation" data-folder-group="<?= htmlspecialchars($row['id']) ?>">
         <div class="staxx-row staxx-folder-row" role="row" aria-level="1"

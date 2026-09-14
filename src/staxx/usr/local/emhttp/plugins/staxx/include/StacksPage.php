@@ -451,15 +451,22 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
            file, and calling it a folder made it read as the folder in the
            list — which is a different thing sitting one level above it. That
            one is shown beside it, as context, and is changed with "Move to
-           folder". The hint is a visible line rather than a title attribute,
-           because a tooltip cannot be reached on a phone and this sentence is
-           the one that tells the two apart. -->
+           folder". The explaining sentence that used to sit under the input
+           was dropped 2026-09-13 (Adrian: not needed any more) — the label
+           already says "Stack name" and the folder chip beside it gives the
+           context, at every width, not just the phone width the sentence was
+           originally written for. -->
       <label class="staxx-modal-name" id="staxx-name-field">
         <span><?= _('Stack name') ?></span>
         <span class="staxx-name-folder" id="staxx-name-folder" hidden></span>
         <input type="text" id="staxx-name" spellcheck="false" <?= $nofill ?>
                placeholder="<?= _('jellyfin') ?>">
-        <span class="staxx-name-hint"><?= _("The folder that holds this stack's compose file. Renaming it moves the folder.") ?></span>
+        <!-- Empty and hidden except while adopting a folder that has no
+             compose file yet: then stacks.js writes the one sentence that
+             explains why the name box is locked (the folder itself is the
+             thing being repaired). The standing sentence that used to live
+             here is gone — see the comment above. -->
+        <span class="staxx-name-hint" id="staxx-name-hint" hidden></span>
       </label>
 
       <div class="staxx-modal-tools">
@@ -663,6 +670,23 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     <div class="staxx-modal-body" data-view="split">
 
       <div class="staxx-pane staxx-pane--form">
+        <!-- PLAN_145 round 2, Part A: below 96rem of dialog width the header's
+             Form/Split/Compose group is hidden (three buttons made the tab
+             strip jump height against Manage) and this one toggle takes its
+             place, styled like the autostart switch. Two copies exist — this
+             one and the matching one at the top of .staxx-pane--yaml below —
+             so it is at the top of whichever pane is actually showing, rather
+             than one node being moved between panes at render time. Neither
+             pane is itself the scroller (#staxx-form and the compose textarea
+             scroll on their own), so this row stays put at the top rather
+             than scrolling away with the content. Shown/hidden and kept in
+             sync with the current view by stacks.js's syncViewRow(); see
+             .staxx-viewrow in the stylesheet for the width it hides below. -->
+        <div class="staxx-viewrow" hidden>
+          <label class="staxx-switch"><input type="checkbox" role="switch" class="staxx-viewswitch">
+            <span class="staxx-switch-track" aria-hidden="true"></span>
+            <span class="staxx-switch-text"><?= _('Show the compose file') ?></span></label>
+        </div>
         <!-- Why the form is locked, shown only while a companion file's tab is
              open. It sits above #staxx-form rather than inside it because
              reparse() replaces that element's contents wholesale, and it would
@@ -678,7 +702,25 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         </div>
       </div>
 
+      <!-- PLAN_145 round 3, Part B: the drag handle between the two panes in
+           Split view. Only shown there — CSS hides it in Form/Compose and in
+           the band below 96rem where Split does not exist at all — and only
+           moves the form pane's width; the compose pane always takes what is
+           left. stacks.js's initSplitter() drives it and applySplit() sets
+           --staxx-split, the custom property the split grid's first track
+           reads (see .staxx-modal-body in the stylesheet). -->
+      <div class="staxx-splitter" id="staxx-splitter" role="separator" aria-orientation="vertical"
+           title="<?= _('Drag to resize. Double-click to reset.') ?>"></div>
+
       <div class="staxx-pane staxx-pane--yaml">
+        <!-- PLAN_145 round 2, Part A: the second copy of the toggle above —
+             see the comment on the first one, in .staxx-pane--form, for why
+             there are two. -->
+        <div class="staxx-viewrow" hidden>
+          <label class="staxx-switch"><input type="checkbox" role="switch" class="staxx-viewswitch">
+            <span class="staxx-switch-track" aria-hidden="true"></span>
+            <span class="staxx-switch-text"><?= _('Show the compose file') ?></span></label>
+        </div>
         <!-- Always visible now, not only when there is more than one tab —
              it also carries the New file and Add a file controls, and
              hiding the strip would hide those with it. Filled by script
@@ -863,6 +905,12 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
            pressing the manual button afterwards does not pay for the lookup
            twice. Never shown for a brand-new stack, which is scaffolded
            automatically before this pane is painted. -->
+      <!-- PLAN_145 Part 2: below desktop width, this bar and every author's-
+           example field note fold into one line here instead — built and
+           torn down by stacks.js's syncNoteStrip(), never written to by
+           PHP. Hidden by default; nothing shows in it above desktop width. -->
+      <div class="staxx-notestrip" id="staxx-notestrip" hidden></div>
+
       <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
       <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
               title="<?= _('Not now') ?>" hidden>&times;</button>
@@ -886,8 +934,14 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-required" id="staxx-required-note" hidden></button>
 
       <div class="staxx-modal-actions">
+        <!-- The standing sentence that used to open this paragraph — "Saved
+             exactly as written…" — was dropped 2026-09-13 at Adrian's
+             request: it only restated rule 1 from CLAUDE.md, already
+             promised in the readme, and did not need a line of footer on
+             every single open. The paragraph stays, because the flash-drive
+             warning below is a live caution, not a promise, and still needs
+             somewhere to render — it is usually empty. -->
         <p class="staxx-hint staxx-modal-note">
-          <?= _('Saved exactly as written — comments, spacing and ordering are kept as they are. This stays a standard compose file that runs anywhere.') ?>
           <? if (strpos($root, '/boot/') === 0): ?>
             <span class="staxx-hint--warn">
               <i class="fa fa-exclamation-triangle"></i>
