@@ -181,14 +181,18 @@ ok('policy: an unrecognised mode is ignored, not honoured',
 ok('policy: a non-numeric delay is ignored, not honoured',
    $pBad['delay'] !== 'notanumber' && is_int($pBad['delay']), json_encode($pBad));
 
-// notify is a scope-declaring key in its own right: a scope that sets only
-// notify must still inherit mode and delay from the level below it, never
-// fall all the way through to the global default for those two.
+// notify is a scope-declaring key in its own right, and the walk's existing
+// rule then applies to it unchanged: the first scope declaring ANY of the
+// three keys wins outright, and whatever it left unsaid comes from the
+// global default rather than from the scope below it. So a service setting
+// only notify takes the global mode and delay, not the stack's.
 $pNotifyOnly = staxx_update_policy($fixtureName, 'service-notify-only');
+$gNotifyOnly = staxx_update_settings();
 ok('policy: a service declaring only notify still wins that scope',
    $pNotifyOnly['from'] === 'service' && $pNotifyOnly['notify'] === false, json_encode($pNotifyOnly));
-ok('policy: …but inherits mode and delay from the stack, not the global default',
-   $pNotifyOnly['mode'] === 'auto' && $pNotifyOnly['delay'] === 12, json_encode($pNotifyOnly));
+ok('policy: …and what it left unsaid comes from the global default, not the stack',
+   $pNotifyOnly['mode'] === $gNotifyOnly['mode'] && $pNotifyOnly['delay'] === $gNotifyOnly['delay'],
+   json_encode($pNotifyOnly));
 
 // The OLD 'notify' spelling for mode, at service scope, on a service that
 // sets nothing else — proves normalisation happens independently of which
