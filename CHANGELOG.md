@@ -16,6 +16,8 @@ before that were dates.
 
 ---
 
+## Unreleased
+
 ## 00.04.00 — released 2026-09-14
 
 - The stack list no longer jumps about when an update finishes: the columns stay where they are instead of sliding sideways and back, the folder headings keep their height, and the "N to look at" markers stay put instead of disappearing until the next reload.
