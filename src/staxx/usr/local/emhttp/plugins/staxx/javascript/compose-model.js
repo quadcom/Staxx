@@ -1932,7 +1932,7 @@
     }
   }
 
-  function harvest(serviceMap, lines) {
+  function harvest(serviceMap, lines, stackPolicy) {
     var out = [], i, p;
 
     // The Container group's three rows come first, in a fixed order, whether
@@ -1970,6 +1970,14 @@
     // rows, so it lands in the Container group in the same fixed-order,
     // whether-or-not-the-file-has-it way those three do.
     out.push(harvestWebui(serviceMap, lines));
+
+    // PLAN_150 phase 4a — the per-container update controls (When/Notify
+    // me), straight after the web page port for the same reason: a fixed
+    // slot in the Container group whether or not the file has anything to
+    // say, so the group's shape never depends on what the file contains.
+    var policy = harvestUpdatePolicy(serviceMap, lines, stackPolicy);
+    out.push(policy[0]);
+    out.push(policy[1]);
 
     harvestLeaves(out, serviceMap, lines);
 
@@ -2129,6 +2137,11 @@
     // dotted-path branch below, find no 'x-unraid' entry in LEAVES, and
     // humanise its way to 'Webui' (PLAN_51).
     if (t.target === 'x-unraid.webui') return 'Web page port';
+    // The two per-container update-policy rows (PLAN_150 phase 4a) — same
+    // reason: a dotted target with no 'x-unraid' entry in LEAVES would
+    // otherwise humanise to something like 'Update Mode'.
+    if (t.target === 'x-unraid.update.mode') return 'When';
+    if (t.target === 'x-unraid.update.notify') return 'Notify me';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
     if (t.binder === 'port') return 'Port ' + t.target.split('/')[0];
     // depends_on's long form: 'depends_on.<name>' titles as the dependency's
@@ -2320,8 +2333,8 @@
   // beyond the value is either worked out from the file or read from the
   // comment beside it. There is nothing to match up, so there is nothing to
   // fall out of step.
-  function fieldsFor(serviceName, serviceMap, lines, declared) {
-    var targets = harvest(serviceMap, lines);
+  function fieldsFor(serviceName, serviceMap, lines, declared, stackPolicy) {
+    var targets = harvest(serviceMap, lines, stackPolicy);
     var fields = [];
 
     for (var i = 0; i < targets.length; i++) {
@@ -2417,6 +2430,12 @@
                     (!usable ? 'this has no value the form can edit' : ''),
         absent: t.absent,
         blocked: t.blocked,
+        // PLAN_150 phase 4a — the two update-control fields' own resolved
+        // choice, sub-choice and scope (service/stack/neither), plus enough
+        // of the stack-scope value for the renderer's note to say which one
+        // "Default" actually follows. Undefined on every other field, so a
+        // consumer can tell a policy row apart just by checking it exists.
+        policy: t.policy,
         advice: advice,
         // Set only when dollarsNeedEscaping() fired above for at least one
         // part — { part, to } names the FIRST such part and the doubled
@@ -2794,6 +2813,202 @@
     return wt;
   }
 
+  /* =====================================================================
+   * PLAN_150 phase 4a — the two per-container update-policy fields (When,
+   * Notify me). Two named exceptions, like harvestWebui() above: both read
+   * a value nested inside x-unraid, and setPart() recognises each by its
+   * exact target string rather than through the ordinary path-based leaf
+   * write, because "Default" means something more than a blank box here —
+   * it removes a key, and it may also have to drop a delay: 0 this same
+   * control wrote for Immediate. See setPart()'s own comment beside the two
+   * branches for the write side.
+   * ===================================================================== */
+
+  // 'off' and 'notify' are the schema's older spelling of 'manual' (see
+  // schema/x-unraid.schema.json) — both read as the one word this control
+  // ever writes back. Anything else is not a word this control knows, and is
+  // left for the caller's own "unreadable" handling rather than guessed at.
+  function updateModeWord(raw) {
+    if (raw === 'manual' || raw === 'off' || raw === 'notify') return 'manual';
+    if (raw === 'auto') return 'auto';
+    return null;
+  }
+
+  // The schema's notify: is a real boolean, so only the two literal words
+  // count — a quoted "true" or a number is exactly the kind of thing a
+  // person typed on purpose and this must not silently reinterpret.
+  function updateNotifyWord(raw) {
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    return null;
+  }
+
+  // The three pairs (or null) an x-unraid.update: block holds, at whichever
+  // scope `xmap` (the x-unraid map itself) belongs to — service or stack.
+  // Returns nulls throughout when there is no x-unraid map, no update: key,
+  // or update: is not a plain map (sealed, anchored, a scalar) — the caller
+  // then reads that scope as having nothing to say, exactly as an absent
+  // block would, and setPart()'s own guards are what actually stop a write
+  // reaching inside something this could not read.
+  function updateBlockPairs(xmap) {
+    var upd = xmap ? xmap.pairs['update'] : null;
+    var updMap = upd && upd.value && upd.value.kind === 'map' ? upd.value : null;
+    return {
+      mode:   updMap ? (updMap.pairs['mode']   || null) : null,
+      notify: updMap ? (updMap.pairs['notify'] || null) : null,
+      delay:  updMap ? (updMap.pairs['delay']  || null) : null
+    };
+  }
+
+  function scalarWordOf(pair) {
+    return pair && pair.value && pair.value.kind === 'scalar' ? pair.value.value : null;
+  }
+
+  // The stack-level x-unraid.update block, read once per buildForm() call
+  // (see its own comment) rather than once per service — every service's
+  // "Default" note needs to know it, but nothing here is service-specific.
+  // `delay`/`auto` are only meaningful when `mode` is 'auto'; a delay this
+  // parser cannot read as a plain whole number is treated as not stated,
+  // the same as one that is genuinely absent — the note then falls back to
+  // naming the server's own delay instead, which is the honest answer when
+  // this one cannot be read.
+  function readStackUpdatePolicy(doc) {
+    var xu = doc.root && doc.root.kind === 'map' ? doc.root.pairs['x-unraid'] : null;
+    var xmap = xu && xu.value && xu.value.kind === 'map' ? xu.value : null;
+    var pairs = updateBlockPairs(xmap);
+
+    var mode = updateModeWord(scalarWordOf(pairs.mode));
+    var delayRaw = scalarWordOf(pairs.delay);
+    var delay = (mode === 'auto' && delayRaw !== null && /^\d+$/.test(delayRaw)) ? Number(delayRaw) : null;
+
+    return {
+      mode: mode,                                        // 'manual' | 'auto' | null
+      auto: mode === 'auto' ? (delay === 0 ? 'immediate' : 'delayed') : null,
+      delay: delay,
+      notify: updateNotifyWord(scalarWordOf(pairs.notify))    // true | false | null
+    };
+  }
+
+  // Builds the two per-service update-policy targets — mode ("When") and
+  // notify ("Notify me"). `stackPolicy` is readStackUpdatePolicy()'s result
+  // for the whole file, read once in buildForm() and threaded down through
+  // fieldsFor()/harvest() rather than re-read per field.
+  //
+  // Each target carries a `policy` property (not a standard target field —
+  // read off the pair copied into fields.push() in fieldsFor()) with enough
+  // for the renderer to draw the row and write its note without re-parsing:
+  // `choice` is what the row's own radio shows ('default' whenever the
+  // service itself sets nothing readable, whatever the stack says);
+  // `scope` says where that choice's *meaning* actually comes from —
+  // 'service', 'stack', or null when neither says anything and the server
+  // setting is what is really in force; `stackChoice` carries the stack
+  // block's own word regardless, since a "Default" row still has to say
+  // "follows this stack's setting" rather than lie about following the
+  // server. `auto`/`delay` (mode only) are set only once `choice` (or, for
+  // the Default+stack case, `stackChoice`) is 'auto' — see harvestUpdatePolicy's
+  // per-field comments below for exactly which scope they read.
+  //
+  // No `path` on either target, on purpose — the same reason harvestWebui()
+  // gives: setPart()'s ordinary create/clear-a-leaf branches are wrong for
+  // both of these (Default removes a key AND may drop a delay: 0 this
+  // control itself wrote; Immediate writes two keys together), so both are
+  // recognised and written by their exact target string instead.
+  function harvestUpdatePolicy(serviceMap, lines, stackPolicy) {
+    stackPolicy = stackPolicy || { mode: null, auto: null, delay: null, notify: null };
+
+    var xu = serviceMap.pairs['x-unraid'];
+    var xmap = xu && xu.value && xu.value.kind === 'map' ? xu.value : null;
+    var pairs = updateBlockPairs(xmap);
+
+    /* ---- mode ("When") -------------------------------------------------- */
+
+    var modeRaw = scalarWordOf(pairs.mode);
+    var modeRecognised = modeRaw === null ? null : updateModeWord(modeRaw);
+    // A mode: line that is a plain, readable scalar but not one of the words
+    // the schema knows is something somebody typed on purpose (CLAUDE.md
+    // rule 2) — never silently overwritten by a tick this control never asked
+    // them to confirm. `choice` still resolves as though it were absent (the
+    // same fallback an unrecognised value gets server-side, in
+    // staxx_update_policy()), but this is carried alongside it so the
+    // renderer can say what is really there, and setPart() refuses every
+    // write to this field while it is set.
+    var modeUnreadable = (modeRaw !== null && modeRecognised === null) ? { raw: modeRaw } : null;
+
+    var ownDelayRaw = scalarWordOf(pairs.delay);
+    var ownDelay = (ownDelayRaw !== null && /^\d+$/.test(ownDelayRaw)) ? Number(ownDelayRaw) : null;
+
+    var modeChoice, modeScope, modeAuto, modeDelay;
+    if (modeRecognised) {
+      modeChoice = modeRecognised;
+      modeScope = 'service';
+      modeAuto = modeRecognised === 'auto' ? (ownDelay === 0 ? 'immediate' : 'delayed') : null;
+      modeDelay = modeRecognised === 'auto' ? ownDelay : null;
+    } else {
+      modeChoice = 'default';
+      modeScope = stackPolicy.mode ? 'stack' : null;
+      modeAuto = null;
+      modeDelay = null;
+    }
+
+    // A spot only when the service's own line is a recognised word — an
+    // absent key, a sealed one, and an unrecognised word are all rendered
+    // the same creatable-but-empty way harvestWebui() renders "nothing to
+    // read here yet", and it is setPart()'s own guards (the duplicate-key
+    // refusal insertChild already carries, and the explicit unreadable
+    // check below) that keep a write from ever reaching a shape this cannot
+    // safely change.
+    var modeSpot = modeRecognised ? scalarSpot(pairs.mode.value) : null;
+    var modeTarget = target('policy', 'x-unraid.update.mode', {
+      parts: { value: part(modeRaw || '', modeSpot) },
+      range: pairs.mode ? { start: pairs.mode.leadStart, end: pairs.mode.end } : null,
+      comment: modeSpot ? readComment(pairs.mode.value.comment) : undefined,
+      commentSpot: modeSpot ? commentSpot(pairs.mode.value, lines) : null,
+      absent: !modeSpot
+    });
+    modeTarget.policy = {
+      field: 'mode',
+      choice: modeChoice,
+      scope: modeScope,
+      auto: modeAuto,
+      delay: modeDelay,
+      stackChoice: stackPolicy.mode,
+      unreadable: modeUnreadable
+    };
+
+    /* ---- notify ("Notify me") -------------------------------------------- */
+
+    var notifyRaw = scalarWordOf(pairs.notify);
+    var notifyRecognised = notifyRaw === null ? null : updateNotifyWord(notifyRaw);
+    var notifyUnreadable = (notifyRaw !== null && notifyRecognised === null) ? { raw: notifyRaw } : null;
+
+    var notifyChoice, notifyScope;
+    if (notifyRecognised !== null) {
+      notifyChoice = notifyRecognised ? 'yes' : 'no';
+      notifyScope = 'service';
+    } else {
+      notifyChoice = 'default';
+      notifyScope = stackPolicy.notify !== null ? 'stack' : null;
+    }
+
+    var notifySpot = notifyRecognised !== null ? scalarSpot(pairs.notify.value) : null;
+    var notifyTarget = target('policy', 'x-unraid.update.notify', {
+      parts: { value: part(notifyRaw || '', notifySpot) },
+      range: pairs.notify ? { start: pairs.notify.leadStart, end: pairs.notify.end } : null,
+      comment: notifySpot ? readComment(pairs.notify.value.comment) : undefined,
+      commentSpot: notifySpot ? commentSpot(pairs.notify.value, lines) : null,
+      absent: !notifySpot
+    });
+    notifyTarget.policy = {
+      field: 'notify',
+      choice: notifyChoice,
+      scope: notifyScope,
+      stackChoice: stackPolicy.notify,
+      unreadable: notifyUnreadable
+    };
+
+    return [modeTarget, notifyTarget];
+  }
+
   // knownVarNames(doc, envNames) -> {NAME: true, ...}
   //
   // PLAN_106: the set dollarsNeedEscaping() treats as genuinely resolvable —
@@ -2870,6 +3085,12 @@
       return out;
     }
 
+    // PLAN_150 phase 4a — read once, not once per service: every service's
+    // "Default" state may mean "follows this stack's own x-unraid.update
+    // block" rather than "follows the server setting", and only the root
+    // knows which.
+    var stackPolicy = readStackUpdatePolicy(doc);
+
     // The top-level blocks are a namespace of names declared once and
     // referenced by services — read one level deep, no recursion. A name
     // with a null value (declared, nothing under it) still counts, because
@@ -2907,7 +3128,7 @@
         if (vv && vv.kind === 'opaque' && (vv.reason === 'merge' || vv.reason === 'alias')) shared = true;
       }
 
-      var fields = fieldsFor(name, p.value, doc.lines, dollarDeclared);
+      var fields = fieldsFor(name, p.value, doc.lines, dollarDeclared, stackPolicy);
       out.fields = out.fields.concat(fields);
       out.services.push({
         name: name,
@@ -3222,6 +3443,22 @@
     return null;
   }
 
+  // A service's own x-unraid.update.<key> pair, read fresh off the live
+  // document rather than trusted from a harvest-time snapshot — the same
+  // discipline ensurePath's getPair() closures follow (see its own comment),
+  // and for the same reason: splice() re-parses the whole file, so anything
+  // read before an earlier write in the same setPart() call is already
+  // stale by the time this runs. Returns null wherever serviceMapOf, the
+  // x-unraid map, or the update: map itself cannot be read.
+  function ownUpdatePair(doc, service, key) {
+    var svc = serviceMapOf(doc, service);
+    var xu = svc && svc.value.pairs['x-unraid'];
+    var xmap = xu && xu.value && xu.value.kind === 'map' ? xu.value : null;
+    var upd = xmap ? xmap.pairs['update'] : null;
+    var updMap = upd && upd.value && upd.value.kind === 'map' ? upd.value : null;
+    return updMap ? (updMap.pairs[key] || null) : null;
+  }
+
   function setPart(doc, form, id, which, value) {
     var f = fieldById(form, id);
     if (!f || f.locked) return false;
@@ -3269,6 +3506,84 @@
       // [IP] is what lets the plugin resolve a macvlan container's own
       // address rather than the server's — see staxx_webui_url() (PHP).
       return addNested(doc, form, f.service, ['x-unraid', 'webui'], 'http://[IP]:' + value + '/') >= 0;
+    }
+
+    // The two per-container update-policy rows (PLAN_150 phase 4a) — see
+    // harvestUpdatePolicy()'s own comment for why neither carries a path.
+    // `value` for When is 'default' | 'manual' | 'auto' | 'auto-immediate'
+    // (Immediate is auto with delay: 0, not a mode word of its own); for
+    // Notify me it is 'default' | 'no' | 'yes'.
+    //
+    // Never guesses over a value it could not confidently read on the way
+    // in — an unknown mode word or a non-boolean notify (see
+    // harvestUpdatePolicy()) is left exactly as it was, full stop, however
+    // this field's own value is asked to change.
+    if (f.target === 'x-unraid.update.mode' && which === 'value') {
+      if (f.policy && f.policy.unreadable) return false;
+
+      var modePair = ownUpdatePair(doc, f.service, 'mode');
+      var delayPair = ownUpdatePair(doc, f.service, 'delay');
+      var ownDelayZero = !!(delayPair && delayPair.value && delayPair.value.kind === 'scalar' &&
+                             delayPair.value.value === '0');
+
+      if (value === 'default') {
+        var okD = true;
+        // Delay is cleared first, while the mode key is still there to keep
+        // update: from collapsing before its own removal is checked — see
+        // removeKey()'s outermostEmptied(), which re-reads the block fresh
+        // on every call and so sees exactly what the previous removal left.
+        if (ownDelayZero) okD = removeUpdateKey(doc, f.service, ['x-unraid', 'update', 'delay']) && okD;
+        if (modePair) okD = removeUpdateKey(doc, f.service, ['x-unraid', 'update', 'mode']) && okD;
+        return okD;
+      }
+
+      var word = value === 'auto-immediate' ? 'auto' : value;   // 'manual' | 'auto'
+      // Delayed and Manual both mean "no delay: 0 of this control's own
+      // making" — only Immediate (below) ever writes one. A hand-written
+      // delay holding anything else is never touched here.
+      if (value !== 'auto-immediate' && ownDelayZero) {
+        if (!removeUpdateKey(doc, f.service, ['x-unraid', 'update', 'delay'])) return false;
+        modePair = ownUpdatePair(doc, f.service, 'mode');   // re-derive: may have moved
+      }
+
+      if (modePair && modePair.value && modePair.value.kind === 'scalar') {
+        if (modePair.value.value !== word && !writeScalar(doc, scalarSpot(modePair.value), word, 'plain')) return false;
+      } else if (modePair) {
+        return false;   // an existing mode: line this parser cannot safely overwrite
+      } else if (addNested(doc, form, f.service, ['x-unraid', 'update', 'mode'], word) < 0) {
+        return false;
+      }
+
+      if (value === 'auto-immediate') {
+        delayPair = ownUpdatePair(doc, f.service, 'delay');   // re-derive: mode write may have moved it
+        if (delayPair && delayPair.value && delayPair.value.kind === 'scalar') {
+          if (delayPair.value.value !== '0' && !writeScalar(doc, scalarSpot(delayPair.value), '0', 'plain')) return false;
+        } else if (delayPair) {
+          return false;   // an existing delay: line this parser cannot safely overwrite
+        } else if (addNested(doc, form, f.service, ['x-unraid', 'update', 'delay'], '0') < 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (f.target === 'x-unraid.update.notify' && which === 'value') {
+      if (f.policy && f.policy.unreadable) return false;
+
+      var notifyPair = ownUpdatePair(doc, f.service, 'notify');
+
+      if (value === 'default') {
+        if (!notifyPair) return true;
+        return removeUpdateKey(doc, f.service, ['x-unraid', 'update', 'notify']);
+      }
+
+      var boolWord = value === 'yes' ? 'true' : 'false';
+      if (notifyPair && notifyPair.value && notifyPair.value.kind === 'scalar') {
+        if (notifyPair.value.value === boolWord) return true;
+        return writeScalar(doc, scalarSpot(notifyPair.value), boolWord, 'bare');
+      }
+      if (notifyPair) return false;   // an existing notify: line this parser cannot safely overwrite
+      return addNested(doc, form, f.service, ['x-unraid', 'update', 'notify'], boolWord, true) >= 0;
     }
 
     // healthcheck.test is one file line shown as two fields (see
@@ -5415,6 +5730,34 @@
     if (!found) return false;
 
     var outermost = outermostEmptied(found.chain, found.leaf, 1);
+    spliceBlock(doc, outermost.leadStart, outermost.end);
+    return true;
+  }
+
+  /**
+   * removeKey's own logic, but for a path that starts inside x-unraid (the
+   * two update-policy fields — PLAN_150 phase 4a) — never lets removal
+   * collapse the x-unraid: block itself away, only whatever sits under it
+   * ('update:', or the leaf alone). Floor 1 in removeKey protects the
+   * service pair from a leaf's own removal collapsing the service itself;
+   * here the same protection has to reach one level further, because
+   * outermostEmptied only counts REAL keys — a scaffolded placeholder for a
+   * sibling field (icon, project, notify…) is a comment, not a key, so it is
+   * invisible to that count. Clearing "mode" back to Default when it was the
+   * x-unraid map's only real key would otherwise take the whole block down
+   * with it, comments and all — measured while proving this file's own
+   * probe, not merely reasoned about. removeKey itself is left exactly as it
+   * was: nothing else calls it with a path rooted at x-unraid, so nothing
+   * else needs this.
+   *
+   * Returns false when there is nothing at `path`, or a level along the way
+   * is sealed, opaque, or not a map.
+   */
+  function removeUpdateKey(doc, service, path) {
+    var found = walkToLeaf(function () { return serviceMapOf(doc, service); }, path);
+    if (!found) return false;
+
+    var outermost = outermostEmptied(found.chain, found.leaf, 2);
     spliceBlock(doc, outermost.leadStart, outermost.end);
     return true;
   }
