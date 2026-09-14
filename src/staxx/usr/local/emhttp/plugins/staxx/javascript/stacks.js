@@ -4376,6 +4376,253 @@
     if (unpinBtn) { performUnpin(unpinBtn.dataset.updUnpin); return; }
   });
 
+  /* =====================================================================
+   * PLAN_150 phase 5 — the row menu's own Updates / Notify me rows. Same
+   * two 'policy' fields as the editor's fieldset above, but the menu opens
+   * with no parsed model of its own to read them off, so this fetches the
+   * stack fresh with the same `read` action the write below already needs,
+   * parses it once, and draws both rows from that. One request answers
+   * both rows, and every service a stack-wide row might have to set.
+   * ===================================================================== */
+
+  // The write side, for the menu. Same two-step shape as writeUpdatePolicy()
+  // above and for the same reason (Adrian's ruling that a tick reaches disk
+  // at once) — but able to carry MANY services in one save, since a stack's
+  // menu row sets every one of them. A service whose own line the parser
+  // could not read is SKIPPED rather than refusing the whole write (PLAN_150's
+  // own "Edge cases and refusals") — a stack of six with one hand-written,
+  // unrecognised word still lets the other five be set from here. Nothing is
+  // saved at all unless at least one service actually changed, and any
+  // genuine refusal (a shape setPart() cannot safely rewrite) throws the
+  // whole attempt away rather than saving a half-applied "all six".
+  //
+  // Resolves to the array of service names actually written, or null on any
+  // refusal (already reported via failed()) — the caller re-ticks from that
+  // list rather than from `services`, so a skipped service never reads as
+  // having been set.
+  function writeUpdatePolicyForServices(name, services, policyField, value) {
+    return call('read', { name: name }).then(function (readRes) {
+      if (!readRes || !readRes.ok) {
+        failed('Could not change this setting', (readRes && readRes.error) || 'Could not read the stack.');
+        return null;
+      }
+
+      var diskDoc  = YAML.parse(readRes.body);
+      var diskForm = YAML.buildForm(diskDoc, netDrivers(), envNameList());
+      diskForm.doc = diskDoc;
+
+      var applied = [];
+      for (var i = 0; i < services.length; i++) {
+        var svc = services[i];
+        var diskField = policyFieldFor(diskForm.fields, svc, policyField);
+        if (!diskField || diskField.policy.unreadable) continue;
+        if (!YAML.setPart(diskDoc, diskForm, diskField.id, 'value', value)) {
+          failed('Could not change this setting',
+                 'That cannot be written as it stands for "' + svc + '" — edit it in the Compose view.');
+          return null;
+        }
+        applied.push(svc);
+      }
+
+      if (!applied.length) {
+        failed('Could not change this setting',
+               'None of these containers could be changed here — edit the compose file directly.');
+        return null;
+      }
+
+      var diskText = YAML.serialise(diskDoc);
+      return call('save', { name: name, body: withEol(diskText, composeEol), 'new': '0',
+                             fingerprint: readRes.fingerprint }).then(function (saveRes) {
+        if (!saveRes || !saveRes.ok) {
+          failed('Could not change this setting', (saveRes && saveRes.error ? saveRes.error : 'Save failed.') +
+                 strayWarning(saveRes || {}));
+          return null;
+        }
+        serviceIcons = saveRes.icons || serviceIcons;
+        // An editor already open on this SAME stack is kept in step with
+        // what disk now says, same reasoning as applyUpdatePolicyLocally()
+        // itself — run once per service the write actually touched, with
+        // the saved fingerprint/text landed only on the last of them so
+        // fingerprintAtOpen ends up set exactly once.
+        if (openedName === name && MODEL) {
+          applied.forEach(function (svc, idx) {
+            applyUpdatePolicyLocally(svc, policyField, value,
+              idx === applied.length - 1 ? (saveRes.fingerprint || readRes.fingerprint) : null,
+              idx === applied.length - 1 ? diskText : null);
+          });
+        }
+        paintServiceIcons();
+        return applied;
+      });
+    });
+  }
+
+  // The row skeleton, built immediately when the menu opens — before the one
+  // read() above has answered. Label carries no "— all N" yet (the real
+  // service count is not known until then either — a replicated service
+  // draws one row per container, not one per service, so there is nothing on
+  // the page itself to count); the body just says "Loading…" at the same
+  // line-height the real ticks take, so the row does not resize once they
+  // land (see .staxx-menu-updrow's own min-height).
+  function updMenuRowSkeleton(field, label) {
+    var row = document.createElement('div');
+    row.className = 'staxx-menu-updrow';
+    row.innerHTML = '<i class="fa fa-' + (field === 'mode' ? 'refresh' : 'bell-o') + '" aria-hidden="true"></i>';
+
+    var body = document.createElement('div');
+    body.className = 'staxx-menu-updbody';
+    var lbl = document.createElement('span');
+    lbl.className = 'staxx-menu-updlabel';
+    lbl.textContent = label;
+    body.appendChild(lbl);
+
+    var loading = document.createElement('span');
+    loading.className = 'staxx-menu-updloading';
+    loading.textContent = 'Loading…';
+    body.appendChild(loading);
+
+    row.appendChild(body);
+    (menuTarget || menuItems).appendChild(row);
+    return { row: row, body: body, label: lbl };
+  }
+
+  // One tick option, the SAME markup shape updTickOptionHtml() above draws
+  // for the editor — .staxx-tickopt/.staxx-tickmark/.staxx-tickword are
+  // styled once, in the sheet, and both places share it rather than each
+  // keeping their own copy. Returns the <input> so the caller can wire its
+  // own change handler (the menu's handler writes to disk; the editor's
+  // commits through setPart() directly).
+  function updMenuTickHtml(name, value, label, checkedVal) {
+    return '<label class="staxx-tickopt"><input type="radio" name="' + esc(name) + '" value="' +
+           esc(value) + '"' + (value === checkedVal ? ' checked' : '') + '>' +
+           '<svg class="staxx-tickmark" viewBox="0 0 16 16" aria-hidden="true">' +
+           '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+           '<span class="staxx-tickword">' + esc(label) + '</span></label>';
+  }
+
+  // Fills one row (mode or notify) once the read() has answered. `readable`
+  // is this row's fields, one per service the menu is allowed to set, with
+  // every unreadable one already left out — see policyFieldFor() and the
+  // 'unreadable' guard on each. A stack whose containers disagree shows NO
+  // tick on any option (PLAN_150 rejects a "Mixed" label as noise); pressing
+  // one still sets every one of them, since the write always targets the
+  // full list, not just whichever service happened to agree.
+  function fillUpdateMenuRow(skel, field, readable, name) {
+    if (!readable.length) {
+      skel.body.querySelector('.staxx-menu-updloading').textContent =
+        'This is set to something StaXX does not recognise — edit it in the Compose view.';
+      return;
+    }
+
+    var values = readable.map(policyValueOf);
+    var agreed = values.every(function (v) { return v === values[0]; }) ? values[0] : null;
+    var isMode = field === 'mode';
+    var topAgreed = isMode && agreed === 'auto-immediate' ? 'auto' : agreed;
+    var options = isMode
+      ? [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']]
+      : [['default', 'Default'], ['no', 'No'], ['yes', 'Yes']];
+
+    skel.body.querySelector('.staxx-menu-updloading').remove();
+
+    var groupName = 'staxx-menu-updpolicy-' + field;
+    var tickrow = document.createElement('div');
+    tickrow.className = 'staxx-tickrow';
+    tickrow.setAttribute('role', 'radiogroup');
+    tickrow.setAttribute('aria-label', skel.label.textContent);
+    tickrow.innerHTML = options.map(function (o) {
+      return updMenuTickHtml(groupName, o[0], o[1], topAgreed);
+    }).join('');
+    skel.body.appendChild(tickrow);
+
+    var subEl = null;
+    if (isMode) {
+      subEl = document.createElement('div');
+      subEl.className = 'staxx-menu-updsub' + (topAgreed === 'auto' ? ' staxx-menu-updsub--open' : '');
+      var subChecked = agreed === 'auto-immediate' ? 'auto-immediate' : 'auto';
+      subEl.innerHTML =
+        updMenuTickHtml(groupName + '-sub', 'auto-immediate', 'Immediate', subChecked) +
+        updMenuTickHtml(groupName + '-sub', 'auto', 'Delayed', subChecked);
+      skel.body.appendChild(subEl);
+    }
+
+    var services = readable.map(function (f) { return f.service; });
+
+    function commit(value) {
+      var allInputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'));
+      if (subEl) allInputs = allInputs.concat(Array.prototype.slice.call(subEl.querySelectorAll('input')));
+      // Disabled for the round trip, same reasoning as the Autostart switch:
+      // a second click landing mid-flight must not race the first.
+      allInputs.forEach(function (i) { i.disabled = true; });
+
+      writeUpdatePolicyForServices(name, services, field, value).then(function (applied) {
+        allInputs.forEach(function (i) { i.disabled = false; });
+        if (!applied) return; // a refusal — failed() already said why
+
+        // Every service the write touched now holds this same value, so
+        // there is nothing left to disagree about — re-tick from the value
+        // just written rather than re-fetching to find out.
+        var newTop = isMode && value === 'auto-immediate' ? 'auto' : value;
+        tickrow.querySelectorAll('input').forEach(function (i) { i.checked = (i.value === newTop); });
+        if (subEl) {
+          var wantImmediate = value === 'auto-immediate';
+          subEl.classList.toggle('staxx-menu-updsub--open', newTop === 'auto');
+          subEl.querySelectorAll('input').forEach(function (i) {
+            i.checked = (i.value === (wantImmediate ? 'auto-immediate' : 'auto'));
+          });
+        }
+        if (menu.hidden) refreshRows(); else menuRedraw = true;
+      });
+    }
+
+    tickrow.addEventListener('change', function (event) { commit(event.target.value); });
+    if (subEl) subEl.addEventListener('change', function (event) { commit(event.target.value); });
+  }
+
+  // Builds both rows for one menu. `scopeService` is the one service a
+  // container's own menu sets, or '' for a stack's menu, which sets every
+  // service the file declares — read off the mode target of the same parse
+  // rather than kept anywhere else, since harvestUpdatePolicy() pushes
+  // exactly one per service regardless of how many containers it is
+  // replicated into.
+  function addUpdatePolicyMenuItems(name, scopeService) {
+    var modeSkel   = updMenuRowSkeleton('mode', 'Updates');
+    var notifySkel = updMenuRowSkeleton('notify', 'Notify me');
+
+    call('read', { name: name }).then(function (readRes) {
+      if (!readRes || !readRes.ok) {
+        var msg = (readRes && readRes.error) || 'Could not read this stack.';
+        modeSkel.body.querySelector('.staxx-menu-updloading').textContent = msg;
+        notifySkel.row.remove();
+        return;
+      }
+
+      var doc  = YAML.parse(readRes.body);
+      var form = YAML.buildForm(doc, netDrivers(), envNameList());
+
+      var allServices = [];
+      form.fields.forEach(function (f) {
+        if (f.policy && f.policy.field === 'mode' && allServices.indexOf(f.service) === -1) {
+          allServices.push(f.service);
+        }
+      });
+      var services = scopeService ? [scopeService] : allServices;
+
+      var suffix = (!scopeService && services.length > 1) ? ' — all ' + services.length : '';
+      modeSkel.label.textContent   = 'Updates' + suffix;
+      notifySkel.label.textContent = 'Notify me' + suffix;
+
+      var modeReadable = services
+        .map(function (svc) { return policyFieldFor(form.fields, svc, 'mode'); })
+        .filter(function (f) { return f && !f.policy.unreadable; });
+      var notifyReadable = services
+        .map(function (svc) { return policyFieldFor(form.fields, svc, 'notify'); })
+        .filter(function (f) { return f && !f.policy.unreadable; });
+
+      fillUpdateMenuRow(modeSkel, 'mode', modeReadable, name);
+      fillUpdateMenuRow(notifySkel, 'notify', notifyReadable, name);
+    });
+  }
+
   function fieldHtml(f, index) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
@@ -26751,6 +26998,10 @@
     }
     addBootMenuItem(d, name, '');
     addBootWaitField(d, 'stack', name);
+    // PLAN_150 phase 5 — sets every service in the stack in one save; a
+    // fileless "start a compose file here" stack has nothing for the one
+    // read() this needs to read, so it is offered only once hasFile is true.
+    if (hasFile) addUpdatePolicyMenuItems(name, '');
     addProfilesMenuItems(d, name);
 
     // Same window.open() pattern as "What changed" above — an outward link,
@@ -26914,6 +27165,8 @@
 
     addBootMenuItem(trigger.dataset, stack, service);
     addBootWaitField(trigger.dataset, 'service', stack + '/' + service);
+    // PLAN_150 phase 5 — this one container only.
+    addUpdatePolicyMenuItems(stack, service);
 
     menuSeparator();
 

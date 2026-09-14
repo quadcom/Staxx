@@ -5759,6 +5759,33 @@
 
     var outermost = outermostEmptied(found.chain, found.leaf, 2);
     spliceBlock(doc, outermost.leadStart, outermost.end);
+
+    // The floor above stops the collapse at x-unraid because a comment there
+    // is invisible to the key count — but it must not leave a bare
+    // "x-unraid:" husk behind either, which is what a stack this control
+    // created the block for gets when its one real key goes away again. So
+    // the block itself goes too, but only once nothing whatsoever is left
+    // under it: no key, and no comment line. Read off the physical extent
+    // rather than the key count, which is exactly the blindness the floor
+    // exists to work around.
+    var svc = serviceMapOf(doc, service);
+    var xu = svc && svc.value && svc.value.kind === 'map' ? svc.value.pairs['x-unraid'] : null;
+    if (xu && (!xu.value || (xu.value.kind === 'map' && xu.value.keys.length === 0))) {
+      // The PHYSICAL extent, walked the way removePlaceholder() walks it —
+      // from the line after the key to the last line still indented deeper
+      // than it. pair.end stops at the last real key, so on a block holding
+      // nothing but comments it stops before them, which is precisely the
+      // case this must not mistake for empty.
+      var bare = true, last = xu.start;
+      for (var i = xu.start + 1; i < doc.lines.length; i++) {
+        var line = doc.lines[i];
+        if (/^[ 	]*$/.test(line)) continue;
+        if (line.match(/^[ 	]*/)[0].length <= xu.indent) break;
+        bare = false;
+        last = i;
+      }
+      if (bare) spliceBlock(doc, xu.leadStart, Math.max(xu.end, last + 1));
+    }
     return true;
   }
 

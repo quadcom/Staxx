@@ -10872,6 +10872,39 @@ console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields'
 })();
 
 (function () {
+  // The other half of the same rule: a block this control CREATED, holding
+  // nothing but the key it wrote, must not be left behind as a bare
+  // "x-unraid:" husk when that key goes away again. Emptiness is read off
+  // the block's physical extent, not its key count — a block holding only
+  // comments (the case just above) counts as occupied, which is why the two
+  // cases have to sit next to each other.
+  var src = 'services:\n  web:\n    image: alpine\n    x-unraid:\n      icon: ./a.png\n' +
+            '  helper:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ['web', 'helper'].forEach(function (svc) {
+    ok(svc + ': Default -> Automatic succeeds',
+       Y.setPart(doc, form, svc + '/policy/x-unraid.update.mode', 'value', 'auto'));
+    form = Y.buildForm(doc);
+  });
+  ok('the service with no metadata block gained one',
+     /helper:[\s\S]*x-unraid:[\s\S]*mode: auto/.test(Y.serialise(doc)), Y.serialise(doc));
+
+  ['web', 'helper'].forEach(function (svc) {
+    ok(svc + ': Automatic -> Default succeeds',
+       Y.setPart(doc, form, svc + '/policy/x-unraid.update.mode', 'value', 'default'));
+    form = Y.buildForm(doc);
+  });
+  var back = Y.serialise(doc);
+  ok('the block this control created is gone again, husk and all',
+     back.indexOf('helper:\n    image: alpine\n') >= 0, back);
+  ok('the block that already held an icon keeps it',
+     back.indexOf('icon: ./a.png') >= 0, back);
+  ok('and the whole file is byte-identical to where it started', back === src,
+     firstDiff(src, back));
+})();
+
+(function () {
   // An anchored (sealed) x-unraid: block refuses the write outright — no
   // partial damage, file comes back byte-identical.
   var src = 'services:\n' +

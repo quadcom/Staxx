@@ -22,6 +22,7 @@ before that were dates.
 - The Settings panel's update options are simpler: Updates is now a plain Manual/Automatic choice, and Notify me is three separate switches — one for a found update, one for an installed one, and one for a failed one, the last one on by default for everybody. Quiet time is now a pick-list in half-hour steps, and sits half width under its own "only during a quiet time" question.
 - A container that updates itself now shows a small green mark beside its name in the stack list, so you can tell which ones will install a newer version on their own without opening each one to check.
 - Each container in the editor now has its own Updates box, with a "When" choice (Default, Manual or Automatic, with Immediate/Delayed once Automatic is picked) and a "Notify me" choice (Default, No or Yes), each explaining in plain words what it will actually do. Changing either takes effect straight away rather than waiting for Save. A pinned container shows why it cannot be changed with a one-click way to unpin it; a container built here from a recipe, or one with no image at all, says so too.
+- The same Updates and Notify me choices are now on a container's own right-click menu, and on a stack's, where one press sets every container in it. A stack whose containers do not all agree shows no tick until you set one.
 
 ## 00.04.00 — released 2026-09-14
 

@@ -10559,6 +10559,67 @@ dialog::backdrop {
   .staxx-upd-sub { justify-content: flex-start; }
 }
 
+/* PLAN_150 phase 5 — the row menu's own Updates / Notify me rows. Laid out
+ * on the same measurements as .staxx-menu-item/.staxx-menu-field above (same
+ * padding, same gap, same glyph column) so the three read as one list, but
+ * built as a plain <div> for the same reason .staxx-menu-field is one: a
+ * click that ticks an option must not close the menu the way clicking a
+ * .staxx-menu-item always does. The tick marks themselves are the SAME
+ * .staxx-tickopt/.staxx-tickmark/.staxx-tickword rules the editor's own
+ * Updates fieldset uses, above — reused as-is rather than duplicated.
+ * min-height keeps the row from resizing when its "Loading…" placeholder is
+ * swapped for the real ticks once the one read() this needs answers. */
+.staxx-scaffold .staxx-menu-updrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.7rem 1.4rem;
+  min-height: 3.4rem;
+  box-sizing: border-box;
+}
+.staxx-scaffold .staxx-menu-updrow > .fa {
+  flex: 0 0 1.6rem;
+  margin-top: 0.2rem;
+  color: var(--sm-muted);
+  text-align: center;
+}
+.staxx-menu-updbody { flex: 1 1 auto; min-width: 0; }
+.staxx-menu-updlabel {
+  display: block;
+  font-size: 1.3rem;
+  line-height: 1.35;
+  color: var(--text-color, #e0e0e0);
+  margin-bottom: 0.3rem;
+}
+.staxx-menu-updloading {
+  display: block;
+  font-size: 1.1rem;
+  color: var(--sm-muted);
+  line-height: 2.4rem;
+}
+.staxx-menu-updrow .staxx-tickrow { gap: 0 1.6rem; }
+
+/* Immediate/Delayed, under the When row's own options. Unlike the editor's
+ * reserved space (.staxx-upd-sub, above), this one ANIMATES open — in a
+ * small floating menu, growth reads as a response to the click, where the
+ * same shift in the long editor form would read as something moving under
+ * someone still typing elsewhere in it. Do not "fix" one to match the
+ * other; PLAN_150 asks for both, deliberately opposite. */
+.staxx-menu-updsub {
+  display: flex;
+  gap: 0 1.6rem;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.18s ease, opacity 0.18s ease;
+}
+.staxx-menu-updsub--open {
+  max-height: 2.4rem;
+  opacity: 1;
+  margin-top: 0.3rem;
+}
+
 /* The quiet-time pair sits half width each, under the quiet-time dropdown —
  * see settingsBlockHtml()'s halfGroup handling in stacks.js. Placed in the
  * install-timing block's right-hand grid column explicitly, since with only
