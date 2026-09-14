@@ -386,14 +386,6 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
        progress is polled from the browser, not part of the page's render. -->
   <div class="staxx-updatequeue" id="staxx-update-queue" hidden></div>
 
-  <!-- A quiet status line, empty and hidden until something needs it — see
-       setPushStatus() in stacks.js, the live-feed-degraded notice. Used to
-       also carry the whole-machine GPU card and a staleness line (PLAN_114
-       moved a stack's GPU badge onto its own row instead, where it survives
-       the stack being stopped, and dropped the strip's age line — a stale
-       snapshot now just blanks the row like a stopped one, see applyStats()). -->
-  <div class="staxx-strip" id="staxx-strip" hidden></div>
-
   <!-- The table is always here, even with nothing in it.
        The browser replaces this table's body in place rather than reloading
        the page, so there has to be a body to replace — a page that swapped the

@@ -28928,11 +28928,6 @@
   }
   rebindStatRows();
 
-  // See setPushStatus() below — the only thing left that ever shows in here,
-  // now the whole-machine GPU card and the staleness line have both moved
-  // onto the row itself (PLAN_114).
-  var strip = document.getElementById('staxx-strip');
-
   var history  = {};    // project -> { cpu:[], mem:[], net:[], gpu:[] }
   var previous = {};    // project -> last cumulative counters
   var lastAt   = 0;     // server timestamp of the last snapshot we counted
@@ -29439,20 +29434,13 @@
   var PUSH_FALLBACK = 20000;
   var pushFallbackTimer = null;
 
-  // The one quiet status line the page has (see the strip's own comment in
-  // StacksPage.php) — a degraded feed is shown here rather than in a dialog
+  // A degraded feed is a live condition, not a one-off event, so it rides
+  // the toolbar's notice ticker as a sticky entry — visible for as long as
+  // it's true and gone the moment the feed recovers — rather than a dialog
   // that would interrupt whatever the user is doing.
-  var pushStatusEl = document.createElement('span');
-  pushStatusEl.className = 'staxx-strip-item';
-  pushStatusEl.hidden = true;
-  if (strip) strip.insertBefore(pushStatusEl, strip.firstChild);
-
   function setPushStatus(text) {
-    if (!strip) return;
-    if (!text) { pushStatusEl.hidden = true; return; }
-    pushStatusEl.textContent = text;
-    pushStatusEl.hidden = false;
-    strip.hidden = false;
+    if (!text) { notices.remove('push-degraded'); return; }
+    notices.add({ id: 'push-degraded', kind: 'warn', text: text, sticky: true });
   }
 
   function pushFallbackTick() {
