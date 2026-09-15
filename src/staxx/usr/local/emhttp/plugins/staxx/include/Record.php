@@ -74,6 +74,21 @@ function staxx_record_valid_entry($entry): bool {
 }
 
 /**
+ * Is a decoded "mergedInto" fact shaped the way one must be — the note a
+ * stack's own record carries once it has been folded into another (PLAN_148
+ * phase 4), so the row it still has can draw a marker and offer to remove
+ * it? Same treatment as "images" below: additive, optional, and its own
+ * shape checked independently so a hand-edited or missing value here can
+ * never take "versions" or "images" down with it.
+ */
+function staxx_record_valid_merged_into($m): bool {
+  if (!is_array($m)) return false;
+  if (!is_string($m['host'] ?? null) || $m['host'] === '') return false;
+  if (!is_int($m['at'] ?? null) || $m['at'] < 0) return false;
+  return true;
+}
+
+/**
  * Is "versions" itself shaped the way it must be — a plain list where every
  * entry passes staxx_record_valid_entry()? Split out of staxx_record_read()
  * so it can be checked independently of "images" (PLAN_82): a hand-edited
@@ -125,7 +140,13 @@ function staxx_record_read(string $rel): array {
     && staxx_image_history_valid_map($data['images'] ?? null)
     ? $data['images'] : [];
 
-  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images];
+  // PLAN_148 phase 4 — additive and independent of both fields above, on
+  // exactly the same terms: a hand-edited or missing "mergedInto" degrades
+  // to null (never merged) rather than invalidating "versions" or "images".
+  $mergedInto = staxx_record_valid_merged_into($data['mergedInto'] ?? null)
+    ? $data['mergedInto'] : null;
+
+  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images, 'mergedInto' => $mergedInto];
 }
 
 /**
@@ -163,8 +184,15 @@ function staxx_record_write_index(string $rel, array $record): bool {
   if (!array_key_exists('images', $record)) {
     $record['images'] = staxx_record_read($rel)['images'] ?? [];
   }
+  // Same carry-forward-unless-given rule as "images" just above, so a plain
+  // history save (which knows nothing about a merge) can never accidentally
+  // clear a mark this stack already carries.
+  if (!array_key_exists('mergedInto', $record)) {
+    $record['mergedInto'] = staxx_record_read($rel)['mergedInto'] ?? null;
+  }
   $out = ['v' => 1, 'next' => $record['next'], 'versions' => $record['versions']];
   if ($record['images']) $out['images'] = $record['images'];
+  if ($record['mergedInto'] !== null) $out['mergedInto'] = $record['mergedInto'];
 
   $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
@@ -404,6 +432,44 @@ function staxx_record_prune(string $rel): void {
   if (!$ok) return; // left exactly as it was; nothing on disk was touched
 
   foreach ($dropUnnamed as $v) @unlink(staxx_record_history_path($rel, $v['n']));
+}
+
+/**
+ * The mark a leftover stack's own record carries once PLAN_148's merge has
+ * folded it into another stack — {host, at}, or null when it has never been
+ * folded into anything. This is the one fact the leftover's row marker and
+ * its "Remove" button draw from (staxx_list_stacks() surfaces it per stack
+ * as 'mergedInto'), so it survives a reload and reads back exactly as any
+ * other best-effort fact in this file: missing or unreadable is simply "not
+ * merged", never an error.
+ */
+function staxx_record_merged_into(string $rel): ?array {
+  if (!staxx_valid_path($rel)) return null;
+  return staxx_record_read($rel)['mergedInto'] ?? null;
+}
+
+/**
+ * Sets the mark above. Called once, on the leftover's own folder, at the end
+ * of a successful merge — never on the host, which gains containers rather
+ * than being folded into anything. Best-effort like the rest of this file:
+ * a merge that has already written the host's file and copied its
+ * companion files must not be undone over a marker failing to save, so a
+ * caller logs a failure here rather than treating the whole merge as
+ * refused.
+ */
+function staxx_record_mark_merged_into(string $rel, string $hostRel): bool {
+  if (!staxx_valid_path($rel) || !staxx_valid_path($hostRel)) return false;
+  $dir = staxx_record_dir($rel);
+  if (!@is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+
+  $record = staxx_record_read($rel);
+  return staxx_record_write_index($rel, [
+    'v'          => 1,
+    'next'       => $record['next'] ?? 1,
+    'versions'   => $record['versions'] ?? [],
+    'images'     => $record['images'] ?? [],
+    'mergedInto' => ['host' => $hostRel, 'at' => time()],
+  ]);
 }
 
 /* -------------------------------------------------------------------------

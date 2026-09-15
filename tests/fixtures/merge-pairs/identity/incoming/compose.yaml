@@ -1,0 +1,7 @@
+services:
+  db:
+    image: mariadb:11
+
+x-unraid:
+  icon: https://example.com/mariadb.png
+  description: The demo application's own database

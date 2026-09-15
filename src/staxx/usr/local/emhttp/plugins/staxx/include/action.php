@@ -61,6 +61,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Store.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Merge.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
 
@@ -251,7 +252,7 @@ $staxxSafeWithoutStore = [
   'browse', 'browse-mkdir', 'timezones', 'devices', 'networks',
   'images', 'tags', 'hub-search', 'image-facts',
   'ca-refresh', 'ca-search', 'ca-home', 'ca-app',
-  'probe', 'webui-test', 'ping',
+  'probe', 'webui-test', 'ping', 'environment',
   'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash', 'crypt-recipe',
   // PLAN_97 Phase 2 — the first-run dialog's own actions. These are how a
   // store gets chosen in the first place, so they have to work before one
@@ -542,6 +543,65 @@ switch ($action) {
   // ---- what has been archived, for the settings panel ----
   case 'archive-list':
     staxx_reply(['ok' => true, 'dir' => staxx_archive_root(), 'files' => staxx_archive_list()]);
+
+  /* --------------------------------------------------- PLAN_148 — merge ----
+   *
+   * The wizard (a later phase) has already built the merged compose text
+   * and the joined .env text in the browser, service by service, via
+   * javascript/merge-write.js — the same rule as everywhere else on this
+   * page: nothing that decides what a file should say happens here, only
+   * what touches the filesystem. See Merge.php's own header for the whole
+   * shape of what this does.
+   *
+   * $name is the host stack, exactly as 'save' already uses it. 'incoming'
+   * is a JSON array of the other stacks being folded in; 'body' is the
+   * merged compose text; 'env' is the joined .env text, or omitted when
+   * nothing incoming carried one; 'fingerprint' guards against the same
+   * "changed since it was opened" race 'save' already refuses on;
+   * 'imageHistory' is optional and, when given, maps each incoming stack to
+   * { origService: finalService } for whichever of its services should
+   * carry their build history across — see staxx_merge_stacks()'s own
+   * comment.
+   */
+  case 'merge':
+    $incoming = json_decode((string)($_POST['incoming'] ?? ''), true);
+    if (!is_array($incoming) || $incoming === [] || array_keys($incoming) !== range(0, count($incoming) - 1)) {
+      staxx_reply(['ok' => false, 'error' => 'No stacks to fold in arrived with this request.']);
+    }
+    foreach ($incoming as $incRel) {
+      if (!is_string($incRel) || $incRel === '') {
+        staxx_reply(['ok' => false, 'error' => 'The list of stacks to fold in did not arrive as valid data.']);
+      }
+    }
+
+    $mergedBody  = (string)($_POST['body'] ?? '');
+    $fingerprint = (string)($_POST['fingerprint'] ?? '');
+    $onDisk      = staxx_stack_fingerprint($name);
+    if ($fingerprint === '' || ($onDisk !== '' && $onDisk !== $fingerprint)) {
+      staxx_reply([
+        'ok'       => false,
+        'conflict' => true,
+        'error'    => 'This file has changed since the merge was set up — by another tab, an image '
+                    . 'update, or a hand edit on the server. Close the merge window and start it again.',
+      ]);
+    }
+
+    $mergedEnv = array_key_exists('env', $_POST) ? (string)$_POST['env'] : null;
+
+    $imageHistory = [];
+    if (($_POST['imageHistory'] ?? '') !== '') {
+      $decodedHistory = json_decode((string)$_POST['imageHistory'], true);
+      if (!is_array($decodedHistory)) {
+        staxx_reply(['ok' => false, 'error' => 'The image-history map did not arrive as valid data.']);
+      }
+      $imageHistory = $decodedHistory;
+    }
+
+    $facts = null;
+    if (!staxx_merge_stacks($name, $incoming, $mergedBody, $mergedEnv, $imageHistory, $error, $facts)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true] + (array)$facts);
 
   /* --------------------------------------------------- PLAN_76 — export ----
    *
@@ -1759,6 +1819,43 @@ switch ($action) {
     $items = staxx_icon_adopt_sweep($skip, 5, $done);
     staxx_reply(['ok' => true, 'items' => $items, 'done' => $done]);
 
+  /* ---- PLAN_149 phase 3 — a picture dropped straight off the desktop ----
+   *
+   * The browser's own drop handler already checked the size and the
+   * extension before reading the file at all; both are proved again here,
+   * since a check made in the browser is a courtesy, never a guarantee.
+   *
+   * Sent as `data`, base64 text inside this same urlencoded post — never a
+   * multipart upload, which hangs on this box — so decoding is this case's
+   * own job, not staxx_icon_adopt_drop()'s: that function only ever sees
+   * the real, decoded bytes, the same shape staxx_icon_is_picture() checks
+   * everywhere else. A string that fails strict base64 decoding is treated
+   * the same as one that decodes to something that is not a picture at all
+   * — 'Not a picture' is right either way, since a corrupt upload and a
+   * non-picture body both hand the person the same true fact: what arrived
+   * cannot be used as an icon.
+   *
+   * Only the stack is named here — the service the icon belongs to is
+   * never sent, because this writes nothing about which service uses it.
+   * The reply hands back a relative path; putting it into the right
+   * service's icon field, exactly as though it had been typed, is the
+   * browser's job once this returns.
+   */
+  case 'icon-drop':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $filename = (string)($_POST['filename'] ?? '');
+    $dataB64  = (string)($_POST['data'] ?? '');
+    $body     = $dataB64 === '' ? false : base64_decode($dataB64, true);
+    if ($filename === '' || $body === false) {
+      staxx_reply(['ok' => false, 'error' => 'Not a picture']);
+    }
+
+    $file = staxx_icon_adopt_drop(staxx_stack_dir($name), $filename, $body, $error);
+    if ($file === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'file' => $file]);
+
   // ---- self-test: pure PHP, runs no commands, cannot hang ----
   case 'ping':
     staxx_reply([
@@ -1766,6 +1863,13 @@ switch ($action) {
       'report' => staxx_selftest(),
       'probes' => array_map(fn($p) => $p['label'], staxx_probes()),
     ]);
+
+  // ---- PLAN_152: the settings tab's Environment section, read fresh on
+  // every visit. Kept off 'ping' on purpose — this one runs docker/compose,
+  // and a silent 'ping' must keep meaning exactly one thing: PHP itself is
+  // not answering. ----
+  case 'environment':
+    staxx_reply(['ok' => true, 'environment' => staxx_environment()]);
 
   // ---- live figures for the table ----
   //

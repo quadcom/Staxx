@@ -2217,6 +2217,12 @@ function staxx_list_stacks(): array {
       // PLAN_69 — see the comment above where these are computed.
       'profiles'       => $declaredProfiles,
       'profilesActive' => $activeProfiles,
+      // PLAN_148 phase 4 — {host, at} once a merge has folded this stack
+      // into another, else null. Read straight from this stack's own
+      // record; see staxx_record_merged_into()'s own comment in Record.php.
+      // This is the whole of what the leftover row marker and its Remove
+      // button have to draw from.
+      'mergedInto' => staxx_record_merged_into($found['rel']),
     ];
   }
 
@@ -3410,35 +3416,222 @@ function staxx_selftest(): array {
       . '(a project only found by asking Docker counts as "do not" here, since this check never does)'
     : 'none — Compose Manager is not installed';
 
+  // PLAN_152 Phase 1c — facts Adrian asked to see that were never in the
+  // report before, above all the version, since "what am I even running?" is
+  // the first question anyone asks. Every one of these is a file read or a
+  // PHP builtin, same rule as everything else here: no external command, so
+  // this stays instant and answers even when the box is sick.
+  $manifest = staxx_manifest_facts();
+  $noManifest = 'development copy, not installed from a manifest';
+  $staxxVersion  = $manifest['version'] !== '' ? $manifest['version'] : $noManifest;
+  $updateChannel = $manifest['branch'] !== ''
+    ? $manifest['branch'].' ('.($manifest['branch'] === 'main' ? 'stable' : 'development').')'
+    : $noManifest;
+
+  $varIni = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
+  $unraidVersion = (string)($varIni['version'] ?? '') !== '' ? (string)$varIni['version'] : 'unknown';
+
+  $storeRoot = staxx_store_root();
+  if ($storeRoot === '') {
+    $storeLocation = 'no data store chosen yet';
+  } elseif (preg_match('#^/mnt/user/#', $storeRoot)) {
+    $storeLocation = $storeRoot." — goes through Unraid's combined-share layer";
+  } elseif (preg_match('#^/mnt/[^/]+/#', $storeRoot)) {
+    $storeLocation = $storeRoot.' — a cache pool directly, not the combined-share layer';
+  } else {
+    $storeLocation = $storeRoot;
+  }
+
+  $flashFree = @disk_free_space('/boot');
+  $flashFreeMiB = $flashFree !== false ? $flashFree / 1048576 : null;
+  $flashFreeBad = $flashFreeMiB !== null && $flashFreeMiB < 32;
+  $flashFreeDetail = $flashFreeMiB !== null ? round($flashFreeMiB).' MiB free on the flash drive' : 'unknown';
+
+  // PLAN_136 — the marker ensure-compose leaves beside the copy it installed.
+  // Its absence just means whatever answered the compose probe was already
+  // on this server; that is not a fault, so it is never a verdict.
+  $composeMarker = '/usr/local/lib/docker/cli-plugins/docker-compose.staxx';
+  $composeSelfInstalled = is_file($composeMarker)
+    ? 'yes — StaXX installed its own copy'
+    : 'no — using what was already on this server';
+
+  $clockDetail = date('Y-m-d H:i:s').' ('.date_default_timezone_get().')';
+
+  // Same two marker files the .page Cond expressions test — see
+  // STAXX_MARKER_HEADER_MENU / STAXX_MARKER_TAKEOVER_DOCKER_TAB in
+  // Defines.php — reported as which page results, not which marker is set.
+  $pageDetail = (is_file(STAXX_MARKER_HEADER_MENU) || is_file(STAXX_MARKER_TAKEOVER_DOCKER_TAB))
+    ? 'its own button in the top navigation bar'
+    : 'a tab under Docker, alongside the stock Docker Containers tab';
+
+  // Updates.php requires this file, so this file cannot require it back —
+  // and the standalone `php -r 'require Stacks.php; print_r(staxx_selftest());'`
+  // route loads this file alone. Same guard, and the same reason, as the
+  // moved-registry report above: report the fact when it is reachable, say
+  // so plainly when it is not, and never fatal in the one place a person
+  // reaches for when the webGUI itself is the broken thing.
+  $updateState   = function_exists('staxx_update_state') ? staxx_update_state() : null;
+  $updatesPaused = $updateState !== null && !empty($updateState['paused']);
+  $checkedTs     = (int)($updateState['checked'] ?? 0);
+  $updatesDetail = $updateState === null
+    ? 'unknown — the update layer is not loaded in this context'
+    : ($updatesPaused ? 'paused' : 'running normally')
+      . ' — last checked ' . ($checkedTs > 0 ? date('Y-m-d H:i:s', $checkedTs) : 'never');
+
+  // Deliberately absent from every entry below: the server's own name or
+  // address, and anything about the Docker Hub token beyond whether one is
+  // signed in. This report is built to be pasted somewhere public.
+  $movedBad = $movedLines !== null && $movedLines !== [];
+  $reviewBad = $seen && $awaitingReview > 0;
+
+  $entry = static fn(string $detail, string $state = 'plain'): array
+    => ['detail' => $detail, 'state' => $state];
+
   return [
-    'endpoint reachable'  => 'yes — you are reading its reply',
-    'php version'         => PHP_VERSION,
-    'php interface'       => PHP_SAPI,
-    'running as'          => (function_exists('posix_getpwuid') && function_exists('posix_geteuid'))
+    'endpoint reachable'  => $entry('yes — you are reading its reply'),
+    'StaXX version'       => $entry($staxxVersion),
+    'update channel'      => $entry($updateChannel),
+    'Unraid version'      => $entry($unraidVersion),
+    'where the store lives' => $entry($storeLocation),
+    'flash free space'    => $entry($flashFreeDetail, $flashFreeBad ? 'bad' : 'plain'),
+    'compose installed by StaXX' => $entry($composeSelfInstalled),
+    'server clock'        => $entry($clockDetail),
+    'which page is live'  => $entry($pageDetail),
+    'updates paused'      => $entry($updatesDetail, $updatesPaused ? 'bad' : 'plain'),
+    'php version'         => $entry(PHP_VERSION),
+    'php interface'       => $entry(PHP_SAPI),
+    'running as'          => $entry((function_exists('posix_getpwuid') && function_exists('posix_geteuid'))
                                ? (posix_getpwuid(posix_geteuid())['name'] ?? '?')
-                               : get_current_user(),
-    'max execution time'  => (string)ini_get('max_execution_time').' s',
-    'stack folder'        => $root,
-    'folder exists'       => is_dir($root) ? 'yes' : 'NO',
-    'folder writable'     => $canWrite ? 'yes' : 'NO — '.$writeErr,
-    'free space'          => is_dir($root) && ($free = @disk_free_space($root)) !== false
+                               : get_current_user()),
+    'max execution time'  => $entry((string)ini_get('max_execution_time').' s'),
+    'stack folder'        => $entry($root),
+    'folder exists'       => $entry(is_dir($root) ? 'yes' : 'NO', is_dir($root) ? 'good' : 'bad'),
+    'folder writable'     => $entry($canWrite ? 'yes' : 'NO — '.$writeErr, $canWrite ? 'good' : 'bad'),
+    'free space'          => $entry(is_dir($root) && ($free = @disk_free_space($root)) !== false
                                ? round($free / 1048576).' MB'
-                               : 'unknown',
-    'stacks found'        => $seen ? (string)$dirs : 'UNKNOWN — '.$scan['error'],
-    'folders found'       => $seen ? (string)$folds : 'UNKNOWN — '.$scan['error'],
-    'stacks awaiting review' => $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
-    'images pulling from a registry their template has left' => $movedReport,
-    'unraid templates on disk'  => $templatesReport,
-    'compose manager projects on disk' => $projectsReport,
-    'containers matching neither' => 'needs docker — see the Import panel, not this list',
-    'dockerd pid file'    => is_file('/var/run/dockerd.pid') ? 'present' : 'MISSING',
-    'compose on disk'     => $composePath !== '' ? $composePath : 'not found in known locations',
-    'docker on disk'      => staxx_docker_bin(),
-    'timeout command'     => is_file('/usr/bin/timeout') ? '/usr/bin/timeout' : 'NOT FOUND',
-    'exec() available'    => function_exists('exec') && !in_array('exec', $disabled, true)
+                               : 'unknown'),
+    'stacks found'        => $entry($seen ? (string)$dirs : 'UNKNOWN — '.$scan['error']),
+    'folders found'       => $entry($seen ? (string)$folds : 'UNKNOWN — '.$scan['error']),
+    'stacks awaiting review' => $entry(
+                               $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
+                               $reviewBad ? 'bad' : 'plain'),
+    'images pulling from a registry their template has left' => $entry($movedReport, $movedBad ? 'bad' : 'plain'),
+    'unraid templates on disk'  => $entry($templatesReport),
+    'compose manager projects on disk' => $entry($projectsReport),
+    'containers matching neither' => $entry('needs docker — see the Import panel, not this list'),
+    'dockerd pid file'    => $entry(is_file('/var/run/dockerd.pid') ? 'present' : 'MISSING',
+                               is_file('/var/run/dockerd.pid') ? 'good' : 'bad'),
+    'compose on disk'     => $entry($composePath !== '' ? $composePath : 'not found in known locations'),
+    'docker on disk'      => $entry(staxx_docker_bin()),
+    'timeout command'     => $entry(is_file('/usr/bin/timeout') ? '/usr/bin/timeout' : 'NOT FOUND',
+                               is_file('/usr/bin/timeout') ? 'good' : 'bad'),
+    'exec() available'    => $entry(function_exists('exec') && !in_array('exec', $disabled, true)
                                ? 'yes' : 'NO — nothing can be run',
-    'job folder'          => STAXX_JOB_DIR,
-    'compose files in a backup' => $backupReport,
+                               (function_exists('exec') && !in_array('exec', $disabled, true)) ? 'good' : 'bad'),
+    'job folder'          => $entry(STAXX_JOB_DIR),
+    'compose files in a backup' => $entry($backupReport),
+  ];
+}
+
+/**
+ * StaXX's own version and update channel, read from the installed manifest
+ * rather than the repository's copy — a dev-deployed box has no manifest at
+ * all (see the fallback in staxx_selftest()), so both come back '' rather
+ * than a guess when the entities cannot be found.
+ *
+ * A regex rather than an XML parser: the file is a DTD-style manifest with
+ * custom `<!ENTITY>` declarations, which is more trouble than it is worth to
+ * parse properly for two plain strings that only ever look like this.
+ *
+ * @return array{version:string, branch:string}
+ */
+function staxx_manifest_facts(): array {
+  $raw = @file_get_contents('/boot/config/plugins/staxx.plg');
+  if ($raw === false) return ['version' => '', 'branch' => ''];
+
+  $version = '';
+  $branch  = '';
+  if (preg_match('/<!ENTITY\s+version\s+"([^"]*)"/', $raw, $m)) $version = $m[1];
+  if (preg_match('/<!ENTITY\s+branch\s+"([^"]*)"/', $raw, $m))  $branch  = $m[1];
+  return ['version' => $version, 'branch' => $branch];
+}
+
+/**
+ * PLAN_152 Phase 2b — what the settings tab's Environment section shows,
+ * read fresh every time it is asked for rather than carried over from
+ * page-load markup (which would be stale the moment the page had been open
+ * a while). Runs `docker`/`compose`, unlike staxx_selftest(), which is why
+ * it is its own endpoint and never folded into `ping` — see action.php.
+ *
+ * @return array{
+ *   rows: list<array{label:string, ok:bool, detail:string}>,
+ *   projects: array<string, string[]>,
+ *   dockerVersion: string,
+ *   composeVersion: string,
+ * }
+ */
+function staxx_environment(): array {
+  $compose       = staxx_compose();
+  $dockerRunning = staxx_docker_running();
+  $projects      = staxx_containers_by_project();
+  $root          = staxx_stack_root();
+  $stackCount    = count(array_filter(array_keys($projects), fn($p) => $p !== ''));
+
+  // Same command shape as the 'daemon' probe in staxx_probes() — the client
+  // version alone ('docker --version') answers even with the daemon down,
+  // which the self-test's own probe already tells you; this wants the
+  // daemon's own version, since that is what "which Docker is this" means.
+  $dockerVersion = $dockerRunning
+    ? trim(staxx_sh(escapeshellarg(staxx_docker_bin()).' info --format "{{.ServerVersion}}"', 8))
+    : '';
+
+  $rows = [
+    [
+      'label'  => 'Docker service',
+      'ok'     => $dockerRunning,
+      'detail' => $dockerRunning ? 'Running' : 'Not running',
+    ],
+    [
+      'label'  => 'Compose available',
+      'ok'     => $compose['available'],
+      'detail' => $compose['available']
+        ? sprintf(
+            $compose['form'] === 'standalone'
+              ? 'v%s — standalone `docker-compose` command'
+              : 'v%s — `docker compose` CLI plugin',
+            $compose['version'] ?: '?'
+          )
+        : 'Not found. Unraid does not ship compose — install the Docker Compose '
+          . 'Manager plugin from Community Applications, then reload this page.',
+    ],
+    [
+      'label'  => 'Compose location',
+      'ok'     => $compose['path'] !== '',
+      'detail' => $compose['path'] !== ''
+        ? $compose['path']
+        : ($compose['available']
+            ? 'Runs, but not in any known location — please report where it lives.'
+            : 'Nothing to locate.'),
+    ],
+    [
+      'label'  => 'Stack folder',
+      'ok'     => is_dir($root),
+      'detail' => is_dir($root) ? $root : sprintf('%s does not exist yet', $root),
+    ],
+    [
+      'label'  => 'Compose project labels',
+      'ok'     => $stackCount > 0,
+      'detail' => $stackCount > 0
+        ? sprintf('%d compose stack(s) detected via com.docker.compose.project', $stackCount)
+        : 'No compose-managed containers found yet.',
+    ],
+  ];
+
+  return [
+    'rows'           => $rows,
+    'projects'       => $projects,
+    'dockerVersion'  => $dockerVersion !== '' ? $dockerVersion : 'unknown',
+    'composeVersion' => $compose['version'] !== '' ? $compose['version'] : 'unknown',
   ];
 }
 

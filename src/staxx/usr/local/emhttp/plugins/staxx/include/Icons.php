@@ -75,6 +75,12 @@ const STAXX_ICON_INDEX_TTL = 7 * 86400;
 /** File extensions that may be written into the cache. */
 const STAXX_ICON_EXTS = ['svg', 'png', 'webp', 'jpg', 'jpeg', 'gif', 'ico'];
 
+/** PLAN_149 phase 3 — the size limit on a picture dropped straight in from
+ *  the desktop, measured on the file's own decoded bytes. Generous on
+ *  purpose: an icon is a kilobyte or two, so this refuses nothing anybody
+ *  would sensibly drop on one while still stopping a photograph. */
+const STAXX_ICON_DROP_MAX_BYTES = 512 * 1024;
+
 /**
  * Where a failed download is remembered, so a broken source is not retried on
  * every sweep. Under /tmp, like STAXX_JOB_DIR and STAXX_STATS_DIR: this costs
@@ -589,6 +595,85 @@ function staxx_icon_adopt(string $ref, string $dir, string &$error, string $url 
   if ($body === false) { $error = 'The cached icon could not be read.'; return ''; }
   if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
 
+  return $relative;
+}
+
+/**
+ * PLAN_149 phase 3 — write a picture handed over directly (dragged off the
+ * desktop, not an address) into the stack's own hidden record folder. The
+ * one difference from staxx_icon_adopt() above: there is no reference to
+ * resolve and nothing cached to copy from — the bytes are already in hand,
+ * sent as text in the ordinary post the page already uses rather than a
+ * multipart upload, which hangs on this box. $body is therefore the
+ * DECODED file — the caller's job, not this function's, since decoding is
+ * about how the bytes travelled, and this is only about what they are.
+ *
+ * Refuses in this order, and returns '' with $error set to the exact
+ * sentence PLAN_149 settled on for each:
+ *
+ *   - over STAXX_ICON_DROP_MAX_BYTES, measured on these bytes directly —
+ *     the browser's own size check is a courtesy, never a guarantee;
+ *   - the wrong shape for $filename's own extension, or an extension
+ *     outside STAXX_ICON_EXTS at all — proved by staxx_icon_is_picture()
+ *     against the actual bytes, never by the name alone;
+ *   - no folder to write into — a stack that has never been saved has none,
+ *     and one is never created behind the person's back to make room for
+ *     this.
+ *
+ * Named from $filename's own stem, cleaned to safe characters and lower-
+ * cased exactly the way staxx_icon_url_filename() names a pasted address
+ * (see its own comment above) — falling back to a hash of the body when
+ * nothing survives the clean, rather than a bare extension nobody could
+ * tell apart from another dropped picture. There is no address to record
+ * beside it, so — unlike staxx_icon_adopt() — nothing is ever appended as
+ * a comment; the plan is explicit that only a note of the drop itself
+ * belongs there, and that note is the caller's to write, once, into the
+ * compose file's own icon line (see action.php's 'icon-drop' case).
+ *
+ * Safe to call twice with the same picture: identical bytes already under
+ * that name is a no-op success, the same idempotence staxx_icon_adopt()
+ * already gives an adopted one — needed here for exactly the same reason,
+ * a repeated drop landing one file rather than two.
+ */
+function staxx_icon_adopt_drop(string $dir, string $filename, string $body, string &$error): string {
+  $error = '';
+
+  if (strlen($body) > STAXX_ICON_DROP_MAX_BYTES) {
+    $error = 'Too big — icons must be under 512 KB';
+    return '';
+  }
+
+  $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+  if (!in_array($ext, STAXX_ICON_EXTS, true) || !staxx_icon_is_picture($ext, $body)) {
+    $error = 'Not a picture';
+    return '';
+  }
+
+  if (!is_dir($dir) || !is_writable($dir)) {
+    $error = 'Save the stack first';
+    return '';
+  }
+
+  $stem = strtolower(pathinfo($filename, PATHINFO_FILENAME));
+  $stem = (string)preg_replace('/[^a-z0-9._-]+/', '', $stem);
+  $stem = trim($stem, '.-');
+  if ($stem === '') $stem = 'icon-'.substr(md5($body), 0, 8);
+  $file = $stem.'.'.$ext;
+
+  $recordDir = $dir.'/'.STAXX_RECORD_DIR;
+  $target    = $recordDir.'/'.$file;
+  $relative  = './'.STAXX_RECORD_DIR.'/'.$file;
+
+  if (is_file($target)) {
+    // Already there. Identical contents is a no-op success, same as
+    // staxx_icon_adopt() — a repeated drop must land one file, not two.
+    if (md5_file($target) === md5($body)) return $relative;
+    $error = 'A different picture is already saved under that name for this stack. '
+           . 'Rename the icon, or remove the one already there, and try again.';
+    return '';
+  }
+
+  if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
   return $relative;
 }
 

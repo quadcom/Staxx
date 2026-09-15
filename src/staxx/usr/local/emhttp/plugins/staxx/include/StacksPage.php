@@ -135,6 +135,14 @@ $updateSettingsForJs = [
 $assets  = '/plugins/'.STAXX_PLUGIN;
 $jsFile  = STAXX_ROOT.'/javascript/stacks.js';
 $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
+// PLAN_148 — the merge wizard's own two halves: the reading pass (phase 2,
+// built separately) and the write pass (phase 4, ditto). Both read
+// window.StaxxYaml, so they must load after compose-model.js; stacks.js
+// reads window.StaxxMergeExamine and window.StaxxMergeWrite, so this must
+// load before it. Conditional for the same reason as the scripts below —
+// either can genuinely be mid-build when this page renders.
+$mergeExamineFile = STAXX_ROOT.'/javascript/merge-examine.js';
+$mergeWriteFile   = STAXX_ROOT.'/javascript/merge-write.js';
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
 $scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
@@ -156,6 +164,8 @@ $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? file
 $scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
 $dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? filemtime($dbImagesFile) : '0');
 $healthOfferTag = $assets.'/javascript/health-offer.js?v='.(is_file($healthOfferFile) ? filemtime($healthOfferFile) : '0');
+$mergeExamineTag = $assets.'/javascript/merge-examine.js?v='.(is_file($mergeExamineFile) ? filemtime($mergeExamineFile) : '0');
+$mergeWriteTag   = $assets.'/javascript/merge-write.js?v='.(is_file($mergeWriteFile) ? filemtime($mergeWriteFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -169,15 +179,6 @@ $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFil
 $nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
         . 'data-bwignore data-form-type="other" data-protonpass-ignore="true"';
 
-if (!function_exists('staxx_status_row')):
-function staxx_status_row(string $label, bool $ok, string $detail): void {
-  $icon = $ok ? 'fa-check green-text' : 'fa-times-circle red-text';
-  echo '<div class="staxx-row" role="row">';
-  echo   '<span class="staxx-cell" role="cell"><i class="fa ', $icon, '"></i> ', htmlspecialchars($label), '</span>';
-  echo   '<span class="staxx-cell" role="cell">', htmlspecialchars($detail), '</span>';
-  echo '</div>';
-}
-endif;
 ?>
 
 <link rel="stylesheet" href="<?= $cssTag ?>">
@@ -371,9 +372,6 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-btn" id="staxx-settings-btn">
         <i class="fa fa-cog"></i> <?= _('Settings') ?>
       </button>
-      <button type="button" class="staxx-btn" id="staxx-diagnose">
-        <i class="fa fa-stethoscope"></i> <?= _('Self-test') ?>
-      </button>
       <button type="button" class="staxx-btn" id="staxx-add-folder">
         <i class="fa fa-folder"></i> <?= _('New folder') ?>
       </button>
@@ -385,6 +383,15 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       </button>
       <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add">
         <i class="fa fa-plus"></i> <?= _('Add stack') ?>
+      </button>
+      <!-- PLAN_148 — a plain button, deliberately: this is not the Select
+           tool, and it must not pre-empt the later job that folds Apps,
+           Import, Merge and manual creation under one "Add stack" button.
+           Hidden below 990px (see staxx.css) — the merge window needs two
+           columns of source beside a third, and there is no small version
+           of this tool. -->
+      <button type="button" class="staxx-btn" id="staxx-merge-btn">
+        <i class="fa fa-compress"></i> <?= _('Merge') ?>
       </button>
       <button type="button" class="staxx-btn" id="staxx-check-updates">
         <i class="fa fa-refresh"></i> <?= _('Check for updates') ?>
@@ -978,6 +985,58 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   </dialog>
 
+  <!-- ------------------------------------------------------ merge wizard --
+
+       PLAN_148. Built to the editor dialog's own measurements — .staxx-modal
+       already carries the width/height rules and the 990px full-screen step
+       (see staxx.css's own comment on why that threshold is written in
+       pixels), so this reuses them rather than inventing a second set; only
+       the internal four-band layout (head, panes, decisions, foot) is its
+       own. Everything inside is built and torn down by stacks.js — there is
+       nothing here for PHP to render per stack, because the whole point is
+       to compare two or more files nobody has picked yet. -->
+  <dialog class="staxx-modal staxx-merge-modal" id="staxx-merge-modal" aria-labelledby="staxx-merge-title">
+
+    <div class="staxx-modal-head staxx-merge-head">
+      <h3 class="staxx-modal-title" id="staxx-merge-title"><?= _('Merge stacks') ?></h3>
+      <div class="staxx-merge-steps" id="staxx-merge-steps" role="list" aria-label="<?= _('Merge steps') ?>"></div>
+    </div>
+
+    <!-- Step 1 fills this whole area with the picker; step 2 onward hands it
+         back to one source pane per chosen stack (scrolling sideways past
+         two) plus the merged pane, which never moves. -->
+    <div class="staxx-merge-panes" id="staxx-merge-panes">
+      <div class="staxx-merge-picker" id="staxx-merge-picker"></div>
+      <div class="staxx-merge-sources" id="staxx-merge-sources"></div>
+      <div class="staxx-merge-merged" id="staxx-merge-merged" hidden>
+        <div class="staxx-merge-pane-head">
+          <span><?= _('Merged file') ?></span>
+        </div>
+        <div class="staxx-merge-code" id="staxx-merge-merged-code"></div>
+      </div>
+    </div>
+
+    <!-- The decisions strip — steps 3 and 4 only; empty and hidden the rest
+         of the time. -->
+    <div class="staxx-merge-decisions" id="staxx-merge-decisions" hidden>
+      <p class="staxx-merge-decisions-lead" id="staxx-merge-decisions-lead"></p>
+      <div class="staxx-merge-decisions-list" id="staxx-merge-decisions-list"></div>
+      <div class="staxx-merge-clean" id="staxx-merge-clean"></div>
+    </div>
+
+    <div class="staxx-modal-foot staxx-merge-foot">
+      <div class="staxx-error" id="staxx-merge-error" hidden></div>
+      <div class="staxx-modal-actions">
+        <button type="button" class="staxx-btn" id="staxx-merge-cancel"><?= _('Cancel') ?></button>
+        <div class="staxx-merge-foot-right">
+          <button type="button" class="staxx-btn" id="staxx-merge-back"><?= _('Back') ?></button>
+          <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-merge-next"><?= _('Next') ?></button>
+        </div>
+      </div>
+    </div>
+
+  </dialog>
+
   <!-- ---------------------------------------------------------- picker -- -->
 
   <!-- A second <dialog>, opened with showModal() while the editor is already
@@ -1408,6 +1467,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="icons"><?= _('Icons and images') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="updates"><?= _('Updates') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Registries and security') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="selftest"><?= _('Self-test') ?></button>
     </div>
 
     <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
@@ -1504,102 +1564,6 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   </dialog>
 
-  <!-- ---------------------------------------------------- environment -- -->
-
-  <details class="staxx-details">
-    <summary><?= _('Environment') ?></summary>
-
-    <div class="staxx-status" role="table">
-      <div class="staxx-row staxx-head-row" role="row">
-        <span class="staxx-cell" role="columnheader"><?= _('Check') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('Result') ?></span>
-      </div>
-      <?
-        staxx_status_row(
-          _('Docker service'),
-          $dockerRunning,
-          $dockerRunning ? _('Running') : _('Not running')
-        );
-
-        // Reported as two rows: whether compose runs at all, and where it was
-        // found. They can disagree — compose can work while sitting somewhere
-        // this plugin does not know to look — and that difference is worth
-        // seeing rather than hiding behind a single tick.
-        staxx_status_row(
-          _('Compose available'),
-          $compose['available'],
-          $compose['available']
-            ? sprintf(
-                $compose['form'] === 'standalone'
-                  ? _('v%s — standalone `docker-compose` command')
-                  : _('v%s — `docker compose` CLI plugin'),
-                $compose['version'] ?: '?'
-              )
-            // Says how to get it rather than promising an installer this
-            // plugin does not have. Unraid ships no compose of its own, and
-            // Compose Manager is how it reaches nearly every box that has it.
-            : _('Not found. Unraid does not ship compose — install the Docker Compose '
-              . 'Manager plugin from Community Applications, then reload this page.')
-        );
-
-        staxx_status_row(
-          _('Compose location'),
-          $compose['path'] !== '',
-          $compose['path'] !== ''
-            ? $compose['path']
-            : ($compose['available']
-                ? _('Runs, but not in any known location — please report where it lives.')
-                : _('Nothing to locate.'))
-        );
-
-        staxx_status_row(
-          _('Stack folder'),
-          is_dir($root),
-          is_dir($root) ? $root : sprintf(_('%s does not exist yet'), $root)
-        );
-
-        staxx_status_row(
-          _('Compose project labels'),
-          $stackCount > 0,
-          $stackCount > 0
-            ? sprintf(_('%d compose stack(s) detected via com.docker.compose.project'), $stackCount)
-            : _('No compose-managed containers found yet.')
-        );
-      ?>
-    </div>
-
-    <? if ($projects): ?>
-      <h3><?= _('Containers by stack') ?></h3>
-      <p class="staxx-hint">
-        <?= _('Grouping comes from the com.docker.compose.project label — stacks group themselves, with no folders to configure.') ?>
-      </p>
-
-      <div class="staxx-projects" role="table">
-        <? foreach ($projects as $project => $containers): ?>
-          <div class="staxx-row" role="row">
-            <span class="staxx-cell staxx-project" role="cell">
-              <? if ($project === ''): ?>
-                <i class="fa fa-cube"></i> <em><?= _('Not compose-managed') ?></em>
-              <? else: ?>
-                <i class="fa fa-cubes"></i> <?= htmlspecialchars($project) ?>
-              <? endif; ?>
-            </span>
-            <span class="staxx-cell" role="cell"><?= htmlspecialchars(implode(', ', $containers)) ?></span>
-          </div>
-        <? endforeach; ?>
-      </div>
-
-      <? if ($unmanagedCount): ?>
-        <p class="staxx-hint">
-          <?= sprintf(
-                _('%d container(s) carry no compose project label. These were created by Unraid templates or by hand, and are what an import path would need to adopt.'),
-                $unmanagedCount
-              ) ?>
-        </p>
-      <? endif; ?>
-    <? endif; ?>
-  </details>
-
 </div>
 
 <!-- The compose model is a separate file on purpose. stacks.js is one large
@@ -1649,6 +1613,16 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      for the same reason as the scripts above. -->
 <? if (is_file($healthOfferFile)): ?>
 <script src="<?= $healthOfferTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_148 — merge-examine.js (phase 2) works out what a merge must
+     decide; merge-write.js (phase 4) turns that into real file text. Both
+     read window.StaxxYaml, so they load after compose-model.js and before
+     stacks.js, which reads window.StaxxMergeExamine and window.StaxxMergeWrite. -->
+<? if (is_file($mergeExamineFile)): ?>
+<script src="<?= $mergeExamineTag ?>"></script>
+<? endif; ?>
+<? if (is_file($mergeWriteFile)): ?>
+<script src="<?= $mergeWriteTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

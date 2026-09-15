@@ -1,0 +1,9 @@
+services:
+  db:
+    image: mariadb:11
+    networks:
+      - demo
+
+networks:
+  demo:
+    driver: macvlan

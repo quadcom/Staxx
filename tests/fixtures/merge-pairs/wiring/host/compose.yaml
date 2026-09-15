@@ -1,0 +1,7 @@
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "8091:80"
+    environment:
+      DB_ADDRESS: 192.0.2.88:3307

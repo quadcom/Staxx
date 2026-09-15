@@ -104,8 +104,10 @@ This tab is explained fully in [checking for updates](updates.md).
 
 ## Self-test
 
-**Self-test**, the button beside Settings, answers "why did nothing happen?" with facts, in two
-stages.
+**Self-test**, the last tab in this window, answers "why did nothing happen?" with facts, in two
+stages. It runs the moment you open the tab, fresh every time — there is nothing to press first,
+and a **Copy** button at the bottom puts the whole report on the clipboard as plain text, ready to
+paste into a forum post or a message.
 
 ![The Self-test output: a list of checks with their answers, then a list of commands run one at a time, each ending in ok](../images/guide/settings-self-test-output.png)
 

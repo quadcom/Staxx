@@ -222,8 +222,25 @@ file_put_contents($log2, "went wrong\n".STAXX_JOB_END.' 137'."\n");
 $r6 = staxx_job_log($job2, 0);
 ok('a non-zero exit code is reported as-is', $r6['done'] === true && $r6['exit'] === 137);
 
+// PLAN_151 — a job whose command finishes before anything ever polls it: the
+// whole log, sentinel included, is on disk already at the very first read.
+// This is the shape that hid a missed completion on Adrian's box — a
+// container that starts, does its work and exits straight away can write its
+// sentinel well inside the second between the command being started and the
+// page's first tick, so "done" has to be caught on read #1 exactly as
+// reliably as it is on read #4 above, not only once a job has been polled
+// while still running.
+$job3 = bin2hex(random_bytes(8));
+$log3 = STAXX_JOB_DIR.'/'.$job3.'.log';
+file_put_contents($log3, "hello\n".STAXX_JOB_END.' 0'."\n");
+$r7 = staxx_job_log($job3, 0);
+ok('a job finished before the first poll is still reported done, on that very first read',
+   $r7['done'] === true && $r7['exit'] === 0);
+ok('…with its real output kept and only the sentinel line stripped out', $r7['text'] === "hello\n");
+
 @unlink($log);
 @unlink($log2);
+@unlink($log3);
 
 /* ---------------------------------------------------- job id validation -- */
 

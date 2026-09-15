@@ -5228,8 +5228,15 @@ div.title.staxx-has-titlebar {
   width: 7.2rem;
   height: 7.2rem;
   border-radius: 0.8rem;
-  overflow: hidden;
+  /* PLAN_149's orange/red drop halo radiates OUTWARDS from the icon, and the
+     refusal text sits directly beneath it — both would be sliced off at the
+     tile's own edge if this stayed hidden, which is why it changed here
+     rather than being fought with a box-shadow trick. The picture inside
+     still can't overflow its own box: that is .staxx-svcicon img/.staxx-tile
+     below, sized to 100% of a tile whose own bounds are unchanged. */
+  overflow: visible;
   opacity: 0.85;
+  position: relative;
 }
 
 .staxx-svcicon:hover,
@@ -5242,6 +5249,18 @@ div.title.staxx-has-titlebar {
 .staxx-svcicon .staxx-tile {
   width: 100%;
   height: 100%;
+  border-radius: 0.8rem;
+  overflow: hidden;
+}
+
+/* PLAN_149 — the picture and its fallback tile never take the drag events
+   themselves; the anchor around them does. Without this, the pointer
+   crossing from the anchor onto its own <img> mid-drag fired a
+   dragleave/dragenter pair that made the halo flicker on and off. */
+.staxx-svcicon img,
+.staxx-svcicon .staxx-tile,
+.staxx-svcicon i {
+  pointer-events: none;
 }
 
 /* Same box model the table's own logos need: width plus padding overflows the
@@ -5261,6 +5280,44 @@ div.title.staxx-has-titlebar {
 
 .staxx-svcicon i {
   font-size: 3.6rem;
+}
+
+/* The glow itself — an orange halo while something hangs over the
+   container's icon, red for five seconds on a refusal. Radiates OUTWARDS
+   from the icon (a spread box-shadow, not a border), which is what makes it
+   read as an invitation rather than a selection outline. The icon already
+   carries its own border-radius above, so the halo follows its shape. */
+.staxx-icondrop--over {
+  box-shadow: 0 0 0 0.2rem var(--orange-500, #f90),
+              0 0 1.4rem 0.4rem var(--orange-500, #f90);
+}
+
+.staxx-icondrop--bad {
+  box-shadow: 0 0 0 0.2rem var(--red-500, #d33),
+              0 0 1.4rem 0.4rem var(--red-500, #d33);
+}
+
+/* The refusal's own short line, directly beneath the icon that is still in
+   place — never pushing anything else on the row, since it is positioned
+   against the icon rather than sitting inline with it. Gone the moment the
+   glow is (see iconDropClear() in stacks.js), so there is nothing here for
+   a repeat attempt to clear away first. */
+.staxx-icondrop-msg {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #fff;
+  background: var(--red-500, #d33);
+  border-radius: 0.3rem;
+  z-index: 5;
+  pointer-events: none;
 }
 
 /* Quiet until the heading is hovered or focused, so a pencil beside every
@@ -10285,7 +10342,8 @@ dialog::backdrop {
 .staxx-settings--wide[data-tab="storage"] .staxx-settings-pane[data-pane="storage"],
 .staxx-settings--wide[data-tab="icons"] .staxx-settings-pane[data-pane="icons"],
 .staxx-settings--wide[data-tab="updates"] .staxx-settings-pane[data-pane="updates"],
-.staxx-settings--wide[data-tab="registries"] .staxx-settings-pane[data-pane="registries"] {
+.staxx-settings--wide[data-tab="registries"] .staxx-settings-pane[data-pane="registries"],
+.staxx-settings--wide[data-tab="selftest"] .staxx-settings-pane[data-pane="selftest"] {
   display: block;
 }
 
@@ -11073,25 +11131,6 @@ dialog::backdrop {
   border-top: 0.1rem solid var(--sm-line);
 }
 
-/* ---- Collapsible environment section ------------------------------------ */
-
-.staxx-details {
-  margin-top: 2.5rem;
-  padding-top: 1.5rem;
-  border-top: 0.1rem solid var(--sm-hairline);
-}
-
-.staxx-details > summary {
-  cursor: pointer;
-  font-size: 1.4rem;
-  font-weight: 700;
-  list-style: revert;
-}
-
-.staxx-details[open] > summary {
-  margin-bottom: 1.5rem;
-}
-
 /* ---- Status and containers-by-stack tables ------------------------------
  *
  * Two small two-column tables — Environment's check/result list and the
@@ -11223,6 +11262,59 @@ dialog::backdrop {
 
 .staxx-scaffold .fa.red-text {
   color: var(--sm-danger);
+}
+
+/* PLAN_152 — the self-test's own third state: a fact, not a verdict, so it
+   gets a plain dash rather than a tick or a cross that would be asserting a
+   judgement nobody is making. */
+.staxx-scaffold .fa.grey-text {
+  color: var(--sm-muted);
+}
+
+/* ---- Self-test tab -------------------------------------------------------
+ *
+ * PLAN_152: the report and its environment facts, both built as .staxx-row/
+ * .staxx-cell rows (see .staxx-status above) directly inside these two
+ * boxes rather than through a table wrapper — there is only ever one column
+ * pair here, never nested rows, so the subgrid machinery those two classes
+ * carry is enough on its own. */
+.staxx-scaffold .staxx-selftest-out,
+.staxx-scaffold .staxx-selftest-env {
+  max-height: 40vh;
+  overflow: auto;
+  margin-bottom: 1rem;
+}
+
+.staxx-scaffold .staxx-selftest-heading {
+  margin: 1.2rem 0 0.4rem;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.staxx-scaffold .staxx-selftest-heading:first-child {
+  margin-top: 0;
+}
+
+.staxx-scaffold .staxx-selftest-row {
+  display: grid;
+  grid-template-columns: 30% 1fr;
+}
+
+.staxx-scaffold .staxx-selftest-row .staxx-cell {
+  padding: 0.5rem 0.8rem;
+  text-align: left;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+}
+
+.staxx-scaffold .staxx-selftest-row + .staxx-selftest-row {
+  border-top: 0.1rem solid var(--sm-hairline);
+}
+
+.staxx-scaffold button.staxx-selftest-copy {
+  min-width: 8rem;
 }
 
 /* ---- Roomier stack rows, wide screens only --------------------------------
@@ -12521,4 +12613,472 @@ dialog::backdrop {
   border-radius: 0.3rem;
   background: color-mix(in srgb, var(--sm-fg) 8%, transparent);
   color: inherit;
+}
+
+/* =====================================================================
+   PLAN_148 — merging stacks into one. The wizard's own screens: the
+   toolbar button, the four-band dialog (head/panes/decisions/foot), the
+   picker (step 1), the host cards (step 2), the decision blocks and
+   highlighting (steps 3-4), and the leftover's own row marker (phase 6).
+   The examination and the write itself are plain data, built elsewhere
+   (merge-examine.js, merge-write.js, Merge.php) — nothing here decides
+   what a merge does, only how it is shown.
+   ===================================================================== */
+
+/* The toolbar button: hidden at the same 990px line the stack table itself
+   drops to its narrow layout at, and the merge dialog fills the screen at
+   (see .staxx-modal's own 990px rule above) — the page changes character at
+   one point, not two. Written in pixels on purpose: a media query's rem is
+   the browser's 16px, not this sheet's 10px root, and rem here would land
+   the threshold somewhere else entirely (the same PLAN_128 trap the modal's
+   own comment records). No small version of this tool exists, so the
+   button is simply absent rather than disabled or explained. */
+@media (max-width: 990px) {
+  #staxx-merge-btn { display: none; }
+}
+
+/* ---- the dialog's own four bands: head, panes, decisions, foot ----
+   .staxx-merge-modal carries .staxx-modal too, so the width/height/990px
+   full-screen rules above apply unchanged; only the row layout differs
+   from the stock editor's head/tabstrip/body/foot. */
+.staxx-merge-modal {
+  grid-template-rows: auto 1fr auto auto;
+}
+
+.staxx-merge-head {
+  flex-wrap: wrap;
+}
+
+.staxx-merge-steps {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 1.2rem;
+  color: var(--sm-muted);
+}
+
+.staxx-merge-step {
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  border: 0.1rem solid var(--sm-line);
+  white-space: nowrap;
+}
+
+.staxx-merge-step--current {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+  font-weight: 600;
+}
+
+.staxx-merge-step--done {
+  color: var(--sm-fg, #ccc);
+}
+
+/* ---- the panes band: the picker (step 1), or source panes + the merged
+   pane (step 2 on). Only one of #staxx-merge-picker / #staxx-merge-sources
+   is ever unhidden at once — stacks.js toggles it, not CSS, since it is
+   exactly one thing switching on a step change, not a state worth a
+   selector of its own. ---- */
+.staxx-merge-panes {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.staxx-merge-picker {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1.2rem 1.4rem;
+  overflow: auto;
+}
+
+/* Scrolls sideways past two source panes; each pane keeps a readable width
+   rather than being squeezed (PLAN_148, "The window"). */
+.staxx-merge-sources {
+  display: flex;
+  gap: 1.2rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1.2rem;
+}
+
+.staxx-merge-pane {
+  flex: 0 0 36rem;
+  min-width: 30rem;
+  display: flex;
+  flex-direction: column;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+}
+
+/* The merged pane never moves — it is not part of the sideways-scrolling
+   row above, but its own sibling taking the rest of the width. */
+.staxx-merge-merged {
+  flex: 1 1 42rem;
+  min-width: 30rem;
+  display: flex;
+  flex-direction: column;
+  border-left: 0.1rem solid var(--sm-line);
+  overflow: hidden;
+}
+
+.staxx-merge-pane-head {
+  padding: 0.7rem 1rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 1.3rem;
+  gap: 0.6rem;
+}
+
+.staxx-merge-tag {
+  font-size: 1rem;
+  font-weight: 500;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  border: 0.1rem solid var(--sm-line);
+  white-space: nowrap;
+}
+
+.staxx-merge-tag--host {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+.staxx-merge-code {
+  flex: 1 1 auto;
+  overflow: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  line-height: 1.5;
+  padding: 0.4rem 0;
+}
+
+/* One line per row, so a finding can be traced to a highlighted line and
+   back — see stacks.js's own mergeHighlight(). Not an editable field: the
+   merged pane is built from the decisions, so nothing here ever gets
+   contenteditable or an <input>. */
+.staxx-merge-line {
+  padding: 0 1rem;
+  white-space: pre;
+  cursor: default;
+}
+
+/* Amber on a SOURCE pane marks the lines that CAUSED a decision; green on
+   the MERGED pane marks what is new or changed. Two different meanings, so
+   two different colours rather than one "changed" class doing both jobs. */
+.staxx-merge-line--amber {
+  background: color-mix(in srgb, var(--sm-accent) 22%, transparent);
+  cursor: pointer;
+}
+
+.staxx-merge-line--green {
+  background: color-mix(in srgb, var(--sm-good) 20%, transparent);
+}
+
+.staxx-merge-line--flash {
+  animation: staxx-merge-flash 1s ease;
+}
+
+@keyframes staxx-merge-flash {
+  0%, 100% { background-color: transparent; }
+  30% { background-color: color-mix(in srgb, var(--sm-accent) 50%, transparent); }
+}
+
+/* ---- the picker (step 1) ---- */
+
+.staxx-merge-picker-search {
+  margin-bottom: 1rem;
+}
+
+/* An <input>, so every property Unraid's own reset zeroes or inherits
+   wrongly (trap 3, header) is restated here rather than left to the plain
+   .staxx-merge-picker-search selector above, which the reset outranks. */
+.staxx-scaffold .staxx-merge-picker-search input[type="text"] {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: transparent;
+  color: inherit;
+  font-size: 1.3rem;
+  font-weight: 400;
+  line-height: normal;
+  font-family: inherit;
+}
+
+.staxx-merge-picker-group {
+  margin-bottom: 1.2rem;
+}
+
+.staxx-merge-picker-group h4 {
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sm-muted);
+  margin: 0 0 0.4rem;
+}
+
+.staxx-merge-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0;
+}
+
+.staxx-merge-pick-row--disabled {
+  opacity: 0.55;
+}
+
+.staxx-merge-pick-reason {
+  font-size: 1.1rem;
+  font-style: italic;
+  color: var(--sm-muted);
+}
+
+.staxx-merge-picker-count {
+  margin-top: 1rem;
+  font-weight: 600;
+  font-size: 1.2rem;
+}
+
+/* ---- step 2: which one takes the others in ---- */
+
+.staxx-merge-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+}
+
+.staxx-merge-card {
+  flex: 1 1 26rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  padding: 1rem 1.2rem;
+  cursor: pointer;
+}
+
+.staxx-merge-card--host {
+  border-color: var(--sm-accent);
+}
+
+.staxx-merge-card h4 {
+  margin: 0 0 0.4rem;
+  font-size: 1.4rem;
+}
+
+.staxx-merge-card p {
+  margin: 0.3rem 0;
+  font-size: 1.2rem;
+}
+
+.staxx-merge-footnote {
+  margin-top: 1.2rem;
+  font-size: 1.2rem;
+  color: var(--sm-muted);
+}
+
+/* ---- the decisions strip (steps 3-4) ---- */
+
+.staxx-merge-decisions {
+  border-top: 0.1rem solid var(--sm-line);
+  padding: 1rem 1.4rem;
+  max-height: 32rem;
+  overflow: auto;
+}
+
+.staxx-merge-decisions-lead {
+  font-weight: 600;
+  margin: 0 0 0.8rem;
+  font-size: 1.3rem;
+}
+
+.staxx-merge-decisions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.staxx-merge-decision {
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+}
+
+.staxx-merge-decision--current {
+  border-color: var(--sm-accent);
+}
+
+.staxx-merge-decision h5 {
+  margin: 0 0 0.4rem;
+  font-size: 1.3rem;
+}
+
+.staxx-merge-decision p {
+  margin: 0 0 0.6rem;
+  font-size: 1.2rem;
+}
+
+.staxx-merge-decision-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* Both the radio and the tickbox (step 4's wiring blocks) sit inside this
+   label — restated the same way every other control on this page is (trap
+   3, header), rather than trusting the bare .staxx-merge-decision-choices
+   rule above, which the reset would still outrank. */
+.staxx-scaffold .staxx-merge-decision label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.2rem;
+  font-weight: 400;
+  color: inherit;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-merge-decision input[type="radio"],
+.staxx-scaffold .staxx-merge-decision input[type="checkbox"] {
+  accent-color: var(--sm-accent);
+  margin: 0;
+}
+
+.staxx-merge-decision--automatic {
+  cursor: default;
+  opacity: 0.9;
+}
+
+/* The free-port field beside "change it to a free port" (step 3). An
+   <input>, so every property Unraid's own reset zeroes or inherits wrongly
+   (trap 3, header) is restated here rather than left to the plain
+   .staxx-merge-portfield selector, which the reset would still outrank. */
+.staxx-merge-portfield {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.2rem 0 0 1.7rem;
+}
+
+.staxx-scaffold .staxx-merge-portfield input[type="number"] {
+  width: 7rem;
+  padding: 0.3rem 0.5rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  font-weight: 400;
+  line-height: normal;
+  font-family: inherit;
+}
+
+.staxx-merge-portfield-note {
+  font-size: 1.1rem;
+  color: var(--sm-muted);
+}
+
+.staxx-merge-portfield-error {
+  font-size: 1.1rem;
+  color: var(--sm-danger);
+  font-weight: 600;
+}
+
+.staxx-merge-clean {
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 0.1rem dashed var(--sm-line);
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+}
+
+.staxx-merge-clean h5 {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ---- step 5: confirm ---- */
+
+.staxx-merge-confirm-block {
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  padding: 1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.staxx-merge-confirm-block h5 {
+  margin: 0 0 0.5rem;
+  font-size: 1.4rem;
+}
+
+.staxx-merge-confirm-block ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.8rem;
+}
+
+.staxx-merge-confirm-block li {
+  margin: 0.2rem 0;
+  font-size: 1.2rem;
+}
+
+/* ---- the foot ---- */
+
+.staxx-merge-foot-right {
+  display: flex;
+  gap: 0.8rem;
+}
+
+/* ---- the leftover's own row marker (phase 6) ----
+   Same shape and reasoning as .staxx-reviewbadge/.staxx-handoverbadge above:
+   a plain label plus a real button beside it, not one control doing both
+   jobs, because the marker is read-only and the button is not. */
+.staxx-mergedbadge {
+  align-self: flex-start;
+  padding: 0.15rem 0.6rem;
+  border: 0.1rem solid var(--sm-accent);
+  border-radius: 1rem;
+  color: var(--sm-accent);
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* .staxx-mergedremove is a real <button> — same trap as
+   .staxx-handoverbadge's own comment above: Unraid's own
+   .unapi button { background-color: transparent; border-radius: 0 } is a
+   class plus an element type, so it outranks a single class and would
+   square this button off and inherit the wrong font. Every property below
+   is restated for that reason, not decoration. */
+.staxx-scaffold button.staxx-mergedremove {
+  padding: 0.15rem 0.6rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 1rem;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: normal;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.staxx-scaffold button.staxx-mergedremove:hover {
+  border-color: var(--sm-danger);
+  color: var(--sm-danger);
+}
+
+.staxx-scaffold button.staxx-mergedremove:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
 }

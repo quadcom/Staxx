@@ -232,19 +232,36 @@ if ($report) {
 }
 
 // staxx_selftest() is the actual surface this stage adds to — the drifted
-// case must reach its report key as the same one-line fact.
+// case must reach its report key as the same one-line fact. PLAN_152 Phase
+// 1b changed the shape to ['detail' => ..., 'state' => ...]; this entry is
+// bad only while something has actually drifted, which this case has.
 $key = 'images pulling from a registry their template has left';
 $selftest = staxx_selftest();
 ok('the self-test carries the drift line',
-   isset($selftest[$key]) && strpos($selftest[$key], 'codeberg.example.io') !== false,
-   $selftest[$key] ?? '(missing)');
+   isset($selftest[$key]) && strpos($selftest[$key]['detail'], 'codeberg.example.io') !== false,
+   $selftest[$key]['detail'] ?? '(missing)');
+ok('...and is marked bad while it is drifted',
+   ($selftest[$key]['state'] ?? '') === 'bad', $selftest[$key]['state'] ?? '(missing)');
 
 // Undo the revive and re-dismiss, so nothing has moved as far as the report
 // is concerned — the "nothing to see" case must say so, not print nothing.
 staxx_update_skip_move($movedImage, $err);
 ok('with every move dismissed, the report is empty', staxx_updates_moved_report() === []);
+$selftestClear = staxx_selftest();
 ok('and the self-test says so in one sentence',
-   strpos(staxx_selftest()[$key], 'none — ') === 0, staxx_selftest()[$key]);
+   strpos($selftestClear[$key]['detail'], 'none — ') === 0, $selftestClear[$key]['detail']);
+ok('...and goes back to plain once nothing is drifted',
+   ($selftestClear[$key]['state'] ?? '') === 'plain', $selftestClear[$key]['state'] ?? '(missing)');
+
+// PLAN_152 Phase 2b — staxx_environment() beside it, exercised here since
+// this suite already has a real store and real containers to group.
+$env = staxx_environment();
+ok('environment returns the three top-level facts',
+   isset($env['rows'], $env['projects'], $env['dockerVersion'], $env['composeVersion']));
+ok('rows carry label/ok/detail for every row', count($env['rows']) > 0
+   && array_key_exists('label', $env['rows'][0])
+   && array_key_exists('ok', $env['rows'][0])
+   && array_key_exists('detail', $env['rows'][0]));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

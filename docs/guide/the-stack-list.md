@@ -9,11 +9,10 @@ bottom, part by part.
 
 ## The buttons along the top
 
-![The row of buttons across the top: Settings, Self-test, New folder, Apps, Import, Add stack, Check for updates, Update all and Pause updates, with Add stack ringed](../images/guide/the-stack-list-button-row.png)
+![The row of buttons across the top: Settings, New folder, Apps, Import, Add stack, Check for updates, Update all and Pause updates, with Add stack ringed](../images/guide/the-stack-list-button-row.png)
 | Button | What it does |
 |---|---|
 | Settings | Opens the StaXX settings page. |
-| Self-test | Runs a quick health check on StaXX itself. |
 | New folder | Creates a folder to group stacks in. |
 | Apps | Opens the catalogue of ready-made apps. |
 | Import | Brings in a container or project StaXX does not manage yet. |

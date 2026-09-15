@@ -1,0 +1,9 @@
+services:
+  web:
+    image: nginx:latest
+    networks:
+      - demo
+
+networks:
+  demo:
+    driver: bridge

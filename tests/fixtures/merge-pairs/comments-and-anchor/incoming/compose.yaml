@@ -1,0 +1,8 @@
+services:
+  # the shared settings every container here inherits
+  base: &base
+    restart: unless-stopped
+
+  worker:
+    <<: *base
+    image: busybox:latest

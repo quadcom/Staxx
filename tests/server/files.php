@@ -378,9 +378,12 @@ ok('a missing root says it could not look', $scanMissing['ok'] === false);
 ok('...never as an empty list standing for a fact', $scanMissing['stacks'] === [] && $scanMissing['error'] !== '');
 ok('staxx_stacks_visible() agrees', staxx_stacks_visible() === false);
 
+// PLAN_152 Phase 1b: each entry is now ['detail' => ..., 'state' => ...],
+// not a bare string — read the detail through that shape.
 $selfMissing = staxx_selftest();
 ok('self-test refuses to report zero stacks it could not count',
-   strpos((string)$selfMissing['stacks found'], 'UNKNOWN') === 0, (string)$selfMissing['stacks found']);
+   strpos((string)$selfMissing['stacks found']['detail'], 'UNKNOWN') === 0,
+   (string)$selfMissing['stacks found']['detail']);
 
 // While the root is still missing: staxx_watch_report() must say the same
 // thing rather than "nothing found", and the six-hourly prune in

@@ -17996,6 +17996,35 @@
     paintFailure(rows, verb);
   }
 
+  // PLAN_151 — same shape as paintFailure()/markFailed() just above, for a
+  // job this page lost track of rather than one the server reported as
+  // failing. Reuses the fail pill's own class and specificity trick (see the
+  // .staxx-scaffold .staxx-pill rules in staxx.css) rather than inventing a
+  // second kind of marker for a person to learn — the difference that
+  // matters is the wording, not the shape.
+  function paintAbandoned(rows) {
+    rows.forEach(function (row) {
+      row.dataset.failed = '1';
+      var td = row.querySelector('[data-cell="state"]');
+      if (td) {
+        td.innerHTML = '<button type="button" class="staxx-pill staxx-pill--fail" ' +
+          'title="This page lost track of the job — click to see its log">' +
+          'Lost touch — click to check</button>';
+        // Same reason as setBusy()/paintFailure(): the record has to go or a
+        // later state matching what was last painted here would be skipped.
+        td.staxxTxt = '';
+      }
+    });
+  }
+
+  function markAbandoned(rows, verb, job) {
+    rows.forEach(function (row) {
+      var key = rowKey(row);
+      if (key) rowFailures[key] = { verb: verb, job: job, abandoned: true };
+    });
+    paintAbandoned(rows);
+  }
+
   // Clears a row's marker, on screen and in the map — called both when a new
   // run starts on the row (setBusy, below: trying again answers the old
   // failure) and when the marker itself is clicked (acknowledged).
@@ -18011,7 +18040,13 @@
   function restoreFailures() {
     Object.keys(rowFailures).forEach(function (key) {
       var rows = rowsForKey(key);
-      if (rows.length) paintFailure(rows, rowFailures[key].verb);
+      if (!rows.length) return;
+      var record = rowFailures[key];
+      // PLAN_151 — an abandoned job's marker (see markAbandoned() below)
+      // shares this same map and has to be repainted with its own wording,
+      // not the ordinary failure pill's.
+      if (record.abandoned) paintAbandoned(rows);
+      else paintFailure(rows, record.verb);
     });
   }
 
@@ -18243,6 +18278,83 @@
   // where this is filled in, and restoreBusy() where it survives a
   // refreshRows() table-body swap the way rowFailures already does.
   var rowJobs = {};
+
+  /* PLAN_151 — a job started from this page used to live only in the two
+   * maps above, so a reload (or a second tab) forgot every job in flight:
+   * the row went back to whatever the server last rendered and sat there,
+   * even though the command itself was still running, or had long since
+   * finished, on the server. The job log is readable by id from any tab, so
+   * the only thing actually missing was remembering the id — kept here in
+   * sessionStorage rather than localStorage, since a job belongs to the tab
+   * that started it, not to every tab this browser has open.
+   */
+  var JOB_STORAGE_KEY = 'staxx-jobs';
+
+  // The backstop for "never wait forever" (see abandonJob() below),
+  // independent of whatever turns out to be causing a row to stick.
+  // Generous on purpose: a slow pull of a large image can legitimately run
+  // for several minutes, and a false "lost touch" is worse than a slow one.
+  var JOB_ABANDON_MS = 15 * 60 * 1000;
+
+  // Rewrites the whole record from what `jobs`/`rowJobs` hold right now.
+  // Called on every change to either — a new job tracked, one finished, one
+  // abandoned — so what is on disk (well, in the tab) never drifts from
+  // what the page actually believes is running. sessionStorage can throw
+  // (private browsing, quota, a browser with storage disabled outright);
+  // none of that is fatal here, it only means a reload will not remember
+  // this job, which is the same behaviour this plan started from.
+  function persistJobs() {
+    try {
+      var out = {};
+      Object.keys(jobs).forEach(function (id) {
+        var entry = jobs[id];
+        var keys = Object.keys(rowJobs).filter(function (k) { return rowJobs[k] === id; });
+        if (keys.length) out[id] = { keys: keys, verb: entry.verb, startedAt: entry.startedAt };
+      });
+      sessionStorage.setItem(JOB_STORAGE_KEY, JSON.stringify(out));
+    } catch (e) { /* nothing survives a reload; not worse than before this plan */ }
+  }
+
+  // Called once, at page load, with the server-rendered rows already in the
+  // document. Re-tracks every job the last load of this tab still had in
+  // flight — track() below does the bookkeeping, restoreBusy() (already
+  // used to survive refreshRows()) does the actual painting, and whatever
+  // this page cannot find rows for any more is dropped rather than kept.
+  function restoreJobsFromStorage() {
+    var raw;
+    try { raw = sessionStorage.getItem(JOB_STORAGE_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var stored;
+    try { stored = JSON.parse(raw); } catch (e) { stored = null; }
+    if (!stored) return;
+
+    Object.keys(stored).forEach(function (id) {
+      var rec = stored[id];
+      var rows = [];
+      (rec.keys || []).forEach(function (key) {
+        rowsForKey(key).forEach(function (row) { if (rows.indexOf(row) === -1) rows.push(row); });
+      });
+      // The stack, folder or service this job was running against is gone
+      // (deleted, or moved out from under its old key) — nothing left to
+      // paint busy, and nothing this page can do about that job either way.
+      if (!rows.length) return;
+      track(id, {
+        rows: rows, verb: rec.verb, show: false, startedAt: rec.startedAt,
+        done: function (job) {
+          clearBusy(rows);
+          if (job.exit !== 0 && job.exit !== null) markFailed(rows, rec.verb, id);
+          // The caller that started this job is gone with the old page, so
+          // its own done() — which is what normally asks for the new state —
+          // went with it. Ask here instead, or a resumed job finishes to a
+          // row still showing whatever the server rendered at load time.
+          refreshStateSoon();
+        }
+      });
+    });
+
+    restoreBusy();   // paint the pill now, rather than wait for the first tick
+    persistJobs();   // rewrite the record with only the jobs actually resumed
+  }
 
   // The busy pill says only WHAT is happening ("Updating…"), never how far
   // along it is. It used to count layers ("Downloading image… 12 of 23"),
@@ -18519,12 +18631,23 @@
         }
 
         if (part.done) {
+          // Stopped rather than left to fire later: the job has ended by
+          // every means this page recognises, so the abandon backstop
+          // firing after this would find nothing left to act on anyway —
+          // but a cleared timer costs nothing and a leaked one does.
+          if (entry.abandonTimer) clearTimeout(entry.abandonTimer);
           delete jobs[id];
           // Every rowKey() this job was filed under leads back to `id` —
           // see track() below, where they are added.
           Object.keys(rowJobs).forEach(function (key) {
             if (rowJobs[key] === id) delete rowJobs[key];
           });
+          // PLAN_151 — a job the server no longer knows about (staxx_job_log()
+          // reports that as done:true, exit:null, the same shape a clean
+          // finish with no exit code would carry) must stop being remembered
+          // here too, or a reload would go on "restoring" a job that has
+          // already been dealt with.
+          persistJobs();
           // Belt and braces for the overlay: a clean exit clears it now
           // rather than waiting on wording pullProgress() may not have
           // seen, and a failed one not already timed out above (the exit
@@ -18570,6 +18693,11 @@
   // show (stream into the output dialog as it grows), done(job).
   function track(job, opts) {
     opts = opts || {};
+    // Restored across a reload (see restoreJobsFromStorage()) rather than
+    // always Date.now(), so a job that was already most of the way to
+    // JOB_ABANDON_MS does not get a fresh clock just because the page
+    // happened to reload.
+    var startedAt = opts.startedAt || Date.now();
     jobs[job] = {
       rows:      opts.rows || [],
       verb:      opts.verb || '',
@@ -18579,8 +18707,10 @@
       text:      '',
       shown:     '',   // what the output pane already holds, so an idle tick can skip writing it
       pillLabel: BUSY_LABEL[opts.verb] || 'Working…',
-      prog:      null,    // PLAN_138 — last pullProgress() result, for restoreBusy()
-      done:      opts.done
+      prog:         null,    // PLAN_138 — last pullProgress() result, for restoreBusy()
+      done:         opts.done,
+      startedAt:    startedAt,
+      abandonTimer: null
     };
     (opts.rows || []).forEach(function (row) {
       var key = rowKey(row);
@@ -18588,6 +18718,33 @@
     });
     if (opts.show) followScroll(job);
     startTicker();
+
+    // PLAN_151 — never wait forever. The sentinel in the job log is what
+    // normally ends a busy row (see tickJobs() below), but that only helps
+    // while the ticker itself keeps running and keeps reaching the server;
+    // this is the backstop for everything else, proven or not.
+    var remaining = JOB_ABANDON_MS - (Date.now() - startedAt);
+    jobs[job].abandonTimer = setTimeout(function () { abandonJob(job); }, Math.max(0, remaining));
+
+    persistJobs();
+  }
+
+  // The backstop itself: the page can no longer say what happened to this
+  // job, so the row says exactly that — plainly, and with the log offered —
+  // rather than quietly going on showing "Starting…" (or whatever busy
+  // label it last painted) for good. See markAbandoned()/paintAbandoned()
+  // below for the marker itself, which reuses the sticky failure pill's
+  // look: this is not a new kind of thing for a person to learn, just a
+  // different reason the row stopped believing its own busy state.
+  function abandonJob(job) {
+    var entry = jobs[job];
+    if (!entry) return;   // already finished normally — a stale timer firing after that is moot, not a bug
+    delete jobs[job];
+    Object.keys(rowJobs).forEach(function (key) { if (rowJobs[key] === job) delete rowJobs[key]; });
+    clearBusy(entry.rows);
+    markAbandoned(entry.rows, entry.verb, job);
+    persistJobs();
+    stopTickerIfIdle();
   }
 
   // PLAN_65 phase D — one clash line, reused by the single-stack and the
@@ -21107,6 +21264,219 @@
     });
   }
 
+  /* ------------------------------------------------------------ icon drop -- */
+  /* PLAN_149 phases 1-2 — drop a picture's address straight onto a
+   * container's icon and it is used as though the address had been typed
+   * into the icon field.
+   *
+   * Exactly one target, and no more: the container's own icon in the
+   * editor's tab strip (data-svc-icon), painted by paintServiceIcons()
+   * above. The plan named a second one inside the form, but the function it
+   * cited turned out to belong to the detail-conflict dialog rather than the
+   * editor, and inventing a row to stand in for it would have put a picture
+   * on screen that nobody asked for. Adrian corrected this plan twice over what
+   * must NOT be a target — a stack row's tiled icons out in the list are
+   * a summary of several containers at once, and aiming a drop at one tile
+   * in that group is exactly the mistake this stays out of. Everywhere else
+   * on the page is left to the browser's own default for an unhandled drop,
+   * which is to navigate away, so nothing here is bound to window or
+   * document beyond delegated listeners that check event.target against
+   * this selector first — dragover is only ever prevented once a
+   * target is actually found.
+   *
+   * A container's icon IS the whole of the feedback (see the stylesheet's
+   * .staxx-icondrop--over/--bad): an orange halo while something hangs over
+   * it, red for five seconds with a short line of text underneath on a
+   * refusal, and the icon itself never changes until a fetch has actually
+   * succeeded — which for the address route happens later, through
+   * PLAN_146's own background sweep, not here.
+   */
+  var ICON_DROP_SEL = '[data-svc-icon]';
+  // Mirrors Icons.php's STAXX_ICON_EXTS. Duplicated rather than shared
+  // because the browser cannot read a PHP constant — kept short and in the
+  // same order so the two are easy to eyeball together if one ever moves.
+  var ICON_DROP_EXTS = ['svg', 'png', 'webp', 'jpg', 'jpeg', 'gif', 'ico'];
+  var ICON_DROP_MAX_BYTES = 512 * 1024;
+
+  function iconDropServiceOf(node) {
+    return node.dataset.svcIcon || '';
+  }
+
+  // The five-second message lives as a child of the target itself (not a
+  // sibling), so it travels with whichever node it belongs to and is never
+  // left behind if that node is replaced by a fresh render before the
+  // timeout fires.
+  function iconDropMsgEl(node) {
+    var el = node.querySelector(':scope > .staxx-icondrop-msg');
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'staxx-icondrop-msg';
+      node.appendChild(el);
+    }
+    return el;
+  }
+
+  function iconDropClear(node) {
+    node.classList.remove('staxx-icondrop--over', 'staxx-icondrop--bad');
+    var msg = node.querySelector(':scope > .staxx-icondrop-msg');
+    if (msg) msg.remove();
+  }
+
+  // Red for five seconds, with the reason underneath — the four fixed
+  // sentences PLAN_149 settled on. Nothing is logged and nothing has to be
+  // dismissed; a second attempt just replaces whatever this one wrote.
+  function iconDropRefuse(node, text) {
+    node.classList.remove('staxx-icondrop--over');
+    node.classList.add('staxx-icondrop--bad');
+    iconDropMsgEl(node).textContent = text;
+    clearTimeout(node._iconDropTimer);
+    node._iconDropTimer = setTimeout(function () { iconDropClear(node); }, 5000);
+  }
+
+  // Writes the address into the service's icon field exactly as typing it
+  // would — a direct edit of the live document, the same shape a rename or
+  // an added port already takes (see structuralEdit() and its other
+  // callers), never a round trip through the server. From here PLAN_146's
+  // own background sweep takes over completely once the stack is saved: it
+  // fetches the picture, keeps it beside the compose file, and rewrites this
+  // same line to point at the copy with the address recorded beside it. So
+  // this function adds no server code at all, exactly as phase 2 requires.
+  //
+  // Icon/description/category and the like are x-unraid's own presentational
+  // fields, which the form does not model as MODEL.fields rows at all (see
+  // insertChild()'s own comment in compose-model.js) — so this reads and
+  // writes MODEL.services[].icon and the raw YAML directly, the same pattern
+  // iconAdoptWrite() already uses for a stack that is not even open.
+  function writeIconDrop(service, address) {
+    if (!MODEL || !MODEL.ok || sanitised || fileOpen !== null) return false;
+    var svc = null;
+    for (var i = 0; i < MODEL.services.length; i++) {
+      if (MODEL.services[i].name === service) { svc = MODEL.services[i]; break; }
+    }
+    if (!svc) return false;
+    var was = svc.icon || '';
+    if (was === address) return true;   // already exactly this — nothing to change, not a refusal
+
+    pushUndo('setting the icon for "' + service + '"');
+    var ok = was
+      ? YAML.replaceNested(MODEL.doc, null, service, ['x-unraid', 'icon'], address)
+      : YAML.addNested(MODEL.doc, null, service, ['x-unraid', 'icon'], address) >= 0;
+    if (!ok) { undoStack.pop(); updateUndo(); return false; }
+
+    structuralEdit(-1, 'Set the icon for "' + service + '" from what was dropped onto it. ' +
+      'Undo is at the bottom if that was wrong.');
+    return true;
+  }
+
+  // Both checks the existing icon handling already insists on: an address
+  // has to be secure, and it has to look like a picture rather than a page.
+  // Purely a client-side pre-check — whether the address can actually be
+  // reached is discovered later by the same background sweep that discovers
+  // it for a typed-in address, exactly as today.
+  function iconDropAddressExt(address) {
+    var clean = address.split(/[?#]/)[0];
+    var dot = clean.lastIndexOf('.');
+    return dot === -1 ? '' : clean.slice(dot + 1).toLowerCase();
+  }
+
+  function handleIconDrop(node, dt) {
+    var service = iconDropServiceOf(node);
+    if (!service) return;
+
+    // A file dropped straight off the desktop — PLAN_149's second route.
+    // Its size is checked before a single byte is read, exactly as the plan
+    // requires, so a photograph off a camera is refused instantly rather
+    // than after a wait.
+    if (dt.files && dt.files.length) {
+      var file = dt.files[0];
+      if (file.size > ICON_DROP_MAX_BYTES) {
+        iconDropRefuse(node, 'Too big — icons must be under 512 KB');
+        return;
+      }
+      var fext = (file.name.split('.').pop() || '').toLowerCase();
+      if (ICON_DROP_EXTS.indexOf(fext) === -1) {
+        iconDropRefuse(node, 'Not a picture');
+        return;
+      }
+      // A stack that has never been saved has no folder to write into, and
+      // one is never created behind the person's back to make room for a
+      // dropped picture. Caught here as well as on the server so the answer
+      // is instant and nothing is uploaded only to be turned away.
+      if (modal.dataset['new'] === '1' || !openedName) {
+        iconDropRefuse(node, 'Save the stack first');
+        return;
+      }
+
+      // Read in the browser and sent as text in the ordinary post this page
+      // already uses. NEVER a multipart upload: those hang on this box, a
+      // fault of the box rather than of StaXX, which is why every other
+      // post here is shaped this way too.
+      var reader = new FileReader();
+      reader.onerror = function () { iconDropRefuse(node, 'Not a picture'); };
+      reader.onload = function () {
+        // readAsDataURL gives "data:<type>;base64,<bytes>" — the server
+        // wants the bytes alone, and proves for itself that they really are
+        // a picture, since a file's name proves nothing.
+        var encoded = String(reader.result || '');
+        var comma = encoded.indexOf(',');
+        if (comma === -1) { iconDropRefuse(node, 'Not a picture'); return; }
+
+        call('icon-drop', { name: openedName, filename: file.name, data: encoded.slice(comma + 1) })
+          .then(function (res) {
+            // The reply hands back the path the picture now lives at, which
+            // goes into the icon field exactly as though it had been typed.
+            if (!res || !res.ok || !res.file) {
+              iconDropRefuse(node, (res && res.error) ? res.error : 'Could not reach that address');
+              return;
+            }
+            if (!writeIconDrop(service, res.file)) iconDropRefuse(node, 'Not a picture');
+          }, function () {
+            iconDropRefuse(node, 'Could not reach that address');
+          });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    var address = (dt.getData('text/uri-list') || dt.getData('text/plain') || '').trim().split('\n')[0].trim();
+    if (!address) { iconDropRefuse(node, 'Not a picture'); return; }
+    if (!/^https:\/\//i.test(address)) { iconDropRefuse(node, 'That address is not secure'); return; }
+    if (ICON_DROP_EXTS.indexOf(iconDropAddressExt(address)) === -1) {
+      iconDropRefuse(node, 'Not a picture');
+      return;
+    }
+
+    if (!writeIconDrop(service, address)) iconDropRefuse(node, 'Not a picture');
+  }
+
+  // Delegated at the document rather than bound per-node, so a service tab
+  // painted after this runs (a fresh render, a newly opened stack) is a
+  // target immediately, with nothing to re-wire. Children of both target
+  // kinds are pointer-events:none in the stylesheet for exactly this reason
+  // — without it, the pointer crossing from the anchor onto its own <img>
+  // fired a dragleave/dragenter pair that made the glow flicker mid-drag.
+  document.addEventListener('dragover', function (event) {
+    var node = event.target.closest(ICON_DROP_SEL);
+    if (!node) return;   // leaves the browser's own default (navigate away) alone
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    if (!node.classList.contains('staxx-icondrop--bad')) node.classList.add('staxx-icondrop--over');
+  });
+
+  document.addEventListener('dragleave', function (event) {
+    var node = event.target.closest(ICON_DROP_SEL);
+    if (!node || node.contains(event.relatedTarget)) return;
+    node.classList.remove('staxx-icondrop--over');
+  });
+
+  document.addEventListener('drop', function (event) {
+    var node = event.target.closest(ICON_DROP_SEL);
+    if (!node) return;
+    event.preventDefault();
+    node.classList.remove('staxx-icondrop--over');
+    handleIconDrop(node, event.dataTransfer);
+  });
+
   function paintIcons(map) {
     Object.keys(map).forEach(function (ref) {
       // A reference is lower-case letters, digits and hyphens — the server
@@ -21351,66 +21721,6 @@
 
   document.getElementById('staxx-import').addEventListener('click', importOpen);
 
-  document.getElementById('staxx-diagnose').addEventListener('click', function () {
-    // A fixed-width report, not free prose, so it keeps its own <pre> inside
-    // the notice dialog rather than becoming paragraphs (card 01a08d0b) —
-    // the column padding below only lines up in a monospace block.
-    var text = 'Checking…';
-    showInfo('Self-test', '<pre class="staxx-confirm-pre">' + esc(text) + '</pre>');
-    function setText(t) {
-      text = t;
-      var pre = confirmBody.querySelector('.staxx-confirm-pre');
-      if (pre) { pre.textContent = text; pre.scrollTop = pre.scrollHeight; }
-    }
-    function appendText(t) { setText(text + t); }
-
-    // Stage one is pure PHP and runs no commands, so it cannot hang. Stage two
-    // runs the external commands one at a time, appending each result as it
-    // lands — so if one of them never returns, the line above it is the last
-    // thing that worked, and the missing line is the culprit.
-    call('ping', {}, 15000).then(function (res) {
-      if (!res.ok || !res.report) {
-        setText(res.error || 'Self-test returned nothing usable.\n\n' +
-                             JSON.stringify(res, null, 2));
-        return;
-      }
-
-      var width = 0;
-      Object.keys(res.report).forEach(function (k) { width = Math.max(width, k.length); });
-      var pad = function (s, w) { return s + new Array(Math.max(1, w - s.length + 3)).join(' '); };
-
-      setText(Object.keys(res.report).map(function (k) {
-        return pad(k, width) + res.report[k];
-      }).join('\n') + strayWarning(res));
-
-      var keys = Object.keys(res.probes || {});
-      if (!keys.length) return;
-
-      appendText('\n\nCommands, one at a time:\n');
-
-      // Sequential on purpose. Running them together would tell us that
-      // something stalled, but not which.
-      keys.reduce(function (chain, key) {
-        return chain.then(function () {
-          appendText('\n  ' + pad(key, 10) + res.probes[key] + ' … ');
-
-          return call('probe', { probe: key }, 30000).then(function (p) {
-            if (!p.ok || !p.result) {
-              appendText('NO REPLY — ' + (p.error || 'unknown').split('\n')[0]);
-              throw new Error('stop');   // nothing after this would be meaningful
-            }
-            var r = p.result;
-            appendText((r.ok ? 'ok' : 'FAILED (exit ' + r.exit + ')') +
-                                  '  [' + r.ms + ' ms]' +
-                                  (r.ok && r.exit === 0 ? '' : '\n' + pad('', 14) + r.output));
-          });
-        });
-      }, Promise.resolve()).catch(function () {
-        appendText('\n\nStopped here. The step above is where it gets stuck.');
-      });
-    });
-  });
-
   document.getElementById('staxx-modal-close').addEventListener('click', function () {
     confirmDiscard().then(function (go) { if (go) closeEditor(); });
   });
@@ -21446,7 +21756,9 @@
   // that no longer resolves to anything has to say that plainly rather than
   // opening on an empty box.
   function openJobOutput(record) {
-    var title = record ? (FAIL_LABEL[record.verb] || 'Output') : 'Output';
+    var title = record
+      ? (record.abandoned ? 'Lost touch with this job' : (FAIL_LABEL[record.verb] || 'Output'))
+      : 'Output';
     if (!record || !record.job) {
       openLogDialog(title, 'There is nothing more to show for this.');
       return;
@@ -24591,7 +24903,7 @@
   // tab strip in StacksPage.php lists its buttons. Kept as plain keys rather
   // than a {key, label} pair, because the labels already live on the buttons
   // themselves — nothing here needs to know the words.
-  var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries'];
+  var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries', 'selftest'];
 
   // Second live-tuned round, 2026-09-03: a handful of rows share one titled
   // box instead of each getting its own. The rows themselves stay in
@@ -25465,6 +25777,233 @@
     });
   }
 
+  /* PLAN_152 — the self-test, lifted out of the old #staxx-diagnose button so
+   * the Settings tab (its only home now) can run the same report. No
+   * caching: it runs fresh every time the tab is shown, so there is nothing
+   * stale to reason about and no "run again" button to place.
+   *
+   * A module-level run token guards every write: leaving the tab and coming
+   * back starts a second chain before the first one's promises have all
+   * settled, and a write with a stale token is silently dropped rather than
+   * interleaving two runs' lines in one element. The element lookup inside
+   * live() catches the other half of the same problem — the settings modal
+   * can be closed mid-run, which throws the pane away while the chain is
+   * still going. */
+  var selftestToken = 0;
+  var selftestLines = [];   // built alongside every row, for the Copy button
+
+  function runSelfTest() {
+    var out = document.getElementById('staxx-selftest-out');
+    if (!out) return;
+
+    var token = ++selftestToken;
+    function live() { return token === selftestToken && document.getElementById('staxx-selftest-out'); }
+
+    selftestLines = [];
+    out.innerHTML = '';
+
+    function heading(text) {
+      if (!live()) return;
+      selftestLines.push('\n' + text);
+      var h = document.createElement('div');
+      h.className = 'staxx-selftest-heading';
+      h.textContent = text;
+      out.appendChild(h);
+      out.scrollTop = out.scrollHeight;
+    }
+
+    function stateIcon(state) {
+      return state === 'good' ? 'fa-check green-text'
+           : state === 'bad'  ? 'fa-times-circle red-text'
+                               : 'fa-minus grey-text';
+    }
+
+    // Returns an updater so a probe's row can flip from "running…" to its
+    // result in place — one line per probe, same as the report used to read.
+    function addRow(label, detail, state) {
+      if (!live()) return { update: function () {} };
+      var idx = selftestLines.push(label + (detail ? ': ' + detail : '')) - 1;
+      var row = document.createElement('div');
+      row.className = 'staxx-row staxx-selftest-row';
+      row.innerHTML = '<span class="staxx-cell"><i class="fa ' + stateIcon(state) + '"></i> ' +
+                       esc(label) + '</span><span class="staxx-cell"></span>';
+      row.querySelector('.staxx-cell:last-child').textContent = detail;
+      out.appendChild(row);
+      out.scrollTop = out.scrollHeight;
+      return {
+        update: function (newDetail, newState) {
+          if (!live()) return;
+          selftestLines[idx] = label + (newDetail ? ': ' + newDetail : '');
+          row.querySelector('.fa').className = 'fa ' + stateIcon(newState);
+          row.querySelector('.staxx-cell:last-child').textContent = newDetail;
+        }
+      };
+    }
+
+    heading('Self-test');
+
+    // Stage one is pure PHP and runs no commands, so it cannot hang. Stage two
+    // runs the external commands one at a time, updating each row as it
+    // lands — so if one of them never returns, the row above it is the last
+    // thing that worked, and the missing row is the culprit.
+    call('ping', {}, 15000).then(function (res) {
+      if (!live()) return Promise.resolve();
+
+      if (!res.ok || !res.report) {
+        addRow('Self-test', res.error || 'Self-test returned nothing usable.', 'bad');
+        return Promise.resolve();
+      }
+
+      Object.keys(res.report).forEach(function (k) {
+        addRow(k, res.report[k].detail, res.report[k].state);
+      });
+      if (res.stray) addRow('PHP also printed', res.stray, 'bad');
+
+      var keys = Object.keys(res.probes || {});
+      if (!keys.length) return Promise.resolve();
+
+      heading('Commands, one at a time');
+
+      // Sequential on purpose. Running them together would tell us that
+      // something stalled, but not which.
+      return keys.reduce(function (chain, key) {
+        return chain.then(function () {
+          var row = addRow(key, res.probes[key] + ' … checking', 'plain');
+          return call('probe', { probe: key }, 30000).then(function (p) {
+            if (!p.ok || !p.result) {
+              row.update('NO REPLY — ' + (p.error || 'unknown').split('\n')[0], 'bad');
+              throw new Error('stop');   // nothing after this would be meaningful
+            }
+            var r = p.result;
+            row.update(
+              (r.ok ? 'ok' : 'FAILED (exit ' + r.exit + ')') + '  [' + r.ms + ' ms]' +
+              (r.ok && r.exit === 0 ? '' : '\n' + r.output),
+              (r.ok && r.exit === 0) ? 'good' : 'bad'
+            );
+          });
+        });
+      }, Promise.resolve()).catch(function () {
+        addRow('Stopped here', 'The step above is where it gets stuck.', 'bad');
+      });
+    }).then(function () {
+      // Runs after the probe chain settles, whether it finished or stopped
+      // early — a self-test that stalled is exactly when the environment
+      // facts are most wanted, so this is not conditional on success.
+      selftestLoadEnvironment(token, live);
+    });
+  }
+
+  // PLAN_152 phase 2b — the old page-bottom Environment block, re-read fresh
+  // every time this tab is opened rather than carried over as stale page-load
+  // markup. Its own endpoint, never folded into 'ping': that action is relied
+  // on as pure PHP that cannot hang, and this runs docker/compose.
+  function selftestLoadEnvironment(token, live) {
+    var box = document.getElementById('staxx-selftest-env');
+    if (!box) return;
+    box.innerHTML = '<h3>' + esc('Environment') + '</h3><p class="staxx-hint">Reading…</p>';
+
+    call('environment', {}).then(function (res) {
+      if (!live()) return;
+      var box2 = document.getElementById('staxx-selftest-env');
+      if (!box2) return;
+
+      if (!res.ok || !res.environment) {
+        box2.innerHTML = '<h3>' + esc('Environment') + '</h3><p class="staxx-hint">' +
+          esc('Could not read the environment: ' + (res.error || 'no reply.')) + '</p>';
+        return;
+      }
+
+      var env = res.environment;
+      selftestLines.push('\nEnvironment');
+
+      var html = '<h3>' + esc('Environment') + '</h3><div class="staxx-status" role="table">' +
+        '<div class="staxx-row staxx-head-row" role="row">' +
+          '<span class="staxx-cell" role="columnheader">Check</span>' +
+          '<span class="staxx-cell" role="columnheader">Result</span>' +
+        '</div>';
+      (env.rows || []).forEach(function (row) {
+        var icon = row.ok ? 'fa-check green-text' : 'fa-times-circle red-text';
+        html += '<div class="staxx-row" role="row">' +
+          '<span class="staxx-cell" role="cell"><i class="fa ' + icon + '"></i> ' + esc(row.label) + '</span>' +
+          '<span class="staxx-cell" role="cell">' + esc(row.detail) + '</span></div>';
+        selftestLines.push(row.label + ': ' + row.detail);
+      });
+      html += '<div class="staxx-row" role="row">' +
+        '<span class="staxx-cell" role="cell"><i class="fa fa-minus grey-text"></i> Docker version</span>' +
+        '<span class="staxx-cell" role="cell">' + esc(env.dockerVersion) + '</span></div>';
+      html += '<div class="staxx-row" role="row">' +
+        '<span class="staxx-cell" role="cell"><i class="fa fa-minus grey-text"></i> Compose version</span>' +
+        '<span class="staxx-cell" role="cell">' + esc(env.composeVersion) + '</span></div>';
+      html += '</div>';
+      selftestLines.push('Docker version: ' + env.dockerVersion);
+      selftestLines.push('Compose version: ' + env.composeVersion);
+
+      var projects = env.projects || {};
+      var projectNames = Object.keys(projects);
+      if (projectNames.length) {
+        html += '<h3>' + esc('Containers by stack') + '</h3>' +
+          '<p class="staxx-hint">' + esc('Grouping comes from the com.docker.compose.project '
+            + 'label — stacks group themselves, with no folders to configure.') + '</p>' +
+          '<div class="staxx-projects" role="table">';
+        selftestLines.push('\nContainers by stack');
+        var unmanaged = 0;
+        projectNames.forEach(function (project) {
+          var containers = projects[project] || [];
+          if (project === '') unmanaged = containers.length;
+          html += '<div class="staxx-row" role="row">' +
+            '<span class="staxx-cell staxx-project" role="cell">' +
+            (project === ''
+              ? '<i class="fa fa-cube"></i> <em>' + esc('Not compose-managed') + '</em>'
+              : '<i class="fa fa-cubes"></i> ' + esc(project)) +
+            '</span><span class="staxx-cell" role="cell">' + esc(containers.join(', ')) + '</span></div>';
+          selftestLines.push((project === '' ? '(not compose-managed)' : project) + ': ' + containers.join(', '));
+        });
+        html += '</div>';
+        if (unmanaged) {
+          var hint = unmanaged + ' container(s) carry no compose project label. These were '
+            + 'created by Unraid templates or by hand, and are what an import path would need to adopt.';
+          html += '<p class="staxx-hint">' + esc(hint) + '</p>';
+          selftestLines.push(hint);
+        }
+      }
+
+      box2.innerHTML = html;
+    });
+  }
+
+  // The trap this exists to avoid: navigator.clipboard needs a secure
+  // context, and Unraid's webGUI is plain http on a LAN address, so the
+  // modern API is simply absent on every real server. The textarea/
+  // execCommand route is the one that actually works here — the first
+  // choice, not a fallback — with the clipboard API only as a second
+  // attempt on the rare page that does have it.
+  function selftestCopy(btn) {
+    var text = selftestLines.join('\n');
+    var revert = function () {
+      setTimeout(function () { if (document.body.contains(btn)) btn.textContent = 'Copy'; }, 1500);
+    };
+    var said = function (ok) {
+      btn.textContent = ok ? 'Copied' : 'Could not copy';
+      revert();
+    };
+
+    var tmp = document.createElement('textarea');
+    tmp.value = text;
+    tmp.setAttribute('style', 'position:fixed;left:-9999px;top:0;');
+    document.body.appendChild(tmp);
+    tmp.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(tmp);
+    if (ok) { said(true); return; }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { said(true); }, function () { said(false); });
+      return;
+    }
+    said(false);
+  }
+
   // Same idea as the editor's setTab(): a data-tab attribute on the dialog
   // itself, read by CSS to show the matching pane, plus aria-selected on the
   // buttons for anyone using a screen reader rather than looking at the
@@ -25478,6 +26017,11 @@
         btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
       });
     }
+    // Hung off here rather than the tab-strip click listener, so every route
+    // into this tab behaves the same — the strip, a focused row, and the
+    // #settings hash all end up calling setSettingsTab() rather than each
+    // needing its own copy of this line.
+    if (tab === 'selftest') runSelfTest();
   }
 
   function openSettings(focusId) {
@@ -25496,6 +26040,18 @@
       // saving (which reads every control regardless of which pane it is in)
       // needs no change at all.
       settingsBody.innerHTML = SETTINGS_TABS.map(function (tab) {
+        // This tab carries no settings at all — SETTINGS_ROWS has nothing
+        // tagged for it — so the general path below would draw an empty
+        // pane. All empty rather than "Checking…": runSelfTest() writes the
+        // text once the tab is actually shown, so the markup and the running
+        // state can never disagree about what is happening.
+        if (tab === 'selftest') {
+          return '<div class="staxx-settings-pane" data-pane="selftest">' +
+            '<div class="staxx-selftest-out" id="staxx-selftest-out"></div>' +
+            '<div class="staxx-selftest-env" id="staxx-selftest-env"></div>' +
+            '<button type="button" class="staxx-btn staxx-selftest-copy" id="staxx-selftest-copy">Copy</button>' +
+          '</div>';
+        }
         // A blocked row only draws its box once, at the block's first row in
         // this tab — every later row of the same block draws nothing.
         var seenBlocks = {};
@@ -25818,6 +26374,8 @@
         });
         return;
       }
+      var copyBtn = event.target.closest('#staxx-selftest-copy');
+      if (copyBtn) { selftestCopy(copyBtn); return; }
     });
 
     settingsCancel.addEventListener('click', closeSettingsAsk);
@@ -30472,6 +31030,12 @@
   }
   startPush();
 
+  // PLAN_151 — pick back up any job this tab still had in flight when it
+  // was last reloaded. Runs here rather than after some later refresh
+  // because the rows are already in the document at this point — this
+  // script tag sits after the server-rendered table, not before it.
+  restoreJobsFromStorage();
+
   // Closing the stream on the way out lets the watcher notice the tab has
   // gone straight away, rather than waiting for it to time out on its own.
   window.addEventListener('pagehide', function () {
@@ -30632,4 +31196,1121 @@
       }
     });
   })();
+  /* =====================================================================
+   * PLAN_148 — merging stacks into one. Phases 1 (the window and the
+   * picker), 3 (steps 3-4 on screen), 5 (confirm, and opening the editor
+   * afterwards) and 6 (the leftover's row marker). The examination
+   * (window.StaxxMergeExamine, in merge-examine.js) and the write itself
+   * (window.StaxxMergeWrite, in merge-write.js, and the 'merge' server
+   * action in Merge.php) are built elsewhere — nothing here decides what a
+   * merge does, only how it is asked about and shown.
+   *
+   * window.StaxxMergeWrite.buildMergedText() takes the wizard's own answers
+   * as opts.decisions — a choice id (or, for a wiring tickbox, true/false)
+   * keyed by mergeFindingKey() below, which matches merge-write.js's own
+   * findingKey() exactly (kind, stack, and the finding's index into this
+   * call's own findings array). mergeState.decisions is threaded through as
+   * opts.decisions on every buildMergedText() call, so picking a non-
+   * recommended radio rebuilds the merged preview AND the final write
+   * against that answer, not just the wizard's own display of it.
+   * =====================================================================
+   */
+
+  var mergeBtn   = document.getElementById('staxx-merge-btn');
+  var mergeModal = document.getElementById('staxx-merge-modal');
+
+  var MERGE_STEP_LABELS = ['Which stacks', 'Which takes them in', 'Clashes', 'Wiring', 'Confirm'];
+
+  var MERGE_STEP3_KINDS = {
+    'storage-volume': 1, 'file-clash': 1, 'settings-join': 1,
+    'container-name-clash': 1, 'port-clash': 1, 'shorthand-clash': 1
+  };
+  var MERGE_STEP4_KINDS = { 'address-rewire': 1, 'port-unneeded': 1, 'left-alone': 1 };
+
+  var MERGE_CHOICE_LABELS = {
+    'keep-existing':   'Go on using the storage that already exists.',
+    'start-empty':     'Start with empty storage.',
+    'stop-here':       'Stop here.',
+    'accept-join':     'Join them, as shown.',
+    'free-port':       'Change the incoming one to a free port.',
+    'stop-publishing': 'Stop publishing it.',
+    'rewire':          'Change it for me, and say so in the file.'
+  };
+
+  var mergeState = null;   // null whenever the wizard is closed and not merely narrow-hidden
+
+  function mergeFreshState() {
+    return {
+      step: 1,
+      picked: [],          // [{name, label}], in the order ticked
+      host: null,          // a rel name from `picked`
+      stacks: {},          // name -> {name, label, text, envText, files, fingerprint, error}
+      decisions: {},       // finding key -> choice id (radio) or true/false (wiring tickbox)
+      built: null,         // last window.StaxxMergeWrite.buildMergedText() result
+      narrowClosed: false, // true only while the 990px rule has hidden an open wizard
+      scroll: null,
+      search: ''
+    };
+  }
+
+  function mergeContainerCount(name) {
+    var n = document.querySelectorAll('.staxx-container-row[data-in-stack="' + name + '"]').length;
+    return n > 0 ? n : 1;
+  }
+
+  // A stack's identity everywhere merge-write.js/merge-examine.js treat a
+  // name as something Docker itself would recognise (a volume name, a
+  // rename suffix) or match findings back to their own stack — never for
+  // reading, writing or displaying a folder location, which stays the full
+  // path. See CLAUDE.md: a stack's NAME is its directory leaf, the same
+  // string Docker stamps as the compose project name; its full path
+  // (e.g. "DEV-TESTING/demo-db") is only its identity under the store root.
+  function mergeLeafName(name) {
+    var parts = String(name || '').split('/');
+    return parts[parts.length - 1];
+  }
+
+  /* --------------------------------------------------------- data pull -- */
+
+  function mergeStackFiles(name) {
+    return call('files', { name: name }).then(function (res) {
+      if (!res.ok) return [];
+      // The compose file itself is not a "companion" — see merge-write.js's
+      // own descriptorFromText(), which only ever wants the OTHER names
+      // beside it.
+      return res.files.filter(function (f) { return !f.compose; }).map(function (f) { return f.name; });
+    });
+  }
+
+  function mergeLoadStack(name, label) {
+    return Promise.all([call('read', { name: name }), mergeStackFiles(name)]).then(function (results) {
+      var readRes = results[0], files = results[1];
+      if (!readRes.ok) return { name: name, label: label, error: readRes.error || 'Could not read this stack.' };
+
+      var hasEnv = files.indexOf('.env') >= 0;
+      var envPromise = hasEnv
+        ? call('file-read', { name: name, file: '.env' }).then(function (r) {
+            return (r && r.ok && !r.binary && typeof r.text === 'string') ? r.text : null;
+          })
+        : Promise.resolve(null);
+
+      return envPromise.then(function (envText) {
+        return {
+          name: name, label: label, text: readRes.body, envText: envText,
+          files: files, fingerprint: readRes.fingerprint
+        };
+      });
+    });
+  }
+
+  function mergeLoadAllPicked() {
+    return Promise.all(mergeState.picked.map(function (p) {
+      return mergeLoadStack(p.name, p.label);
+    })).then(function (results) {
+      results.forEach(function (r) { mergeState.stacks[r.name] = r; });
+    });
+  }
+
+  function mergeEnsureHost() {
+    if (mergeState.host && mergeState.picked.some(function (p) { return p.name === mergeState.host; })) return;
+    var best = mergeState.picked[0];
+    mergeState.picked.forEach(function (p) {
+      if (mergeContainerCount(p.name) > mergeContainerCount(best.name)) best = p;
+    });
+    mergeState.host = best ? best.name : null;
+  }
+
+  function mergeRebuild() {
+    if (!mergeState.host || !window.StaxxMergeWrite) { mergeState.built = null; return; }
+    var hostData = mergeState.stacks[mergeState.host];
+    var incomingData = mergeState.picked
+      .filter(function (p) { return p.name !== mergeState.host; })
+      .map(function (p) { return mergeState.stacks[p.name]; });
+
+    if (!hostData || hostData.error || incomingData.some(function (s) { return !s || s.error; })) {
+      mergeState.built = null;
+      return;
+    }
+
+    // buildMergedText() hands each of these straight to merge-write.js's own
+    // descriptorFromText() as the descriptor's `name` — which merge-examine.js
+    // then uses to build the volume's real name, a settings rename suffix and
+    // so on, so it has to be the stack's leaf (mergeLeafName above), not the
+    // path mergeState.stacks is keyed by.
+    var host = {
+      name: mergeLeafName(hostData.name), text: hostData.text, envText: hostData.envText, files: hostData.files
+    };
+    var incoming = incomingData.map(function (s) {
+      return { name: mergeLeafName(s.name), text: s.text, envText: s.envText, files: s.files };
+    });
+
+    // thisServer is left unset here on purpose: the page's own address
+    // (location.hostname) is very often not the literal LAN address a
+    // compose file's own author wrote (a name versus an IP), and supplying
+    // one that does not match would turn addresses the port-evidence
+    // fallback already accepts correctly today into ones left alone
+    // instead — a regression, not a tightening. merge-examine.js's own
+    // wiring pass accepts an IPv4 literal or bare hostname on the strength
+    // of a matching published port alone when no list is supplied, which is
+    // exactly the case the demo stacks (and real CA installs) exercise.
+    var mergeOpts = { decisions: mergeState.decisions };
+
+    try {
+      mergeState.built = window.StaxxMergeWrite.buildMergedText(host, incoming, mergeOpts);
+      // Finding detection does not depend on the decisions themselves, so a
+      // default filled in just now needs a second pass to actually apply —
+      // see mergeFillPortClashDefaults()'s own comment.
+      if (mergeFillPortClashDefaults()) {
+        mergeState.built = window.StaxxMergeWrite.buildMergedText(host, incoming, mergeOpts);
+      }
+    } catch (e) {
+      mergeState.built = { composeText: '', envText: null, findings: [], refusals: [
+        { kind: 'file-clash', severity: 'refusal', stack: null, facts: { name: '' } }
+      ] };
+      var errorEl = document.getElementById('staxx-merge-error');
+      if (errorEl) { errorEl.hidden = false; errorEl.textContent = 'Could not work out this merge: ' + (e && e.message || e); }
+    }
+  }
+
+  /* --------------------------------------------------------- open/close -- */
+
+  function mergeOpen() {
+    mergeState = mergeFreshState();
+    if (mergeModal) mergeModal.showModal();
+    mergeRender();
+  }
+
+  function mergeClose() {
+    if (mergeModal && mergeModal.open) mergeModal.close();
+  }
+
+  if (mergeModal) {
+    mergeModal.addEventListener('close', function () {
+      // A narrow-width auto-hide leaves everything in memory so widening the
+      // window brings the wizard straight back — see mergeOnNarrowChange()
+      // below. Every other way this dialog closes (Cancel, the backdrop,
+      // Escape) writes nothing, so the state is simply dropped.
+      if (mergeState && mergeState.narrowClosed) return;
+      mergeState = null;
+    });
+    mergeModal.addEventListener('click', function (event) {
+      // <dialog> fires no backdrop click of its own — a click on the
+      // backdrop targets the dialog element itself, the same hit-test every
+      // other dialog on this page uses.
+      if (event.target === mergeModal) mergeClose();
+    });
+  }
+
+  if (mergeBtn) mergeBtn.addEventListener('click', mergeOpen);
+
+  var mergeCancelBtn = document.getElementById('staxx-merge-cancel');
+  if (mergeCancelBtn) mergeCancelBtn.addEventListener('click', mergeClose);
+
+  // Below 990px the merge button is hidden by CSS, so a wizard can only ever
+  // be open here because the window was WIDE a moment ago. It must be
+  // properly closed — dialog.close(), not display:none — because a <dialog>
+  // hidden the other way stays in the top layer and leaves the whole page
+  // beneath it inert (measured on Adrian's own box, PLAN_148). Everything the
+  // wizard knows lives in mergeState, untouched by closing it.
+  var mergeNarrowQuery = window.matchMedia ? window.matchMedia('(max-width: 990px)') : null;
+
+  function mergeOnNarrowChange(narrow) {
+    if (!mergeModal) return;
+    if (narrow) {
+      if (mergeState && mergeModal.open) {
+        var sourcesEl = document.getElementById('staxx-merge-sources');
+        var decisionsEl = document.getElementById('staxx-merge-decisions');
+        mergeState.scroll = {
+          sources: sourcesEl ? sourcesEl.scrollLeft : 0,
+          decisions: decisionsEl ? decisionsEl.scrollTop : 0
+        };
+        mergeState.narrowClosed = true;
+        mergeModal.close();
+      }
+    } else if (mergeState && mergeState.narrowClosed) {
+      mergeState.narrowClosed = false;
+      mergeModal.showModal();
+      mergeRender();
+      var scroll = mergeState.scroll || {};
+      var sourcesEl2 = document.getElementById('staxx-merge-sources');
+      var decisionsEl2 = document.getElementById('staxx-merge-decisions');
+      if (sourcesEl2) sourcesEl2.scrollLeft = scroll.sources || 0;
+      if (decisionsEl2) decisionsEl2.scrollTop = scroll.decisions || 0;
+    }
+  }
+
+  if (mergeNarrowQuery) {
+    mergeNarrowQuery.addEventListener('change', function (e) { mergeOnNarrowChange(e.matches); });
+  }
+
+  /* ---------------------------------------------------------- rendering -- */
+
+  function mergeRenderSteps() {
+    var host = document.getElementById('staxx-merge-steps');
+    if (!host) return;
+    host.innerHTML = '';
+    MERGE_STEP_LABELS.forEach(function (label, i) {
+      var n = i + 1;
+      var chip = document.createElement('span');
+      chip.className = 'staxx-merge-step' +
+        (n === mergeState.step ? ' staxx-merge-step--current' : (n < mergeState.step ? ' staxx-merge-step--done' : ''));
+      chip.textContent = n + ' ' + label;
+      host.appendChild(chip);
+    });
+  }
+
+  function mergePickerEntries() {
+    var out = [];
+    Array.prototype.forEach.call(document.querySelectorAll('.staxx-stack-row[data-stack-row]'), function (row) {
+      var name = row.dataset.stackRow;
+      var folder = row.dataset.inFolder || '';
+      var btn = row.querySelector('[data-menu="stack"]');
+      var labelEl = row.querySelector('.staxx-name-text');
+      var reason = '';
+      if (!btn || btn.dataset.hasfile === '0') reason = 'no compose file';
+      else if (btn.dataset.parses === '0') reason = 'file cannot be read';
+      else if (btn.dataset.review === '1') reason = 'under review';
+      else if (btn.dataset.override === '1') reason = 'has a second settings file';
+      out.push({ name: name, label: labelEl ? labelEl.textContent : name, folder: folder, reason: reason });
+    });
+    return out;
+  }
+
+  function mergeRenderPickerCount() {
+    var el = document.getElementById('staxx-merge-picker-count');
+    if (!el) return;
+    var n = mergeState.picked.length;
+    el.textContent = n === 0 ? 'Nothing picked yet.'
+      : n === 1 ? '1 picked — pick at least one more.'
+      : n + ' picked.';
+  }
+
+  function mergeRenderPicker() {
+    var host = document.getElementById('staxx-merge-picker');
+    if (!host) return;
+    var entries = mergePickerEntries();
+    var q = (mergeState.search || '').toLowerCase();
+    if (q) {
+      entries = entries.filter(function (e) {
+        return e.label.toLowerCase().indexOf(q) >= 0 || e.folder.toLowerCase().indexOf(q) >= 0;
+      });
+    }
+
+    var groups = {};
+    var order = [];
+    entries.forEach(function (e) {
+      var key = e.folder || '';
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(e);
+    });
+
+    var html = '<div class="staxx-merge-picker-search">' +
+      '<input type="text" id="staxx-merge-search-input" placeholder="' + esc('Find a stack…') +
+      '" value="' + esc(mergeState.search || '') + '"></div>';
+
+    order.forEach(function (key) {
+      html += '<div class="staxx-merge-picker-group"><h4>' + esc(key || 'Loose stacks') + '</h4>';
+      groups[key].forEach(function (e) {
+        if (e.reason) {
+          html += '<div class="staxx-merge-pick-row staxx-merge-pick-row--disabled">' +
+            '<span class="staxx-merge-pick-reason">' + esc(e.reason) + '</span>' +
+            '<span>' + esc(e.label) + '</span></div>';
+        } else {
+          var checked = mergeState.picked.some(function (p) { return p.name === e.name; });
+          html += '<label class="staxx-merge-pick-row">' +
+            '<input type="checkbox" data-merge-pick="' + esc(e.name) + '" data-merge-pick-label="' + esc(e.label) + '"' +
+            (checked ? ' checked' : '') + '><span>' + esc(e.label) + '</span></label>';
+        }
+      });
+      html += '</div>';
+    });
+
+    html += '<p class="staxx-merge-picker-count" id="staxx-merge-picker-count"></p>';
+    host.innerHTML = html;
+
+    var searchInput = document.getElementById('staxx-merge-search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', function () {
+        var pos = searchInput.selectionStart;
+        mergeState.search = searchInput.value;
+        mergeRenderPicker();
+        var again = document.getElementById('staxx-merge-search-input');
+        if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+      });
+    }
+
+    Array.prototype.forEach.call(host.querySelectorAll('[data-merge-pick]'), function (cb) {
+      cb.addEventListener('change', function () {
+        var name = cb.dataset.mergePick, label = cb.dataset.mergePickLabel;
+        if (cb.checked) mergeState.picked.push({ name: name, label: label });
+        else mergeState.picked = mergeState.picked.filter(function (p) { return p.name !== name; });
+        mergeRenderPickerCount();
+        var nextBtn = document.getElementById('staxx-merge-next');
+        if (nextBtn) nextBtn.disabled = mergeState.picked.length < 2;
+      });
+    });
+
+    mergeRenderPickerCount();
+  }
+
+  function mergeRenderCards() {
+    var host = document.getElementById('staxx-merge-sources');
+    if (!host) return;
+    var html = '<p class="staxx-merge-footnote">' +
+      esc('Which one takes the other in? It keeps its name, its folder, its icon and its history.') +
+      '</p><div class="staxx-merge-cards">';
+
+    mergeState.picked.forEach(function (p) {
+      var isHost = p.name === mergeState.host;
+      var row = rowFor(p.name);
+      var folder = row ? (row.dataset.inFolder || '') : '';
+      var btn = row ? row.querySelector('[data-menu="stack"]') : null;
+      var running = !!(btn && btn.dataset.running === '1');
+      var count = mergeContainerCount(p.name);
+      html += '<div class="staxx-merge-card' + (isHost ? ' staxx-merge-card--host' : '') + '">' +
+        '<label><input type="radio" name="staxx-merge-host" value="' + esc(p.name) + '"' + (isHost ? ' checked' : '') +
+        '> <strong>' + esc(p.label) + '</strong></label>' +
+        '<p>' + esc(folder ? 'In ' + folder : 'A loose stack') + '</p>' +
+        '<p>' + esc(count + (count === 1 ? ' container' : ' containers') + ' — ' + (running ? 'running' : 'stopped')) + '</p>' +
+        '<p>' + (isHost
+          ? esc('Takes the others in. Keeps its name, folder, icon and history.')
+          : esc('Folded in. Arrives as a container inside the other stack.')) +
+        '</p></div>';
+    });
+
+    html += '</div><p class="staxx-merge-footnote">' +
+      esc('Which containers actually have to be rebuilt depends on what you decide next — the last step will name them.') +
+      '</p>';
+    host.innerHTML = html;
+
+    Array.prototype.forEach.call(host.querySelectorAll('[name="staxx-merge-host"]'), function (radio) {
+      radio.addEventListener('change', function () {
+        mergeState.host = radio.value;
+        mergeRebuild();
+        mergeRender();
+      });
+    });
+  }
+
+  // Coarse but honest: neither merge-examine.js nor merge-write.js hands
+  // back a line number for what a finding touched, so a finding's own facts
+  // (a name, a port, an address) are matched as plain substrings against
+  // each pane's text instead of true spans. Good enough to point at the
+  // right handful of lines; not a claim of exact ranges.
+  function mergeFindingNeedles(f) {
+    var facts = f.facts || {}, out = [];
+    ['volume', 'oldName', 'newName', 'name', 'from', 'to', 'service', 'port', 'heldBy', 'envVar', 'toService', 'value']
+      .forEach(function (k) {
+        if (facts[k] !== undefined && facts[k] !== null && facts[k] !== '') out.push(String(facts[k]));
+      });
+    return out;
+  }
+
+  function mergeLinesMatching(text, needles) {
+    var out = {};
+    if (!needles || !needles.length || !text) return out;
+    text.split('\n').forEach(function (line, i) {
+      for (var j = 0; j < needles.length; j++) {
+        if (needles[j] && line.indexOf(needles[j]) >= 0) { out[i] = true; break; }
+      }
+    });
+    return out;
+  }
+
+  function mergeLineFindingMap(text, stackFilter) {
+    var map = {};
+    if (!mergeState.built) return map;
+    mergeState.built.findings.forEach(function (f, idx) {
+      if (f.severity === 'clean') return;
+      if (stackFilter !== undefined && f.stack !== stackFilter) return;
+      var hit = mergeLinesMatching(text, mergeFindingNeedles(f));
+      Object.keys(hit).forEach(function (i) { if (map[i] === undefined) map[i] = idx; });
+    });
+    return map;
+  }
+
+  function mergeRenderCodeLines(container, text, map, cls) {
+    container.innerHTML = '';
+    (text || '').split('\n').forEach(function (line, i) {
+      var row = document.createElement('div');
+      var hit = map[i] !== undefined;
+      row.className = 'staxx-merge-line' + (hit ? ' ' + cls : '');
+      row.textContent = line.length ? line : ' ';
+      row.dataset.line = i;
+      if (hit) {
+        row.dataset.mergeFindingIndex = map[i];
+        row.addEventListener('click', function () { mergeJumpToFinding(map[i]); });
+      }
+      container.appendChild(row);
+    });
+  }
+
+  function mergeRenderMergedCode() {
+    var codeEl = document.getElementById('staxx-merge-merged-code');
+    if (!codeEl) return;
+    if (!mergeState.built) { codeEl.innerHTML = ''; return; }
+    var map = mergeLineFindingMap(mergeState.built.composeText || '');
+    mergeRenderCodeLines(codeEl, mergeState.built.composeText || '', map, 'staxx-merge-line--green');
+  }
+
+  function mergeRenderSourcePanes() {
+    var host = document.getElementById('staxx-merge-sources');
+    if (!host) return;
+    host.innerHTML = '';
+    mergeState.picked.forEach(function (p) {
+      var isHost = p.name === mergeState.host;
+      var data = mergeState.stacks[p.name];
+      var pane = document.createElement('div');
+      pane.className = 'staxx-merge-pane';
+      // Matched against f.stack below (mergeJumpToFinding, mergeLineFindingMap),
+      // which is the LEAF — see mergeLeafName().
+      pane.dataset.mergeStack = mergeLeafName(p.name);
+
+      var head = document.createElement('div');
+      head.className = 'staxx-merge-pane-head';
+      head.innerHTML = '<span>' + esc(p.label) + '</span>' +
+        '<span class="staxx-merge-tag' + (isHost ? ' staxx-merge-tag--host' : '') + '">' +
+        esc(isHost ? 'takes the others in' : 'folded in') + '</span>';
+
+      var code = document.createElement('div');
+      code.className = 'staxx-merge-code';
+      var text = (data && !data.error) ? data.text : '';
+      var map = mergeLineFindingMap(text, mergeLeafName(p.name));
+      mergeRenderCodeLines(code, text, map, 'staxx-merge-line--amber');
+
+      pane.appendChild(head);
+      pane.appendChild(code);
+      host.appendChild(pane);
+    });
+  }
+
+  function mergeFlashEl(el) {
+    if (!el) return;
+    el.classList.remove('staxx-merge-line--flash');
+    void el.offsetWidth;   // restart the animation on a repeat click
+    el.classList.add('staxx-merge-line--flash');
+  }
+
+  function mergeJumpToFinding(idx) {
+    if (!mergeState.built) return;
+    var f = mergeState.built.findings[idx];
+    if (!f) return;
+
+    var block = document.querySelector('[data-merge-finding-index="' + idx + '"]');
+    if (block) { block.scrollIntoView({ block: 'nearest' }); block.classList.add('staxx-merge-decision--current'); }
+
+    function flashIn(containerSelector) {
+      var container = document.querySelector(containerSelector);
+      if (!container) return;
+      var rows = container.querySelectorAll('[data-merge-finding-index="' + idx + '"]');
+      var first = null;
+      Array.prototype.forEach.call(rows, function (row) { if (!first) first = row; mergeFlashEl(row); });
+      if (first) first.scrollIntoView({ block: 'center' });
+    }
+
+    if (f.stack) flashIn('.staxx-merge-pane[data-merge-stack="' + f.stack + '"] .staxx-merge-code');
+    flashIn('#staxx-merge-merged-code');
+  }
+
+  function mergeDescribeFinding(f) {
+    var t = f.facts || {};
+    switch (f.kind) {
+      case 'storage-volume':
+        return {
+          heading: '"' + f.stack + '" keeps its data in storage Docker manages, not a folder on your array.',
+          body: 'It is really named "' + t.oldName + '", and once folded in it would go looking for "' +
+            t.newName + '" instead — the database would come up empty.'
+        };
+      case 'file-clash':
+        return f.severity === 'refusal'
+          ? { heading: '"' + t.name + '" already exists in the host\'s folder.',
+              body: 'Folding "' + f.stack + '" in would overwrite it, so the merge is refused until it is renamed or moved.' }
+          : { heading: '"' + t.name + '" from "' + f.stack + '" is copied in.',
+              body: 'It is copied into the host\'s folder so its short paths keep working.' };
+      case 'settings-join':
+        var renamed = (t.renamed || []).map(function (r) { return r.from + ' → ' + r.to; }).join(', ');
+        return {
+          heading: '"' + f.stack + '" brings its own settings list (.env).',
+          body: 'It is joined into one file: the host\'s own settings come first and are untouched, and "' +
+            f.stack + '"\'s own are added under their own heading.' +
+            (t.sameValueNames && t.sameValueNames.length ? ' ' + t.sameValueNames.join(', ') + ' already match and are not repeated.' : '') +
+            (renamed ? ' ' + renamed + ' mean different things on each side, so the incoming one is renamed.' : '')
+        };
+      case 'container-name-clash':
+        return {
+          heading: '"' + t.from + '" is used by more than one container.',
+          body: '"' + f.stack + '"\'s own is renamed to "' + t.to + '", and everything that referred to it follows.'
+        };
+      case 'port-clash':
+        return {
+          heading: 'Port ' + t.port + ' is claimed by more than one container.',
+          body: '"' + t.service + '" in "' + f.stack + '" and "' + t.heldBy + '" both publish port ' + t.port + '.'
+        };
+      case 'shorthand-clash':
+        return {
+          heading: '"' + t.from + '" (' + t.declKind + ') means different things on each side.',
+          body: '"' + f.stack + '"\'s own is renamed to "' + t.to + '", and everything using it follows.'
+        };
+      case 'address-rewire':
+        return {
+          heading: '"' + t.service + '" in "' + f.stack + '" reaches another one of these over the network.',
+          body: 'It is set to "' + t.from + '". Inside one stack that becomes "' + t.toService + ':' + t.toPort +
+            '" — the real port, not the one published to your network.'
+        };
+      case 'port-unneeded':
+        return {
+          heading: 'Port ' + t.port + ' was published so another container could reach "' + t.service + '" from outside.',
+          body: 'Once they are one stack, nothing needs it — closing it is one less way in.'
+        };
+      case 'left-alone':
+        return {
+          heading: '"' + t.envVar + '" in "' + f.stack + '"',
+          body: (t.note || '') + ' (currently "' + t.value + '").'
+        };
+      default:
+        return { heading: f.kind, body: '' };
+    }
+  }
+
+  function mergeChoiceLabel(c) {
+    return MERGE_CHOICE_LABELS[c.id] || c.id;
+  }
+
+  function mergeFindingKey(f, idx) {
+    return f.kind + '|' + (f.stack || '') + '|' + idx;
+  }
+
+  // A 'free-port' decision is stored as { id: 'free-port', port: N } once a
+  // number is attached; a plain choice (e.g. 'stop-publishing') is stored as
+  // its bare id string. This reads the id either way, so the radio that
+  // matches a stored decision is found whichever shape it took.
+  function mergeStoredId(stored) {
+    return (stored && typeof stored === 'object') ? stored.id : stored;
+  }
+
+  // Every port this merge already publishes, across every stack taking
+  // part — not just the host and the one incoming stack a clash was found
+  // in, because folding in a third stack later must not repeat a port a
+  // second one is already using. Read straight from each stack's own text,
+  // since mergeState.built only ever holds the HOST's own file plus
+  // findings, never every participant's services.
+  function mergePortsTakenAcrossMerge() {
+    var taken = {};
+    if (!window.StaxxMergeWrite) return taken;
+    mergeState.picked.forEach(function (p) {
+      var s = mergeState.stacks[p.name];
+      if (!s || s.error) return;
+      var desc, services;
+      try { desc = window.StaxxMergeWrite.descriptorFromText(s.name, s.text, s.envText, s.files); }
+      catch (e) { return; }
+      services = (desc && desc.compose && desc.compose.services) || {};
+      Object.keys(services).forEach(function (svcName) {
+        (services[svcName].ports || []).forEach(function (pt) {
+          if (pt.host) taken[Number(pt.host)] = true;
+        });
+      });
+    });
+    return taken;
+  }
+
+  // The taken set above, plus every OTHER port-clash finding's own chosen
+  // free port — so two clashes resolved in the same sitting cannot suggest,
+  // or accept, the same new port for both. excludeKey leaves the finding
+  // being checked or suggested for out of its own comparison.
+  function mergeEffectiveTakenPorts(excludeKey) {
+    var taken = mergePortsTakenAcrossMerge();
+    if (!mergeState.built) return taken;
+    mergeState.built.findings.forEach(function (f, idx) {
+      if (f.kind !== 'port-clash') return;
+      var k = mergeFindingKey(f, idx);
+      if (k === excludeKey) return;
+      var stored = mergeState.decisions[k];
+      if (stored && typeof stored === 'object' && stored.port) taken[Number(stored.port)] = true;
+    });
+    return taken;
+  }
+
+  // The first port above the clashing one that nothing in this merge
+  // already publishes. Not a guarantee the wider server has it free —
+  // nothing here can know that — only that resolving the clash this way
+  // will not immediately create a new one.
+  function mergeSuggestFreePort(clashPort, taken) {
+    var p = Number(clashPort) + 1;
+    while (p <= 65535 && taken[p]) p += 1;
+    return p <= 65535 ? p : null;
+  }
+
+  // Fills in a suggested port for every port-clash finding nobody has
+  // answered yet. Without this, "change it to a free port" is the default
+  // choice but carries no number, so leaving it at its default silently
+  // resolves nothing (merge-write.js's own freePortFrom() refuses to
+  // invent one). Never overwrites a decision that is already there,
+  // whichever choice it recorded. Returns true if anything changed, so the
+  // caller knows to rebuild the merged preview against the new decisions.
+  function mergeFillPortClashDefaults() {
+    if (!mergeState.built) return false;
+    var changed = false;
+    mergeState.built.findings.forEach(function (f, idx) {
+      if (f.kind !== 'port-clash') return;
+      var key = mergeFindingKey(f, idx);
+      if (mergeState.decisions[key] !== undefined) return;
+      var suggestion = mergeSuggestFreePort(f.facts.port, mergeEffectiveTakenPorts(key));
+      if (suggestion) {
+        mergeState.decisions[key] = { id: 'free-port', port: suggestion };
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  // Plain words beside the field, or null once the number in it can
+  // actually be sent. A number outside 1-65535, or one that repeats a port
+  // already published elsewhere in this merge, is refused here rather than
+  // silently carried forward into a merge that would not fix the clash.
+  function mergePortClashError(key) {
+    var stored = mergeState.decisions[key];
+    var raw = (stored && typeof stored === 'object') ? stored.port : null;
+    if (raw === null || raw === undefined || raw === '') return 'Enter a port number.';
+    var n = Number(raw);
+    if (!isFinite(n) || Math.floor(n) !== n || n < 1 || n > 65535) return 'Port numbers run from 1 to 65535.';
+    if (mergeEffectiveTakenPorts(key)[n]) return 'Port ' + n + ' is already published elsewhere in this merge.';
+    return null;
+  }
+
+  // Whether any port-clash finding currently answered "free port" carries a
+  // number that cannot be sent — the gate the step 3 Next button checks so
+  // the merge cannot proceed on an answer that would resolve nothing.
+  function mergeHasBadPortClash() {
+    if (!mergeState.built) return false;
+    return mergeState.built.findings.some(function (f, idx) {
+      if (f.kind !== 'port-clash') return false;
+      var key = mergeFindingKey(f, idx);
+      if (mergeStoredId(mergeState.decisions[key]) !== 'free-port') return false;
+      return !!mergePortClashError(key);
+    });
+  }
+
+  // The small number field shown beside "change it to a free port" once
+  // that choice is selected — its own change rebuilds the merged pane
+  // immediately, exactly as picking any other decision already does.
+  function mergePortClashField(key) {
+    var wrap = document.createElement('span');
+    wrap.className = 'staxx-merge-portfield';
+
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.min = '1';
+    input.max = '65535';
+    input.className = 'staxx-merge-portfield-input';
+    var stored = mergeState.decisions[key];
+    var port = (stored && typeof stored === 'object' && stored.port) ? stored.port : '';
+    input.value = port;
+    input.addEventListener('click', function (event) { event.stopPropagation(); });
+    input.addEventListener('change', function (event) {
+      event.stopPropagation();
+      var n = input.value === '' ? null : Number(input.value);
+      mergeState.decisions[key] = { id: 'free-port', port: n };
+      mergeRebuild();
+      mergeRender();
+    });
+    wrap.appendChild(input);
+
+    var err = mergePortClashError(key);
+    var msg = document.createElement('div');
+    if (err) {
+      msg.className = 'staxx-merge-portfield-error';
+      msg.textContent = err;
+    } else {
+      msg.className = 'staxx-merge-portfield-note';
+      msg.textContent = 'Nothing in this merge publishes port ' + port + ' — not a guarantee it is free on the whole server.';
+    }
+    wrap.appendChild(msg);
+    return wrap;
+  }
+
+  function mergeFindingsForStep(step) {
+    if (!mergeState.built) return [];
+    var kinds = step === 3 ? MERGE_STEP3_KINDS : MERGE_STEP4_KINDS;
+    var out = [];
+    mergeState.built.findings.forEach(function (f, i) { if (kinds[f.kind]) out.push({ f: f, i: i }); });
+    return out;
+  }
+
+  function mergeHasRefusal() {
+    return !!(mergeState && mergeState.built && mergeState.built.refusals && mergeState.built.refusals.length);
+  }
+
+  function mergeRenderDecisions() {
+    var lead = document.getElementById('staxx-merge-decisions-lead');
+    var list = document.getElementById('staxx-merge-decisions-list');
+    var clean = document.getElementById('staxx-merge-clean');
+    if (!lead || !list || !clean) return;
+    list.innerHTML = '';
+    clean.innerHTML = '';
+
+    if (!mergeState.built) { lead.textContent = ''; return; }
+
+    if (mergeHasRefusal()) {
+      var r = mergeState.built.refusals[0];
+      var d = mergeDescribeFinding(r);
+      lead.textContent = d.body || d.heading;
+      var errBlock = document.createElement('div');
+      errBlock.className = 'staxx-merge-decision staxx-merge-decision--automatic';
+      errBlock.textContent = 'The merge is refused until this is fixed. Close the wizard, sort it out, and start again.';
+      list.appendChild(errBlock);
+      return;
+    }
+
+    var step = mergeState.step;
+    var entries = mergeFindingsForStep(step);
+
+    if (step === 3) {
+      var decisionCount = entries.filter(function (e) { return e.f.severity !== 'clean'; }).length;
+      lead.textContent = decisionCount
+        ? decisionCount + ' thing' + (decisionCount === 1 ? '' : 's') + ' need' + (decisionCount === 1 ? 's' : '') +
+          ' a decision. Everything else was checked and is fine.'
+        : 'Nothing clashes. Everything was checked and is fine.';
+    } else {
+      var wiringCount = entries.filter(function (e) { return e.f.kind !== 'left-alone'; }).length;
+      lead.textContent = 'Once they are one stack these two talk to each other inside it, by name, without going ' +
+        'out to your network and back. StaXX found ' + wiringCount + ' place' + (wiringCount === 1 ? '' : 's') +
+        ' that need changing and will not touch anything it is unsure of.';
+    }
+
+    var cleanEntries = [];
+    entries.forEach(function (entry) {
+      var f = entry.f, idx = entry.i;
+      if (f.kind === 'left-alone' || f.severity === 'clean') { cleanEntries.push(entry); return; }
+
+      var desc = mergeDescribeFinding(f);
+      var block = document.createElement('div');
+      block.className = 'staxx-merge-decision' + (f.choices ? '' : ' staxx-merge-decision--automatic');
+      block.dataset.mergeFindingIndex = idx;
+
+      var h = document.createElement('h5');
+      h.textContent = desc.heading;
+      var p = document.createElement('p');
+      p.textContent = desc.body;
+      block.appendChild(h);
+      block.appendChild(p);
+
+      if (f.choices && f.choices.length) {
+        var choicesBox = document.createElement('div');
+        choicesBox.className = 'staxx-merge-decision-choices';
+        var key = mergeFindingKey(f, idx);
+        var isTick = f.severity === 'wiring';
+
+        f.choices.forEach(function (c) {
+          var label = document.createElement('label');
+          var input = document.createElement('input');
+          input.type = isTick ? 'checkbox' : 'radio';
+          if (!isTick) input.name = 'staxx-merge-decision-' + idx;
+          var stored = mergeState.decisions[key];
+          var isOn = isTick
+            ? (stored === undefined ? !!c.ticked : !!stored)
+            : (stored === undefined ? !!c.recommended : mergeStoredId(stored) === c.id);
+          input.checked = isOn;
+          input.addEventListener('change', function (event) {
+            event.stopPropagation();
+            if (isTick) {
+              mergeState.decisions[key] = input.checked;
+            } else if (c.id === 'free-port') {
+              // Switching onto this choice keeps a number already picked;
+              // landing on it fresh suggests one rather than sending
+              // 'free-port' with nothing attached, which resolves nothing.
+              var already = mergeState.decisions[key];
+              var port = (already && typeof already === 'object' && already.port)
+                ? already.port
+                : mergeSuggestFreePort(f.facts.port, mergeEffectiveTakenPorts(key));
+              mergeState.decisions[key] = { id: 'free-port', port: port };
+            } else {
+              mergeState.decisions[key] = c.id;
+            }
+            mergeRebuild();
+            mergeRender();
+          });
+          label.appendChild(input);
+          label.appendChild(document.createTextNode(' ' + mergeChoiceLabel(c)));
+          choicesBox.appendChild(label);
+
+          if (f.kind === 'port-clash' && c.id === 'free-port' && isOn) {
+            choicesBox.appendChild(mergePortClashField(key));
+          }
+        });
+        block.appendChild(choicesBox);
+      }
+
+      block.addEventListener('click', function (event) {
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'LABEL') return;
+        mergeJumpToFinding(idx);
+      });
+
+      list.appendChild(block);
+    });
+
+    if (cleanEntries.length) {
+      var h5 = document.createElement('h5');
+      h5.textContent = step === 3 ? 'Checked and fine' : 'Left alone';
+      clean.appendChild(h5);
+      cleanEntries.forEach(function (entry) {
+        var line = document.createElement('div');
+        line.textContent = entry.f.kind === 'clean'
+          ? String((entry.f.facts && entry.f.facts.category) || '')
+          : mergeDescribeFinding(entry.f).heading;
+        clean.appendChild(line);
+      });
+    }
+  }
+
+  function mergeRenderConfirm() {
+    var lead = document.getElementById('staxx-merge-decisions-lead');
+    var list = document.getElementById('staxx-merge-decisions-list');
+    var clean = document.getElementById('staxx-merge-clean');
+    if (!lead || !list || !clean) return;
+    list.innerHTML = '';
+    clean.innerHTML = '';
+    lead.textContent = 'Nothing has been written yet. This is what will happen when you press the button.';
+
+    if (!mergeState.built) return;
+
+    var hostEntry = mergeState.picked.filter(function (p) { return p.name === mergeState.host; })[0];
+    var hostLabel = hostEntry ? hostEntry.label : mergeState.host;
+    var incomingEntries = mergeState.picked.filter(function (p) { return p.name !== mergeState.host; });
+    var incomingNames = incomingEntries.map(function (p) { return p.label; }).join(', ');
+
+    var changes = [];
+    mergeState.built.findings.forEach(function (f) {
+      if (f.kind === 'address-rewire') {
+        changes.push(f.stack + '/' + f.facts.service + ': ' + f.facts.envVar + ' — ' + f.facts.from + ' → ' +
+          f.facts.toService + ':' + f.facts.toPort);
+      } else if (f.kind === 'container-name-clash') {
+        changes.push(f.facts.from + ' → ' + f.facts.to);
+      } else if (f.kind === 'shorthand-clash') {
+        changes.push(f.facts.declKind + ' ' + f.facts.from + ' → ' + f.facts.to);
+      } else if (f.kind === 'storage-volume') {
+        changes.push(f.facts.volume + ': kept as "' + f.facts.oldName + '"');
+      }
+    });
+
+    var gains = document.createElement('div');
+    gains.className = 'staxx-merge-confirm-block';
+    gains.innerHTML = '<h5>' + esc(hostLabel + ' gains ' + incomingNames) + '</h5>' +
+      '<p>' + esc('They arrive exactly as they were — same image, same settings, comments and all.') + '</p>' +
+      (changes.length ? ('<ul>' + changes.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul>') : '') +
+      '<p>' + esc('This lands as one entry in ' + hostLabel + '’s history, so one step back undoes the whole merge.') + '</p>';
+    list.appendChild(gains);
+
+    incomingEntries.forEach(function (p) {
+      var block = document.createElement('div');
+      block.className = 'staxx-merge-confirm-block';
+      block.innerHTML = '<h5>' + esc(p.label + ' is left exactly as it is') + '</h5>' +
+        '<p>' + esc('Its folder, file and history are untouched. Once the merged stack has run, StaXX will offer ' +
+          'to remove it — its own record of which builds it has run comes across, so it can still be rolled back.') +
+        '</p>';
+      list.appendChild(block);
+    });
+
+    var running = mergeState.picked.filter(function (p) {
+      var row = rowFor(p.name);
+      var btn = row ? row.querySelector('[data-menu="stack"]') : null;
+      return !!(btn && btn.dataset.running === '1');
+    });
+    var hostRebuilt = mergeState.built.findings.some(function (f) {
+      return f.kind === 'address-rewire' && f.stack === mergeLeafName(mergeState.host);
+    });
+    var rebuilt = incomingEntries.map(function (p) { return p.label; }).concat(hostRebuilt ? [hostLabel] : []);
+
+    var stopBlock = document.createElement('div');
+    stopBlock.className = 'staxx-merge-confirm-block';
+    if (!running.length) {
+      stopBlock.innerHTML = '<h5>' + esc('Nothing is running') + '</h5>' +
+        '<p>' + esc('Starting a leftover afterwards would fight over the same storage the merged stack now uses.') + '</p>';
+    } else {
+      stopBlock.innerHTML = '<h5>' + esc('What has to stop, and what gets rebuilt') + '</h5>' +
+        '<p>' + esc('Running containers in ' + running.map(function (p) { return p.label; }).join(', ') +
+          ' hold a port or storage the merged stack now wants, so they stop first.') + '</p>' +
+        '<p>' + esc('When the merged stack next starts, Docker rebuilds: ' + rebuilt.join(', ') + '.') + '</p>';
+    }
+    list.appendChild(stopBlock);
+  }
+
+  function mergeRender() {
+    if (!mergeState) return;
+    mergeRenderSteps();
+
+    var pickerEl    = document.getElementById('staxx-merge-picker');
+    var sourcesEl   = document.getElementById('staxx-merge-sources');
+    var mergedEl    = document.getElementById('staxx-merge-merged');
+    var decisionsEl = document.getElementById('staxx-merge-decisions');
+    var backBtn     = document.getElementById('staxx-merge-back');
+    var nextBtn     = document.getElementById('staxx-merge-next');
+    var errorEl     = document.getElementById('staxx-merge-error');
+    if (!pickerEl || !sourcesEl || !mergedEl || !decisionsEl || !backBtn || !nextBtn) return;
+
+    if (errorEl) errorEl.hidden = true;
+    backBtn.disabled = mergeState.step === 1;
+    nextBtn.textContent = mergeState.step === 5 ? 'Merge' : 'Next';
+    nextBtn.disabled = false;
+
+    if (mergeState.step === 1) {
+      pickerEl.hidden = false;
+      sourcesEl.hidden = true;
+      mergedEl.hidden = true;
+      decisionsEl.hidden = true;
+      mergeRenderPicker();
+      nextBtn.disabled = mergeState.picked.length < 2;
+      return;
+    }
+
+    pickerEl.hidden = true;
+    sourcesEl.hidden = false;
+
+    if (mergeState.step === 2) {
+      mergedEl.hidden = !mergeState.built;
+      decisionsEl.hidden = true;
+      mergeRenderCards();
+      if (mergeState.built) mergeRenderMergedCode();
+      nextBtn.disabled = !mergeState.host;
+      return;
+    }
+
+    mergedEl.hidden = false;
+    decisionsEl.hidden = false;
+    mergeRenderSourcePanes();
+    mergeRenderMergedCode();
+
+    if (mergeState.step === 5) {
+      mergeRenderConfirm();
+    } else {
+      mergeRenderDecisions();
+      if (mergeState.step === 3) nextBtn.disabled = mergeHasRefusal() || mergeHasBadPortClash();
+    }
+  }
+
+  function mergeNext() {
+    if (!mergeState) return;
+    var nextBtn = document.getElementById('staxx-merge-next');
+
+    if (mergeState.step === 1) {
+      if (mergeState.picked.length < 2) return;
+      mergeState.step = 2;
+      if (nextBtn) nextBtn.disabled = true;
+      mergeLoadAllPicked().then(function () {
+        mergeEnsureHost();
+        mergeRebuild();
+        mergeRender();
+      });
+      return;
+    }
+    if (mergeState.step === 2) {
+      if (!mergeState.host || !mergeState.built) return;
+      mergeState.step = 3;
+      mergeRender();
+      return;
+    }
+    if (mergeState.step === 3) {
+      if (mergeHasRefusal()) return;
+      mergeState.step = 4;
+      mergeRender();
+      return;
+    }
+    if (mergeState.step === 4) {
+      mergeState.step = 5;
+      mergeRender();
+      return;
+    }
+    if (mergeState.step === 5) {
+      mergeSubmit();
+    }
+  }
+
+  function mergeBack() {
+    if (!mergeState || mergeState.step === 1) return;
+    mergeState.step -= 1;
+    mergeRender();
+  }
+
+  var mergeNextBtn = document.getElementById('staxx-merge-next');
+  var mergeBackBtn = document.getElementById('staxx-merge-back');
+  if (mergeNextBtn) mergeNextBtn.addEventListener('click', mergeNext);
+  if (mergeBackBtn) mergeBackBtn.addEventListener('click', mergeBack);
+
+  /* ------------------------------------------------------------- write -- */
+
+  function mergeSubmit() {
+    if (!mergeState || !mergeState.built || !window.StaxxMergeWrite) return;
+    var nextBtn = document.getElementById('staxx-merge-next');
+    var errorEl = document.getElementById('staxx-merge-error');
+    if (errorEl) errorEl.hidden = true;
+    if (nextBtn) nextBtn.disabled = true;
+
+    var hostEntry = mergeState.picked.filter(function (p) { return p.name === mergeState.host; })[0];
+    var incomingRels = mergeState.picked
+      .filter(function (p) { return p.name !== mergeState.host; })
+      .map(function (p) { return p.name; });
+
+    // Every arriving service, mapped to its own name unless examine() (via
+    // buildMergedText's own findings) renamed it — read straight off those
+    // findings, never recomputed, so this can never disagree with what the
+    // merged text actually holds. See Merge.php's own comment on
+    // staxx_merge_carry_image_history() for why an untouched name still has
+    // to be in this map at all (it is what lets past builds stay rollable).
+    var imageHistoryMap = {};
+    incomingRels.forEach(function (rel) {
+      var data = mergeState.stacks[rel];
+      var svcMap = {};
+      if (data && !data.error) {
+        var desc = window.StaxxMergeWrite.descriptorFromText(rel, data.text, data.envText, data.files);
+        Object.keys(desc.compose.services).forEach(function (svcName) { svcMap[svcName] = svcName; });
+      }
+      // f.stack is the LEAF (see mergeLeafName()); `rel` stays the full path
+      // here because it is what Merge.php needs to find this stack's own
+      // folder and image-history record.
+      mergeState.built.findings.forEach(function (f) {
+        if (f.kind === 'container-name-clash' && f.facts.field === 'service' && f.stack === mergeLeafName(rel)) {
+          svcMap[f.facts.from] = f.facts.to;
+        }
+      });
+      imageHistoryMap[rel] = svcMap;
+    });
+
+    var fields = {
+      name: mergeState.host,
+      incoming: JSON.stringify(incomingRels),
+      body: mergeState.built.composeText,
+      fingerprint: (mergeState.stacks[mergeState.host] || {}).fingerprint || '',
+      imageHistory: JSON.stringify(imageHistoryMap)
+    };
+    if (mergeState.built.envText !== null && mergeState.built.envText !== undefined) {
+      fields.env = mergeState.built.envText;
+    }
+
+    call('merge', fields, 120000).then(function (res) {
+      if (nextBtn) nextBtn.disabled = false;
+      if (!res.ok) {
+        if (errorEl) { errorEl.hidden = false; errorEl.textContent = res.error || 'Could not merge these stacks.'; }
+        return;
+      }
+      var hostName = mergeState.host, hostLabel = hostEntry ? hostEntry.label : mergeState.host;
+      mergeState = null;
+      mergeClose();
+      editStack(hostName, hostLabel);
+      setTimeout(refreshRows, 140);
+    });
+  }
+
+  /* --------------------------------------------- phase 6: the leftover -- */
+
+  // Delegated so a row re-rendered by refreshRows()/refreshStateSoon() is
+  // covered without re-binding anything — the same reason every other
+  // per-row control on this page is wired this way (see the big delegated
+  // click handler elsewhere in this file). removeStack() already asks once
+  // and then deletes the stack the ordinary way; there is nothing else for
+  // this button to do.
+  document.addEventListener('click', function (event) {
+    var btn = event.target.closest && event.target.closest('[data-merge-remove]');
+    if (!btn) return;
+    removeStack(btn.dataset.mergeRemove, btn.dataset.mergeRemoveLabel || btn.dataset.mergeRemove);
+  });
+
 })();

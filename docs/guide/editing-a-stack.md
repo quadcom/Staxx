@@ -189,6 +189,12 @@ the stack's own folder, and updates the file to point at that copy, with the add
 kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
 The change is announced in the same notice that reports a matched icon.
 
+You do not have to open the field at all: drag a picture — or drag a picture's web address across
+from another browser tab — and drop it straight onto a service's own icon in the editor. The icon
+glows while you are holding something over it, to show it is about to take it. A picture dropped in
+from your own computer must be under 512 KB; if the drop cannot be used for any reason, the icon
+glows red for a moment with a short line underneath saying why, and nothing about the stack changes.
+
 The field's selfh.st link opens that collection in a new tab. The first time you open a third-party
 site from StaXX, Unraid asks whether you trust it; tick **Always allow** and it will not ask about
 that site again.

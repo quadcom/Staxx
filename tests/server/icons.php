@@ -41,6 +41,13 @@
  * decision not to offer a URL still marked missed is checked at the same
  * field-level as PLAN_105's case above, for the same reason given there —
  * the walk itself needs the real store root, which this file does not move.
+ *
+ * Also covers PLAN_149 phase 3: staxx_icon_adopt_drop() — a picture dropped
+ * straight in from the desktop rather than fetched from an address. Unlike
+ * staxx_icon_adopt() above, it needs no reachable data store and touches
+ * nothing but the explicit /tmp folders this file already uses, since it
+ * never reads from the shared icon cache at all — the bytes are handed to
+ * it already in hand.
  */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
@@ -223,6 +230,50 @@ file_put_contents($svcDir.'/compose.yaml',
 $meta = staxx_compose_meta($svcDir.'/compose.yaml');
 check("a service's own recorded icon is what the walk reads before ever copying anything",
   $meta['ok'] && ($meta['services']['a']['x']['icon'] ?? '') === 'something-already-here');
+
+/* ---- PLAN_149 phase 3 — a picture dropped straight in from the desktop ---- */
+// staxx_icon_adopt_drop() never touches the shared icon cache and never
+// fetches anything — the bytes are already in hand, the same shape a real
+// browser drop hands the server once it has read the file itself. Every
+// case below uses an explicit /tmp folder, same as the rest of this file.
+
+$dropDir = $scratch.'/drop';
+@mkdir($dropDir, 0755, true);
+$dropAbs = $dropDir.'/'.STAXX_RECORD_DIR.'/mylogo.png';
+
+$error = '';
+$file = staxx_icon_adopt_drop($dropDir, 'My Logo!!.PNG', $pngBytes, $error);
+check('a genuine picture dropped in is accepted, and named from its own filename, cleaned up',
+  $file === './'.STAXX_RECORD_DIR.'/mylogo.png' && is_file($dropAbs) && $error === '');
+
+$mtimeDropFirst = @filemtime($dropAbs);
+
+$error = '';
+$again = staxx_icon_adopt_drop($dropDir, 'My Logo!!.PNG', $pngBytes, $error);
+check('dropping the same picture a second time lands one file, not two',
+  $again === $file && $error === '' && @filemtime($dropAbs) === $mtimeDropFirst);
+
+$error = '';
+check('a file whose contents are not a picture is refused, whatever its name claims',
+  staxx_icon_adopt_drop($dropDir, 'fake.png', 'not actually a picture at all', $error) === ''
+  && $error === 'Not a picture');
+
+$error = '';
+check('a kind outside the accepted list is refused',
+  staxx_icon_adopt_drop($dropDir, 'notes.txt', 'plain text, not a picture', $error) === ''
+  && $error === 'Not a picture');
+
+$oversized = str_repeat('a', STAXX_ICON_DROP_MAX_BYTES + 1);
+$error = '';
+check('a body over the 512 KB limit is refused',
+  staxx_icon_adopt_drop($dropDir, 'huge.png', $oversized, $error) === ''
+  && $error === 'Too big — icons must be under 512 KB');
+
+$neverSaved = $scratch.'/drop-never-saved';
+$error = '';
+check('a stack that has never been saved has no folder to write into, and is refused rather than one being created for it',
+  staxx_icon_adopt_drop($neverSaved, 'logo.png', $pngBytes, $error) === ''
+  && $error === 'Save the stack first' && !is_dir($neverSaved));
 
 echo "\n".($fails === 0 ? "all checks passed\n" : "$fails check(s) FAILED\n");
 exit($fails === 0 ? 0 : 1);

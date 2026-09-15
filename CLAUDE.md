@@ -117,6 +117,7 @@ node tests/words.js                 # the passphrase generator's word list — c
 node tests/registry_note.js         # the registry-behaviour note generator's own cases
 node tests/links_detect.js          # spotting that two services need to know about each other
 node tests/links_record.js          # the connection record — writing it, matching it, noticing it is stale
+node tests/merge_examine.js         # the merge wizard's reading pass — storage, files, .env join, name/port/shorthand clashes, wiring
 node tests/crosslinks.js            # the browser half of the same: wording, and the confirmed-link write
 node tests/db_images.js             # the table of well-known database images
 node tests/health_offer.js          # picking a health check, and the narrow door for one found elsewhere
@@ -186,6 +187,7 @@ Four rules run through the whole set:
 | `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |
 | `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
 | `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
+| `merge` | The write half of merging several stacks into one (PLAN_148 phase 4): the companion-file copy and its refusal, the one named history entry, image history carried across under the arriving service's own name, the leftover's own record mark, and every refusal before anything is written | `STORE_ROOT` at `/tmp` |
 | `meta-cache` | The on-disk memory behind reading a compose file's metadata, keyed on contents plus version | — |
 | `moves` | Noticing when a catalogue app's template has moved registries | backs up three real files |
 | `networks` | Spotting the networks a compose file names that this server does not have, against fake network lists, and the refusal that check feeds into the job runner | `STORE_ROOT` at `/tmp` |

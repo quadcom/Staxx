@@ -1,0 +1,1 @@
+Stands in for the host's real config folder, so the fixture has something on disk to collide with.
