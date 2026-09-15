@@ -643,6 +643,19 @@ div.title.staxx-has-titlebar {
   color: #000;
 }
 
+/* Hovering a filled button turned its label the accent colour — the same
+   colour it is sitting on — so the word disappeared entirely. White, and
+   weighted up a little to hold its own against the fill.
+   The weight is faked with a doubled shadow rather than font-weight on
+   purpose: a real bold is a wider word, which widens the button, which shifts
+   every button left of it in a content-sized row. That moves the Select
+   button out from under the selection bar hanging off it, measured at just
+   over a pixel — visible, and for a hover state alone not worth a reflow. */
+.staxx-scaffold .staxx-btn--active:hover:not(:disabled) {
+  color: #fff;
+  text-shadow: 0 0 0.4px currentColor, 0 0 0.4px currentColor;
+}
+
 /* The queue's own Stop button, sat inside a hint-sized strip rather than the
    button row above the grid — smaller so it does not outweigh the sentence
    beside it. */
@@ -790,24 +803,108 @@ div.title.staxx-has-titlebar {
   opacity: 0.55;
 }
 
-/* The bar at the foot of the list — same shape as .staxx-updatequeue above,
-   which it sits below, since both are a status line plus a small button
-   row that appears only while it applies. */
+/* Sits directly under .staxx-bar and deliberately borrows that rule's shape
+   instead — no border or fill, and the same bottom margin — so the row of
+   verbs reads as a second line of the same button row rather than a separate
+   panel, with its buttons lining up under the toolbar's own.
+
+   The bar itself is only the animated container — the flex row it used to
+   be lives on .staxx-selectbar-inner below. The height is what has to move:
+   snapping the bar in and out made the whole list below it jump, and a fade on
+   its own would leave that jump exactly as it was. A grid row taken from 0fr
+   to 1fr is the only way to slide to a height nobody can know in advance,
+   since the buttons wrap differently at every window width. */
 .staxx-selectbar {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  /* The negative top margin cancels .staxx-bar's own 0.6rem bottom margin, so
+     the outline below reaches all the way up to the button row and touches it.
+     A gap there breaks the join and the box stops reading as attached. It is
+     also what alignSelectBar() measures from and then adjusts inline. */
+  margin: -0.6rem 0 0.6rem;
+  transition: grid-template-rows 260ms cubic-bezier(.22, .61, .36, 1),
+              opacity 200ms cubic-bezier(.22, .61, .36, 1);
+}
+
+/* Not optional, and the reason is a trap. The `hidden` attribute hides an
+   element only because the browser's own stylesheet says [hidden]{display:none},
+   and that rule is weaker than any class rule setting display. The moment the
+   rule above says display:grid, `hidden` stops hiding anything at all and an
+   empty bar sits under the toolbar permanently. */
+.staxx-selectbar[hidden] { display: none; }
+
+/* Carries what the bar's flex row used to do. overflow:hidden is what makes
+   the slide possible — it clips the content while the row is short of its full
+   height — and min-height:0 is what lets a grid row actually collapse, since a
+   grid item's default minimum is its content. */
+.staxx-selectbar-inner {
+  overflow: hidden;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: stretch;
   flex-wrap: wrap;
   gap: 1rem;
-  margin: 1.2rem 0 0;
-  padding: 0.8rem 1rem;
-  border: 0.1rem solid var(--sm-line);
-  border-radius: var(--sm-radius);
-  background: var(--sm-fill);
+}
+
+.staxx-selectbar--open { grid-template-rows: 1fr; opacity: 1; }
+
+/* The buttons arrive just behind the row rather than with it, which is what
+   makes the opening read as one movement instead of a box appearing. */
+.staxx-selectbar .staxx-buttons {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 200ms cubic-bezier(.22, .61, .36, 1) 120ms,
+              transform 200ms cubic-bezier(.22, .61, .36, 1) 120ms;
+}
+
+.staxx-selectbar--open .staxx-buttons { opacity: 1; transform: none; }
+
+/* On the way out they leave immediately: kept as it is above, the entry delay
+   would hold them in place while the row was already closing under them. */
+.staxx-selectbar:not(.staxx-selectbar--open) .staxx-buttons {
+  transition-duration: 110ms;
+  transition-delay: 0ms;
+}
+
+/* Somebody who has asked for less movement still gets the bar, just without
+   the slide. The close path does not wait on a transition finishing, so it
+   still tidies up correctly with no transition to run at all. */
+@media (prefers-reduced-motion: reduce) {
+  .staxx-selectbar,
+  .staxx-selectbar .staxx-buttons { transition: none; }
 }
 
 .staxx-selectbar-text {
   font-size: 1.2rem;
+  /* The row stretches its children now, so the text is centred on its own. */
+  align-self: center;
+}
+
+/* The button group is outlined like a tab hanging from the "Select" button
+   above. The border is unbroken: the top edge runs on under that button, which
+   is filled orange while it is active, so the two merge there while the line
+   stays visible under the darker buttons beside it. The top-left corner alone
+   is square, because that is where the Select button sits against it, and that
+   button's own bottom corners are squared to match — see .staxx-btn--tabbed
+   below — so the two read as one shape rather than a box floating under a
+   button. Written at .staxx-scaffold .staxx-xxx deliberately — see this
+   sheet's header on Unraid's reset, which beats a single class. */
+.staxx-scaffold .staxx-selectbar-wrap {
+  position: relative;
+  padding: 0.6rem 0.8rem;
+  border: 0.1rem solid var(--sm-accent);
+  border-radius: 0 0.8rem 0.8rem 0.8rem;
+}
+
+/* While the bar below is showing, the Select button is the tab the box hangs
+   from, so its bottom corners are squared to meet it — rounded ones leave a
+   notch at each end of the join and the two stop reading as one shape.
+   Written at .staxx-scaffold button.staxx-xxx deliberately — see this sheet's
+   header on Unraid's reset, which beats a single class. */
+.staxx-scaffold button.staxx-btn--tabbed {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 /* ---- App icons (square tiles — these open the menu) --------------------- */

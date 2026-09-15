@@ -18,6 +18,8 @@ before that were dates.
 
 ## Unreleased
 
+- The Select tool's actions are no longer hidden at the foot of the list. Choose a stack or two and a row of buttons — Start, Stop, Restart, Check for updates, Update — slides open directly beneath the Select button, outlined so the two read as one piece. It appears only once something is chosen, and slides away again when nothing is.
+- A filled button's label no longer vanishes when you hover it. Select while choosing, and Pause updates while updates are paused, both turned their text the same colour as the button behind it.
 - The warning that live updates aren't connected now appears in the notices area beside the search box instead of as a bar across the top of the list.
 - The Settings panel's update options are simpler: Updates is now a plain Manual/Automatic choice, and Notify me is three separate switches — one for a found update, one for an installed one, and one for a failed one, the last one on by default for everybody. Quiet time is now a pick-list in half-hour steps, and sits half width under its own "only during a quiet time" question.
 - A container that updates itself now shows a small green mark beside its name in the stack list, so you can tell which ones will install a newer version on their own without opening each one to check.

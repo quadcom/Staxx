@@ -363,7 +363,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     </div>
     <div class="staxx-buttons staxx-buttons--inline">
       <!-- PLAN_78 — toggles selection mode; the marks it puts on every row
-           and folder header, and the bar of verbs at the foot of the list,
+           and folder header, and the bar of verbs directly below this row,
            are both painted entirely by stacks.js. -->
       <button type="button" class="staxx-btn" id="staxx-select-btn">
         <i class="fa fa-check-square-o"></i> <?= _('Select') ?>
@@ -401,6 +401,14 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     </div>
   </div>
 
+  <!-- PLAN_78 — the bar of verbs for whatever is chosen in selection mode.
+       It sits directly under the button row because the button that switches
+       the mode on is in that row; at the foot of the list it was a screen or
+       more away from the control that produced it. Hidden and empty unless
+       selection mode is on with at least one stack chosen, and painted
+       entirely by paintSelectBar() in stacks.js. -->
+  <div class="staxx-selectbar" id="staxx-select-bar" hidden></div>
+
   <!-- PLAN_45 phase 4-8. Hidden until update-queue-start begins one, and
        painted entirely by paintUpdateQueue() in stacks.js — a queue's own
        progress is polled from the browser, not part of the page's render. -->
@@ -425,12 +433,6 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <div class="staxx-body" id="staxx-rows" role="rowgroup"><?= staxx_render_rows($rows, $canRun, staxx_store_reachable()) ?></div>
     </div>
   </div>
-
-  <!-- PLAN_78 — the bar of verbs for whatever is chosen in selection mode.
-       Hidden and empty outside that mode; painted entirely by
-       paintSelectBar() in stacks.js, the same way #staxx-update-queue above
-       is painted by its own script rather than carrying markup here. -->
-  <div class="staxx-selectbar" id="staxx-select-bar" hidden></div>
 
   <!-- One menu, reused by every row, and attached to the page rather than to a
        table cell. A menu nested inside the scrolling table container would be

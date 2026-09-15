@@ -19999,6 +19999,9 @@
     pauseBtn.title = updatesPaused
       ? 'Every update clock on this page is frozen. Press to let them count down again.'
       : 'Freezes every update clock on this page at once — nothing installs itself while this is on.';
+    // The label just changed width, so the button row is a different size and
+    // the selection bar's buttons no longer line up with it.
+    alignSelectBar();
   }
 
   if (pauseBtn) {
@@ -27416,6 +27419,13 @@
   var selectBtn = document.getElementById('staxx-select-btn');
   var selectBar = document.getElementById('staxx-select-bar');
 
+  // Bumped every time the bar starts closing, and again every time one is
+  // opened. A close captures the value and its deferred tidy-up runs only
+  // while that value is still current — otherwise choosing a stack again
+  // during the closing slide would have the finishing close empty the bar
+  // that was just painted.
+  var selectBarCloseToken = 0;
+
   // Every stack name in the grid, in the order the rows are actually
   // drawn — "the order shown", which the bar states rather than pretending
   // a better one exists (that is the connections-between-stacks work,
@@ -27541,31 +27551,140 @@
 
   function paintSelectBar() {
     if (!selectBar) return;
-    if (!selectMode) { selectBar.hidden = true; selectBar.innerHTML = ''; return; }
 
     var names = selectedNamesInOrder();
-    if (!names.length) {
-      selectBar.hidden = false;
-      selectBar.innerHTML = '<span class="staxx-selectbar-text">' +
-        esc('Choose stacks below, in the order shown.') + '</span>';
+    // Nothing chosen is treated exactly like not being in selection mode: an
+    // empty bar under the button row would push the whole list down for as
+    // long as somebody is still picking, so it earns its space only once
+    // there is something to act on.
+    // The Select button's squared-off corners belong to the joined-up shape,
+    // so they come and go with the box rather than with selection mode.
+    if (!selectMode || !names.length) {
+      closeSelectBar();
       return;
     }
 
     var disabled = CAN_RUN ? '' : ' disabled';
+    if (selectBtn) selectBtn.classList.add('staxx-btn--tabbed');
+    selectBarCloseToken++;   // any close still in flight is now stale
     selectBar.hidden = false;
     selectBar.innerHTML =
-      '<span class="staxx-selectbar-text" data-select-count>' +
-        esc(names.length + (names.length === 1 ? ' stack chosen' : ' stacks chosen') +
-            ', in the order shown.') +
-      '</span>' +
-      '<div class="staxx-buttons staxx-buttons--inline">' +
-        '<button type="button" class="staxx-btn" data-bulk="up"' + disabled + '>' + esc('Start') + '</button>' +
-        '<button type="button" class="staxx-btn" data-bulk="down"' + disabled + '>' + esc('Stop') + '</button>' +
-        '<button type="button" class="staxx-btn" data-bulk="restart"' + disabled + '>' + esc('Restart') + '</button>' +
-        '<button type="button" class="staxx-btn" data-bulk="check"' + disabled + '>' + esc('Check for updates') + '</button>' +
-        '<button type="button" class="staxx-btn" data-bulk="update"' + disabled + '>' + esc('Update') + '</button>' +
+      '<div class="staxx-selectbar-inner">' +
+        '<span class="staxx-selectbar-text" data-select-count>' +
+          esc(names.length + (names.length === 1 ? ' stack chosen' : ' stacks chosen') +
+              ', in the order shown.') +
+        '</span>' +
+        '<div class="staxx-buttons staxx-buttons--inline staxx-selectbar-wrap">' +
+          '<button type="button" class="staxx-btn" data-bulk="up"' + disabled + '>' + esc('Start') + '</button>' +
+          '<button type="button" class="staxx-btn" data-bulk="down"' + disabled + '>' + esc('Stop') + '</button>' +
+          '<button type="button" class="staxx-btn" data-bulk="restart"' + disabled + '>' + esc('Restart') + '</button>' +
+          '<button type="button" class="staxx-btn" data-bulk="check"' + disabled + '>' + esc('Check for updates') + '</button>' +
+          '<button type="button" class="staxx-btn" data-bulk="update"' + disabled + '>' + esc('Update') + '</button>' +
+        '</div>' +
       '</div>';
+
+    // The open class has to land a frame later than the element becoming
+    // visible: added in the same frame there is no starting value to animate
+    // away from, and the slide simply does not run. The button group only
+    // exists once the markup above has been written, so this is also the
+    // earliest the alignment can be measured.
+    //
+    // The token is captured because a frame is long enough for the bar to be
+    // shut again — deselecting two stacks in quick succession does exactly
+    // that, and without this the late frame puts the open class back onto a
+    // closing bar. It then never comes off, and the next open has nothing to
+    // animate from and appears instantly.
+    var openToken = selectBarCloseToken;
+    requestAnimationFrame(function () {
+      if (openToken !== selectBarCloseToken) return;
+      selectBar.classList.add('staxx-selectbar--open');
+      alignSelectBar();
+    });
   }
+
+  // Slide the bar shut, then tidy up. The contents cannot be cleared straight
+  // away — an emptied bar has nothing left to slide, so it would vanish rather
+  // than close.
+  function closeSelectBar() {
+    if (!selectBar || selectBar.hidden) return;   // already shut; leave it be
+
+    selectBar.classList.remove('staxx-selectbar--open');
+    var token = ++selectBarCloseToken;
+    var done  = false;
+
+    function finish(event) {
+      // Children animate too, and their transitionend bubbles up here well
+      // before the row itself has finished; only the bar's own counts.
+      if (event && event.target !== selectBar) return;
+      if (done) return;
+      done = true;
+      // Detached before the staleness check, not after: a close that was
+      // superseded by a re-open still has to let go of its listener, or every
+      // open-and-shut leaves another dead one attached for the page's life.
+      selectBar.removeEventListener('transitionend', finish);
+      if (token !== selectBarCloseToken) return;
+      selectBar.hidden = true;
+      selectBar.innerHTML = '';
+      selectBar.style.marginTop = '';
+      // The Select button's squared corners belong to the joined-up shape, so
+      // they last exactly as long as the box does. Rounding them back at the
+      // start of the close breaks the join while it is still on screen.
+      if (selectBtn) selectBtn.classList.remove('staxx-btn--tabbed');
+    }
+
+    // The timer is the one that has to be here: transitionend never fires when
+    // there is no transition to run, which is precisely the reduced-motion
+    // case, and it can be missed if the element is hidden some other way
+    // mid-flight. Whichever arrives first wins; the other finds it done.
+    selectBar.addEventListener('transitionend', finish);
+    setTimeout(finish, 300);
+  }
+
+  // Line the bar's first button up with the "Select" button in the row
+  // above. The stylesheet cannot do this: the top row's buttons are
+  // content-sized, so where that button starts depends on the window width
+  // and on the labels themselves — the pause button repaints between
+  // "Pause updates" and "Resume updates", which shifts everything left of
+  // it. So it is measured at paint time and again on resize.
+  //
+  // The margin is reset to zero before measuring because it is applied from
+  // where the group naturally sits — after the count text — not from the
+  // row's left edge. Measuring without the reset compounds the offset and
+  // lands the buttons a couple of hundred pixels too far right; that was
+  // got wrong once already.
+  function alignSelectBar() {
+    if (!selectBar || selectBar.hidden || !selectBtn) return;
+    var grp = selectBar.querySelector('.staxx-buttons');
+    if (!grp) return;
+
+    grp.style.marginLeft = '0px';
+    var natural = grp.getBoundingClientRect().left;
+    var want    = selectBtn.getBoundingClientRect().left;
+    // Clamped so a narrow window cannot push the group off the right edge,
+    // and so a negative margin cannot pull it back under the count text.
+    var room    = selectBar.getBoundingClientRect().right - grp.getBoundingClientRect().width;
+    grp.style.marginLeft = Math.max(0, Math.min(want, room) - natural) + 'px';
+    // The outline has to start at the Select button's bottom edge, not the
+    // row's: the taller search box leaves the buttons floating a fraction
+    // above it, and any gap there breaks the join.
+    //
+    // The whole bar is moved up rather than the group inside it, because the
+    // bar's inner wrapper clips its contents so the slide has something to
+    // hide behind — and a group pulled up past the top of that wrapper has its
+    // top border clipped away, which is the hairline the join is made of.
+    // Shifting the bar keeps that edge outside the clipped area.
+    //
+    // Both resets matter before measuring: the inline margin has to go so the
+    // stylesheet's own value is what is read back, and the group's own offset
+    // has to be zeroed so it is not counted a second time.
+    grp.style.marginTop = '0px';
+    selectBar.style.marginTop = '';
+    var base = parseFloat(getComputedStyle(selectBar).marginTop);
+    var gap  = grp.getBoundingClientRect().top - selectBtn.getBoundingClientRect().bottom;
+    selectBar.style.marginTop = (base - gap) + 'px';
+  }
+
+  window.addEventListener('resize', function () { alignSelectBar(); });
 
   if (selectBar) {
     selectBar.addEventListener('click', function (event) {
