@@ -13339,10 +13339,16 @@ dialog::backdrop {
   flex: 0 0 auto;
   width: 3.2rem;
   height: 3.2rem;
-  padding: 0;
+  /* Flex-centred: Unraid's reset leaves a button's text at its left edge,
+     which read as the arrow being out of line with the heads (Adrian's own
+     walk, 2026-09-16). The small bottom pad optically centres the glyph. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0 0.2rem;
   border: 0;
   border-radius: 0;
-  background: var(--sm-fill);
+  background: rgba(128, 128, 128, 0.2);
   color: inherit;
   font-size: 1.8rem;
   line-height: 1;
@@ -13536,6 +13542,36 @@ dialog::backdrop {
    approved (a tick) or declined (a hollow ring, drawn rather than the typed
    "○", which sat too high and too small at this size). Reused on step 4's
    file rows with the same meaning. */
+/* The answer buttons carry the same glyph the answered line will wear, so
+   the two read as one thing (Adrian, built walk 2026-09-16): green tick on
+   Approved / Rename / Copy, blue tick on Keep one, red ring on Decline /
+   Leave it behind. Drawn as ::before so the button text stays plain. */
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-approve]::before,
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-file-choice-value="rename"]::before,
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-file-choice-value="copy"]::before,
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-file-choice-value="keep-one"]::before {
+  content: "✓";   /* the tick itself, not an escape: a backslash escape was mangled on the way in once */
+  display: inline-block;
+  margin-right: 0.4rem;
+  font-weight: 700;
+  color: #7ec97e;
+}
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-file-choice-value="keep-one"]::before {
+  color: #5aa9ff;
+}
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-leave]::before,
+.staxx-scaffold .staxx-merge-reasoncard button[data-merge-file-choice-value="leave-behind"]::before {
+  content: "";
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0.4rem;
+  border: 0.2rem solid #e05555;
+  border-radius: 50%;
+  box-sizing: border-box;
+  vertical-align: -0.1rem;
+}
+
 .staxx-merge-badge {
   display: inline-block;
   margin-left: 1rem;

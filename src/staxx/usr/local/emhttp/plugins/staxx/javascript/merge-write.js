@@ -2013,7 +2013,11 @@
           if (!versionDropped) {
             versionDropped = true;
             changes.push({
-              key: 'top-version', topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: 0,
+              // line: null — the line is dropped, so there is nothing in the
+              // merged file to point at; a merged line of 0 used to paint the
+              // file's own opening comment as the change (Adrian's walk,
+              // 2026-09-16: "things just are not aligned").
+              key: 'top-version', topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: null,
               title: 'The `version:` line is not carried',
               reason: 'Compose ignores it and warns about it; a file StaXX writes fresh does not start with a warning.',
               struckComment: null
@@ -2045,7 +2049,7 @@
             changes.push({
               key: xuKey, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: null,
               title: 'This stack’s own description is not carried',
-              reason: 'The new stack keeps ' + firstXUnraidLeaf + '’s; a stack has one.',
+              reason: 'A merged stack has one description, and ' + firstXUnraidLeaf + '’s is kept. This one is left out; Decline keeps it under its own renamed key.',
               struckComment: null
             });
           }

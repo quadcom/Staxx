@@ -515,7 +515,7 @@ console.log('\nH. One stack-level x-unraid (the first source\'s), services keep 
 
   var dropped = w.changes.filter(function (c) { return c.title === 'This stack’s own description is not carried'; })[0];
   ok('...and its own change record says so, rather than silently dropping it',
-     !!dropped && dropped.stack === 'srcF' && dropped.reason === 'The new stack keeps srcE’s; a stack has one.');
+     !!dropped && dropped.stack === 'srcF' && dropped.reason === 'A merged stack has one description, and srcE’s is kept. This one is left out; Decline keeps it under its own renamed key.');
   ok('dropping the second stack\'s own description CAN be left as it was', dropped.cannotLeave === undefined);
 
   // "leave" here means keeping it after all — renamed the same way any
@@ -631,8 +631,8 @@ console.log('\nH2. Every other top-level key travels too (C1, PLAN_156 F1, trap 
   ok('...and the name: line too, silently — no change record needed for it',
      !/^name:/m.test(w.text) && !w.changes.some(function (c) { return c.reason && c.reason.indexOf('name:') >= 0; }));
   var vChange = w.changes.filter(function (c) { return c.title === 'The `version:` line is not carried'; })[0];
-  ok('the version drop is said, not silent, and points at the merged file\'s own opening comment',
-     !!vChange && vChange.line === 0 &&
+  ok('the version drop is said, not silent, and points at no merged line — the line is gone, so its card opens on the source side',
+     !!vChange && vChange.line === null &&
      vChange.reason === 'Compose ignores it and warns about it; a file StaXX writes fresh does not start with a warning.');
   ok('the version drop CAN be left as it was — unlike a mandatory rename', vChange.cannotLeave === undefined);
 

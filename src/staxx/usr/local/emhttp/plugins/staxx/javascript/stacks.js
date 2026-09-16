@@ -31458,6 +31458,7 @@
       scrollLink: null,      // {offset} once a source row has been snapped to its
                               // merged-file match (C17); dropped on source/step change
       walkLast: null,        // the key the tally's "<o> to answer" button last jumped
+      autoWalk: false,       // set by an answer; the next tally redraw walks on (C17)
                               // to, so the next click carries on rather than restarting
       narrowClosed: false,   // true only while the 990px rule has hidden an open wizard
       scroll: null,
@@ -31514,20 +31515,28 @@
    * itself — mouseenter on the popover cancels the pending hide, so
    * moving from mark to its own "Approved" button works. ---- */
   var mergePopoverEl = null, mergePopoverHideTimer = null;
+  // The card stays put until the pointer has been INTO it and out again
+  // (Adrian, built walk 2026-09-16: a card that vanished the moment the
+  // pointer left the mark could not be read, and one drawn under the mark
+  // covered the very lines being compared). Leaving the mark no longer
+  // closes it; leaving the card does, as does a click anywhere outside it
+  // or any answer given from it.
+  var mergePopoverVisited = false;
 
   function mergeEnsurePopover() {
     if (mergePopoverEl || !mergeModal) return mergePopoverEl;
     mergePopoverEl = document.createElement('div');
     mergePopoverEl.className = 'staxx-merge-pop';
     mergePopoverEl.hidden = true;
-    mergePopoverEl.addEventListener('mouseenter', function () { clearTimeout(mergePopoverHideTimer); });
-    mergePopoverEl.addEventListener('mouseleave', mergeSchedulePopoverHide);
+    mergePopoverEl.addEventListener('mouseenter', function () { clearTimeout(mergePopoverHideTimer); mergePopoverVisited = true; });
+    mergePopoverEl.addEventListener('mouseleave', function () { mergePopoverVisited = true; mergeSchedulePopoverHide(); });
     mergeModal.appendChild(mergePopoverEl);
     return mergePopoverEl;
   }
 
   function mergeSchedulePopoverHide() {
     clearTimeout(mergePopoverHideTimer);
+    if (!mergePopoverVisited) return;   // not yet read — it waits
     mergePopoverHideTimer = setTimeout(function () {
       if (mergePopoverEl) mergePopoverEl.hidden = true;
     }, 150);
@@ -31546,6 +31555,7 @@
     var pop = mergeEnsurePopover();
     if (!pop) return;
     clearTimeout(mergePopoverHideTimer);
+    mergePopoverVisited = false;
     pop.innerHTML = '';
     pop.appendChild(contentEl);
     pop.hidden = false;
@@ -31553,6 +31563,18 @@
     // function group's header comment on why position:fixed lands there.
     var mr = mergeModal.getBoundingClientRect();
     var ar = anchor.getBoundingClientRect();
+    // A line mark's card sits off to the RIGHT, level with its line and
+    // against the pane's far edge, so the line and its neighbours stay
+    // readable while the card is up (the same walk, same complaint).
+    var anchorRow = (!opts || !opts.overRow) && anchor.closest && anchor.closest('.staxx-merge-codeline');
+    if (anchorRow) {
+      var textEl = anchorRow.querySelector('.staxx-merge-codetext');
+      var tr = (textEl || anchorRow).getBoundingClientRect();
+      var rowLeft = Math.min(tr.right - mr.left + 12, mr.width - pop.offsetWidth - 8);
+      pop.style.top = Math.max(8, Math.min(ar.top - mr.top, mr.height - pop.offsetHeight - 8)) + 'px';
+      pop.style.left = Math.max(8, rowLeft) + 'px';
+      return;
+    }
     var left = Math.max(8, Math.min(ar.left - mr.left, mr.width - pop.offsetWidth - 8));
     // A step 4 file row (C17) opens its card overlapping its own lower
     // half — top edge at the row's top + 55% of its own height — so the
@@ -31585,7 +31607,26 @@
     mark.className = 'staxx-merge-gmark';
     mark.setAttribute('aria-label', change.title);
     mark.dataset.mergeMarkKey = change.key;   // see mergeReopenMarkForKey()
-    function open() { mergeShowPopover(mark, cardBuilder(change)); }
+    // The card always hangs off the MERGED pane's row for this change when
+    // there is one (Adrian, built walk 2026-09-16: a card that opened on
+    // whichever side was hovered "flipped back and forth for no reason").
+    // A source-pane mark first lines its row up with the merged one — the
+    // same snap a click on the row does — then opens there. Only a change
+    // with no merged line at all (a dropped stack-level x-unraid) opens on
+    // the source side, since there is nowhere else for it to go.
+    function open() {
+      var anchor = mark;
+      var mergedCode = document.getElementById('staxx-merge-merged-code');
+      if (mergedCode && !mergedCode.contains(mark)) {
+        var twin = mergedCode.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + mergeCssEsc(change.key) + '"]');
+        if (twin) {
+          var srcRow = mark.closest('.staxx-merge-codeline'), mergedRow = twin.closest('.staxx-merge-codeline');
+          if (srcRow && mergedRow) mergeAlignAndFlash(srcRow, mergedRow);
+          anchor = twin;
+        }
+      }
+      mergeShowPopover(anchor, cardBuilder(change));
+    }
     mark.addEventListener('mouseenter', open);
     mark.addEventListener('focus', open);
     mark.addEventListener('mouseleave', mergeSchedulePopoverHide);
@@ -31610,7 +31651,10 @@
     var mark = mergeModal && mergeModal.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + selector + '"]');
     // Focus alone opens the card only while the document itself has focus;
     // the mark's own click handler always ends with its card open (C17).
-    if (mark) { mark.focus(); mark.click(); }
+    // preventScroll: a mark inside a pane that the track has slid off to the
+    // side would otherwise drag the band's scrollLeft along to reveal it,
+    // leaving half of one source and half of the next on show.
+    if (mark) { mark.focus({ preventScroll: true }); mark.click(); }
   }
 
   // A step 4 file row's own card opens on a rest, not on entry — the
@@ -33102,6 +33146,8 @@
 
     var track = document.getElementById('staxx-merge-srctrack');
     if (track) track.style.transform = 'translateX(-' + (i * 100) + '%)';
+    var band = track && track.parentElement;
+    if (band) band.scrollLeft = 0;   // anything that nudged it sideways is undone by the slide
 
     var heads = document.querySelectorAll('#staxx-merge-srcstrip-heads [data-merge-src-idx]');
     Array.prototype.forEach.call(heads, function (h) {
@@ -33289,12 +33335,11 @@
     if (!outstanding.length) return;
     var ordered = mergeMergedOrderKeys().filter(function (k) { return outstanding.indexOf(k) >= 0; });
     outstanding.forEach(function (k) { if (ordered.indexOf(k) < 0) ordered.push(k); });
-    var startIdx = 0;
-    if (mergeState.walkLast) {
-      var lastIdx = ordered.indexOf(mergeState.walkLast);
-      startIdx = (lastIdx + 1) % ordered.length;
-    }
-    mergeWalkToKey(ordered[startIdx]);
+    // Always the FIRST outstanding change, never "the one after the last
+    // visited": Adrian pressed the button without answering and it marched
+    // on past the skipped one, which read as the count being wrong. Answering
+    // is what moves the walk; skipping is done with the pane's own arrows.
+    mergeWalkToKey(ordered[0]);
   }
 
   // Step 4's own walk (C17): joined-settings marks top to bottom first,
@@ -33338,12 +33383,7 @@
   function mergeStep4WalkClick() {
     var list = mergeStep4WalkKeys();
     if (!list.length) return;
-    var startIdx = 0;
-    if (mergeState.walkLast) {
-      var lastIdx = list.findIndex(function (k) { return k.key === mergeState.walkLast; });
-      startIdx = (lastIdx + 1) % list.length;
-    }
-    var target = list[startIdx];
+    var target = list[0];   // the first outstanding, same rule as step 3's walk
     mergeState.walkLast = target.key;
 
     if (target.kind === 'env') {
@@ -33425,6 +33465,15 @@
     if (lockBtn) {
       lockBtn.disabled = lockRefusals.length > 0 || counts.o > 0;
       lockBtn.title = counts.o > 0 ? 'Answer every marked change before going on.' : '';
+    }
+
+    // An answer walks straight on to the next open decision (Adrian, built
+    // walk 2026-09-16), so a run of approvals is one click each. The flag is
+    // set by the answer handlers only — a step's own first render never
+    // jumps anywhere. Deferred a tick so the pane it re-drew is in place.
+    if (mergeState.autoWalk) {
+      mergeState.autoWalk = false;
+      if (counts.o > 0) setTimeout(function () { if (mergeState) mergeTallyWalkClick(); }, 0);
     }
   }
 
@@ -35889,6 +35938,7 @@
       var approveBtn = target.closest && target.closest('[data-merge-approve]');
       if (approveBtn) {
         mergeState.approved[approveBtn.dataset.mergeApprove] = true;
+        mergeState.autoWalk = true;
         mergeHidePopoverNow();   // the mark it opened from does not survive the render below
         if (mergeState.step === 4) mergeRenderStep4(); else mergeRenderMergedPane();
         return;
@@ -35897,6 +35947,7 @@
       var keepBothBtn = target.closest && target.closest('[data-merge-env-keepboth]');
       if (keepBothBtn) {
         mergeState.decisions[keepBothBtn.dataset.mergeEnvKeepboth] = 'keep-both';
+        mergeState.autoWalk = true;
         mergeHidePopoverNow();
         mergeRebuild();
         mergeRenderStep4();
@@ -35919,6 +35970,7 @@
       var fileChoiceBtn = target.closest && target.closest('[data-merge-file-choice]');
       if (fileChoiceBtn) {
         mergeState.decisions[fileChoiceBtn.dataset.mergeFileChoice] = fileChoiceBtn.dataset.mergeFileChoiceValue;
+        mergeState.autoWalk = true;
         // A decision counts as unanswered until its own button is actually
         // clicked (C17) — the recommended button being lit is a default,
         // not an answer, so this is tracked separately from `decisions`.
@@ -35950,6 +36002,7 @@
       var leaveBtn = target.closest && target.closest('[data-merge-leave]');
       if (leaveBtn) {
         var key = leaveBtn.dataset.mergeLeave;
+        mergeState.autoWalk = true;
         var finding = mergeFindingByKey(key);
         if (finding && finding.choices) {
           var nonRecommended = finding.choices.filter(function (c) { return !c.recommended; })[0];
@@ -35975,6 +36028,7 @@
       var portSwapBtn = target.closest && target.closest('[data-merge-port-swap]');
       if (portSwapBtn) {
         var swapKey = portSwapBtn.dataset.mergePortSwap;
+        mergeState.autoWalk = true;
         if (mergeState.decisions[swapKey] === 'swap') delete mergeState.decisions[swapKey];
         else mergeState.decisions[swapKey] = 'swap';
         mergeHidePopoverNow();
@@ -36009,12 +36063,23 @@
         return;
       }
 
-      var sourceChangedRow = target.closest && target.closest('.staxx-merge-sourcepane [data-merge-change-key]');
-      if (sourceChangedRow) {
-        var ckey = sourceChangedRow.dataset.mergeChangeKey;
+      // A click anywhere on a changed row — either pane — lines the two
+      // panes up on that change and opens its card, the same as clicking
+      // its number block (Adrian's walk, 2026-09-16: a click on the text
+      // aligned but never answered "where is this question coming from",
+      // and the merged pane did nothing at all). The mark's own click
+      // handler does the align-then-open and stops its bubble, so handing
+      // it the click never re-enters this listener.
+      var changedRow = target.closest && target.closest('.staxx-merge-sourcepane [data-merge-change-key], #staxx-merge-merged-code [data-merge-change-key]');
+      if (changedRow) {
+        var ckey = changedRow.dataset.mergeChangeKey;
         var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(ckey) : ckey;
-        var mergedRow = document.querySelector('#staxx-merge-merged-code [data-merge-change-key="' + selector + '"]');
-        mergeAlignAndFlash(sourceChangedRow, mergedRow);
+        var inMerged = !!changedRow.closest('#staxx-merge-merged-code');
+        var mergedRow = inMerged ? changedRow : document.querySelector('#staxx-merge-merged-code [data-merge-change-key="' + selector + '"]');
+        var srcRow = inMerged ? document.querySelector('.staxx-merge-sourcepane [data-merge-change-key="' + selector + '"]') : changedRow;
+        var mark = changedRow.querySelector('.staxx-merge-gmark');
+        if (inMerged) mergeAlignAndFlash(srcRow, mergedRow);   // slides to the source that raised it
+        if (mark) mark.click(); else mergeAlignAndFlash(srcRow, mergedRow);
       }
     });
 
