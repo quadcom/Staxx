@@ -122,19 +122,26 @@ console.log('\nA. Container name clashes');
   var a = loadRaw('container-name-clash', 'host'), b = loadRaw('container-name-clash', 'incoming');
   var r = M.examine([descOf(a), descOf(b)]);
 
+  // This fixture's two "web" services run different images (nginx and
+  // mariadb) — PLAN_155 C17's better default kicks in, so the clashing
+  // service is offered the image's own short name ("mariadb") rather than
+  // the plain "web_incoming" suffix. The container_name field clash is a
+  // separate rule (unaffected — it has no image to draw a name from).
   var svcClash = findingsOf(r, 'container-name-clash').filter(function (f) { return f.facts.field === 'service'; });
-  ok('the clashing service key is renamed with the SECOND source\'s name as suffix',
-     svcClash.length === 1 && svcClash[0].facts.from === 'web' && svcClash[0].facts.to === 'web_incoming');
+  ok('the clashing service is offered its own image\'s short name',
+     svcClash.length === 1 && svcClash[0].facts.from === 'web' && svcClash[0].facts.to === 'mariadb' &&
+     svcClash[0].facts.imageShortName === 'mariadb');
   ok('the rename is automatic, not a decision', svcClash[0].severity === 'automatic');
   ok('every finding carries a stable key', svcClash[0].key === 'container-name-clash|incoming|' +
      r.findings.indexOf(svcClash[0]));
 
   var cnClash = findingsOf(r, 'container-name-clash').filter(function (f) { return f.facts.field === 'container_name'; });
-  ok('the explicit container_name clash is caught too', cnClash.length === 1 && cnClash[0].facts.to === 'web_incoming');
+  ok('the explicit container_name clash still falls back to the suffix (no image to draw from)',
+     cnClash.length === 1 && cnClash[0].facts.to === 'web_incoming');
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp' });
-  ok('the clashing service and its container_name both carry the resolved name',
-     /web_incoming:\n\s*image: mariadb:11\n\s*container_name: web_incoming/.test(w.text));
+  ok('the clashing service takes the image-derived name; its container_name keeps the suffix',
+     /mariadb:\n\s*image: mariadb:11\n\s*container_name: web_incoming/.test(w.text));
   ok('the first source\'s own untouched service is still exactly as it was',
      /web:\n\s*image: nginx:latest\n\s*container_name: web\n/.test(w.text));
 
@@ -142,12 +149,41 @@ console.log('\nA. Container name clashes');
   // done — the service key's own rename and the container_name rewrite
   // each get their own change record (CLAUDE.md rule 2).
   var svcRename = w.changes.filter(function (c) { return c.key === svcClash[0].key; });
-  ok('the service rename gets its own change record', svcRename.length === 1 &&
-     svcRename[0].title === 'Renamed to keep it distinct' && /web_incoming:/.test(svcRename[0].marker || w.text.split('\n')[svcRename[0].line]));
+  ok('the service rename gets its own change record, with the image-based reason',
+     svcRename.length === 1 && svcRename[0].title === 'Renamed to keep it distinct' &&
+     /mariadb:/.test(svcRename[0].marker || w.text.split('\n')[svcRename[0].line]) &&
+     svcRename[0].reason.indexOf('mariadb container') >= 0);
   var cnRename = w.changes.filter(function (c) { return c.key === cnClash[0].key; });
   ok('the container_name rewrite gets its own change record too', cnRename.length === 1 &&
      w.text.split('\n')[cnRename[0].line].indexOf('web_incoming') >= 0);
-  assertMergedIsValid('container-name-clash', w.text, ['web', 'web_incoming']);
+  assertMergedIsValid('container-name-clash', w.text, ['web', 'mariadb']);
+})();
+
+(function () {
+  // Both call their service "web"; different images, and the image's short
+  // name (a real one, with a registry host and a tag to strip) is free.
+  var a = loadRaw('service-name-clash-image', 'host'), b = loadRaw('service-name-clash-image', 'incoming');
+  var r = M.examine([descOf(a), descOf(b)]);
+  var clash = findingsOf(r, 'container-name-clash').filter(function (f) { return f.facts.field === 'service'; });
+  ok('a real registry/tag image name is reduced to its own short name',
+     clash.length === 1 && clash[0].facts.to === 'adminer' && clash[0].facts.imageShortName === 'adminer');
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-16', name: 'demoapp' });
+  assertMergedIsValid('service-name-clash-image', w.text, ['web', 'adminer']);
+})();
+
+(function () {
+  // The image's short name would be "adminer" again, but this source
+  // already has its OWN service called that — the fallback suffix must
+  // win instead, exactly as it did before this rule existed.
+  var a = loadRaw('service-name-clash-taken', 'host'), b = loadRaw('service-name-clash-taken', 'incoming');
+  var r = M.examine([descOf(a), descOf(b)]);
+  var clash = findingsOf(r, 'container-name-clash').filter(function (f) { return f.facts.field === 'service'; });
+  ok('a short name already taken by another service falls back to the suffix',
+     clash.length === 1 && clash[0].facts.to === 'web_incoming' && clash[0].facts.imageShortName === '');
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-16', name: 'demoapp' });
+  assertMergedIsValid('service-name-clash-taken', w.text, ['web', 'adminer', 'web_incoming']);
 })();
 
 console.log('\nB. Published port clashes');
@@ -259,6 +295,10 @@ console.log('\nD. Three or more sources — a clash between two NON-FIRST source
       compose: { name: null, services: { }, volumes: {}, networks: {}, configs: {}, secrets: {} }
     };
   }
+  // 'x' and 'y' are single-character "images" specifically so their short
+  // name would equal themselves, distinguishing this case from the plain
+  // suffix — a real image name is exercised separately, in the
+  // container-name-clash fixture above.
   var host = bare('host'); host.compose.services.app = { image: 'x', ports: [] };
   var a = bare('a'); a.compose.services.shared = { image: 'x', ports: [] };
   var b = bare('b'); b.compose.services.shared = { image: 'y', ports: [] };
@@ -266,8 +306,8 @@ console.log('\nD. Three or more sources — a clash between two NON-FIRST source
   var r = M.examine([host, a, b]);
   var clash = findingsOf(r, 'container-name-clash').filter(function (f) { return f.facts.field === 'service'; });
   ok('neither incoming service collides with the first, but they collide with each other', clash.length === 1);
-  ok('the THIRD source is the one renamed, since the second already claimed the name',
-     clash[0].stack === 'b' && clash[0].facts.to === 'shared_b');
+  ok('the THIRD source is the one renamed, offered its own image\'s short name since the images differ',
+     clash[0].stack === 'b' && clash[0].facts.to === 'y' && clash[0].facts.imageShortName === 'y');
 })();
 
 /* =========================================================================
@@ -293,7 +333,7 @@ console.log('\nE. Storage Docker manages — carried, never copied');
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp' });
   ok('the recommended "carry" answer writes the real name as an override, with both required comments',
-     /dbdata:\n\s*# Carried over from incoming, which is why the real name still says incoming\.\n\s*# Renaming it here would start this service with empty storage\.\n\s*name: incoming_dbdata/.test(w.text));
+     /dbdata:\n\s*# incoming’s own storage, under the name Docker already knows it by\.\n\s*# Only the label above is new; the data is untouched\.\n\s*name: incoming_dbdata/.test(w.text));
   assertMergedIsValid('storage-volume (carry)', w.text, ['web', 'db']);
 
   var key = storage[0].key;
@@ -337,7 +377,7 @@ console.log('\nE. Storage Docker manages — carried, never copied');
   var carryChanges = w.changes.filter(function (c) { return c.key === storage[1].key; });
   ok('the storage-carry rename gets one change record per line it actually touched',
      carryChanges.length === 2 && carryChanges[0].part === 0 && carryChanges[1].part === 1 &&
-     carryChanges[0].title === 'Kept by its real name' &&
+     carryChanges[0].title === 'Still appB’s own storage' &&
      carryChanges[1].title === 'Points at appB’s own storage');
   assertMergedIsValid('storage-carry (same key twice)', w.text, ['svcA', 'svcB']);
 })();
@@ -443,8 +483,10 @@ console.log('\nG. An inert override file must never come alive (fault 1)');
  * again by C1 on 2026-09-15): the FIRST source's own stack-level x-unraid
  * is now carried like any other top-level key, and every later source's is
  * left behind with its own change record — never silently dropped. Each
- * service's OWN x-unraid block (icon included) is carried verbatim
- * regardless, same as every other line in its block.
+ * service's OWN x-unraid block is carried verbatim regardless, same as
+ * every other line in its block — EXCEPT its icon, which PLAN_155 C17
+ * always points at "./.staxx/icon-<service>.<ext>" once the file it names
+ * sits inside that source's own .staxx/, whether or not anything clashed.
  * ========================================================================= */
 
 console.log('\nH. One stack-level x-unraid (the first source\'s), services keep their own');
@@ -463,14 +505,64 @@ console.log('\nH. One stack-level x-unraid (the first source\'s), services keep 
   ok('the merged text carries exactly one top-level x-unraid: key — the FIRST source\'s',
      (w.text.match(/^x-unraid:/gm) || []).length === 1);
   ok('...and it is that source\'s own text, description included', w.text.indexOf('First app') >= 0);
-  ok('each service keeps its own x-unraid block verbatim, icon included',
-     /icon: \.\/\.staxx\/svc-icon\.png/.test(w.text) && /icon: \.\/\.staxx\/svc2-icon\.png/.test(w.text));
+  ok('each service\'s icon is rewritten to its own per-service file, regardless of any clash',
+     /icon: \.\/\.staxx\/icon-svc\.png/.test(w.text) && /icon: \.\/\.staxx\/icon-svc2\.png/.test(w.text));
+  ok('the plan copies each one under its new name',
+     w.files.some(function (fi) { return fi.from === 'srcE' && fi.path === '.staxx/svc-icon.png' && fi.to === '.staxx/icon-svc.png'; }) &&
+     w.files.some(function (fi) { return fi.from === 'srcF' && fi.path === '.staxx/svc2-icon.png' && fi.to === '.staxx/icon-svc2.png'; }));
   ok('the second source\'s own stack-level description does not survive anywhere in the merge',
      w.text.indexOf('Second app') === -1);
 
   var dropped = w.changes.filter(function (c) { return c.title === 'This stack’s own description is not carried'; })[0];
   ok('...and its own change record says so, rather than silently dropping it',
      !!dropped && dropped.stack === 'srcF' && dropped.reason === 'The new stack keeps srcE’s; a stack has one.');
+  ok('dropping the second stack\'s own description CAN be left as it was', dropped.cannotLeave === undefined);
+
+  // "leave" here means keeping it after all — renamed the same way any
+  // other clashing top-level "x-" key already is, since two "x-unraid:"
+  // keys cannot coexist.
+  var kept = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-xunraid|srcF': 'leave' } });
+  ok('choosing "leave" keeps the second source\'s own description too, renamed to fit',
+     kept.text.indexOf('Second app') >= 0 && /^x-unraid-srcF:/m.test(kept.text));
+  ok('no change record is produced for it, since nothing was left out',
+     !kept.changes.some(function (c) { return c.key === 'top-xunraid|srcF'; }));
+})();
+
+console.log('\nH1. Icons are not a question — never a clash, one copy per referencing service');
+
+(function () {
+  // Two sources, each with its own '.staxx/icon.png' — same path in both,
+  // which would have been a file-clash before PLAN_155 C17. One source's
+  // two services (web, api) share the one file; the other's single
+  // service (db) has its own copy of the same name.
+  var g = {
+    name: 'srcG', text: 'services:\n  web:\n    image: alpine\n    x-unraid:\n      icon: ./.staxx/icon.png\n' +
+      '  api:\n    image: alpine\n    x-unraid:\n      icon: ./.staxx/icon.png\n'
+  };
+  var h = {
+    name: 'srcH', text: 'services:\n  db:\n    image: alpine\n    x-unraid:\n      icon: ./.staxx/icon.png\n'
+  };
+  var iconEntry = { path: '.staxx/icon.png', size: 512, dir: false, link: false, target: '', outside: false, keyLike: false, referenced: true };
+  var filesReplies = { srcG: { files: [iconEntry] }, srcH: { files: [iconEntry] } };
+
+  var descs = [descOf(g, filesReplies.srcG), descOf(h, filesReplies.srcH)];
+  var r = M.examine(descs);
+  ok('the same-named icon file in both sources raises no file-clash at all',
+     findingsOf(r, 'file-clash').length === 0);
+
+  var w = MW.buildMergedText([g, h], { date: '2026-09-16', name: 'demoapp', files: filesReplies });
+  ok('each service\'s icon reference points at its own per-service file',
+     /web:\n[\s\S]*?icon: \.\/\.staxx\/icon-web\.png/.test(w.text) &&
+     /api:\n[\s\S]*?icon: \.\/\.staxx\/icon-api\.png/.test(w.text) &&
+     /db:\n[\s\S]*?icon: \.\/\.staxx\/icon-db\.png/.test(w.text));
+
+  var iconFiles = w.files.filter(function (fi) { return fi.path === '.staxx/icon.png'; });
+  ok('the plan holds three copies — one per referencing service, even the two sharing one source file',
+     iconFiles.length === 3 &&
+     iconFiles.some(function (fi) { return fi.from === 'srcG' && fi.to === '.staxx/icon-web.png'; }) &&
+     iconFiles.some(function (fi) { return fi.from === 'srcG' && fi.to === '.staxx/icon-api.png'; }) &&
+     iconFiles.some(function (fi) { return fi.from === 'srcH' && fi.to === '.staxx/icon-db.png'; }));
+  assertMergedIsValid('icons are not a question', w.text, ['web', 'api', 'db']);
 })();
 
 console.log('\nH2. Every other top-level key travels too (C1, PLAN_156 F1, trap 18)');
@@ -522,6 +614,8 @@ console.log('\nH2. Every other top-level key travels too (C1, PLAN_156 F1, trap 
   var anchorChange = w.changes.filter(function (c) { return c.key.indexOf('top-anchor') === 0; })[0];
   ok('the anchor rename gets its own, separate change record',
      !!anchorChange && anchorChange.stack === 'demo-db' && anchorChange.reason.indexOf('logging_demo-db') >= 0);
+  ok('...and it cannot be left as it was — two anchors of the same name would collide',
+     anchorChange.cannotLeave === true);
 
   var reparsed = CM.parse(w.text);
   ok('the merged file parses clean, no warnings', reparsed.warnings.length === 0, reparsed.warnings);
@@ -540,6 +634,15 @@ console.log('\nH2. Every other top-level key travels too (C1, PLAN_156 F1, trap 
   ok('the version drop is said, not silent, and points at the merged file\'s own opening comment',
      !!vChange && vChange.line === 0 &&
      vChange.reason === 'Compose ignores it and warns about it; a file StaXX writes fresh does not start with a warning.');
+  ok('the version drop CAN be left as it was — unlike a mandatory rename', vChange.cannotLeave === undefined);
+
+  // "Every change must be answered" (PLAN_155 C17): decisions[key] === 'leave'
+  // is the non-recommended answer where one exists — here, keeping the
+  // version: line after all.
+  var leftVersion = MW.buildMergedText([a, b], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-version': 'leave' } });
+  ok('choosing "leave" on the version: drop keeps it in the merged file', /^version: "3\.8"/m.test(leftVersion.text));
+  ok('...and no change record is produced for it, since nothing was changed',
+     !leftVersion.changes.some(function (c) { return c.key === 'top-version'; }));
 
   var c = { name: 'appC', text: 'oddball:\n  a: 1\nservices:\n  web:\n    image: nginx:latest\n' };
   var d = { name: 'appD', text: 'oddball:\n  a: 2\nservices:\n  db:\n    image: mariadb:11\n' };

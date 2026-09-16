@@ -1,0 +1,9 @@
+services:
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "8091:80"
+  adminer:
+    image: adminer:4
+    ports:
+      - "8093:8080"

@@ -125,6 +125,8 @@ ok('.env is never offered', !isset($byPath['.env']));
 ok('NEEDS-REVIEW.md is never offered', !isset($byPath['NEEDS-REVIEW.md']));
 ok('HANDOVER.md is never offered', !isset($byPath['HANDOVER.md']));
 ok('an image file directly inside .staxx IS offered', isset($byPath['.staxx/icon.png']));
+ok('an image entry carries a url for the hover preview', array_key_exists('url', $byPath['.staxx/icon.png'] ?? []));
+ok('a non-image entry carries no url at all (empty string)', ($byPath['plain.txt']['url'] ?? null) === '');
 ok('a non-image file inside .staxx is not offered', !isset($byPath['.staxx/note.txt']));
 ok('nothing below .staxx is walked at all', !isset($byPath['.staxx/versions/1.yaml']));
 ok('a plain file is offered', isset($byPath['plain.txt']));
@@ -153,7 +155,9 @@ ok('a file under a mounted folder is referenced',
 ok('a loose file beside it is not referenced',
    ($mountByPath['loose.txt']['referenced'] ?? true) === false);
 
-// A1 — the 10MB guard, and that the walk stops there.
+// A1 — the 10MB guard flags the folder that crosses it, but no longer
+// stops the walk — a file inside that same folder queued after the guard
+// trips is still listed, just no longer counted (PLAN_155 C17).
 mkdir($root.'/zzc155big/bulk', 0755, true);
 file_put_contents($root.'/zzc155big/compose.yaml', "services:\n  app:\n    image: nginx:latest\n");
 $fh = fopen($root.'/zzc155big/bulk/huge.bin', 'w');
@@ -165,6 +169,34 @@ staxx_scan_stacks_reset();
 $err = ''; $bigListing = staxx_merge_files('zzc155big', $err);
 ok('the 10MB guard fires on a folder that crosses it',
    is_array($bigListing['large'] ?? null) && ($bigListing['large']['path'] ?? '') === 'bulk');
+$bigByPath = [];
+foreach (($bigListing['files'] ?? []) as $entry) $bigByPath[$entry['path']] = $entry;
+ok('a file queued after the flagged one is still listed',
+   isset($bigByPath['bulk/small.txt']));
+
+// A1.5 — a folder sorted AFTER the flagged one, still queued behind it, is
+// also fully walked: this is the exact bug Adrian found (site/, php/ and
+// secrets/ read as empty because the whole walk stopped on data/blob.bin).
+mkdir($root.'/zzc155bigwalk/aaa-bulk', 0755, true);
+mkdir($root.'/zzc155bigwalk/zzz-later', 0755, true);
+file_put_contents($root.'/zzc155bigwalk/compose.yaml', "services:\n  app:\n    image: nginx:latest\n");
+$fh2 = fopen($root.'/zzc155bigwalk/aaa-bulk/huge.bin', 'w');
+ftruncate($fh2, 12 * 1024 * 1024);
+fclose($fh2);
+file_put_contents($root.'/zzc155bigwalk/zzz-later/small.txt', "a later folder's own file\n");
+staxx_scan_stacks_reset();
+
+$err = ''; $walkListing = staxx_merge_files('zzc155bigwalk', $err);
+$walkByPath = [];
+foreach (($walkListing['files'] ?? []) as $entry) $walkByPath[$entry['path']] = $entry;
+ok('the flagged folder is still walked (its own file is listed)',
+   isset($walkByPath['aaa-bulk/huge.bin']));
+ok('a folder queued after the flagged one is walked too, not skipped',
+   isset($walkByPath['zzz-later/small.txt']));
+ok('only the first entry to cross 10MB is named by "large"',
+   is_array($walkListing['large'] ?? null) && ($walkListing['large']['path'] ?? '') === 'aaa-bulk');
+ok('"largeAll" lists every flagged entry, not just the first',
+   ($walkListing['largeAll'] ?? null) === [['path' => 'aaa-bulk']]);
 
 // A2 — a relative symlink resolving outside the stack folder.
 mkdir($root.'/zzc155link', 0755, true);

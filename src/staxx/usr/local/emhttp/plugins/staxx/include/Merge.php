@@ -61,6 +61,7 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 // The write phase's copy loop reaches into Relocate.php for a folder entry's
 // own copy helper (staxx_relocate_copy_tree()) rather than duplicating it.
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
@@ -200,10 +201,13 @@ function staxx_merge_path_under(string $path, array $folders): bool {
  * except an image file sitting directly inside it — the icon a merge needs
  * to carry across (PLAN_155, "Icons are already broken").
  *
- * Walking stops the moment the running total for the CURRENT top-level
- * entry passes 10MB — "large" names the first folder that does, and
- * nothing beyond it is measured, because the number stops mattering once
- * the line is crossed (PLAN_155, "the guard").
+ * A top-level entry whose running total passes 10MB stops being COUNTED —
+ * further bytes under it are not added to the total once it is flagged —
+ * but the walk itself carries on into every other entry, so a large file in
+ * one folder no longer hides the children of every folder queued after it
+ * (PLAN_155, "the guard"; PLAN_155 C17, "a server bug behind an empty
+ * folder"). "large" names the first entry that tripped the cap, kept for
+ * callers that only ever showed one; "largeAll" lists every one.
  *
  * Symlinks are never followed while walking: a linked directory is listed
  * as a link, not descended into. A relative link whose target resolves
@@ -212,8 +216,10 @@ function staxx_merge_path_under(string $path, array $folders): bool {
  * nothing, or at something else entirely, once it lives somewhere new.
  *
  * @return array{ok:bool, files:array<int,array{path:string,size:int,mode:string,
- *   dir:bool,link:bool,target:string,outside:bool,keyLike:bool,referenced:bool}>,
- *   large:?array{path:string}, override:?string}|null null only for a bad or
+ *   dir:bool,link:bool,target:string,outside:bool,keyLike:bool,referenced:bool,
+ *   url:string}>,
+ *   large:?array{path:string}, largeAll:array<int,array{path:string}>,
+ *   override:?string}|null null only for a bad or
  *   missing stack; $error set in that case. 'override' is the paired
  *   override file's own basename (PLAN_155 C3), or null when this source has
  *   none — the browser reads it separately with 'read' and applies it
@@ -241,17 +247,20 @@ function staxx_merge_files(string $rel, string &$error): ?array {
 
   $files      = [];
   $large      = null;
+  $largeAll   = [];
   // One running total per top-level entry, keyed by its own path, so a big
   // folder stops the walk without a big FILE elsewhere in the tree being
   // blamed for it.
   $totals     = [];
+  // Entries already flagged large, so their bytes stop being counted (and
+  // re-flagged) without the walk itself stopping — see the guard below.
+  $flagged    = [];
 
   // Breadth doesn't matter here, only that every folder's own children are
   // listed together — a plain queue of "subfolders still to walk" does that
-  // without recursion, and lets the walk simply stop dead the moment $large
-  // is set.
+  // without recursion.
   $queue = [['sub' => '', 'top' => '']];
-  while ($queue !== [] && $large === null) {
+  while ($queue !== []) {
     $item = array_shift($queue);
     $sub  = $item['sub'];
     $top  = $item['top'];   // the top-level entry this path's size counts against
@@ -328,6 +337,11 @@ function staxx_merge_files(string $rel, string &$error): ?array {
         // "Not used by anything" is now only genuinely loose files.
         'referenced' => ($composeText !== '' && strpos($composeText, $path) !== false)
           || staxx_merge_path_under($path, $mountedFolders),
+        // The hover preview (PLAN_155 C17) reuses the icon store's existing
+        // local-file route rather than exposing a new one — empty when the
+        // extension isn't a picture format or the file can't be served.
+        'url'        => in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), $imageExts, true)
+          ? staxx_icon_from_path($full2)['url'] : '',
       ];
 
       if ($isDir) {
@@ -335,16 +349,22 @@ function staxx_merge_files(string $rel, string &$error): ?array {
         $queue[]  = ['sub' => $path, 'top' => $childTop];
       } else {
         $countTop = $isTop ? $path : $top;
+        // Once an entry is flagged its bytes stop being counted — the walk
+        // still visits every file under it, they simply no longer add to a
+        // total that has already made its point.
+        if (isset($flagged[$countTop])) continue;
         $totals[$countTop] = ($totals[$countTop] ?? 0) + $size;
         if ($totals[$countTop] > 10 * 1024 * 1024) {
-          $large = ['path' => $countTop];
-          break;
+          $flagged[$countTop] = true;
+          $entry = ['path' => $countTop];
+          if ($large === null) $large = $entry;
+          $largeAll[] = $entry;
         }
       }
     }
   }
 
-  return ['ok' => true, 'files' => $files, 'large' => $large, 'override' => $composeNames[1] ?? null];
+  return ['ok' => true, 'files' => $files, 'large' => $large, 'largeAll' => $largeAll, 'override' => $composeNames[1] ?? null];
 }
 
 /**

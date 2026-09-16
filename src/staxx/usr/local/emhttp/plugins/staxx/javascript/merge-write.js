@@ -185,6 +185,29 @@
     return false;
   }
 
+  // A service's own x-unraid.icon line, rewritten to its new per-service
+  // file name (PLAN_155 C17 — "icons are not a question": every carried
+  // service that points at a file inside its own source's .staxx/ gets that
+  // file under its own name, whether or not anything actually clashed).
+  // Scoped to the service's own line range so two services in the same
+  // source that share one icon file each get their own line rewritten,
+  // rather than a whole-doc search landing on the first one twice.
+  function rewriteServiceIcon(doc, serviceKey, oldRef, newRef) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[serviceKey];
+    if (!p) return null;
+    for (var i = p.start; i < p.end; i++) {
+      var m = /^\s*icon:\s*(.*)$/.exec(doc.lines[i]);
+      if (!m) continue;
+      var cm = /^([^#]*?)(\s*#.*)?$/.exec(m[1]);
+      var val = cm[1].replace(/^['"]|['"]$/g, '').trim();
+      if (val !== oldRef) continue;
+      doc.lines[i] = rewriteScalarValue(doc.lines[i], newRef);
+      return { line: i, text: doc.lines[i] };
+    }
+    return null;
+  }
+
   // Substring replace inside whichever line names both the env var and the
   // old address — safe because the examiner already matched that exact
   // "host:port" text on that exact variable, so there is nothing to
@@ -461,7 +484,13 @@
       if (before[i] === after[i]) continue;
       changes.push({
         key: f.key, part: part++, stack: f.stack, sourceLine: i, marker: after[i],
-        title: title, reason: reason, struckComment: null
+        title: title, reason: reason, struckComment: null,
+        // "Every change must be answered" (PLAN_155 C17) needs a *Decline*
+        // button on everything painted — except here: two sources' same
+        // name really would collide in the merged file, so there is no
+        // "leave it as it was" to offer. The browser hides the button when
+        // it sees this rather than offering one that can only refuse.
+        cannotLeave: true
       });
     }
   }
@@ -483,13 +512,48 @@
     return null;
   }
 
-  function planFiles(exam, decisions) {
+  // Every carried service whose x-unraid.icon names a file sitting directly
+  // inside ITS OWN source's .staxx/ (never a clash candidate — see
+  // findCompanionFindings() in merge-examine.js) gets that file copied
+  // under its own name in the merged stack: "icon-<service>.<ext>", using
+  // the service's name IN THE MERGED FILE, after any clash rename, since
+  // that is the name the icon has to keep matching from here on. A service
+  // declaring no icon gets nothing; two services sharing one source file
+  // each get their own copy (PLAN_155 C17 — "icons are not a question").
+  function planIconCopies(descs, plan) {
+    var out = [];
+    (descs || []).forEach(function (d) {
+      var services = (d.compose && d.compose.services) || {};
+      Object.keys(services).forEach(function (svcName) {
+        var icon = services[svcName].x_unraid && services[svcName].x_unraid.icon;
+        if (!icon) return;
+        var m = /^(?:\.\/)?\.staxx\/([^\/]+)$/.exec(String(icon).trim());
+        if (!m) return;   // not a file inside this source's own .staxx/
+        var ext = (/\.([^./]+)$/.exec(m[1]) || [null, ''])[1];
+        var finalSvc = plan.serviceRenames[d.name + '/' + svcName] || svcName;
+        out.push({
+          source: d.name, path: '.staxx/' + m[1], service: svcName, finalService: finalSvc,
+          oldRef: String(icon).trim(),
+          newRef: './.staxx/icon-' + finalSvc + (ext ? '.' + ext : '')
+        });
+      });
+    });
+    return out;
+  }
+
+  function planFiles(exam, decisions, iconCopies) {
     var perSourceTo = {};   // "source|path" -> final `to`, null meaning leave behind
     var clashesByPath = {};
     exam.findings.forEach(function (f) {
       if (f.kind !== 'file-clash') return;
       clashesByPath[f.facts.path] = f;
     });
+
+    // Icon files handled by planIconCopies() above are copied explicitly,
+    // one entry per referencing service — never by the generic per-file
+    // logic below, which only ever keeps one copy under one name.
+    var iconHandled = {};   // "source|path" -> true
+    (iconCopies || []).forEach(function (ic) { iconHandled[ic.source + '|' + ic.path] = true; });
 
     var files = [];
     exam.sourcesByName = exam.sourcesByName || {};
@@ -500,6 +564,7 @@
 
       entries.forEach(function (entry) {
         if (entry.outside) { toByPath[entry.path] = null; return; }   // never copied
+        if (iconHandled[s.name + '|' + entry.path]) return;   // handled below instead
 
         var to = entry.path;
         var clash = clashesByPath[entry.path];
@@ -536,6 +601,7 @@
       // bind-mounted empty folder still exists in the new stack.
       entries.forEach(function (entry) {
         if (entry.outside) return;
+        if (iconHandled[s.name + '|' + entry.path]) return;   // its own explicit entries are added below
         if (entry.dir) {
           var prefix = entry.path + '/';
           var hasKeptChild = entries.some(function (e) {
@@ -545,6 +611,13 @@
         }
         files.push({ from: s.name, path: entry.path, to: toByPath[entry.path] });
       });
+    });
+
+    // Icons are not a question: one explicit copy per referencing service,
+    // however many there are, added last so they never compete with the
+    // generic per-file decisions above.
+    (iconCopies || []).forEach(function (ic) {
+      files.push({ from: ic.source, path: ic.path, to: ic.newRef.replace(/^\.\//, '') });
     });
 
     return files;
@@ -696,7 +769,11 @@
       key: 'override|' + stackRel + '|' + sourceLine, stack: stackRel, sourceLine: sourceLine,
       marker: markerText, title: 'From the override file',
       reason: overrideLeaf + ' sets this beside the main file, so it is applied here and the ' +
-        'merged stack keeps behaving as the pair did.'
+        'merged stack keeps behaving as the pair did.',
+      // "Leaving" one of these would mean the merged file behaves
+      // differently than the real source pair already did — the override
+      // is not optional today, so there is nothing to decline back to.
+      cannotLeave: true
     };
   }
 
@@ -1351,11 +1428,17 @@
       volumeCarryFindings[k] = f;
     });
 
+    // Every carried service's own icon, if it points inside its source's
+    // .staxx/ — computed from `plan` (so a clash rename is already known)
+    // ahead of both the file plan and the doc edits, same reasoning as the
+    // storage-carry map above.
+    var iconCopies = planIconCopies(descs, plan);
+
     // The companion-file copy plan, decided ahead of the doc edits below —
     // fault 3's "rename it" answer is no good to anyone if the service
     // lines that used to point at the old name are left pointing at a file
     // that no longer exists under it.
-    var filesOut = planFiles(exam, decisions);
+    var filesOut = planFiles(exam, decisions, iconCopies);
 
     /* --- parse and edit every source's own doc --- */
 
@@ -1377,9 +1460,16 @@
       var origDoc = CM.parse(s.text);
       var desc = descs[idx];
 
+      // Icon files are rewritten by their own scoped pass just below (one
+      // service's line at a time — see rewriteServiceIcon()'s own comment
+      // for why a whole-doc text replace is wrong the moment two services
+      // in one source share a single icon.png), so they are skipped here.
+      var iconPathsHere = {};
+      iconCopies.forEach(function (ic) { if (ic.source === s.name) iconPathsHere[ic.path] = true; });
+
       var renamedRefs = false;
       filesOut.forEach(function (fe) {
-        if (fe.from !== s.name || !fe.to || fe.to === fe.path) return;
+        if (fe.from !== s.name || !fe.to || fe.to === fe.path || iconPathsHere[fe.path]) return;
         if (rewriteFileReferences(doc, fe.path, fe.to)) renamedRefs = true;
       });
       if (renamedRefs) CM.splice(doc, 0, 0, []);   // no line-count change — just refreshes doc.root
@@ -1393,8 +1483,25 @@
         if (f.kind !== 'container-name-clash' || f.stack !== s.name || f.facts.field !== 'service') return;
         var before = doc.lines.slice();
         CM.renameService(doc, f.facts.from, f.facts.to);
-        pushAutoRenameChanges(changes, f, before, doc.lines, 'Renamed to keep it distinct',
-          'Two source stacks both had a service called "' + f.facts.from + '" — this one is now "' + f.facts.to + '".');
+        // A rename picked from the image's own short name (both sources'
+        // services really are different things) reads better said that
+        // way; the plain suffix fallback keeps its older, more general
+        // wording, since there nothing else distinguishes the two.
+        var reason = f.facts.imageShortName
+          ? ('Both sources have a service called "' + f.facts.from + '"; this one is the ' +
+             f.facts.imageShortName + ' container, so it is offered as "' + f.facts.to + '".')
+          : ('Two source stacks both had a service called "' + f.facts.from + '" — this one is now "' + f.facts.to + '".');
+        pushAutoRenameChanges(changes, f, before, doc.lines, 'Renamed to keep it distinct', reason);
+      });
+
+      // The icon rewrite itself — one line at a time, scoped to the
+      // referencing service's own block, using its name IN THE MERGED FILE
+      // (after the rename above). Silent: PLAN_155 C17 is explicit that
+      // this is "not a question" — no card, no change record, just a line
+      // in step 4's own file list (drawn from planIconCopies(), not here).
+      iconCopies.forEach(function (ic) {
+        if (ic.source !== s.name) return;
+        rewriteServiceIcon(doc, ic.finalService, ic.oldRef, ic.newRef);
       });
 
       // Two sources both gave a container the same fixed name.
@@ -1449,12 +1556,12 @@
         (f.lines || []).forEach(function (le, i) {
           changes.push({
             key: f.key, part: i, stack: s.name, sourceLine: le.line, marker: doc.lines[le.line],
-            title: i === 0 ? 'Kept by its real name' : ('Points at ' + leaf(s.name) + '’s own storage'),
+            title: i === 0 ? ('Still ' + leaf(s.name) + '’s own storage') : ('Points at ' + leaf(s.name) + '’s own storage'),
             reason: i === 0
-              ? ('This is ' + leaf(s.name) + '’s existing storage, `' + f.facts.realName + '`; renamed here because ' +
-                 otherLeaf + ' also calls its storage `' + f.facts.volume + '`. The data is not copied or moved.')
+              ? ('The label inside this file changed so the sources cannot collide; `name:` keeps it on the volume ' +
+                 leaf(s.name) + ' was already using, so nothing is copied or emptied.')
               : ('Was `' + f.facts.volume + '`, which in the new stack is ' + otherLeaf + '’s.'),
-            struckComment: null
+            struckComment: null, cannotLeave: true   // two sources' storage under one key would collide
           });
         });
       });
@@ -1872,7 +1979,7 @@
               sourceLine: findAnchorDefLine(sd.origDoc.lines, name),
               title: 'Renamed to keep it distinct',
               reason: 'Two source stacks both had an anchor called "' + name + '" — this one is now "' + newName + '".',
-              struckComment: null
+              struckComment: null, cannotLeave: true   // two anchors of the same name would collide
             };
             changes.push(anchorChange);
             pendingAnchorMarkers.push({ doc: doc, atLine: atLine, change: anchorChange });
@@ -1892,6 +1999,14 @@
         if (KNOWN_FIVE[key]) return;
 
         if (key === 'version') {
+          // Every change must be answered (PLAN_155 C17): unlike a
+          // mandatory rename, dropping `version:` CAN be left as it was —
+          // "leave" just means keep whichever source's copy asks for it
+          // first, same one-record-only guard either way.
+          if (decisions['top-version'] === 'leave') {
+            if (!versionDropped) { versionDropped = true; topAdditions = topAdditions.concat(blocks.blocks[key]); }
+            return;
+          }
           // Compose ignores it and warns about it, so a file StaXX writes
           // fresh does not start with a warning — one record no matter how
           // many sources happened to carry a version: line of their own.
@@ -1909,16 +2024,26 @@
         if (key === 'name') return;   // the new stack's project name is its folder, dropped silently
 
         if (key === 'x-unraid') {
+          var xuKey = 'top-xunraid|' + sd.name;
           // A stack has one description, not one per source — the first
           // source's is kept, every later one is said to be left behind
-          // rather than silently dropped (CLAUDE.md rule 2).
+          // rather than silently dropped (CLAUDE.md rule 2). "Leave it as
+          // it was" for one of the later ones means keeping it after all —
+          // the same rename-and-keep a clashing top-level "x-" key already
+          // gets further down, since two "x-unraid:" keys cannot coexist.
           if (firstXUnraidLeaf === null) {
             firstXUnraidLeaf = leaf(sd.name);
             topAdditions.push('# From ' + firstXUnraidLeaf);
             topAdditions = topAdditions.concat(blocks.blocks[key]);
+          } else if (decisions[xuKey] === 'leave') {
+            var xRenamedKey = key + '-' + leaf(sd.name);
+            var xStart = blocks.starts[key], xEnd = xStart + blocks.blocks[key].length;
+            renameTopKeyLineInDoc(doc, xStart, xEnd, xRenamedKey);
+            topAdditions.push('# From ' + leaf(sd.name));
+            topAdditions = topAdditions.concat(doc.lines.slice(xStart, xEnd));
           } else {
             changes.push({
-              key: 'top-xunraid|' + sd.name, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: null,
+              key: xuKey, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: null,
               title: 'This stack’s own description is not carried',
               reason: 'The new stack keeps ' + firstXUnraidLeaf + '’s; a stack has one.',
               struckComment: null
@@ -1942,7 +2067,7 @@
               key: 'top-key|' + sd.name + '|' + key, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], marker: renamedBody[0],
               title: 'Renamed to keep it distinct',
               reason: 'Two source stacks both had a top-level "' + key + '", for different things — this one is now "' + renamedKey + '".',
-              struckComment: null
+              struckComment: null, cannotLeave: true   // two identical top-level keys would collide
             });
             return;
           }
@@ -2087,8 +2212,8 @@
               body[keyLineIdx] = km[1] + km[2] + ':';
             }
             additions = additions.concat(body.slice(0, keyLineIdx + 1));
-            additions.push('    # Carried over from ' + leaf(sd.name) + ', which is why the real name still says ' + leaf(sd.name) + '.');
-            additions.push('    # Renaming it here would start this service with empty storage.');
+            additions.push('    # ' + leaf(sd.name) + '’s own storage, under the name Docker already knows it by.');
+            additions.push('    # Only the label above is new; the data is untouched.');
             additions.push('    name: ' + carry.facts.realName);
             additions = additions.concat(body.slice(keyLineIdx + 1));
             return;
@@ -2107,7 +2232,7 @@
       finalLines.push('');
     });
 
-    // A storage-carry's own DECLARATION line (its "Kept by its real name"
+    // A storage-carry's own DECLARATION line (its "Still <leaf>’s own storage"
     // change, pushed far above, before this volumes:/networks:/… block
     // even existed) is the one change kind never resolved by the
     // per-service marker search further up — it does not live in any

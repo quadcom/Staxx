@@ -31454,8 +31454,25 @@
       built: null,           // last window.StaxxMergeWrite.buildMergedText() result
       folders: [],           // from 'folder-list', loaded once on entering step 2
       changeNavIndex: -1,    // step 3's up/down change stepper
+      srcIdx: 0,             // step 3's header strip — which source is on show
+      scrollLink: null,      // {offset} once a source row has been snapped to its
+                              // merged-file match (C17); dropped on source/step change
+      walkLast: null,        // the key the tally's "<o> to answer" button last jumped
+                              // to, so the next click carries on rather than restarting
       narrowClosed: false,   // true only while the 990px rule has hidden an open wizard
       scroll: null,
+      // Step 4 (C17) — a decision counts as unanswered until its own button
+      // is actually clicked; the recommended button being lit in the card
+      // is a default, not an answer, so this is tracked separately from
+      // `decisions` (which already holds the recommended value even
+      // untouched). Keyed by finding.key, same as `decisions`/`approved`.
+      fileAnswered: {},
+      // The joined-settings/new-folder grab handle's own split, as a pair
+      // of fr shares — null until first touched, meaning an even split.
+      step4Split: null,
+      // Step 5's once-per-wizard dependency-drag demonstration — never
+      // replayed once shown, whatever the person does afterwards.
+      demoShown: false,
       // Step 5 (PLAN_155 phase E) — never fed back into buildMergedText();
       // see window.StaxxMergeSuggest's own header for why. Rebuilt fresh
       // every time step 5 is entered (mergeEnterStep5()), so nothing here
@@ -31525,7 +31542,7 @@
     if (mergePopoverEl) mergePopoverEl.hidden = true;
   }
 
-  function mergeShowPopover(anchor, contentEl) {
+  function mergeShowPopover(anchor, contentEl, opts) {
     var pop = mergeEnsurePopover();
     if (!pop) return;
     clearTimeout(mergePopoverHideTimer);
@@ -31537,8 +31554,23 @@
     var mr = mergeModal.getBoundingClientRect();
     var ar = anchor.getBoundingClientRect();
     var left = Math.max(8, Math.min(ar.left - mr.left, mr.width - pop.offsetWidth - 8));
-    pop.style.top = (ar.bottom - mr.top + 6) + 'px';
+    // A step 4 file row (C17) opens its card overlapping its own lower
+    // half — top edge at the row's top + 55% of its own height — so the
+    // pointer steps straight off the row into the box instead of crossing
+    // the row below it (opening beside or fully beneath the row were both
+    // tried and rejected, the first as too cramped, the second because the
+    // next row took the popover over on a dense list).
+    var top = (opts && opts.overRow) ? ((ar.top - mr.top) + ar.height * 0.55) : (ar.bottom - mr.top + 6);
+    pop.style.top = top + 'px';
     pop.style.left = left + 'px';
+  }
+
+  // A CSS.escape() a bare string when the browser has one, otherwise the
+  // string itself — every attribute-value selector this file builds from
+  // user- or server-supplied text goes through this rather than repeating
+  // the same feature test at each call site.
+  function mergeCssEsc(s) {
+    return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(s) : s;
   }
 
   // Wires one line-number mark to open cardBuilder(change)'s own card (the
@@ -31574,9 +31606,85 @@
   // so a decision needing a further answer (step 4's "Choose a name") does
   // not make the person hover all over again to reach the field it opens.
   function mergeReopenMarkForKey(key) {
-    var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key;
+    var selector = mergeCssEsc(key);
     var mark = mergeModal && mergeModal.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + selector + '"]');
-    if (mark) mark.focus();
+    // Focus alone opens the card only while the document itself has focus;
+    // the mark's own click handler always ends with its card open (C17).
+    if (mark) { mark.focus(); mark.click(); }
+  }
+
+  // A step 4 file row's own card opens on a rest, not on entry — the
+  // decision popover would otherwise flash open on every row a hover
+  // merely passes over on its way somewhere else (C17). `cardBuilder`
+  // returns a fresh element on every open, same contract as
+  // mergeAttachMark()'s own cardBuilder above.
+  function mergeAttachFileHover(rowEl, cardBuilder) {
+    var openTimer = null;
+    function openNow() { mergeShowPopover(rowEl, cardBuilder(), { overRow: true }); }
+    rowEl.tabIndex = 0;
+    rowEl.addEventListener('mouseenter', function () {
+      clearTimeout(openTimer);
+      openTimer = setTimeout(openNow, 160);
+    });
+    rowEl.addEventListener('mouseleave', function () {
+      clearTimeout(openTimer);
+      mergeSchedulePopoverHide();
+    });
+    rowEl.addEventListener('focus', openNow);
+    rowEl.addEventListener('blur', mergeSchedulePopoverHide);
+  }
+
+  /* ---- the image hover preview (C17) — a small card beside a row whose
+   * file is a picture, reusing the icon store's own existing serve route
+   * (the 'url' the server already hands back per file entry) rather than
+   * exposing anything new. One element, like the reason popover above,
+   * appended into the dialog so position:fixed measures against ITS box
+   * rather than the viewport (same reasoning as mergeShowPopover()'s own
+   * header comment). ---- */
+  var mergeImgPopEl = null;
+
+  function mergeEnsureImgPop() {
+    if (mergeImgPopEl || !mergeModal) return mergeImgPopEl;
+    mergeImgPopEl = document.createElement('div');
+    mergeImgPopEl.className = 'staxx-merge-imgpop';
+    mergeImgPopEl.hidden = true;
+    var img = document.createElement('img');
+    img.alt = '';
+    var span = document.createElement('span');
+    mergeImgPopEl.appendChild(img);
+    mergeImgPopEl.appendChild(span);
+    mergeModal.appendChild(mergeImgPopEl);
+    return mergeImgPopEl;
+  }
+
+  function mergeShowImgPop(anchorEl, url, label) {
+    var pop = mergeEnsureImgPop();
+    if (!pop || !url || !mergeModal) return;
+    pop.querySelector('img').src = url;
+    pop.querySelector('span').textContent = label;
+    pop.hidden = false;
+    var mr = mergeModal.getBoundingClientRect();
+    var ar = anchorEl.getBoundingClientRect();
+    var w = pop.offsetWidth || 160, h = pop.offsetHeight || 160;
+    var left = (ar.right - mr.left) + 8;
+    if (left + w > mr.width - 8) left = Math.max(8, (ar.left - mr.left) - w - 8);
+    var top = Math.max(8, Math.min(ar.top - mr.top, mr.height - h - 8));
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+  }
+
+  function mergeHideImgPop() {
+    if (mergeImgPopEl) mergeImgPopEl.hidden = true;
+  }
+
+  // Never delayed and never held open past mouseleave (unlike the decision
+  // popover above) — it is a picture, not something to read.
+  function mergeAttachImgHover(rowEl, urlFn, labelFn) {
+    rowEl.addEventListener('mouseenter', function () {
+      var url = urlFn();
+      if (url) mergeShowImgPop(rowEl, url, labelFn());
+    });
+    rowEl.addEventListener('mouseleave', mergeHideImgPop);
   }
 
   // A stack's identity everywhere merge-write.js/merge-examine.js treat a
@@ -31595,6 +31703,45 @@
   function mergeColorFor(rel) {
     var idx = mergeState.picked.findIndex(function (p) { return p.name === rel; });
     return MERGE_COLORS[(idx < 0 ? 0 : idx) % MERGE_COLORS.length];
+  }
+
+  /* ---- step 4/6's shared file icon set (C17) — no icon library, the
+   * paths live here. Order matters: a folder or a symlink is never judged
+   * by its extension, and a name containing "password"/"secret" is judged
+   * before falling back to a plain page. ---- */
+  var MERGE_FILE_ICON_SVG = {
+    folder: '<svg viewBox="0 0 24 24" fill="#e8b85a"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="#c9c9c9" stroke-width="1.6"><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg>',
+    image: '<svg viewBox="0 0 24 24" fill="none" stroke="#7ec97e" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg>',
+    yaml: '<svg viewBox="0 0 24 24" fill="none" stroke="#7ec9ff" stroke-width="1.6"><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" fill="none" stroke="#c9c9c9" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" fill="none" stroke="#e05555" stroke-width="1.6"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+    cert: '<svg viewBox="0 0 24 24" fill="none" stroke="#e8b85a" stroke-width="1.6"><circle cx="12" cy="9" r="5"/><path d="M9 13.5L8 22l4-2 4 2-1-8.5"/></svg>',
+    link: '<svg viewBox="0 0 24 24" fill="none" stroke="#c9c9c9" stroke-width="1.6"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>'
+  };
+
+  function mergeFileIconKind(path, isDir, isLink) {
+    if (isDir) return 'folder';
+    if (isLink) return 'link';
+    var name = mergeLeafName(path).toLowerCase();
+    var ext = (/\.([^./]+)$/.exec(name) || [null, ''])[1];
+    if (['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif'].indexOf(ext) >= 0) return 'image';
+    if (ext === 'yaml' || ext === 'yml' || /\.(yaml|yml)\.bak$/.test(name)) return 'yaml';
+    if (['env', 'conf', 'ini', 'cfg'].indexOf(ext) >= 0) return 'gear';
+    if (['key', 'crt', 'pem'].indexOf(ext) >= 0) return 'cert';
+    if (name.indexOf('password') >= 0 || name.indexOf('secret') >= 0) return 'lock';
+    return 'file';
+  }
+
+  function mergeFileIconEl(path, isDir, isLink) {
+    var wrap = document.createElement('span');
+    wrap.innerHTML = MERGE_FILE_ICON_SVG[mergeFileIconKind(path, isDir, isLink)];
+    return wrap.firstElementChild;
+  }
+
+  function mergeIsImageExt(path) {
+    var ext = (/\.([^./]+)$/.exec(path) || [null, ''])[1].toLowerCase();
+    return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].indexOf(ext) >= 0;
   }
 
   function mergeDepthFor(rel) {
@@ -31784,10 +31931,12 @@
 
   if (mergeModal) {
     mergeModal.addEventListener('close', function () {
-      // A narrow-width auto-hide leaves everything in memory so widening the
-      // window brings the wizard straight back — see mergeOnNarrowChange()
-      // below. Every other way this dialog closes (Cancel, the backdrop,
-      // Escape) writes nothing, so the state is simply dropped.
+      // Narrow-width no longer closes this dialog at all (C17: it stays
+      // open, backdrop and all, and shows a notice instead — see
+      // mergeOnNarrowChange() below). This guard only still matters for the
+      // edge case of the browser's own Escape default closing the dialog
+      // while narrow-hidden; every other way it closes (Cancel, Escape at a
+      // normal width) writes nothing, so the state is simply dropped.
       if (mergeState && mergeState.narrowClosed) return;
       mergeState = null;
     });
@@ -31814,29 +31963,77 @@
   }
 
   // Below 990px the merge button is hidden by CSS, so a wizard can only ever
-  // be open here because the window was WIDE a moment ago. It must be
-  // properly closed — dialog.close(), not display:none — because a <dialog>
-  // hidden the other way stays in the top layer and leaves the whole page
-  // beneath it inert (measured on Adrian's own box, PLAN_148). Everything the
-  // wizard knows lives in mergeState, untouched by closing it.
+  // be open here because the window was WIDE a moment ago. It stays open —
+  // mergeOnNarrowChange() below hides its own head/panes/foot instead of
+  // calling dialog.close() (C17: Adrian saw the wizard vanish while the
+  // backdrop stayed and could not tell what had happened). Everything the
+  // wizard knows lives in mergeState, untouched either way.
   var mergeNarrowQuery = window.matchMedia ? window.matchMedia('(max-width: 990px)') : null;
 
   function mergeVisibleStepEl() {
     return document.getElementById('staxx-merge-step' + mergeState.step);
   }
 
+  // The narrow-width notice (C17, 2026-09-16): built once and appended into
+  // the dialog like mergePopoverEl above, rather than carried in the PHP —
+  // it is pure JS-owned state, never present in the markup until the first
+  // time the window narrows.
+  var mergeNarrowEl = null;
+
+  function mergeEnsureNarrowNotice() {
+    if (mergeNarrowEl || !mergeModal) return mergeNarrowEl;
+    mergeNarrowEl = document.createElement('div');
+    mergeNarrowEl.className = 'staxx-merge-narrow';
+    mergeNarrowEl.hidden = true;
+    var h = document.createElement('strong');
+    h.textContent = 'The Merge tool needs a desktop-sized window.';
+    var p = document.createElement('p');
+    p.textContent = 'Make the browser window wider, or maximise it, and the wizard comes back exactly ' +
+      'where you left it. Nothing has been lost. On a phone or tablet, merging is not available.';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'staxx-btn staxx-merge-narrow-cancel';
+    cancelBtn.textContent = 'Cancel the merge';
+    cancelBtn.addEventListener('click', mergeClose);
+    mergeNarrowEl.appendChild(h);
+    mergeNarrowEl.appendChild(p);
+    mergeNarrowEl.appendChild(cancelBtn);
+    mergeModal.appendChild(mergeNarrowEl);
+    return mergeNarrowEl;
+  }
+
+  // Below 990px the wizard now STAYS open — backdrop and blur included, so
+  // nothing underneath is clickable — and hides its own head/panes/foot in
+  // favour of the notice above (Adrian, 2026-09-16: the dialog vanishing
+  // while the backdrop stayed read as "you don't really know what
+  // happened"). mergeState.narrowClosed is still the marker for "hidden,
+  // not closed" even though nothing is actually closed any more — it is
+  // what a widening window checks to know whether to reveal the wizard
+  // again, and what mergeModal's own 'close' listener still reads to leave
+  // mergeState alone if Escape or a real close happens while narrow.
   function mergeOnNarrowChange(narrow) {
     if (!mergeModal) return;
+    var headEl = mergeModal.querySelector('.staxx-merge-head');
+    var panesEl = document.getElementById('staxx-merge-panes');
+    var footEl = mergeModal.querySelector('.staxx-merge-foot');
+    var notice = mergeEnsureNarrowNotice();
+
     if (narrow) {
       if (mergeState && mergeModal.open) {
         var visible = mergeVisibleStepEl();
         mergeState.scroll = { top: visible ? visible.scrollTop : 0 };
         mergeState.narrowClosed = true;
-        mergeModal.close();
+        if (headEl) headEl.hidden = true;
+        if (panesEl) panesEl.hidden = true;
+        if (footEl) footEl.hidden = true;
+        if (notice) notice.hidden = false;
       }
     } else if (mergeState && mergeState.narrowClosed) {
       mergeState.narrowClosed = false;
-      mergeModal.showModal();
+      if (notice) notice.hidden = true;
+      if (headEl) headEl.hidden = false;
+      if (panesEl) panesEl.hidden = false;
+      if (footEl) footEl.hidden = false;
       mergeRender();
       var visible2 = mergeVisibleStepEl();
       if (visible2 && mergeState.scroll) visible2.scrollTop = mergeState.scroll.top || 0;
@@ -32505,27 +32702,82 @@
     approveBtn.textContent = 'Approved';
     approveBtn.dataset.mergeApprove = change.key;
 
-    var leaveBtn = document.createElement('button');
-    leaveBtn.type = 'button';
-    leaveBtn.className = 'staxx-btn staxx-merge-leave';
-    leaveBtn.textContent = 'Leave it as it was';
-    leaveBtn.dataset.mergeLeave = change.key;
-
     buttons.appendChild(approveBtn);
-    buttons.appendChild(leaveBtn);
+    // Renamed from "Leave it as it was" in the third interactive session —
+    // same key, same handler, just Adrian's own word for it. Hidden
+    // outright for a structural change that cannot be left as it was; the
+    // card's own sentence says so instead (change.cannotLeave, set by
+    // merge-write.js/merge-examine.js, never by anything here).
+    if (!change.cannotLeave) {
+      var leaveBtn = document.createElement('button');
+      leaveBtn.type = 'button';
+      leaveBtn.className = 'staxx-btn staxx-merge-leave';
+      leaveBtn.textContent = 'Decline';
+      leaveBtn.dataset.mergeLeave = change.key;
+      buttons.appendChild(leaveBtn);
+    }
     card.appendChild(h);
     card.appendChild(p);
     card.appendChild(buttons);
     return card;
   }
 
+  // The tick/ring worn at the end of an answered line's own text — painted
+  // fresh on every render of the merged pane so it can never fall out of
+  // step with approved[]/decisions[] (C17, third interactive session).
+  function mergeAppendAnswerBadge(content, key) {
+    if (mergeState.approved[key]) {
+      var ok = document.createElement('span');
+      ok.className = 'staxx-merge-badge staxx-merge-badge--ok';
+      ok.textContent = '✓';
+      content.appendChild(ok);
+    } else if (mergeState.decisions[key] !== undefined) {
+      var no = document.createElement('span');
+      no.className = 'staxx-merge-badge staxx-merge-badge--no';
+      content.appendChild(no);
+    }
+  }
+
+  // Wraps a rebuild that empties and repopulates one scroll container, so
+  // the container's own scroll position survives it instead of jumping
+  // back to the top — the same jump on every answer across step 3, step 4
+  // and step 5 (Adrian, 2026-09-16: "I toggled a check half way down and
+  // lost my place"), one helper rather than three copies of the same
+  // read-before/write-after.
+  function keepScroll(el, fn) {
+    if (!el) { fn(); return; }
+    var top = el.scrollTop;
+    fn();
+    el.scrollTop = top;
+  }
+
   function mergeRenderMergedPane() {
     var codeEl = document.getElementById('staxx-merge-merged-code');
     var countEl = document.getElementById('staxx-merge-changecount');
     if (!codeEl) return;
-    codeEl.innerHTML = '';
-    if (!mergeState.built) { if (countEl) countEl.textContent = ''; return; }
+    if (!mergeState.built) { codeEl.innerHTML = ''; if (countEl) countEl.textContent = ''; return; }
 
+    keepScroll(codeEl, function () { mergeRenderMergedPaneInner(codeEl); });
+
+    // Tallied by KEY, not by row, and by PAINTED key — see
+    // mergePaintedChangeKeys()'s own header for both reasons. Outside the
+    // keepScroll() call above since it never touches codeEl's own layout.
+    var keyList = mergePaintedChangeKeys();
+    var approvedCount = keyList.filter(function (k) { return mergeState.approved[k]; }).length;
+    var declinedCount = keyList.filter(function (k) {
+      return !mergeState.approved[k] && mergeState.decisions[k] !== undefined;
+    }).length;
+    var outstandingCount = keyList.length - approvedCount - declinedCount;
+    if (countEl) {
+      countEl.textContent = !keyList.length ? 'No changes.'
+        : keyList.length + ' change' + (keyList.length === 1 ? '' : 's') + ', ' +
+          (approvedCount ? approvedCount + ' approved' : 'none approved yet');
+    }
+    mergeRenderTally({ n: keyList.length, a: approvedCount, d: declinedCount, o: outstandingCount });
+  }
+
+  function mergeRenderMergedPaneInner(codeEl) {
+    codeEl.innerHTML = '';
     var text = mergeState.built.text || '';
     var sourceMap = mergeSourceMapForLines(text);
     var changeMap = mergeChangesByMergedLine();
@@ -32545,7 +32797,11 @@
       var row = document.createElement('div');
       row.className = 'staxx-merge-codeline staxx-merge-codeline--changed staxx-merge-codeline--struck staxx-merge-codeline--ghost';
       row.style.borderLeftColor = rel ? mergeColorFor(rel) : 'transparent';
-      row.style.borderLeftWidth = '0.7rem';
+      // 0.3rem on every row, changed or not (the "indentation error" fault,
+      // C17) — the number column's own solid block is what marks a change
+      // now, painted by --stripe by the sheet, not by a wider border.
+      row.style.borderLeftWidth = '0.3rem';
+      if (rel) row.style.setProperty('--stripe', mergeColorFor(rel));
       row.dataset.mergeChangeKey = c.key;
       var num = document.createElement('span');
       num.className = 'staxx-merge-codenum';
@@ -32555,6 +32811,7 @@
       var content = document.createElement('span');
       content.className = 'staxx-merge-codetext';
       content.textContent = c.removedText || '';
+      mergeAppendAnswerBadge(content, c.key);
       row.appendChild(content);
       frag.appendChild(row);
     }
@@ -32571,8 +32828,12 @@
       var row = document.createElement('div');
       row.className = 'staxx-merge-codeline' + (change ? ' staxx-merge-codeline--changed' : '');
       row.style.borderLeftColor = stripeColor;
-      row.style.borderLeftWidth = change ? '0.7rem' : '0.3rem';
-      if (change) row.dataset.mergeChangeKey = change.key;
+      row.style.borderLeftWidth = '0.3rem';
+      if (change) {
+        row.dataset.mergeChangeKey = change.key;
+        if (rel) row.style.setProperty('--stripe', stripeColor);
+      }
+      row.dataset.mergeLine = String(i);   // mergeShowSource()'s own services-marker scroll
 
       var num = document.createElement('span');
       num.className = 'staxx-merge-codenum';
@@ -32586,33 +32847,34 @@
       try { res = window.StaxxYaml.highlight(line, carry); } catch (e) { res = { html: esc(line), carry: '' }; }
       carry = res.carry || '';
       content.innerHTML = res.html;
+      if (change) mergeAppendAnswerBadge(content, change.key);
       row.appendChild(content);
 
       frag.appendChild(row);
     }
     codeEl.appendChild(frag);
-
-    // Counted by KEY, not by row (third interactive session) — records
-    // sharing a key are one decision, and approving one approves all of
-    // them, so the tally in the heading has to agree with that. Counted by
-    // PAINTED key (PLAN_156 second walk, F7), not every key the merge wrote
-    // — a record with nowhere to be shown must never inflate this number.
-    var keyList = mergePaintedChangeKeys();
-    var approvedCount = keyList.filter(function (k) { return mergeState.approved[k]; }).length;
-    if (countEl) {
-      countEl.textContent = !keyList.length ? 'No changes.'
-        : keyList.length + ' change' + (keyList.length === 1 ? '' : 's') + ', ' +
-          (approvedCount ? approvedCount + ' approved' : 'none approved yet');
-    }
   }
 
+  // C17: one source at a time. Every pane still lives here, side by side
+  // on a hidden track that slides — the swap Adrian rejected in favour of
+  // a sliding file — but each pane's own head now moves out into the
+  // header strip (mergeRenderStep3()'s #staxx-merge-srcstrip-heads), so
+  // one pane's head can read its full name while the others collapse to
+  // numbered squares. mergeShowSource() (below) is what actually decides
+  // which pane is on show; this function only builds the material it acts on.
   function mergeRenderSourcesBand() {
     var host = document.getElementById('staxx-merge-sourcesband');
+    var headsHost = document.getElementById('staxx-merge-srcstrip-heads');
     if (!host) return;
     host.innerHTML = '';
-    host.style.flex = mergeState.picked.length + ' 1 0';
+    if (headsHost) headsHost.innerHTML = '';
 
-    mergeState.picked.forEach(function (p) {
+    var track = document.createElement('div');
+    track.className = 'staxx-merge-srctrack';
+    track.id = 'staxx-merge-srctrack';
+    host.appendChild(track);
+
+    mergeState.picked.forEach(function (p, idx) {
       var rel = p.name;
       var data = mergeState.stacks[rel];
       var color = mergeColorFor(rel);
@@ -32621,11 +32883,31 @@
       pane.className = 'staxx-merge-sourcepane';
       pane.dataset.mergeSourceStack = rel;
 
-      pane.appendChild(mergeSourceHeadEl(p.label, color));
-
       var code = document.createElement('div');
       code.className = 'staxx-merge-code';
       pane.appendChild(code);
+
+      if (headsHost) {
+        var head = mergeSourceHeadEl(p.label, color);
+        head.dataset.mergeSrcIdx = String(idx);
+        // "<n> – name" — the number in its own cell, then the dash, then
+        // the name wrapped so the sheet can fade it in separately once the
+        // head has finished growing open (the coordinator's own contract).
+        var numSpan = document.createElement('span');
+        numSpan.className = 'staxx-merge-srcnum';
+        numSpan.textContent = String(idx + 1);
+        var dashSpan = document.createElement('span');
+        dashSpan.className = 'staxx-merge-srcdash';
+        dashSpan.textContent = ' – ';
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'staxx-merge-srcname';
+        nameSpan.textContent = head.textContent;
+        head.textContent = '';
+        head.appendChild(numSpan);
+        head.appendChild(dashSpan);
+        head.appendChild(nameSpan);
+        headsHost.appendChild(head);
+      }
 
       // PLAN_155 C3: shows the APPLIED text (main file plus its paired
       // override, when it has one) — that is the stack as compose runs it,
@@ -32652,12 +32934,21 @@
           row.classList.add('staxx-merge-codeline--changed');
           row.style.borderLeftColor = color;
           row.style.borderLeftWidth = '0.3rem';
+          row.style.setProperty('--stripe', color);
           row.dataset.mergeChangeKey = change.key;
+          // A change that leaves nothing in the merged file (a later source's
+          // own stack-level x-unraid, dropped) is painted here and nowhere
+          // else — without a mark of its own it could never be answered, and
+          // step 3's lock would hold Next for ever (found on the first
+          // deployed walk of C17). The number block is the hit area, as on
+          // the merged pane.
+          var srcNum = row.querySelector('.staxx-merge-codenum');
+          if (srcNum && !srcNum.querySelector('.staxx-merge-gmark')) mergeAttachMark(srcNum, change, mergeReasonCard);
         }
         if (struckAbove[i]) row.classList.add('staxx-merge-codeline--struck');
       });
 
-      host.appendChild(pane);
+      track.appendChild(pane);
     });
   }
 
@@ -32694,6 +32985,39 @@
     row.className = 'staxx-merge-step3-row';
     row.id = 'staxx-merge-step3-row';
 
+    // The header strip (C17): one source's head open at a time, the rest
+    // collapsed to numbered squares either side, plus the merged pane's own
+    // head slotted in on the right so the two halves' headers line up. Both
+    // sit ahead of the sources band and the merged pane themselves, which
+    // is what lets the row wrap into "header row, then content row" at
+    // narrower widths without any layout code here — that is the sheet's
+    // job, this only has to get the DOM order right.
+    var strip = document.createElement('div');
+    strip.className = 'staxx-merge-srcstrip';
+    strip.id = 'staxx-merge-srcstrip';
+    var prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'staxx-merge-srcstrip-btn';
+    prevBtn.textContent = '‹';
+    prevBtn.dataset.mergeSrcStep = '-1';
+    var headsHost = document.createElement('div');
+    headsHost.className = 'staxx-merge-srcstrip-heads';
+    headsHost.id = 'staxx-merge-srcstrip-heads';
+    var nextStripBtn = document.createElement('button');
+    nextStripBtn.type = 'button';
+    nextStripBtn.className = 'staxx-merge-srcstrip-btn';
+    nextStripBtn.textContent = '›';
+    nextStripBtn.dataset.mergeSrcStep = '1';
+    strip.appendChild(prevBtn);
+    strip.appendChild(headsHost);
+    strip.appendChild(nextStripBtn);
+    row.appendChild(strip);
+
+    var slot = document.createElement('div');
+    slot.className = 'staxx-merge-mergedhead-slot';
+    slot.id = 'staxx-merge-mergedhead-slot';
+    row.appendChild(slot);
+
     var band = document.createElement('div');
     band.className = 'staxx-merge-sourcesband';
     band.id = 'staxx-merge-sourcesband';
@@ -32722,7 +33046,7 @@
     mergedHead.appendChild(mergedTitle);
     mergedHead.appendChild(mergedCount);
     mergedHead.appendChild(mergedNav);
-    merged.appendChild(mergedHead);
+    slot.appendChild(mergedHead);   // moved up into the strip row, not left in the pane
     var mergedCode = document.createElement('div');
     mergedCode.className = 'staxx-merge-code';
     mergedCode.id = 'staxx-merge-merged-code';
@@ -32733,10 +33057,122 @@
 
     mergeRenderSourcesBand();
     mergeRenderMergedPane();
+    mergeShowSource(mergeState.srcIdx || 0);
+    mergeAttachScrollLink();
   }
 
+  // Finds the services-block marker `mergeShowSource()` scrolls the merged
+  // pane to: the SECOND "# From <leaf>" line for this source (the one
+  // buildMergedText() writes inside services:, not the earlier one some
+  // top-level blocks also carry), or the first when there is only one.
+  function mergeServicesMarkerLine(rel) {
+    var leaf = mergeLeafName(rel);
+    var text = (mergeState.built && mergeState.built.text) || '';
+    var marker = '# From ' + leaf;
+    var lines = text.split('\n');
+    var hits = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim() === marker) hits.push(i);
+    }
+    return hits.length > 1 ? hits[1] : (hits.length ? hits[0] : -1);
+  }
+
+  function mergeSourceIdxForRel(rel) {
+    return mergeState.picked.findIndex(function (p) { return p.name === rel; });
+  }
+
+  // Drops the scroll link a click on a source row may have recorded (item
+  // 5) — a stale offset from the last source shown would otherwise mirror
+  // the wrong two panes' scrolling the moment a new source slides in.
+  function mergeDropScrollLink() {
+    if (mergeState) mergeState.scrollLink = null;
+  }
+
+  // Slides the header strip and the source track to source i, and scrolls
+  // the merged pane to line up on where that source's own services landed
+  // — "one source at a time" (C17). i is clamped rather than wrapped: the
+  // strip's own end arrows disable at the ends instead of cycling.
+  function mergeShowSource(i) {
+    if (!mergeState) return;
+    var n = mergeState.picked.length;
+    if (!n) return;
+    i = Math.max(0, Math.min(i, n - 1));
+    mergeState.srcIdx = i;
+    mergeDropScrollLink();
+
+    var track = document.getElementById('staxx-merge-srctrack');
+    if (track) track.style.transform = 'translateX(-' + (i * 100) + '%)';
+
+    var heads = document.querySelectorAll('#staxx-merge-srcstrip-heads [data-merge-src-idx]');
+    Array.prototype.forEach.call(heads, function (h) {
+      h.classList.toggle('is-on', Number(h.dataset.mergeSrcIdx) === i);
+    });
+
+    var prevBtn = document.querySelector('#staxx-merge-srcstrip [data-merge-src-step="-1"]');
+    var nextBtn2 = document.querySelector('#staxx-merge-srcstrip [data-merge-src-step="1"]');
+    if (prevBtn) prevBtn.disabled = i === 0;
+    if (nextBtn2) nextBtn2.disabled = i === n - 1;
+
+    var rel = mergeState.picked[i] && mergeState.picked[i].name;
+    var mergedCode = document.getElementById('staxx-merge-merged-code');
+    if (rel && mergedCode) {
+      var lineIdx = mergeServicesMarkerLine(rel);
+      if (lineIdx >= 0) {
+        var target = mergedCode.querySelector('[data-merge-line="' + lineIdx + '"]');
+        if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
+
+  // A guard flag against the mirrored scroll echoing straight back — set
+  // for one animation frame every time either side of a linked pair moves
+  // the other, per item 5's own "requestAnimationFrame to release it".
+  var mergeScrollLinkGuard = false;
+
+  // Wires the merged pane and every source pane's own scroller to mirror
+  // each other once mergeState.scrollLink holds an offset (set by
+  // mergeAlignAndFlash() below, or by the tally's walk). Attached fresh on
+  // every render of step 3 — the old elements and their listeners are
+  // simply discarded with the rest of the step's DOM, never accumulated.
+  function mergeAttachScrollLink() {
+    var mergedCode = document.getElementById('staxx-merge-merged-code');
+    if (!mergedCode) return;
+    var sourceCodes = Array.prototype.slice.call(document.querySelectorAll('#staxx-merge-srctrack .staxx-merge-code'));
+
+    mergedCode.addEventListener('scroll', function () {
+      if (mergeScrollLinkGuard || !mergeState || !mergeState.scrollLink) return;
+      var srcEl = sourceCodes[mergeState.srcIdx || 0];
+      if (!srcEl) return;
+      mergeScrollLinkGuard = true;
+      srcEl.scrollTop = mergedCode.scrollTop - mergeState.scrollLink.offset;
+      requestAnimationFrame(function () { mergeScrollLinkGuard = false; });
+    });
+
+    sourceCodes.forEach(function (el, idx) {
+      el.addEventListener('scroll', function () {
+        if (mergeScrollLinkGuard || !mergeState || !mergeState.scrollLink) return;
+        if (idx !== (mergeState.srcIdx || 0)) return;
+        mergeScrollLinkGuard = true;
+        mergedCode.scrollTop = el.scrollTop + mergeState.scrollLink.offset;
+        requestAnimationFrame(function () { mergeScrollLinkGuard = false; });
+      });
+    });
+  }
+
+  // Clicking a changed source row: shows that row's own source first (the
+  // up/down arrows can reach a row belonging to a source not on show),
+  // scrolls the merged pane so the matching line lines up with it, flashes
+  // both, and records the scroll offset between the two (item 5 — "linked
+  // scrolling after a snap"). A row with nothing to align to (mergedRow
+  // null) never reaches the alignment or the link, only the caller's own
+  // flash of the source row on its own.
   function mergeAlignAndFlash(sourceRow, mergedRow) {
     if (!sourceRow || !mergedRow) return;
+    var ownerPane = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');
+    if (ownerPane) {
+      var ownerIdx = mergeSourceIdxForRel(ownerPane.dataset.mergeSourceStack);
+      if (ownerIdx >= 0 && ownerIdx !== mergeState.srcIdx) mergeShowSource(ownerIdx);
+    }
     var mergedPane = document.getElementById('staxx-merge-merged-code');
     if (!mergedPane) return;
     // getBoundingClientRect(), not offsetTop — offsetTop is measured against
@@ -32750,6 +33186,9 @@
       el.classList.add('staxx-merge-codeline--flash');
       setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
     });
+
+    var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-code');
+    if (scroller) mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
   }
 
   function mergeChangeRows() {
@@ -32765,6 +33204,228 @@
     rows[idx].scrollIntoView({ block: 'center' });
     rows[idx].classList.add('staxx-merge-codeline--flash');
     setTimeout(function () { rows[idx].classList.remove('staxx-merge-codeline--flash'); }, 1500);
+  }
+
+  /* ------------------------------------------ step 3 answer lock + tally -- */
+
+  // Every painted change still without an answer — approved, or any
+  // decision at all (including 'leave', a port clash's 'swap', or a plain
+  // choice id), all count as answered. Drives both Next's own lock and the
+  // tally's own "<o> to answer" count, off the SAME key list the header
+  // count reads (mergePaintedChangeKeys()), so the two can never disagree.
+  function mergeOutstandingKeys() {
+    return mergePaintedChangeKeys().filter(function (k) {
+      return !mergeState.approved[k] && mergeState.decisions[k] === undefined;
+    });
+  }
+
+  function mergeChangeForKey(key) {
+    var list = (mergeState.built && mergeState.built.changes) || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return null;
+  }
+
+  // The order the tally's walk answers changes in: top to bottom in the
+  // merged file, since that is what the person can actually see moving.
+  // A key painted only in a source pane (nothing landed in the merged
+  // file at all — the rare "left behind" case item 5 notes has nothing to
+  // snap to) has no row here to sort by, so it is simply visited last.
+  function mergeMergedOrderKeys() {
+    var rows = document.querySelectorAll('#staxx-merge-merged-code [data-merge-change-key]');
+    var seen = {}, out = [];
+    Array.prototype.forEach.call(rows, function (r) {
+      var k = r.dataset.mergeChangeKey;
+      if (!seen[k]) { seen[k] = true; out.push(k); }
+    });
+    return out;
+  }
+
+  // One click of the tally's "<o> to answer" button: finds the next
+  // outstanding change after mergeState.walkLast (wrapping to the top),
+  // shows its owning source, snaps the two panes together and flashes
+  // both, and opens the row's own popover so the answer is one click away.
+  function mergeWalkToKey(key) {
+    var change = mergeChangeForKey(key);
+    if (change && change.stack) {
+      var idx = mergeSourceIdxForRel(change.stack);
+      if (idx >= 0 && idx !== mergeState.srcIdx) mergeShowSource(idx);
+    }
+    var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key;
+    var mergedPane = document.getElementById('staxx-merge-merged-code');
+    var mergedRow = mergedPane && mergedPane.querySelector('[data-merge-change-key="' + selector + '"]');
+    var sourceRow = document.querySelector('#staxx-merge-srctrack [data-merge-change-key="' + selector + '"]');
+
+    if (mergedPane && mergedRow) {
+      // A third of the way down, not merely into view — the same "line up
+      // with room to work" spot every walk jump lands on.
+      var paneRect = mergedPane.getBoundingClientRect();
+      var rowRect = mergedRow.getBoundingClientRect();
+      mergedPane.scrollTop += (rowRect.top - paneRect.top) - paneRect.height / 3;
+      mergedRow.classList.add('staxx-merge-codeline--flash');
+      setTimeout(function () { mergedRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+      if (sourceRow) {
+        var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-code');
+        if (scroller) {
+          var mergedRowRect = mergedRow.getBoundingClientRect();
+          var sourceRowRectBefore = sourceRow.getBoundingClientRect();
+          scroller.scrollTop += (sourceRowRectBefore.top - mergedRowRect.top);
+          sourceRow.classList.add('staxx-merge-codeline--flash');
+          setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+          mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
+        }
+      }
+    } else if (sourceRow) {
+      sourceRow.classList.add('staxx-merge-codeline--flash');
+      setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+    }
+
+    mergeReopenMarkForKey(key);
+    mergeState.walkLast = key;
+  }
+
+  function mergeTallyWalkClick() {
+    if (mergeState.step === 4) { mergeStep4WalkClick(); return; }
+    var outstanding = mergeOutstandingKeys();
+    if (!outstanding.length) return;
+    var ordered = mergeMergedOrderKeys().filter(function (k) { return outstanding.indexOf(k) >= 0; });
+    outstanding.forEach(function (k) { if (ordered.indexOf(k) < 0) ordered.push(k); });
+    var startIdx = 0;
+    if (mergeState.walkLast) {
+      var lastIdx = ordered.indexOf(mergeState.walkLast);
+      startIdx = (lastIdx + 1) % ordered.length;
+    }
+    mergeWalkToKey(ordered[startIdx]);
+  }
+
+  // Step 4's own walk (C17): joined-settings marks top to bottom first,
+  // then the file rows column by column — a clash spans several rows
+  // (one per source it touches) but is one entry here, visited once, at
+  // the first column it appears in.
+  function mergeStep4WalkKeys() {
+    var keys = [];
+    var envChanges = ((mergeState.built && mergeState.built.changes) || []).filter(function (c) { return c.file === 'env'; });
+    envChanges.sort(function (a, b) { return (a.line || 0) - (b.line || 0); });
+    var seenEnv = {};
+    envChanges.forEach(function (c) {
+      if (seenEnv[c.key]) return;
+      seenEnv[c.key] = true;
+      var answered = mergeState.approved[c.key] || mergeState.decisions[c.key] === 'keep-both' || mergeState.decisions[c.key] === 'choose-name';
+      if (!answered) keys.push({ key: c.key, kind: 'env' });
+    });
+
+    var findings = (mergeState.built && mergeState.built.findings) || [];
+    var clashByPath = {};
+    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+    var seenFile = {};
+    mergeState.picked.forEach(function (p) {
+      var s = mergeState.stacks[p.name];
+      var files = ((s && s.filesReply && s.filesReply.files) || []).slice()
+        .sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
+      files.forEach(function (entry) {
+        var clash = clashByPath[entry.path];
+        var unref = clash ? null : findings.filter(function (f) {
+          return f.kind === 'unreferenced' && f.stack === p.name && f.facts.path === entry.path;
+        })[0];
+        var f = clash || unref;
+        if (!f || seenFile[f.key]) return;
+        seenFile[f.key] = true;
+        if (!mergeState.fileAnswered[f.key]) keys.push({ key: f.key, kind: 'file' });
+      });
+    });
+    return keys;
+  }
+
+  function mergeStep4WalkClick() {
+    var list = mergeStep4WalkKeys();
+    if (!list.length) return;
+    var startIdx = 0;
+    if (mergeState.walkLast) {
+      var lastIdx = list.findIndex(function (k) { return k.key === mergeState.walkLast; });
+      startIdx = (lastIdx + 1) % list.length;
+    }
+    var target = list[startIdx];
+    mergeState.walkLast = target.key;
+
+    if (target.kind === 'env') {
+      var selector = mergeCssEsc(target.key);
+      var mergedPane = document.getElementById('staxx-merge-settings-merged-code');
+      var mark = mergedPane && mergedPane.querySelector('[data-merge-mark-key="' + selector + '"]');
+      var rowEl = mark && mark.closest('.staxx-merge-codeline');
+      if (rowEl) {
+        rowEl.scrollIntoView({ block: 'center' });
+        rowEl.classList.add('staxx-merge-codeline--flash');
+        setTimeout(function () { rowEl.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+      }
+      mergeReopenMarkForKey(target.key);
+    } else {
+      var f = mergeFindingByKey(target.key);
+      var path = f && f.facts && f.facts.path;
+      var rel = f && (f.kind === 'unreferenced' ? f.stack : (f.facts.sources && f.facts.sources[0]));
+      var pane = rel && mergeModal.querySelector('.staxx-merge-sourcepane[data-merge-src-rel="' + mergeCssEsc(rel) + '"]');
+      var nameEl = pane && path && pane.querySelector('.staxx-merge-filename[data-path="' + mergeCssEsc(path) + '"]');
+      var frow = nameEl && nameEl.closest('.staxx-merge-filerow');
+      if (frow) {
+        frow.scrollIntoView({ block: 'center' });
+        frow.classList.add('staxx-merge-codeline--flash');
+        setTimeout(function () { frow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+        // The card opens through the same rest-hover the row answers from —
+        // a synthetic mouseenter lands on the very listener mergeAttachFileHover()
+        // wired, so this walks exactly like a person's own hover would.
+        frow.dispatchEvent(new MouseEvent('mouseenter'));
+      }
+    }
+  }
+
+  // The tally element itself is created once, lazily, into the foot's own
+  // right-hand group ahead of Back — see the class-name contract this was
+  // briefed against. Step 4's own count (owned by another change) calls
+  // this same function so the header count and the tally can never read
+  // two different numbers.
+  function mergeEnsureTallyEl() {
+    var footRight = document.querySelector('.staxx-merge-foot-right');
+    if (!footRight) return null;
+    var el = document.getElementById('staxx-merge-tally');
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'staxx-merge-tally';
+      el.id = 'staxx-merge-tally';
+      var backBtn = document.getElementById('staxx-merge-back');
+      footRight.insertBefore(el, backBtn || footRight.firstChild);
+    }
+    return el;
+  }
+
+  // Painted once per answer, straight from the place that just changed the
+  // answer — never from a timer. The mock had two polling loops taking
+  // turns over the same element and Adrian saw the words flip; a redraw
+  // driven by the answer itself cannot do that (C17). Hidden on every step
+  // but 3 and 4 regardless of the counts passed in.
+  function mergeRenderTally(counts) {
+    var el = mergeEnsureTallyEl();
+    if (!el || !mergeState) return;
+    if (mergeState.step !== 3 && mergeState.step !== 4) { el.hidden = true; return; }
+    el.hidden = false;
+    var html = '<span><b>' + counts.n + '</b> decisions</span>' +
+      '<span class="is-done"><b>' + counts.a + '</b> approved</span>' +
+      '<span><b>' + counts.d + '</b> declined</span>';
+    if (counts.o > 0) {
+      html += '<button type="button" class="staxx-merge-tally-walk" data-merge-tally-walk>' +
+        '<b>' + counts.o + '</b> to answer</button>';
+    } else {
+      html += '<span class="is-done"><b>0</b> to answer</span>';
+    }
+    if (el.innerHTML !== html) el.innerHTML = html;
+
+    // The Next lock lives with the count it is derived from, so an answer
+    // that re-draws the tally (approve, decline, a file choice) unlocks in the
+    // same breath — the first deployed walk answered all nineteen and Next
+    // stayed grey because only the step's first render had set it (C17).
+    var lockBtn = document.getElementById('staxx-merge-next');
+    var lockRefusals = (mergeState.built && mergeState.built.refusals) || [];
+    if (lockBtn) {
+      lockBtn.disabled = lockRefusals.length > 0 || counts.o > 0;
+      lockBtn.title = counts.o > 0 ? 'Answer every marked change before going on.' : '';
+    }
   }
 
   /* ------------------------------------------------------- step 4 pane -- */
@@ -33043,7 +33704,9 @@
     var h = document.createElement('strong');
     h.textContent = 'Same name from more than one stack';
     var p = document.createElement('p');
-    p.textContent = mergeJoinNames(names) + ' both have ' + (finding.facts.isDir ? 'a folder' : 'a file') +
+    // "Both" is wrong past two sources (C17, third interactive session).
+    var bothOrAll = names.length <= 2 ? 'both' : 'all';
+    p.textContent = mergeJoinNames(names) + ' ' + bothOrAll + ' have ' + (finding.facts.isDir ? 'a folder' : 'a file') +
       ' called “' + finding.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.';
     card.appendChild(h);
     card.appendChild(p);
@@ -33091,6 +33754,45 @@
     return card;
   }
 
+  // A file that is both a clash AND unreferenced (README.md in t155-db) —
+  // one card, both sentences, the clash's own three buttons: a file left
+  // behind or kept once needs no separate copy question, and one kept by
+  // a rename follows the clash answer (C17).
+  function mergeFileComboCard(clash, unref) {
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var h = document.createElement('strong');
+    h.textContent = 'Same name from more than one stack';
+    card.appendChild(h);
+
+    var names = clash.facts.sources.map(mergeLeafName);
+    var bothOrAll = names.length <= 2 ? 'both' : 'all';
+    var p1 = document.createElement('p');
+    p1.textContent = mergeJoinNames(names) + ' ' + bothOrAll + ' have ' + (clash.facts.isDir ? 'a folder' : 'a file') +
+      ' called “' + clash.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.';
+    card.appendChild(p1);
+
+    var p2 = document.createElement('p');
+    p2.textContent = '“' + unref.facts.path + '” would also be copied even though nothing in ' +
+      mergeLeafName(unref.stack) + '’s compose file points at it.';
+    card.appendChild(p2);
+
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+    var decision = mergeFindingDecision(clash);
+    [['rename', 'Rename'], ['keep-one', 'Keep one'], ['leave-behind', 'Leave it behind']].forEach(function (pair) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'staxx-btn staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : '');
+      btn.textContent = pair[1];
+      btn.dataset.mergeFileChoice = clash.key;
+      btn.dataset.mergeFileChoiceValue = pair[0];
+      buttons.appendChild(btn);
+    });
+    card.appendChild(buttons);
+    return card;
+  }
+
   // PLAN_156 F13: is this file named by the source's own env_file:, so its
   // row can say it travels untouched rather than being folded into the
   // joined settings file? Mirrors staxx_compose_names_file()'s env_file
@@ -33117,6 +33819,15 @@
     return false;
   }
 
+  // Rewritten for C17: a source's own companion files are drawn as a tree
+  // (folders and their children, one icon per row), never as a flat list
+  // of one-line strips — the server's own reply already IS a tree (every
+  // path it returns, not just top-level folders, since PLAN_156's own
+  // 10MB-cap fix stopped truncating one), so this only has to sort and
+  // indent it. No card is ever drawn inline any more: a row with a
+  // decision is highlighted (`is-ask`) and opens the same card in a hover
+  // popover (mergeAttachFileHover()), answered from any of the rows a
+  // clash touches.
   function mergeRenderFileSourcePane(pane, p) {
     var rel = p.name, data = mergeState.stacks[rel];
     var files = (data && data.filesReply && data.filesReply.files) || [];
@@ -33137,6 +33848,10 @@
       return;
     }
 
+    var clashesByPath = {};
+    ((mergeState.built && mergeState.built.findings) || []).forEach(function (f) {
+      if (f.kind === 'file-clash') clashesByPath[f.facts.path] = f;
+    });
     var unrefByPath = {};
     mergeFindingsByKind('unreferenced').forEach(function (f) {
       if (f.stack === rel) unrefByPath[f.facts.path] = f;
@@ -33144,41 +33859,95 @@
 
     var list = document.createElement('div');
     list.className = 'staxx-merge-filelist';
-    files.forEach(function (entry) {
+    list.dataset.mergeSrcRel = rel;
+
+    var sorted = files.slice().sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
+
+    sorted.forEach(function (entry) {
+      // .staxx never offers itself as a copyable entry, only the image
+      // files sitting directly inside it (Merge.php's own contract) — so
+      // every row seen here under .staxx/ is necessarily one of those,
+      // never a question (Adrian: "icons are not a question").
+      var isIconRow = /^\.staxx\/[^/]+$/.test(entry.path);
+      var depth = entry.path.split('/').length - 1;
+
       var row = document.createElement('div');
-      row.className = 'staxx-merge-filerow' + (entry.outside ? ' staxx-merge-filerow--outside' : '');
+      row.className = 'staxx-merge-filerow' + (entry.dir ? ' is-dir' : '') + (entry.outside ? ' staxx-merge-filerow--outside' : '');
+      row.style.paddingLeft = (0.6 + depth * 1.8) + 'rem';
+      row.appendChild(mergeFileIconEl(entry.path, entry.dir, entry.link));
+
       var name = document.createElement('span');
       name.className = 'staxx-merge-filename';
-      name.textContent = entry.path + (entry.dir ? '/' : '');
+      name.dataset.path = entry.path;
+      name.textContent = mergeLeafName(entry.path) + (entry.dir ? '/' : '');
       row.appendChild(name);
+
       if (!entry.dir) {
         var size = document.createElement('span');
         size.className = 'staxx-merge-filesize';
         size.textContent = mergeHumanBytes(entry.size);
         row.appendChild(size);
       }
-      if (entry.keyLike) {
-        var note = document.createElement('span');
-        note.className = 'staxx-merge-filenote';
-        note.textContent = 'a copy will exist in two places';
-        row.appendChild(note);
-      }
-      if (entry.outside) {
-        var onote = document.createElement('span');
-        onote.className = 'staxx-merge-filenote staxx-merge-filenote--refusal';
-        onote.textContent = 'not copied — points outside the stack';
-        row.appendChild(onote);
-      }
-      if (!entry.dir && mergeFileNamedByEnvFile(data && data.text, entry.path)) {
-        var envNote = document.createElement('span');
-        envNote.className = 'staxx-merge-filenote';
-        envNote.textContent = 'Named by env_file: — copied as it is, never joined with the settings file.';
-        row.appendChild(envNote);
-      }
-      list.appendChild(row);
 
-      var unref = unrefByPath[entry.path];
-      if (unref) list.appendChild(mergeUnreferencedCard(unref));
+      if (isIconRow) {
+        var iconTos = ((mergeState.built && mergeState.built.files) || [])
+          .filter(function (f) { return f.from === rel && f.path === entry.path; })
+          .map(function (f) { return f.to; });
+        if (iconTos.length) {
+          var iconNote = document.createElement('span');
+          iconNote.className = 'staxx-merge-filenote';
+          iconNote.textContent = 'Copied as ' + mergeJoinNames(iconTos) + '.';
+          row.appendChild(iconNote);
+        }
+      } else {
+        if (entry.keyLike) {
+          var note = document.createElement('span');
+          note.className = 'staxx-merge-filenote';
+          note.textContent = 'a copy will exist in two places';
+          row.appendChild(note);
+        }
+        if (entry.outside) {
+          var onote = document.createElement('span');
+          onote.className = 'staxx-merge-filenote staxx-merge-filenote--refusal';
+          onote.textContent = 'not copied — points outside the stack';
+          row.appendChild(onote);
+        }
+        if (!entry.dir && mergeFileNamedByEnvFile(data && data.text, entry.path)) {
+          var envNote = document.createElement('span');
+          envNote.className = 'staxx-merge-filenote';
+          envNote.textContent = 'Named by env_file: — copied as it is, never joined with the settings file.';
+          row.appendChild(envNote);
+        }
+
+        var clash = clashesByPath[entry.path];
+        var unrefHere = unrefByPath[entry.path];
+        var finding = clash || unrefHere;
+        if (finding) {
+          if (!mergeState.fileAnswered[finding.key]) {
+            row.classList.add('is-ask');
+          } else {
+            var decision = mergeFindingDecision(finding);
+            var kind = clash
+              ? (decision === 'rename' ? 'ok' : decision === 'keep-one' ? (clash.facts.sources[0] === rel ? 'keep' : 'no') : 'no')
+              : (decision === 'copy' ? 'ok' : 'no');
+            var badge = document.createElement('span');
+            badge.className = 'staxx-merge-badge staxx-merge-badge--' + kind;
+            if (kind !== 'no') badge.textContent = '✓';
+            row.appendChild(badge);
+          }
+          mergeAttachFileHover(row, function () {
+            return (clash && unrefHere) ? mergeFileComboCard(clash, unrefHere)
+              : clash ? mergeFileClashCard(clash) : mergeUnreferencedCard(unrefHere);
+          });
+        }
+      }
+
+      if (!entry.dir && entry.url && mergeIsImageExt(entry.path)) {
+        mergeAttachImgHover(row, function () { return entry.url; },
+          function () { return p.label + ' · ' + entry.path; });
+      }
+
+      list.appendChild(row);
     });
     pane.appendChild(list);
   }
@@ -33190,17 +33959,16 @@
     });
   }
 
-  // The file lists' own clashes belong to neither source pane (a clash
-  // names two or more stacks at once) — shown once, above the source
-  // panes, the same reasoncard shape a clash always used.
+  // No fixed card ever sits in this band any more (C17: a one-line strip
+  // and an inline card were both mocked and set aside) — every column is
+  // a tree, and a row with a decision opens its card on hover.
   function mergeRenderFilesBand(host) {
-    mergeFindingsByKind('file-clash').forEach(function (f) { host.appendChild(mergeFileClashCard(f)); });
-
     var band = document.createElement('div');
     band.className = 'staxx-merge-sourcesband';
     mergeState.picked.forEach(function (p) {
       var pane = document.createElement('div');
       pane.className = 'staxx-merge-sourcepane';
+      pane.dataset.mergeSrcRel = p.name;
       pane.appendChild(mergeSourceHeadEl(p.label, mergeColorFor(p.name)));
       mergeRenderFileSourcePane(pane, p);
       band.appendChild(pane);
@@ -33215,6 +33983,256 @@
     }
   }
 
+  // Every parent folder implied by a final path, synthesised so the tree
+  // can draw it as its own row — planFiles() only ever names FILES, a
+  // folder is implied by its own children (its one exception, an empty
+  // folder kept on purpose, already arrives as its own entry here too).
+  function mergeBuildTreeRows(entries) {
+    var metaByPath = {};
+    entries.forEach(function (e) { metaByPath[e.path] = e; });
+    var allPaths = {};
+    entries.forEach(function (e) {
+      allPaths[e.path] = true;
+      var parts = e.path.split('/');
+      for (var i = 1; i < parts.length; i++) allPaths[parts.slice(0, i).join('/')] = true;
+    });
+    return Object.keys(allPaths).sort().map(function (path) {
+      return { path: path, depth: path.split('/').length - 1, isDir: !metaByPath[path], meta: metaByPath[path] || null };
+    });
+  }
+
+  function mergeSourceFileUrl(rel, path) {
+    var s = mergeState.stacks[rel];
+    var files = (s && s.filesReply && s.filesReply.files) || [];
+    for (var i = 0; i < files.length; i++) { if (files[i].path === path) return files[i].url || ''; }
+    return '';
+  }
+
+  // Hovering a tree row lights its origin (C17): the whole FILES column it
+  // came from, plus the one row inside it — found by the path this row's
+  // own build already worked out (`data-orig`), not by re-parsing the
+  // rename here. Rows with no dot (the two files StaXX writes, .staxx/)
+  // never call this at all.
+  function mergeTreeRowHoverOn(rel, orig) {
+    if (!mergeModal) return;
+    var pane = mergeModal.querySelector('.staxx-merge-sourcepane[data-merge-src-rel="' + mergeCssEsc(rel) + '"]');
+    if (!pane) return;
+    var color = mergeColorFor(rel);
+    pane.classList.add('staxx-merge-srchl');
+    pane.style.setProperty('--hl', color);
+    var head = pane.querySelector('.staxx-merge-pane-head');
+    if (head) head.classList.add('staxx-merge-srchl');
+    var nameEl = pane.querySelector('.staxx-merge-filename[data-path="' + mergeCssEsc(orig) + '"]');
+    var frow = nameEl && nameEl.closest('.staxx-merge-filerow');
+    if (frow) {
+      frow.classList.add('staxx-merge-filehl');
+      frow.style.setProperty('--hl', color);
+      frow.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function mergeTreeRowHoverOff() {
+    if (!mergeModal) return;
+    mergeModal.querySelectorAll('.staxx-merge-srchl').forEach(function (el) { el.classList.remove('staxx-merge-srchl'); });
+    mergeModal.querySelectorAll('.staxx-merge-filehl').forEach(function (el) { el.classList.remove('staxx-merge-filehl'); });
+  }
+
+  // "The new stack's folder" (C17) — the file plan drawn as a tree, never
+  // a second computation: every surviving planFiles() entry (`to === null`
+  // is left behind and simply is not here), plus the two files StaXX
+  // writes itself. A pending decision shows at its recommended (default)
+  // name, since that is exactly what the plan already computed for an
+  // unset decision — see mergeFindingDecision()'s own comment.
+  function mergeRenderNewFolderTree(container) {
+    var rootLeaf = (mergeState.built && mergeState.built.newProject) || mergeLeafName(mergeBestEffortRel());
+    var rootRow = document.createElement('div');
+    rootRow.className = 'staxx-merge-trow';
+    var rootDot = document.createElement('span');
+    rootDot.className = 'staxx-merge-tdot';
+    rootRow.appendChild(rootDot);
+    var rootMain = document.createElement('div');
+    rootMain.className = 'staxx-merge-tmain';
+    rootMain.appendChild(mergeFileIconEl(rootLeaf, true, false));
+    var rootName = document.createElement('span');
+    rootName.className = 'staxx-merge-tname dir';
+    rootName.textContent = rootLeaf + '/';
+    rootMain.appendChild(rootName);
+    rootRow.appendChild(rootMain);
+    container.appendChild(rootRow);
+
+    var entries = [];
+    entries.push({ path: 'compose.yaml', from: null, note: 'the merged file', isNew: true });
+    if (mergeEnvSourceEntries().length) entries.push({ path: '.env', from: null, note: 'the joined settings file', isNew: true });
+
+    var findings = (mergeState.built && mergeState.built.findings) || [];
+    var clashByPath = {};
+    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+
+    ((mergeState.built && mergeState.built.files) || []).forEach(function (f) {
+      if (f.to === null) return;   // left behind — not part of the new folder
+      var clash = clashByPath[f.path];
+      var unref = clash ? null : findings.filter(function (u) {
+        return u.kind === 'unreferenced' && u.stack === f.from && u.facts.path === f.path;
+      })[0];
+      var pendingKey = clash ? clash.key : (unref ? unref.key : null);
+      var pending = !!pendingKey && !mergeState.fileAnswered[pendingKey];
+      var isRenamedIcon = /^\.staxx\/icon-/.test(f.to) && f.to !== f.path;
+      var note = '';
+      if (isRenamedIcon) note = 'renamed for its service';
+      else if (clash) note = (f.to !== f.path) ? 'renamed to keep both' : 'the one copy kept';
+      entries.push({ path: f.to, from: f.from, origPath: f.path, note: note, pending: pending, isNew: isRenamedIcon });
+    });
+
+    mergeBuildTreeRows(entries).forEach(function (r) {
+      var row = document.createElement('div');
+      row.className = 'staxx-merge-trow';
+      row.dataset.leaf = r.meta && r.meta.from ? mergeLeafName(r.meta.from) : '';
+      row.dataset.orig = r.meta ? (r.meta.origPath || '') : '';
+
+      var dot = document.createElement('span');
+      dot.className = 'staxx-merge-tdot';
+      if (r.meta && r.meta.from) {
+        dot.style.background = mergeColorFor(r.meta.from);
+        dot.title = 'From ' + mergeLeafName(r.meta.from);
+      }
+      row.appendChild(dot);
+
+      var main = document.createElement('div');
+      main.className = 'staxx-merge-tmain';
+      main.style.paddingLeft = ((r.depth + 1) * 1.8) + 'rem';
+      var leaf = mergeLeafName(r.path);
+      main.appendChild(mergeFileIconEl(r.path, r.isDir, false));
+
+      var nameSpan = document.createElement('span');
+      var cls = 'staxx-merge-tname';
+      if (r.isDir) cls += ' dir';
+      if (r.meta && r.meta.pending) cls += ' ask';
+      else if (r.meta && r.meta.isNew) cls += ' new';
+      nameSpan.className = cls;
+      nameSpan.textContent = leaf + (r.isDir ? '/' : '') + (r.meta && r.meta.pending ? ' — waiting on your answer' : '');
+      main.appendChild(nameSpan);
+
+      if (r.meta && !r.meta.pending && r.meta.note) {
+        var fromSpan = document.createElement('span');
+        fromSpan.className = 'staxx-merge-tfrom';
+        fromSpan.textContent = r.meta.note;
+        main.appendChild(fromSpan);
+      }
+      row.appendChild(main);
+
+      if (r.meta && r.meta.from) {
+        row.addEventListener('mouseenter', function () { mergeTreeRowHoverOn(r.meta.from, r.meta.origPath); });
+        row.addEventListener('mouseleave', mergeTreeRowHoverOff);
+        if (!r.isDir && mergeIsImageExt(r.path)) {
+          var url = mergeSourceFileUrl(r.meta.from, r.meta.origPath);
+          if (url) {
+            mergeAttachImgHover(row, function () { return url; },
+              function () { return leaf + ' (from ' + mergeLeafName(r.meta.from) + ')'; });
+          }
+        }
+      }
+      container.appendChild(row);
+    });
+  }
+
+  // The joined-settings/new-folder split (C17) as a pair of fr shares,
+  // remembered on mergeState for the wizard's own life. Snapping happens
+  // on the DRAG (within 6% of either end); a pane head's own click sets
+  // the same shape outright (fully open/fully shut, or back to even).
+  function mergeStep4ApplySplit(joined) {
+    var s = mergeState.step4Split || { top: 1, bot: 1 };
+    joined.style.setProperty('--top', s.top + 'fr');
+    joined.style.setProperty('--bot', s.bot + 'fr');
+    var heads = joined.querySelectorAll('.staxx-merge-pane-head');
+    if (heads[0]) heads[0].classList.toggle('is-shut', s.top <= 0);
+    if (heads[1]) heads[1].classList.toggle('is-shut', s.bot <= 0);
+  }
+
+  function mergeInitStep4Split(joined, grip, topEl, botEl, head1, head2) {
+    mergeStep4ApplySplit(joined);
+    var dragging = false, startY = 0, startTopH = 0, totalH = 0;
+
+    grip.addEventListener('pointerdown', function (e) {
+      dragging = true;
+      startY = e.clientY;
+      startTopH = topEl.getBoundingClientRect().height;
+      totalH = startTopH + botEl.getBoundingClientRect().height;
+      grip.setPointerCapture(e.pointerId);
+    });
+    grip.addEventListener('pointermove', function (e) {
+      if (!dragging || totalH <= 0) return;
+      var h = Math.max(0, Math.min(totalH, startTopH + (e.clientY - startY)));
+      var frac = h / totalH;
+      if (frac < 0.06) frac = 0; else if (frac > 0.94) frac = 1;
+      mergeState.step4Split = { top: frac === 0 ? 0 : frac * 100, bot: frac === 1 ? 0 : (1 - frac) * 100 };
+      mergeStep4ApplySplit(joined);
+    });
+    function endDrag() { dragging = false; }
+    grip.addEventListener('pointerup', endDrag);
+    grip.addEventListener('pointercancel', endDrag);
+
+    function toggle(which) {
+      var s = mergeState.step4Split || { top: 1, bot: 1 };
+      if (which === 'top') {
+        mergeState.step4Split = (s.top > 0 && s.bot === 0) ? { top: 1, bot: 1 } : { top: 1, bot: 0 };
+      } else {
+        mergeState.step4Split = (s.bot > 0 && s.top === 0) ? { top: 1, bot: 1 } : { top: 0, bot: 1 };
+      }
+      mergeStep4ApplySplit(joined);
+    }
+    head1.addEventListener('click', function () { toggle('top'); });
+    head2.addEventListener('click', function () { toggle('bot'); });
+  }
+
+  // Every joined-settings mark plus every highlighted file row, tallied
+  // together (C17) — the same counted-once-only rule the walk above uses,
+  // so the two can never disagree.
+  function mergeEnvMarkCounts() {
+    var keys = {};
+    ((mergeState.built && mergeState.built.changes) || []).forEach(function (c) { if (c.file === 'env') keys[c.key] = true; });
+    var list = Object.keys(keys);
+    var a = 0, d = 0;
+    list.forEach(function (k) {
+      if (mergeState.approved[k]) a++;
+      else if (mergeState.decisions[k] === 'keep-both') d++;
+      else if (mergeState.decisions[k] === 'choose-name') a++;
+    });
+    return { n: list.length, a: a, d: d };
+  }
+
+  function mergeFileMarkCounts() {
+    var findings = (mergeState.built && mergeState.built.findings) || [];
+    var clashByPath = {};
+    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+    var n = 0, a = 0, d = 0;
+    var seenClash = {};
+    findings.forEach(function (f) {
+      if (f.kind === 'file-clash') {
+        if (seenClash[f.key]) return;
+        seenClash[f.key] = true;
+        var rows = f.facts.sources.length;
+        n += rows;
+        if (!mergeState.fileAnswered[f.key]) return;
+        var dec = mergeFindingDecision(f);
+        if (dec === 'rename') a += rows;
+        else if (dec === 'keep-one') { a += 1; d += rows - 1; }
+        else d += rows;
+      } else if (f.kind === 'unreferenced') {
+        if (clashByPath[f.facts.path]) return;   // folded into the clash's own rows above
+        n += 1;
+        if (!mergeState.fileAnswered[f.key]) return;
+        if (mergeFindingDecision(f) === 'copy') a += 1; else d += 1;
+      }
+    });
+    return { n: n, a: a, d: d };
+  }
+
+  function mergeStep4TallyCounts() {
+    var env = mergeEnvMarkCounts(), files = mergeFileMarkCounts();
+    var n = env.n + files.n, a = env.a + files.a, d = env.d + files.d;
+    return { n: n, a: a, d: d, o: n - a - d };
+  }
+
   // The "What the new stack's folder will contain" pane is gone (third
   // interactive session) — its file count and total size moved to step 6's
   // own consequences column (mergeStep6Consequences()'s "N files come
@@ -33222,51 +34240,97 @@
   function mergeRenderStep4() {
     var host = document.getElementById('staxx-merge-step4');
     if (!host) return;
-    host.innerHTML = '';
 
-    var refusalNote = document.createElement('div');
-    refusalNote.className = 'staxx-error';
-    var refusals = (mergeState.built && mergeState.built.refusals) || [];
-    if (refusals.length) {
-      refusalNote.textContent = refusals.map(mergeRefusalText).join(' ');
-    } else {
-      refusalNote.hidden = true;
-    }
-    host.appendChild(refusalNote);
+    // Scroll positions survive the rebuild (Adrian, C17: "I toggled a
+    // check half way down and lost my place") — every container below is
+    // destroyed and recreated from scratch, so each one's own position is
+    // captured by a stable key rather than by the (about to vanish) element
+    // itself, the way keepScroll()'s single-element form assumes.
+    var savedScroll = {};
+    host.querySelectorAll('.staxx-merge-filelist[data-merge-src-rel]').forEach(function (el) {
+      savedScroll['files:' + el.dataset.mergeSrcRel] = el.scrollTop;
+    });
+    var oldCode1 = document.getElementById('staxx-merge-settings-merged-code');
+    if (oldCode1) savedScroll.joinedCode = oldCode1.scrollTop;
+    var oldTree = host.querySelector('.staxx-merge-filetree');
+    if (oldTree) savedScroll.tree = oldTree.scrollTop;
 
-    // A CSS grid rather than nested flex boxes: the joined pane's own
-    // grid-area spans the settings and files rows together, which is what
-    // lines its heading up with the source headings rather than the
-    // SETTINGS label above them (third interactive session's own ruling —
-    // see .staxx-merge-step4-grid in staxx.css for the area names).
-    var grid = document.createElement('div');
-    grid.className = 'staxx-merge-step4-grid';
-    host.appendChild(grid);
+    keepScroll(host, function () {
+      host.innerHTML = '';
 
-    var settingsHead = document.createElement('h4');
-    settingsHead.className = 'staxx-merge-tile-heading staxx-merge-step4-slabel';
-    settingsHead.textContent = 'Settings';
-    grid.appendChild(settingsHead);
+      var refusalNote = document.createElement('div');
+      refusalNote.className = 'staxx-error';
+      var refusals = (mergeState.built && mergeState.built.refusals) || [];
+      if (refusals.length) {
+        refusalNote.textContent = refusals.map(mergeRefusalText).join(' ');
+      } else {
+        refusalNote.hidden = true;
+      }
+      host.appendChild(refusalNote);
 
-    var srow = document.createElement('div');
-    srow.className = 'staxx-merge-step4-srow';
-    grid.appendChild(srow);
-    mergeRenderSettingsSourceBand(srow);
+      // A CSS grid rather than nested flex boxes: the joined pane's own
+      // grid-area spans the settings and files rows together, which is what
+      // lines its heading up with the source headings rather than the
+      // SETTINGS label above them (third interactive session's own ruling —
+      // see .staxx-merge-step4-grid in staxx.css for the area names).
+      var grid = document.createElement('div');
+      grid.className = 'staxx-merge-step4-grid';
+      host.appendChild(grid);
 
-    var filesHead = document.createElement('h4');
-    filesHead.className = 'staxx-merge-tile-heading staxx-merge-step4-flabel';
-    filesHead.textContent = 'Files';
-    grid.appendChild(filesHead);
+      var settingsHead = document.createElement('h4');
+      settingsHead.className = 'staxx-merge-tile-heading staxx-merge-step4-slabel';
+      settingsHead.textContent = 'Settings';
+      grid.appendChild(settingsHead);
 
-    var frow = document.createElement('div');
-    frow.className = 'staxx-merge-step4-frow';
-    grid.appendChild(frow);
-    mergeRenderFilesBand(frow);
+      var srow = document.createElement('div');
+      srow.className = 'staxx-merge-step4-srow';
+      grid.appendChild(srow);
+      mergeRenderSettingsSourceBand(srow);
 
-    var joined = document.createElement('div');
-    joined.className = 'staxx-merge-step4-joined';
-    grid.appendChild(joined);
-    mergeRenderJoinedSettingsPane(joined);
+      var filesHead = document.createElement('h4');
+      filesHead.className = 'staxx-merge-tile-heading staxx-merge-step4-flabel';
+      filesHead.textContent = 'Files';
+      grid.appendChild(filesHead);
+
+      var frow = document.createElement('div');
+      frow.className = 'staxx-merge-step4-frow';
+      grid.appendChild(frow);
+      mergeRenderFilesBand(frow);
+
+      var joined = document.createElement('div');
+      joined.className = 'staxx-merge-step4-joined';
+      grid.appendChild(joined);
+      mergeRenderJoinedSettingsPane(joined);
+
+      var grip = document.createElement('div');
+      grip.className = 'staxx-merge-grip staxx-merge-grip--h';
+      joined.appendChild(grip);
+
+      var treeHead = document.createElement('div');
+      treeHead.className = 'staxx-merge-pane-head';
+      treeHead.textContent = 'The new stack’s folder';
+      joined.appendChild(treeHead);
+
+      var treeEl = document.createElement('div');
+      treeEl.className = 'staxx-merge-filetree';
+      joined.appendChild(treeEl);
+      mergeRenderNewFolderTree(treeEl);
+
+      var settingsHeadEl = joined.querySelector('.staxx-merge-pane-head');
+      var settingsCodeEl = document.getElementById('staxx-merge-settings-merged-code');
+      mergeInitStep4Split(joined, grip, settingsCodeEl, treeEl, settingsHeadEl, treeHead);
+    });
+
+    host.querySelectorAll('.staxx-merge-filelist[data-merge-src-rel]').forEach(function (el) {
+      var v = savedScroll['files:' + el.dataset.mergeSrcRel];
+      if (v !== undefined) el.scrollTop = v;
+    });
+    var newCode1 = document.getElementById('staxx-merge-settings-merged-code');
+    if (newCode1 && savedScroll.joinedCode !== undefined) newCode1.scrollTop = savedScroll.joinedCode;
+    var newTree = host.querySelector('.staxx-merge-filetree');
+    if (newTree && savedScroll.tree !== undefined) newTree.scrollTop = savedScroll.tree;
+
+    mergeRenderTally(mergeStep4TallyCounts());
   }
 
   /* ------------------------------------------------------- step 5 pane -- *
@@ -33547,14 +34611,32 @@
       var fromChip = els.board.querySelector('[data-dep-chip="from"][data-dep-svc="' + d.from + '"]');
       var toChip = els.board.querySelector('[data-dep-chip="to"][data-dep-svc="' + d.to + '"]');
       if (!fromChip || !toChip) return;
+      var dAttr = mergeCurvePath(mergeChipCenter(rect, fromChip), mergeChipCenter(rect, toChip));
+
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', mergeCurvePath(mergeChipCenter(rect, fromChip), mergeChipCenter(rect, toChip)));
+      path.setAttribute('d', dAttr);
       path.setAttribute('class', 'staxx-merge-depline');
       path.setAttribute('stroke', mergeSvcColor(services, d.from));
       path.dataset.depFrom = d.from;
       path.dataset.depTo = d.to;
       path.dataset.depIndex = idx;
       els.svg.appendChild(path);
+
+      // The visible stroke is too thin to hit reliably (C17: "no way to
+      // undo that") — a wide transparent twin with the same "d" carries
+      // the real pointer target, and toggles is-hot on the line it
+      // shadows so hovering either one highlights the same line.
+      var hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      hit.setAttribute('d', dAttr);
+      hit.setAttribute('class', 'staxx-merge-dephit');
+      hit.dataset.depIndex = idx;
+      els.svg.appendChild(hit);
+
+      function setHot(on) { path.classList.toggle('is-hot', on); }
+      path.addEventListener('mouseenter', function () { setHot(true); });
+      path.addEventListener('mouseleave', function () { setHot(false); });
+      hit.addEventListener('mouseenter', function () { setHot(true); });
+      hit.addEventListener('mouseleave', function () { setHot(false); });
     });
   }
 
@@ -33596,6 +34678,16 @@
     q.className = 'staxx-merge-suggest-q';
     q.textContent = 'Dependencies';
     block.appendChild(q);
+
+    // C17: the START-versus-READY paragraph that used to sit under the
+    // board moved to the Health checks heading below — this one-liner
+    // takes its place, plus the removal instruction (a click was nearly
+    // impossible to land and said nothing about being possible at all).
+    var explain = document.createElement('p');
+    explain.className = 'staxx-merge-explain';
+    explain.textContent = 'Grab a handle from the column on the left and drag it to a service in the column ' +
+      'on the right to make a connection. Click a line to remove it.';
+    block.appendChild(explain);
 
     var board = document.createElement('div');
     board.className = 'staxx-merge-depboard';
@@ -33667,30 +34759,88 @@
     board.appendChild(cols);
     block.appendChild(board);
 
-    var help = document.createElement('p');
-    help.className = 'staxx-merge-help';
-    help.textContent = 'A line waits for the other service to START, which is not the same as READY — a ' +
-      'database can be up for twenty seconds before it accepts a connection, which is exactly when the app ' +
-      'tries and fails. Give the target a health check below and the wait becomes a real one.';
-    block.appendChild(help);
-
     host.appendChild(block);
+
+    // The once-per-wizard demonstration (C17): only when the board is
+    // empty, and only the first time this ever renders that way — the
+    // flag is set the moment it is scheduled, not when it actually plays,
+    // so a redraw within the two seconds never schedules a second one.
+    if (!(mergeState.suggest.deps || []).length && !mergeState.demoShown) {
+      mergeState.demoShown = true;
+      setTimeout(function () { mergePlayDepDemo(); }, 2000);
+    }
   }
 
-  // Verbatim wording from the second interactive session (PLAN_155) — four
-  // kinds now: `covered` needs no switch at all (the file already has one,
-  // or the image declares its own — Docker runs either unasked); a `known`
-  // row (PLAN_155 C12) names the well-known check StaXX would write if the
-  // switch is left on; everything else is the plain "Add one" switch, off
-  // or on, and turning IT on shows this same sentence until the person asks
-  // to write their own instead.
+  // Fades a hand in on the second service's handle in the left column,
+  // glides it to the third in the right column while an amber line draws
+  // itself alongside, then fades both out — purely decorative (pointer-
+  // events: none throughout) and nothing here is written into mergeState
+  // beyond the cleanup handle a real drag can cancel it through.
+  function mergePlayDepDemo() {
+    if (!mergeState || mergeState.step !== 5) return;
+    if ((mergeState.suggest.deps || []).length) return;   // a line appeared meanwhile
+    var els = mergeDepBoardEls();
+    if (!els.board) return;
+    var fromChips = els.board.querySelectorAll('[data-dep-chip="from"]');
+    var toChips = els.board.querySelectorAll('[data-dep-chip="to"]');
+    if (fromChips.length < 2 || toChips.length < 3) return;   // needs a "second" and a "third" service
+    var fromHandle = fromChips[1].querySelector('.staxx-merge-dephandle');
+    var toHandle = toChips[2].querySelector('.staxx-merge-dephandle');
+    if (!fromHandle || !toHandle) return;
+
+    mergeState.demoPlaying = true;
+    var boardRect = els.board.getBoundingClientRect();
+    var hand = document.createElement('div');
+    hand.className = 'staxx-merge-demohand';
+    hand.innerHTML = '<svg viewBox="0 0 24 24" fill="#fff" stroke="#222" stroke-width="1"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V11m0-2a1.5 1.5 0 0 1 3 0v6a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-4.6-2.2L3.4 15.1a1.5 1.5 0 0 1 2.3-1.9L9 16"/></svg>';
+    var line = document.createElement('div');
+    line.className = 'staxx-merge-demoline';
+    els.board.appendChild(hand);
+    els.board.appendChild(line);
+
+    function centerOf(el) {
+      var r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - boardRect.left, y: r.top + r.height / 2 - boardRect.top };
+    }
+    var p1 = centerOf(fromHandle), p2 = centerOf(toHandle);
+    hand.style.left = p1.x + 'px'; hand.style.top = p1.y + 'px'; hand.style.opacity = '0';
+    line.style.left = p1.x + 'px'; line.style.top = p1.y + 'px'; line.style.width = '0px'; line.style.opacity = '0';
+
+    function cleanup() {
+      hand.remove();
+      line.remove();
+      if (mergeState) mergeState.demoPlaying = false;
+    }
+    mergeState.demoCleanup = cleanup;
+
+    requestAnimationFrame(function () { hand.style.opacity = '1'; });
+    setTimeout(function () {
+      if (!mergeState || !mergeState.demoPlaying) return;
+      var dx = p2.x - p1.x, dy = p2.y - p1.y;
+      var len = Math.sqrt(dx * dx + dy * dy), ang = Math.atan2(dy, dx) * 180 / Math.PI;
+      hand.style.left = p2.x + 'px';
+      hand.style.top = p2.y + 'px';
+      line.style.width = len + 'px';
+      line.style.transform = 'rotate(' + ang + 'deg)';
+      line.style.opacity = '0.9';
+      setTimeout(function () {
+        if (!mergeState || !mergeState.demoPlaying) return;
+        hand.style.opacity = '0';
+        line.style.opacity = '0';
+        setTimeout(cleanup, 400);
+      }, 1900);
+    }, 500);
+  }
+
+  // Facts only, nothing else (C17): every row's sentence is who-waits
+  // (built in mergeRenderHealthRow() below) plus at most one of these
+  // three — never a "known" check named ahead of time, never an
+  // explanation shown before the switch is even turned on. What the
+  // switch and the button beneath it do is unchanged; only the words are.
   function mergeHealthSourceSentence(h) {
-    if (h.covered) return 'Its image has a health check built in, so there is nothing to add — ' +
-      'anything waiting for it waits until it is healthy.';
-    if (h.source === 'own') return 'Write your own below.';
-    if (h.known) return 'StaXX knows a check for this image: ' + offerCommandText(h.known.test) + '.';
-    return 'StaXX will work a check out once the stack is running, try it inside the container, ' +
-      'and offer it to you in the editor.';
+    if (h.covered) return 'Its image has a health check built in.';
+    if (h.on) return 'StaXX will work a check out once the stack is running.';
+    return '';
   }
 
   function mergeRenderHealthForm(service, h) {
@@ -33751,8 +34901,10 @@
 
     var sentence = document.createElement('p');
     sentence.className = 'staxx-merge-healthrow-sentence';
-    sentence.textContent = (count > 0 ? (count + ' service' + (count === 1 ? '' : 's') + ' wait' +
-      (count === 1 ? 's' : '') + ' for it.') : 'Nothing waits for it.') + ' ' + mergeHealthSourceSentence(h);
+    var who = count > 0 ? (count + ' service' + (count === 1 ? '' : 's') + ' wait' +
+      (count === 1 ? 's' : '') + ' for it.') : 'Nothing waits for it.';
+    var rest = mergeHealthSourceSentence(h);
+    sentence.textContent = rest ? (who + ' ' + rest) : who;
     row.appendChild(sentence);
 
     // Switched on with nothing decided yet: the button that hands the
@@ -33780,6 +34932,16 @@
     q.className = 'staxx-merge-suggest-q';
     q.textContent = 'Health checks';
     block.appendChild(q);
+
+    // Moved here from under the dependency board (C17) and reworded: a
+    // fact about what a dependency line does and does not wait for, not
+    // an explanation of the switch below it.
+    var help = document.createElement('p');
+    help.className = 'staxx-merge-help';
+    help.textContent = 'A dependency line only waits for the other service to start, not to be ready — a ' +
+      'database can be up for twenty seconds before it accepts a connection. A health check turns the wait ' +
+      'into a real one.';
+    block.appendChild(help);
 
     var counts = {};
     services.forEach(function (s) { counts[s] = 0; });
@@ -33932,35 +35094,52 @@
     host.appendChild(block);
   }
 
+  // C17: toggling a suggestion used to empty and rebuild the whole step,
+  // which jumped both panes back to the top ("I toggled a check half way
+  // down and lost my place"). The left and right containers are now
+  // persistent — only their OWN contents are cleared and rebuilt, each
+  // wrapped in keepScroll() — so a re-render never touches the other's
+  // scroll position and each keeps its own.
   function mergeRenderStep5() {
     var host = document.getElementById('staxx-merge-step5');
     if (!host) return;
-    host.innerHTML = '';
-    if (!mergeState.built || !mergeState.suggest) return;
+    if (!mergeState.built || !mergeState.suggest) { host.innerHTML = ''; return; }
 
     var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
 
-    var left = document.createElement('div');
-    left.className = 'staxx-merge-step5-left';
-    mergeRenderDepBlock(left, services);
-    mergeRenderHealthBlock(left, services);
-    mergeRenderUpdateBlock(left);
-    host.appendChild(left);
+    var left = host.querySelector('.staxx-merge-step5-left');
+    if (!left) {
+      host.innerHTML = '';
+      left = document.createElement('div');
+      left.className = 'staxx-merge-step5-left';
+      host.appendChild(left);
+    }
+    keepScroll(left, function () {
+      left.innerHTML = '';
+      mergeRenderDepBlock(left, services);
+      mergeRenderHealthBlock(left, services);
+      mergeRenderUpdateBlock(left);
+    });
 
-    var right = document.createElement('div');
-    right.className = 'staxx-merge-step5-right';
-    var rightHead = document.createElement('div');
-    rightHead.className = 'staxx-merge-pane-head';
-    rightHead.textContent = 'The new file';
-    right.appendChild(rightHead);
-    var codeWrap = document.createElement('div');
-    codeWrap.className = 'staxx-merge-code';
-    codeWrap.id = 'staxx-merge-step5-code';
-    right.appendChild(codeWrap);
-    host.appendChild(right);
-
-    mergePaintCode(codeWrap, mergeState.finalText, function (row, i) {
-      if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
+    var right = host.querySelector('.staxx-merge-step5-right');
+    var codeWrap = document.getElementById('staxx-merge-step5-code');
+    if (!right) {
+      right = document.createElement('div');
+      right.className = 'staxx-merge-step5-right';
+      var rightHead = document.createElement('div');
+      rightHead.className = 'staxx-merge-pane-head';
+      rightHead.textContent = 'The new file';
+      right.appendChild(rightHead);
+      codeWrap = document.createElement('div');
+      codeWrap.className = 'staxx-merge-code';
+      codeWrap.id = 'staxx-merge-step5-code';
+      right.appendChild(codeWrap);
+      host.appendChild(right);
+    }
+    keepScroll(codeWrap, function () {
+      mergePaintCode(codeWrap, mergeState.finalText, function (row, i) {
+        if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
+      });
     });
 
     mergeDrawDepLines(services);
@@ -33975,8 +35154,10 @@
     mergeSuggestRecompute();
     var codeEl = document.getElementById('staxx-merge-step5-code');
     if (codeEl) {
-      mergePaintCode(codeEl, mergeState.finalText, function (row, i) {
-        if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
+      keepScroll(codeEl, function () {
+        mergePaintCode(codeEl, mergeState.finalText, function (row, i) {
+          if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
+        });
       });
     }
     var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
@@ -33996,6 +35177,12 @@
       var chip = event.target.closest ? event.target.closest('[data-dep-chip="from"]') : null;
       if (!chip || !mergeState || mergeState.step !== 5) return;
       event.preventDefault();
+      // A real drag starting mid-demo cancels it outright (C17) — the
+      // demo's own elements are removed and nothing further plays.
+      if (mergeState.demoPlaying && mergeState.demoCleanup) {
+        mergeState.demoCleanup();
+        mergeState.demoCleanup = null;
+      }
       var els = mergeDepBoardEls();
       if (!els.board || !els.svg) return;
       var rect = els.board.getBoundingClientRect();
@@ -34025,11 +35212,15 @@
       document.addEventListener('pointerup', up);
     });
 
-    // Click a line to remove it (PLAN_155). A separate listener from the
-    // wizard's big shared click delegate above: an SVG <path> is not one of
-    // the element shapes that one already knows how to route.
+    // Click a line to remove it (PLAN_155) — either the line itself or its
+    // own wide hit-path twin (C17), both carrying the same data-dep-index.
+    // A separate listener from the wizard's big shared click delegate
+    // above: an SVG <path> is not one of the element shapes that one
+    // already knows how to route.
     mergeModal.addEventListener('click', function (event) {
-      var path = event.target.closest ? event.target.closest('.staxx-merge-depline:not(.staxx-merge-depline--drag)') : null;
+      var path = event.target.closest
+        ? event.target.closest('.staxx-merge-depline:not(.staxx-merge-depline--drag), .staxx-merge-dephit')
+        : null;
       if (!path || !mergeState) return;
       var idx = parseInt(path.dataset.depIndex, 10);
       if (isNaN(idx)) return;
@@ -34460,7 +35651,7 @@
     host.appendChild(formCol);
 
     var grip = document.createElement('div');
-    grip.className = 'staxx-merge-step6-grip';
+    grip.className = 'staxx-merge-step6-grip staxx-merge-grip staxx-merge-grip--v';
     host.appendChild(grip);
 
     var codeCol = document.createElement('div');
@@ -34530,6 +35721,11 @@
     step5El.hidden = mergeState.step !== 5;
     step6El.hidden = mergeState.step !== 6;
 
+    // Hides the tally by default on every entry to a step other than 3 and
+    // 4 — step 3's own render below overwrites this with real counts, and
+    // so, in time, will step 4's.
+    mergeRenderTally({ n: 0, a: 0, d: 0, o: 0 });
+
     if (mergeState.step === 1) {
       mergeRenderStep1();
       nextBtn.disabled = mergeState.picked.length < 2;
@@ -34538,11 +35734,15 @@
     } else if (mergeState.step === 3) {
       mergeRenderStep3();
       var refusals = (mergeState.built && mergeState.built.refusals) || [];
-      nextBtn.disabled = refusals.length > 0;
+      var outstanding3 = mergeOutstandingKeys().length;
+      nextBtn.disabled = refusals.length > 0 || outstanding3 > 0;
+      nextBtn.title = outstanding3 > 0 ? 'Answer every marked change before going on.' : '';
     } else if (mergeState.step === 4) {
-      mergeRenderStep4();
+      mergeRenderStep4();   // paints its own tally
       var refusals4 = (mergeState.built && mergeState.built.refusals) || [];
-      nextBtn.disabled = refusals4.length > 0;
+      var outstanding4 = mergeStep4TallyCounts().o;
+      nextBtn.disabled = refusals4.length > 0 || outstanding4 > 0;
+      nextBtn.title = outstanding4 > 0 ? 'Answer every marked change before going on.' : '';
     } else if (mergeState.step === 5) {
       // Every suggestion here is optional (PLAN_155: "everything is off by
       // default"), so there is never a refusal to gate Next on.
@@ -34574,6 +35774,7 @@
     if (mergeState.step === 1) {
       if (mergeState.picked.length < 2) return;
       mergeState.step = 2;
+      mergeState.walkLast = null;
       mergeEnterStep2();
       return;
     }
@@ -34585,25 +35786,29 @@
       // step for a live rebuild to feed.
       mergeRebuild();
       mergeState.step = 3;
+      mergeState.walkLast = null;
       mergeRender();
       return;
     }
     if (mergeState.step === 3) {
       var refusals = (mergeState.built && mergeState.built.refusals) || [];
-      if (refusals.length) return;
+      if (refusals.length || mergeOutstandingKeys().length) return;
       mergeState.step = 4;
+      mergeState.walkLast = null;
       mergeRender();
       return;
     }
     if (mergeState.step === 4) {
       var refusals4 = (mergeState.built && mergeState.built.refusals) || [];
-      if (refusals4.length) return;
+      if (refusals4.length || mergeStep4TallyCounts().o > 0) return;
       mergeState.step = 5;
+      mergeState.walkLast = null;
       mergeEnterStep5();
       return;
     }
     if (mergeState.step === 5) {
       mergeState.step = 6;
+      mergeState.walkLast = null;
       mergeRender();
       return;
     }
@@ -34613,6 +35818,7 @@
   function mergeBack() {
     if (!mergeState || mergeState.step === 1) return;
     mergeState.step -= 1;
+    mergeState.walkLast = null;
     mergeRender();
   }
 
@@ -34650,6 +35856,7 @@
         var idx = mergeState.picked.findIndex(function (p) { return p.name === relName; });
         if (idx >= 0) mergeState.picked.splice(idx, 1);
         else mergeState.picked.push({ name: relName, label: label });
+        mergeState.walkLast = null;   // the picks changed, so the walk's cursor no longer means anything
         mergeRenderStep1();
         var nextBtn = document.getElementById('staxx-merge-next');
         if (nextBtn) nextBtn.disabled = mergeState.picked.length < 2;
@@ -34712,6 +35919,11 @@
       var fileChoiceBtn = target.closest && target.closest('[data-merge-file-choice]');
       if (fileChoiceBtn) {
         mergeState.decisions[fileChoiceBtn.dataset.mergeFileChoice] = fileChoiceBtn.dataset.mergeFileChoiceValue;
+        // A decision counts as unanswered until its own button is actually
+        // clicked (C17) — the recommended button being lit is a default,
+        // not an answer, so this is tracked separately from `decisions`.
+        mergeState.fileAnswered[fileChoiceBtn.dataset.mergeFileChoice] = true;
+        mergeHidePopoverNow();
         mergeRebuild();
         mergeRenderStep4();
         return;
@@ -34742,6 +35954,13 @@
         if (finding && finding.choices) {
           var nonRecommended = finding.choices.filter(function (c) { return !c.recommended; })[0];
           if (nonRecommended) mergeState.decisions[key] = nonRecommended.id;
+        } else {
+          // A finding with no choices (a version: drop, an override line, a
+          // top-level key carried) has nothing to switch to — Decline just
+          // records that the change was answered and should not be made
+          // (C17); buildMergedText() treats 'leave' exactly like the
+          // non-recommended choice above.
+          mergeState.decisions[key] = 'leave';
         }
         mergeHidePopoverNow();
         mergeRebuild();
@@ -34767,6 +35986,26 @@
       var navBtn = target.closest && target.closest('[data-merge-change-nav]');
       if (navBtn) {
         mergeStepChange(navBtn.dataset.mergeChangeNav === 'up' ? -1 : 1);
+        return;
+      }
+
+      // The header strip's own controls (C17): a square head jumps
+      // straight to its source, the end arrows step by one.
+      var srcHead = target.closest && target.closest('.staxx-merge-srcstrip-heads [data-merge-src-idx]');
+      if (srcHead) {
+        mergeShowSource(Number(srcHead.dataset.mergeSrcIdx));
+        return;
+      }
+
+      var srcStepBtn = target.closest && target.closest('[data-merge-src-step]');
+      if (srcStepBtn) {
+        mergeShowSource((mergeState.srcIdx || 0) + Number(srcStepBtn.dataset.mergeSrcStep));
+        return;
+      }
+
+      var tallyWalkBtn = target.closest && target.closest('[data-merge-tally-walk]');
+      if (tallyWalkBtn) {
+        mergeTallyWalkClick();
         return;
       }
 

@@ -415,6 +415,14 @@
           return;
         }
 
+        // An image file sitting directly in .staxx/ is never a clash
+        // candidate (PLAN_155 C17, "icons are not a question") — every
+        // carried service that names one gets its own copy under its own
+        // name regardless, a decision merge-write.js's planIconCopies()
+        // makes on its own; a same-name clash between two SOURCES' icon
+        // files is not a question anybody needs asked.
+        if (/^\.staxx\/[^\/]+$/.test(entry.path)) return;
+
         (byPath[entry.path] = byPath[entry.path] || []).push({ stack: s.name, entry: entry });
 
         if (entry.keyLike) {
@@ -681,20 +689,55 @@
    * with nothing here privileging any one of them as a host.
    * ===================================================================== */
 
+  // The image's own short name — the last path segment before any tag,
+  // lower-cased, anything outside [a-z0-9_.-] dropped. Used as the better
+  // default rename for a clashing service (PLAN_155 C17): "nginx:1.27-alpine"
+  // -> "nginx", "ghcr.io/foo/adminer:4" -> "adminer", "redis/redis-stack-
+  // server" (no tag at all) -> "redis-stack-server". Returns '' for an image
+  // with nothing usable (empty, or a build-only service with no image:).
+  function imageShortName(image) {
+    if (!image) return '';
+    var noDigest = String(image).split('@')[0];
+    var slash = noDigest.lastIndexOf('/');
+    var afterSlash = slash >= 0 ? noDigest.slice(slash + 1) : noDigest;
+    var colon = afterSlash.indexOf(':');
+    var namePart = colon >= 0 ? afterSlash.slice(0, colon) : afterSlash;
+    return namePart.toLowerCase().replace(/[^a-z0-9_.-]/g, '');
+  }
+
   function findServiceNameClashes(sources, docCache) {
     var out = [];
-    var taken = {};
+    var taken = {};   // final service name -> the image that already owns it
     sources.forEach(function (s) {
-      Object.keys(servicesOf(s)).forEach(function (name) {
+      var svcs = servicesOf(s);
+      Object.keys(svcs).forEach(function (name) {
         var finalName = name;
         var clashed = !!taken[name];
-        if (clashed) finalName = name + '_' + leaf(s.name);
-        taken[finalName] = true;
+        var viaImage = '';
+        if (clashed) {
+          // The suffix is the fallback, not the best answer (Adrian,
+          // 2026-09-16): when the two clashing services run different
+          // images, the image's own short name reads better than a name
+          // borrowed from the SOURCE, provided it is free and is not simply
+          // the other clashing service's own name (which would not tell
+          // them apart either). Same image on both sides can't be told
+          // apart by it, so the suffix stands.
+          var myImage = svcs[name].image || '';
+          var otherImage = taken[name].image || '';
+          var shortName = (myImage && myImage !== otherImage) ? imageShortName(myImage) : '';
+          if (shortName && shortName !== name && !taken[shortName]) {
+            finalName = shortName;
+            viaImage = shortName;
+          } else {
+            finalName = name + '_' + leaf(s.name);
+          }
+        }
+        taken[finalName] = { image: svcs[name].image || '' };
         if (clashed) {
           var doc = docCache[s.name];
           out.push({
             kind: 'container-name-clash', severity: 'automatic', stack: s.name,
-            facts: { field: 'service', from: name, to: finalName },
+            facts: { field: 'service', from: name, to: finalName, imageShortName: viaImage },
             lines: doc ? linesEntry(s.name, locateServiceKeyLine(doc, name)) : []
           });
         }

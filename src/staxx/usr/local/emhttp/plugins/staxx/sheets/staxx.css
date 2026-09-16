@@ -6411,6 +6411,14 @@ div.title.staxx-has-titlebar {
   margin: 0 0 0.8rem;
 }
 
+/* PLAN_155 C17 — a plain tooltip with no facts table is a lone __lead, which
+   otherwise keeps the gap meant to separate it from the table below and so
+   reads as a stray blank line under short text. Applies to every tooltip in
+   the plugin, not just the merge wizard's tree. */
+.staxx-updcard__lead:last-child {
+  margin-bottom: 0;
+}
+
 /* No padding between rows — line-height alone separates them, per the
    mockup: the first draft's row padding made a five-row card taller than
    the lead sentence beside it, which nothing else on the page does. */
@@ -12811,6 +12819,26 @@ dialog::backdrop {
   outline-offset: 0.1rem;
 }
 
+/* PLAN_155 C17 — the mark is no longer a dot beside the number; the whole
+   number column is painted solid in the source's colour (below) and the
+   button becomes an invisible hit area over it, so clicking the number
+   itself opens the reason popover. Outranks the dot rule above at equal
+   specificity by coming after it in source order; the focus outline above
+   still applies since it sets outline, not box-shadow. */
+.staxx-scaffold .staxx-merge-codenum > button.staxx-merge-gmark {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  margin: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
 /* Appended inside #staxx-merge-modal (see mergeEnsurePopover()) — the
    dialog's own container-type: inline-size (below) makes it a containing
    block for a position:fixed descendant, so this is measured against the
@@ -12821,11 +12849,15 @@ dialog::backdrop {
   position: fixed;
   z-index: 20;
   width: 26rem;
-  max-width: calc(100% - 2rem);
+  /* PLAN_155 C17 — step 4's files popover asks for a 30rem cap; folded into
+     the viewport clamp with min() rather than a second max-width, since two
+     declarations of the same property on one rule just have the last one
+     win and would drop the viewport safety this already had. */
+  max-width: min(30rem, calc(100% - 2rem));
   background: var(--sm-bg);
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
-  padding: 0.7rem 0.9rem;
+  padding: 0.6rem 0.8rem;
   box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.45);
 }
 
@@ -12833,6 +12865,8 @@ dialog::backdrop {
   margin: 0;
   border: 0;
   padding: 0;
+  background: none;
+  box-shadow: none;
 }
 
 /* A removed line's ghost row — struck text only, not its number or mark
@@ -12860,6 +12894,24 @@ dialog::backdrop {
 
 .staxx-merge-codeline--changed {
   background: rgba(255, 196, 61, 0.10);
+  /* PLAN_155 C17 — the changed-line number block, painted solid in the
+     source's own colour (stacks.js sets --stripe inline per row). The
+     stripe is a box-shadow, not a wider border, precisely because a wider
+     border consumes layout width and pushed the number and text right on
+     every marked line (the "indentation error" this session found first) —
+     border-left stays 0.3rem on every row and the shadow paints inward from
+     it instead. 3.4rem covers the border (0.3rem) + the number column's own
+     padding and width, so text starts in the same column on every line. */
+  box-shadow: inset 3.4rem 0 0 var(--stripe, transparent);
+}
+
+/* The number itself reads white and bold against that painted block; the
+   button's containing block for its absolute hit area (above) is set here
+   too, since only a changed row's number needs the invisible mark. */
+.staxx-merge-codeline--changed .staxx-merge-codenum {
+  color: #fff;
+  font-weight: 700;
+  position: relative;
 }
 
 /* A comment the change has falsified — struck through rather than removed,
@@ -13240,6 +13292,11 @@ dialog::backdrop {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* PLAN_155 C17 — the header strip is now its own row above the two 50/50
+     panes rather than living inside .staxx-merge-sourcesband, so the row
+     wraps onto two lines instead of squeezing everything onto one. */
+  flex-wrap: wrap;
+  align-content: flex-start;
 }
 
 .staxx-merge-sourcesband {
@@ -13262,6 +13319,156 @@ dialog::backdrop {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ---- PLAN_155 C17 — step 3 reviews one source at a time (2026-09-16 live
+   design session). Scoped under the row's own id so step 4, which reuses
+   .staxx-merge-sourcesband/.staxx-merge-sourcepane/.staxx-merge-mergedpane
+   for its own settled layout, is untouched. ---- */
+
+/* The header strip: '<' arrow, every source's head, '>' arrow, sized to
+   match the pane heads below it so the two rows read as one header. */
+#staxx-merge-step3-row .staxx-merge-srcstrip {
+  flex: 0 0 50%;
+  max-width: 50%;
+  display: flex;
+  height: 3.2rem;
+}
+
+.staxx-scaffold button.staxx-merge-srcstrip-btn {
+  flex: 0 0 auto;
+  width: 3.2rem;
+  height: 3.2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--sm-fill);
+  color: inherit;
+  font-size: 1.8rem;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.staxx-scaffold button.staxx-merge-srcstrip-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.staxx-merge-srcstrip-heads {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+/* Every source's head in the strip: a 3.2rem square showing only its
+   number until it is the one on show, when it grows to fill the strip and
+   its name fades in. The flex-basis/flex-grow transition is what makes the
+   file "slide" read as the square opening rather than a swap. */
+#staxx-merge-step3-row .staxx-merge-srcstrip-heads .staxx-merge-pane-head {
+  flex: 0 0 3.2rem;
+  overflow: hidden;
+  white-space: nowrap;
+  color: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 0;
+  border-bottom: 0;
+  transition: flex-grow 0.35s ease, flex-basis 0.35s ease;
+}
+
+#staxx-merge-step3-row .staxx-merge-srcstrip-heads .staxx-merge-pane-head.is-on {
+  flex: 1 1 auto;
+  color: var(--sm-fg);
+  cursor: default;
+}
+
+.staxx-merge-srcnum {
+  font-size: 1.7rem;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 3.2rem;
+  text-align: center;
+  color: #fff;
+}
+
+.staxx-merge-srcdash {
+  display: none;
+}
+
+.is-on .staxx-merge-srcdash {
+  display: inline;
+  margin-right: 0.3rem;
+}
+
+/* The name text — inferred as its own element (see the C17 report): the
+   fade needs a wrapper distinct from .staxx-merge-srcnum, which must stay
+   visible throughout, so this is the class the head's name span carries. */
+.staxx-merge-srcname {
+  opacity: 0;
+  transition: opacity 0.2s ease 0.2s;
+}
+
+.is-on .staxx-merge-srcname {
+  opacity: 1;
+}
+
+/* The merged pane's own head moves up into the strip's right half so the
+   two header rows line up. */
+.staxx-merge-mergedhead-slot {
+  flex: 0 0 50%;
+  max-width: 50%;
+  display: flex;
+}
+
+/* The merged pane's head fills its half of the strip, level with the source heads (C17). */
+.staxx-merge-mergedhead-slot > .staxx-merge-pane-head {
+  flex: 1 1 auto;
+}
+
+#staxx-merge-step3-row .staxx-merge-sourcesband {
+  flex: 0 0 50%;
+  max-width: 50%;
+  height: calc(100% - 3.2rem);
+  overflow: hidden;
+  display: block;
+}
+
+#staxx-merge-step3-row .staxx-merge-mergedpane {
+  flex: 0 0 50%;
+  max-width: 50%;
+  height: calc(100% - 3.2rem);
+}
+
+/* The hidden track every source pane sits on, one full-width pane each,
+   slid with transform so the file appears to slide across rather than
+   swap out. */
+.staxx-merge-srctrack {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  transition: transform 0.35s ease;
+  will-change: transform;
+}
+
+#staxx-merge-step3-row .staxx-merge-srctrack > .staxx-merge-sourcepane {
+  flex: 0 0 100%;
+  min-width: 100%;
+  max-width: 100%;
+  height: 100%;
+  overflow: auto;
+  display: block;
+  border-right: 0;
+}
+
+/* One source at a time, full width, with its own scrollbars for long or
+   many lines rather than wrapping the text (Adrian's ruling this session). */
+#staxx-merge-step3-row .staxx-merge-srctrack > .staxx-merge-sourcepane .staxx-merge-code {
+  overflow: visible;
+  width: max-content;
+  min-width: 100%;
 }
 
 .staxx-merge-changecount {
@@ -13300,11 +13507,19 @@ dialog::backdrop {
 .staxx-merge-reasoncard strong {
   display: block;
   margin-bottom: 0.2rem;
+  /* PLAN_155 C17 — Adrian's ruling: a reason card's heading and sentence are
+     "important things that need to be read", not decoration, so they read
+     full-colour everywhere a card is drawn (step 3's marks, step 4's files,
+     step 5). The muted colour stays reserved for sizes, notes and the tally. */
+  color: #fff;
+  font-weight: 700;
 }
 
 .staxx-merge-reasoncard p {
   margin: 0 0 0.6rem;
-  color: var(--sm-muted);
+  color: #fff;
+  font-weight: 400;
+  opacity: 1;
 }
 
 .staxx-merge-reasoncard-buttons {
@@ -13315,6 +13530,78 @@ dialog::backdrop {
 .staxx-scaffold .staxx-merge-approve--on {
   border-color: var(--sm-good);
   color: var(--sm-good);
+}
+
+/* PLAN_155 C17 — the answer a marked line wears at the end of its text:
+   approved (a tick) or declined (a hollow ring, drawn rather than the typed
+   "○", which sat too high and too small at this size). Reused on step 4's
+   file rows with the same meaning. */
+.staxx-merge-badge {
+  display: inline-block;
+  margin-left: 1rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.staxx-merge-badge--ok {
+  color: #7ec97e;
+}
+
+/* Step 4's "Keep one" — a third answer shape (neither approved nor
+   declined), so it gets a colour of its own rather than borrowing green or
+   red for a different fact. */
+.staxx-merge-badge--keep {
+  color: #5aa9ff;
+}
+
+.staxx-merge-badge--no {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0.2rem solid #e05555;
+  border-radius: 50%;
+  box-sizing: border-box;
+  vertical-align: -0.1rem;
+}
+
+/* The tally, in the foot before Back: "<n> decisions · <a> approved · <l>
+   left as they were · <o> to answer". Restated in full per CLAUDE.md's own
+   ".unapi" trap — this sits in .staxx-merge-foot-right beside real
+   .staxx-btn elements, so it needs its own font-size and colour rather than
+   trusting inheritance. */
+.staxx-scaffold .staxx-merge-tally {
+  display: inline-flex;
+  gap: 1.2rem;
+  align-items: center;
+  margin-right: 1.2rem;
+  font-size: 1.2rem;
+  color: var(--sm-muted);
+}
+
+.staxx-scaffold .staxx-merge-tally b {
+  color: inherit;
+  font-weight: 600;
+}
+
+.staxx-scaffold .staxx-merge-tally .is-done {
+  color: #7ec97e;
+}
+
+/* "<o> to answer", while it is still a button that walks the outstanding
+   changes — styled as text, not a button, since it sits inline in a
+   sentence (dotted underline rather than solid so it reads as a link-like
+   word, not a rule under the whole tally). */
+.staxx-scaffold button.staxx-merge-tally-walk {
+  color: #ffc43d;
+  text-decoration: underline dotted;
+  text-decoration-thickness: 0.1rem;
+  text-underline-offset: 0.35rem;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0 0 0.15rem;
+  font: inherit;
 }
 
 /* ---- the foot ---- */
@@ -13393,7 +13680,11 @@ dialog::backdrop {
 .staxx-merge-step4-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
-  grid-template-rows: auto 1fr auto 1fr;
+  /* PLAN_155 C17 — the settings band now fits its tallest .env instead of
+     taking a fixed share: fit-content(38%) is a ceiling, not a fit, so a
+     short .env does not drag FILES down with it and a tall one never takes
+     more than 38% of the step. */
+  grid-template-rows: auto fit-content(38%) auto 1fr;
   grid-template-areas:
     "slabel ."
     "srow   joined"
@@ -13419,12 +13710,17 @@ dialog::backdrop {
 .staxx-merge-step4-srow > .staxx-merge-sourcesband { flex: 1 1 auto; min-width: 0; }
 .staxx-merge-step4-frow { grid-area: frow; flex-direction: column; overflow: auto; }
 
+/* PLAN_155 C17 — the right column splits into four rows (the joined
+   settings file's head and code, then the new folder tree's own head and
+   pane), each pair sharing the height a grab handle between them can move.
+   --top/--bot are set inline by stacks.js as the handle is dragged; the
+   1fr fallback is the even split before anyone has touched it. */
 .staxx-merge-step4-joined {
   grid-area: joined;
   min-height: 0;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, var(--top, 1fr)) auto auto minmax(0, var(--bot, 1fr));
   border-left: 0.1rem solid var(--sm-line);
   overflow: hidden;
 }
@@ -13459,11 +13755,17 @@ dialog::backdrop {
   flex: 1 1 auto;
 }
 
+/* PLAN_155 C17 — file rows are drawn as a tree now (folders and children,
+   an icon per row), so a row can wrap onto a second line for its note
+   instead of squeezing the name to one letter per line; align-items:center
+   keeps a 1.5rem icon level with 1.2rem text. */
 .staxx-merge-filerow {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.6rem;
-  padding: 0.3rem 0.6rem;
+  padding: 0.15rem 0.6rem;
+  min-height: 2.1rem;
+  flex-wrap: wrap;
   border-left: 0.3rem solid transparent;
   font-size: 1.2rem;
 }
@@ -13472,9 +13774,22 @@ dialog::backdrop {
   opacity: 0.6;
 }
 
+.staxx-merge-filerow > svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+}
+
+/* The name never breaks (Adrian: rows read as "very small and all
+   compressed" when it did) — a note drops to its own line instead, below. */
 .staxx-merge-filename {
-  font-family: ui-monospace, Consolas, monospace;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 1.2rem;
+}
+
+.staxx-merge-filerow.is-dir .staxx-merge-filename {
+  font-weight: 600;
 }
 
 .staxx-merge-filesize {
@@ -13483,14 +13798,55 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
+/* flex-basis 100% is what drops the note to its own line under the name
+   rather than squeezing it onto the same line as the row wraps. */
 .staxx-merge-filenote {
+  flex: 1 1 100%;
   font-size: 1.05rem;
+  line-height: 1.3;
   font-style: italic;
   color: var(--sm-muted);
 }
 
 .staxx-merge-filenote--refusal {
   color: var(--sm-danger);
+}
+
+/* A row with an open decision — amber name, faint amber wash, a "help"
+   cursor since the answer lives in the hover card, not on the row itself. */
+.staxx-merge-filerow.is-ask {
+  background: rgba(255, 196, 61, 0.10);
+  cursor: help;
+}
+
+.staxx-merge-filerow.is-ask .staxx-merge-filename {
+  color: #ffc43d;
+  font-weight: 600;
+}
+
+.staxx-merge-filerow > .staxx-merge-badge {
+  margin-left: auto;
+}
+
+/* A row highlighted from the folder tree's own hover (stacks.js sets --hl
+   to the source's colour); outline rather than border so it does not shift
+   the row's own layout. */
+.staxx-merge-filerow.staxx-merge-filehl {
+  outline: 0.15rem solid var(--hl);
+  outline-offset: -0.15rem;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* The whole FILES column lights up the same way, plus its head — stacks.js
+   applies staxx-merge-srchl to both the column and its own pane-head
+   element, since CSS has no way to reach a previous sibling from here. */
+.staxx-merge-sourcepane.staxx-merge-srchl {
+  box-shadow: inset 0 0 0 0.2rem var(--hl);
+  border-radius: 0.3rem;
+}
+
+.staxx-merge-pane-head.staxx-merge-srchl {
+  filter: brightness(1.2);
 }
 
 .staxx-merge-filewarn {
@@ -13500,6 +13856,171 @@ dialog::backdrop {
   border-radius: var(--sm-radius);
   font-size: 1.1rem;
   color: var(--sm-muted);
+}
+
+/* ---- PLAN_155 C17 — the new stack's folder, drawn as a file manager
+   rather than as text: one row per entry, a dot gutter saying where each
+   came from, an icon before the name. ---- */
+
+.staxx-merge-filetree {
+  overflow: auto;
+  padding: 0.3rem 0.6rem;
+  line-height: 1.3;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+.staxx-merge-trow {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr;
+  align-items: center;
+  padding: 0 0.4rem;
+  min-height: 2.1rem;
+  border-radius: 0.3rem;
+}
+
+.staxx-merge-trow:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* The origin dot — one per row that came from a source, none on the two
+   files StaXX writes itself or the .staxx/ line (stacks.js leaves this
+   column empty for those, rather than the grid column collapsing). */
+.staxx-merge-tdot {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  justify-self: start;
+}
+
+/* stacks.js sets padding-left per depth (1.8rem per level) directly on this
+   element, since the number of levels is not fixed. */
+.staxx-merge-tmain {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.staxx-merge-tmain svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+}
+
+.staxx-merge-tname.dir {
+  font-weight: 600;
+}
+
+.staxx-merge-tname.new {
+  color: #ffc43d;
+}
+
+.staxx-merge-tname.ask {
+  color: #ffc43d;
+  font-style: italic;
+}
+
+.staxx-merge-tfrom {
+  margin-left: auto;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
+/* ---- the grab handles between step 4's two right-hand panes, and step
+   6's form/preview split turned on its side to match. One shared shape
+   rather than two copies (Adrian: the old step 6 grip was "hard to see"). ---- */
+
+.staxx-merge-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.staxx-merge-grip--h {
+  height: 0.8rem;
+  cursor: row-resize;
+}
+
+.staxx-merge-grip--v {
+  flex: 0 0 0.8rem;
+  cursor: col-resize;
+  background: transparent;
+  opacity: 1;
+}
+
+.staxx-merge-grip--h::before,
+.staxx-merge-grip--v::before {
+  content: "";
+  border-radius: 0.2rem;
+  background: var(--sm-line);
+}
+
+.staxx-merge-grip--h::before {
+  width: 4rem;
+  height: 0.3rem;
+}
+
+.staxx-merge-grip--v::before {
+  width: 0.3rem;
+  height: 4rem;
+}
+
+.staxx-merge-grip--h:hover::before,
+.staxx-merge-grip--h:active::before,
+.staxx-merge-grip--v:hover::before,
+.staxx-merge-grip--v:active::before {
+  background: #aaa;
+}
+
+/* A pane head inside the joined column is now clickable, expanding its
+   pane to the whole column; the chevron says which way it currently goes. */
+.staxx-merge-step4-joined .staxx-merge-pane-head {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.staxx-merge-step4-joined .staxx-merge-pane-head::after {
+  content: "\25be";
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: 1.1rem;
+}
+
+.staxx-merge-step4-joined .staxx-merge-pane-head.is-shut::after {
+  content: "\25b8";
+}
+
+/* Hovering a file row that is an image opens this beside it — a small
+   checkerboard so a transparent icon still reads. */
+.staxx-merge-imgpop {
+  position: fixed;
+  z-index: 10001;
+  padding: 0.6rem;
+  background: var(--background-color, #1c1c1c);
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.staxx-merge-imgpop img {
+  width: 9.6rem;
+  height: 9.6rem;
+  object-fit: contain;
+  background: repeating-conic-gradient(rgba(255, 255, 255, 0.06) 0 25%, transparent 0 50%) 0 0 / 1.6rem 1.6rem;
+  border-radius: 0.3rem;
+}
+
+.staxx-merge-imgpop span {
+  font-size: 1.05rem;
+  color: #fff;
 }
 
 /* ---- step 5: suggestions (PLAN_155 phase E) — left column three blocks
@@ -13560,6 +14081,25 @@ dialog::backdrop {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+
+/* PLAN_155 C17 — the one-line explainer under a step 5 heading (the
+   dependency-drag line, the START-versus-READY paragraph moved here from
+   under the board). White like every reason card's text, not the muted
+   .staxx-merge-help size used for hints elsewhere on this step. */
+.staxx-merge-explain {
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 400;
+  line-height: 1.4;
+  margin: 0.2rem 0 0.8rem;
+}
+
+/* "Important things that need to be read" read full-colour on this step
+   too, same ruling as the reason cards above. */
+.staxx-merge-suggest-block .staxx-merge-help {
+  color: #fff;
+  opacity: 1;
 }
 
 /* 1.5rem — a step larger than the page's normal 1.3rem text (second
@@ -13638,12 +14178,40 @@ dialog::backdrop {
 .staxx-merge-depline--faded { opacity: 0.12; }
 .staxx-merge-depline--thick { stroke-width: 0.28rem; }
 
+/* PLAN_155 C17 — a real click never landed on a thin 0.15rem line; a wide
+   transparent twin path with the same "d" is the actual hit target
+   (stacks.js draws it beneath the visible line and toggles is-hot on that
+   line when the pointer is over either). */
+.staxx-merge-dephit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 1.4rem;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.staxx-merge-depline:not(.staxx-merge-depline--drag):hover,
+.staxx-merge-depline.is-hot {
+  stroke: #e05555;
+  stroke-width: 0.35rem;
+}
+
+/* PLAN_155 C17 — the real reason a click never reached a line at all: this
+   div is drawn after the SVG and covers the whole board, so every pointer
+   event in the gap between the columns went here instead. pointer-events
+   is switched off on the div and restored on each chip so the chips still
+   drag and the lines beneath are finally reachable. */
 .staxx-merge-depcols {
   position: relative;
   z-index: 1;
   display: flex;
   justify-content: space-between;
   gap: 2rem;
+  pointer-events: none;
+}
+
+.staxx-merge-depcol > * {
+  pointer-events: auto;
 }
 
 /* Each column is a fixed strip pinned to one edge of the board, so the
@@ -13751,6 +14319,31 @@ dialog::backdrop {
 
 .staxx-merge-depchip--faded { opacity: 0.12; }
 
+/* PLAN_155 C17 — the once-per-session demonstration on an empty board: a
+   hand glides from one chip's handle to another while an amber line draws
+   itself alongside. Nothing here is interactive (pointer-events: none
+   throughout) and nothing is written into mergeState. */
+.staxx-merge-demohand {
+  position: absolute;
+  z-index: 5;
+  width: 2.6rem;
+  height: 2.6rem;
+  pointer-events: none;
+  transition: left 1.4s ease-in-out, top 1.4s ease-in-out, opacity 0.4s;
+  filter: drop-shadow(0 0.2rem 0.4rem rgba(0, 0, 0, 0.6));
+}
+
+.staxx-merge-demoline {
+  position: absolute;
+  z-index: 4;
+  height: 0.2rem;
+  background: #ffc43d;
+  border-radius: 0.1rem;
+  transform-origin: left center;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
 /* ---- block 2: health checks — one card, one row per service. ---- */
 .staxx-merge-healthcard {
   border: 0.1rem solid var(--sm-line);
@@ -13786,7 +14379,10 @@ dialog::backdrop {
 .staxx-merge-healthrow-sentence {
   margin: 0.4rem 0 0;
   font-size: 1.3rem;
-  color: var(--sm-muted);
+  /* PLAN_155 C17 — same ruling as the reason cards: the per-service
+     sentence is a fact to read, not a hint, so it is full-colour. */
+  color: #fff;
+  opacity: 1;
 }
 
 /* Eases in rather than appearing outright — it only ever shows up after
@@ -13891,21 +14487,12 @@ dialog::backdrop {
   border-right: 0.1rem solid var(--sm-line);
 }
 
-/* 0.6rem wide, half-opacity until touched — a wider or brighter grip at
-   rest would read as a divider rather than a control, same reasoning as
-   the editor's own .staxx-splitter. */
+/* PLAN_155 C17 — re-pointed to the same shape as step 4's grab handle
+   (Adrian: the old strip-with-opacity grip was "hard to see"); stacks.js
+   carries .staxx-merge-grip.staxx-merge-grip--v alongside this class for
+   the look, this one keeps only what step 6 alone needs. */
 .staxx-merge-step6-grip {
-  flex: 0 0 0.6rem;
-  cursor: col-resize;
-  background: var(--sm-line);
-  opacity: 0.5;
   touch-action: none;
-}
-
-.staxx-merge-step6-grip:hover,
-.staxx-merge-step6-grip:active {
-  opacity: 1;
-  background: var(--sm-accent);
 }
 
 .staxx-merge-step6-code {
@@ -13959,4 +14546,94 @@ dialog::backdrop {
 
 .staxx-merge-step6-switch {
   font-size: 1.2rem;
+}
+
+/* PLAN_155 C17 — below 990px the wizard now stays open (backdrop and blur
+   included) with every step, the head, the foot and the tally hidden, and
+   this notice centred in their place instead; Cancel is the only way out
+   on a device that cannot widen. Styled like the foot's Cancel button
+   (.staxx-btn), restated here rather than assuming the same class is on
+   the element, since this button may carry only its own class. */
+.staxx-merge-narrow {
+  max-width: 42rem;
+  margin: auto;
+  padding: 1.6rem 2rem;
+  border: 0.2rem solid #e05555;
+  border-radius: var(--sm-radius);
+  color: #fff;
+}
+
+.staxx-merge-narrow > strong {
+  display: block;
+  color: #e05555;
+  margin-bottom: 0.6rem;
+}
+
+.staxx-scaffold button.staxx-merge-narrow-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.6rem 1.1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.staxx-scaffold button.staxx-merge-narrow-cancel:hover {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+/* ---- PLAN_155 C17 — thin, dark scrollbars everywhere StaXX draws, not
+   just the merge wizard (first asked for it, then widened to the whole
+   scaffold). Every rule below is scoped under .staxx-scaffold so Unraid's
+   own page scrollbars are untouched.
+
+   Written with one pseudo-element per selector on purpose: in a comma list
+   a pseudo-element binds only to the selector it is written on, so
+   `.staxx-scaffold *, .staxx-scaffold::-webkit-scrollbar { width: 0.6rem }`
+   sets width on every element in the scaffold, not the scrollbar alone —
+   measured the hard way when the wizard shrank to six pixels wide behind
+   its own backdrop.
+
+   Colour comes from --sm-fg (the theme's own text colour) via color-mix
+   rather than a literal per theme: the sheet has no light/dark selector of
+   its own anywhere — every other themed colour here is an Unraid CSS
+   variable that already differs between themes — and --sm-fg is exactly
+   that: pale on a dark theme, dark on a light one, so mixing it with
+   transparent gives a workable thumb colour on both without a switch that
+   does not otherwise exist in this file. */
+.staxx-scaffold ::-webkit-scrollbar {
+  width: 0.6rem;
+  height: 0.6rem;
+}
+
+.staxx-scaffold ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.staxx-scaffold ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--sm-fg) 14%, transparent);
+  border-radius: 0.3rem;
+}
+
+.staxx-scaffold ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--sm-fg) 28%, transparent);
+}
+
+.staxx-scaffold ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.staxx-scaffold,
+.staxx-scaffold * {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--sm-fg) 14%, transparent) transparent;
 }

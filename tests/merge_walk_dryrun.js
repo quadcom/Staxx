@@ -361,7 +361,7 @@ checkStorageIntegrity('B', resultB.suggested.text, resultB.built, resultB.exam);
  * ghost row (`removed: true`) is the one exception, since several of those
  * can share one insertion point on purpose. Live evidence this once caught
  * (2026-09-15): a heading reading "16 changes" against 15 visible marks,
- * the missing one always a storage-carry's own "Kept by its real name"
+ * the missing one always a storage-carry's own "Still <leaf>'s own storage"
  * declaration line.
  * ========================================================================= */
 
