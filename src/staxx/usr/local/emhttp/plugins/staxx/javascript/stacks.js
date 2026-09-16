@@ -31791,12 +31791,9 @@
       if (mergeState && mergeState.narrowClosed) return;
       mergeState = null;
     });
-    mergeModal.addEventListener('click', function (event) {
-      // <dialog> fires no backdrop click of its own — a click on the
-      // backdrop targets the dialog element itself, the same hit-test every
-      // other dialog on this page uses.
-      if (event.target === mergeModal) mergeClose();
-    });
+    // No backdrop-click close, unlike the page's other dialogs: the wizard
+    // holds six steps of decisions, and a stray click beside a wide pane
+    // threw them all away (Adrian, 2026-09-16). Cancel and Escape remain.
   }
 
   if (mergeBtn) mergeBtn.addEventListener('click', mergeOpen);
