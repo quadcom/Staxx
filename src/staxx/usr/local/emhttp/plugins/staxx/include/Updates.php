@@ -2364,20 +2364,22 @@ function staxx_update_check(string $scope, bool $force): array {
   // staxx_update_notify() and staxx_update_found_containers() all live in
   // UpdateRun.php, which this file must never require (that would be
   // circular), so every one of them is guarded.
+  // PLAN_154 — no longer gated on the server's own 'found' switch here: a
+  // container may override that switch upward, so staxx_update_found_containers()
+  // is asked regardless, and it is the one that resolves each container's own
+  // say (falling to the server's switch only where a container has none).
   if ($newlyFound > 0 && function_exists('staxx_update_notify') && function_exists('staxx_update_settings')
       && function_exists('staxx_update_found_containers') && function_exists('staxx_update_name_or_count')) {
     $settings = staxx_update_settings();
-    if ($settings['notifyFound']) {
-      $wanted = staxx_update_found_containers($images, $refs, $stackFiles, $settings);
+    $wanted = staxx_update_found_containers($images, $refs, $stackFiles, $settings);
 
-      // An empty list here means every container that has an update waiting
-      // has opted itself out — nobody asked to hear about nothing.
-      if ($wanted !== []) {
-        staxx_update_notify(
-          'StaXX image updates found',
-          staxx_update_name_or_count($wanted, 'container has an update waiting', 'containers have an update waiting').'.'
-        );
-      }
+    // An empty list here means every container that has an update waiting
+    // has opted itself out — nobody asked to hear about nothing.
+    if ($wanted !== []) {
+      staxx_update_notify(
+        'StaXX image updates found',
+        staxx_update_name_or_count($wanted, 'container has an update waiting', 'containers have an update waiting').'.'
+      );
     }
   }
 

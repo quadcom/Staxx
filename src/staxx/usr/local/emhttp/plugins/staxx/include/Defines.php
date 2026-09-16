@@ -822,7 +822,14 @@ function staxx_hub_repo(string $image): array {
  * S6_VERBOSITY, ...) baked in when it was built, and writing them into a
  * compose file pins a snapshot that breaks the day the image changes them.
  *
- * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>}
+ * Also returns the image's own declared health check, staxx_local_image_
+ * config()'s 'healthcheck' field read off this same config blob — the merge
+ * wizard's health-check offer (PLAN_155 step 5) needs it for an image that
+ * has never been pulled onto this server, which is exactly the case this
+ * function exists for.
+ *
+ * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>,
+ *               healthcheck?:array{test:string[], declared:bool}}
  */
 function staxx_registry_config(string $image): array {
   $repo = staxx_hub_repo_path($image);
@@ -881,9 +888,10 @@ function staxx_registry_config(string $image): array {
 
   $config = is_array($blob['config'] ?? null) ? $blob['config'] : [];
   return [
-    'ports'   => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
-    'volumes' => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
-    'labels'  => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+    'ports'       => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
+    'volumes'     => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
+    'labels'      => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+    'healthcheck' => staxx_parse_image_healthcheck(is_array($config['Healthcheck'] ?? null) ? $config['Healthcheck'] : null),
   ];
 }
 
@@ -1652,6 +1660,9 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
   if (isset($config['ports']))   $facts['ports']   = $config['ports'];
   if (isset($config['volumes'])) $facts['volumes'] = $config['volumes'];
   if (isset($config['labels']))  $facts['labels']  = $config['labels'];
+  // The image's own declared check, for the merge wizard's health-check
+  // offer (PLAN_155 step 5): the one source that needs no running container.
+  if (isset($config['healthcheck'])) $facts['healthcheck'] = $config['healthcheck'];
 
   $facts['appdata']  = staxx_appdata_root();
   $facts['timezone'] = staxx_server_timezone();

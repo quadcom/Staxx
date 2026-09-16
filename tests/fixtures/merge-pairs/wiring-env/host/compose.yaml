@@ -1,0 +1,15 @@
+services:
+  web1:
+    image: nginx:latest
+    environment:
+      DB_ADDRESS: ${DB_ADDRESS}
+  web2:
+    image: nginx:latest
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+  web3:
+    image: nginx:latest
+    environment:
+      DB3_HOST: ${DB3_HOST:-127.0.0.1}
+      DB3_PORT: ${DB3_PORT}

@@ -143,6 +143,13 @@ $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 // either can genuinely be mid-build when this page renders.
 $mergeExamineFile = STAXX_ROOT.'/javascript/merge-examine.js';
 $mergeWriteFile   = STAXX_ROOT.'/javascript/merge-write.js';
+// PLAN_155 phase E — step 5's own text-writing half (depends_on,
+// healthcheck, x-unraid.update), kept separate from merge-write.js because
+// it never feeds back into buildMergedText(); see that file's own header.
+// PLAN_155 C15 added a second reason this must load after merge-write.js:
+// its depends_on writer reads window.StaxxMergeWrite directly, for the
+// same "join a shared network" check the address-rewire pass uses.
+$mergeSuggestFile = STAXX_ROOT.'/javascript/merge-suggest.js';
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
 $scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
@@ -166,6 +173,7 @@ $dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? f
 $healthOfferTag = $assets.'/javascript/health-offer.js?v='.(is_file($healthOfferFile) ? filemtime($healthOfferFile) : '0');
 $mergeExamineTag = $assets.'/javascript/merge-examine.js?v='.(is_file($mergeExamineFile) ? filemtime($mergeExamineFile) : '0');
 $mergeWriteTag   = $assets.'/javascript/merge-write.js?v='.(is_file($mergeWriteFile) ? filemtime($mergeWriteFile) : '0');
+$mergeSuggestTag = $assets.'/javascript/merge-suggest.js?v='.(is_file($mergeSuggestFile) ? filemtime($mergeSuggestFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -987,14 +995,21 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   <!-- ------------------------------------------------------ merge wizard --
 
-       PLAN_148. Built to the editor dialog's own measurements — .staxx-modal
-       already carries the width/height rules and the 990px full-screen step
-       (see staxx.css's own comment on why that threshold is written in
-       pixels), so this reuses them rather than inventing a second set; only
-       the internal four-band layout (head, panes, decisions, foot) is its
-       own. Everything inside is built and torn down by stacks.js — there is
-       nothing here for PHP to render per stack, because the whole point is
-       to compare two or more files nobody has picked yet. -->
+       PLAN_155 — merging stacks: the rebuild. Built to the editor dialog's
+       own measurements — .staxx-modal already carries the width/height
+       rules and the 990px full-screen step (see staxx.css's own comment on
+       why that threshold is written in pixels), so this reuses them rather
+       than inventing a second set; only the internal three-band layout
+       (head, panes, foot) is its own. Everything inside is built and torn
+       down by stacks.js — there is nothing here for PHP to render per
+       stack, because the whole point is to compare two or more files
+       nobody has picked yet.
+
+       Six steps now share one dialog: a merge no longer folds one stack
+       into a host, it writes a brand new third stack from two or more
+       sources. Exactly one of the six panes below is ever unhidden — step 6
+       is the confirm screen: the stack editor's own form and YAML view of
+       the merged file, side by side with what pressing Merge will do. -->
   <dialog class="staxx-modal staxx-merge-modal" id="staxx-merge-modal" aria-labelledby="staxx-merge-title">
 
     <div class="staxx-modal-head staxx-merge-head">
@@ -1002,26 +1017,17 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <div class="staxx-merge-steps" id="staxx-merge-steps" role="list" aria-label="<?= _('Merge steps') ?>"></div>
     </div>
 
-    <!-- Step 1 fills this whole area with the picker; step 2 onward hands it
-         back to one source pane per chosen stack (scrolling sideways past
-         two) plus the merged pane, which never moves. -->
     <div class="staxx-merge-panes" id="staxx-merge-panes">
-      <div class="staxx-merge-picker" id="staxx-merge-picker"></div>
-      <div class="staxx-merge-sources" id="staxx-merge-sources"></div>
-      <div class="staxx-merge-merged" id="staxx-merge-merged" hidden>
-        <div class="staxx-merge-pane-head">
-          <span><?= _('Merged file') ?></span>
-        </div>
-        <div class="staxx-merge-code" id="staxx-merge-merged-code"></div>
+      <div class="staxx-merge-step1" id="staxx-merge-step1" hidden>
+        <input type="search" class="staxx-merge-search-input" id="staxx-merge-search-input"
+               placeholder="<?= _('Search stacks…') ?>">
+        <div class="staxx-merge-step1-tiles" id="staxx-merge-step1-tiles"></div>
       </div>
-    </div>
-
-    <!-- The decisions strip — steps 3 and 4 only; empty and hidden the rest
-         of the time. -->
-    <div class="staxx-merge-decisions" id="staxx-merge-decisions" hidden>
-      <p class="staxx-merge-decisions-lead" id="staxx-merge-decisions-lead"></p>
-      <div class="staxx-merge-decisions-list" id="staxx-merge-decisions-list"></div>
-      <div class="staxx-merge-clean" id="staxx-merge-clean"></div>
+      <div class="staxx-merge-step2" id="staxx-merge-step2" hidden></div>
+      <div class="staxx-merge-step3" id="staxx-merge-step3" hidden></div>
+      <div class="staxx-merge-step4" id="staxx-merge-step4" hidden></div>
+      <div class="staxx-merge-step5" id="staxx-merge-step5" hidden></div>
+      <div class="staxx-merge-step6" id="staxx-merge-step6" hidden></div>
     </div>
 
     <div class="staxx-modal-foot staxx-merge-foot">
@@ -1623,6 +1629,9 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 <? endif; ?>
 <? if (is_file($mergeWriteFile)): ?>
 <script src="<?= $mergeWriteTag ?>"></script>
+<? endif; ?>
+<? if (is_file($mergeSuggestFile)): ?>
+<script src="<?= $mergeSuggestTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

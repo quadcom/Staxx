@@ -119,6 +119,12 @@ services:
     x-unraid:
       update:
         notify: sideways
+  service-notify-failed-only:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify:
+          failed: true
   built-ok:
     build:
       context: ./build-ok
@@ -193,14 +199,15 @@ ok('settings: cleanup is one of off/weekly',
 /* ---------------------------------------------------------- 2. policy -- */
 
 $pUnknown = staxx_update_policy('staxx-no-such-stack', 'x');
-// staxx_update_policy_fallback() ORs the three switches together for this
-// axis — "is this container ever mentioned at all" is one question, answered
-// yes the moment any one kind of message is switched on.
-$globalNotify = $settings['notifyFound'] || $settings['notifyInstalled'] || $settings['notifyFailed'];
+// PLAN_154 — staxx_update_policy_fallback() has nothing more specific to
+// read, so each event is the server's own switch for it, verbatim — never
+// null, unlike staxx_update_policy_from_meta()'s own per-event answers.
 ok('policy: an unknown stack falls back to the global setting, not an error',
    $pUnknown['from'] === 'global' && $pUnknown['mode'] === $settings['mode']
    && $pUnknown['delay'] === $settings['delay']
-   && $pUnknown['notify'] === $globalNotify, json_encode($pUnknown));
+   && $pUnknown['notifyFound'] === $settings['notifyFound']
+   && $pUnknown['notifyInstalled'] === $settings['notifyInstalled']
+   && $pUnknown['notifyFailed'] === $settings['notifyFailed'], json_encode($pUnknown));
 
 // service-mode writes the OLD 'off' spelling on purpose — proving it still
 // normalises to 'manual' is the whole point of PLAN_150's read-side change.
@@ -215,8 +222,11 @@ ok('policy: no service override falls back to the stack-level mode',
    $pStack['mode'] === 'auto' && $pStack['from'] === 'stack', json_encode($pStack));
 ok('policy: the stack-level delay travels with it',
    $pStack['delay'] === 12, json_encode($pStack));
-ok('policy: the stack-level notify travels with it too',
-   $pStack['notify'] === true, json_encode($pStack));
+// The stack's own 'notify: true' is the older boolean spelling — PLAN_154
+// says it answers all three events at once, exactly as it always has.
+ok('policy: the stack-level notify (older boolean spelling) sets all three events',
+   $pStack['notifyFound'] === true && $pStack['notifyInstalled'] === true
+   && $pStack['notifyFailed'] === true, json_encode($pStack));
 
 $pBad = staxx_update_policy($fixtureName, 'bad-values');
 ok('policy: an unrecognised mode is ignored, not honoured',
@@ -224,18 +234,28 @@ ok('policy: an unrecognised mode is ignored, not honoured',
 ok('policy: a non-numeric delay is ignored, not honoured',
    $pBad['delay'] !== 'notanumber' && is_int($pBad['delay']), json_encode($pBad));
 
-// notify is a scope-declaring key in its own right, and the walk's existing
-// rule then applies to it unchanged: the first scope declaring ANY of the
-// three keys wins outright, and whatever it left unsaid comes from the
-// global default rather than from the scope below it. So a service setting
-// only notify takes the global mode and delay, not the stack's.
+// PLAN_154 — notify no longer joins the mode/delay handoff: a service
+// declaring only notify does NOT thereby also win mode/delay for itself, so
+// this falls through to the stack's own mode/delay exactly as a service
+// declaring nothing at all would. Its own notify (the older boolean
+// spelling, false) still overrides the stack's 'true' for every event.
 $pNotifyOnly = staxx_update_policy($fixtureName, 'service-notify-only');
-$gNotifyOnly = staxx_update_settings();
-ok('policy: a service declaring only notify still wins that scope',
-   $pNotifyOnly['from'] === 'service' && $pNotifyOnly['notify'] === false, json_encode($pNotifyOnly));
-ok('policy: …and what it left unsaid comes from the global default, not the stack',
-   $pNotifyOnly['mode'] === $gNotifyOnly['mode'] && $pNotifyOnly['delay'] === $gNotifyOnly['delay'],
+ok('policy: a service declaring only notify does not also win mode/delay for itself',
+   $pNotifyOnly['from'] === 'stack' && $pNotifyOnly['mode'] === 'auto' && $pNotifyOnly['delay'] === 12,
    json_encode($pNotifyOnly));
+ok('policy: …but its own notify still overrides the stack for every event',
+   $pNotifyOnly['notifyFound'] === false && $pNotifyOnly['notifyInstalled'] === false
+   && $pNotifyOnly['notifyFailed'] === false, json_encode($pNotifyOnly));
+
+// A service overriding just one event (the object shape) still falls to the
+// stack for the other two — here the stack's own boolean shorthand answers
+// every event, so "falls to the stack" reads as true/true here rather than
+// null; the genuinely-null case (nothing at either scope) is proved directly
+// against staxx_update_policy_from_meta() further down.
+$pFailedOnly = staxx_update_policy($fixtureName, 'service-notify-failed-only');
+ok('policy: a service overriding just "failed" leaves the other two following the stack',
+   $pFailedOnly['notifyFailed'] === true && $pFailedOnly['notifyFound'] === true
+   && $pFailedOnly['notifyInstalled'] === true, json_encode($pFailedOnly));
 
 // The OLD 'notify' spelling for mode, at service scope, on a service that
 // sets nothing else — proves normalisation happens independently of which
@@ -244,9 +264,19 @@ $pOldSpelling = staxx_update_policy($fixtureName, 'service-old-notify-spelling')
 ok('policy: the old "notify" mode spelling also reads as manual',
    $pOldSpelling['mode'] === 'manual' && $pOldSpelling['from'] === 'service', json_encode($pOldSpelling));
 
+// The genuinely-null case: neither scope has anything to say about notify at
+// all, so staxx_update_policy_from_meta() must leave every event null rather
+// than quietly borrowing the server's own switch — that step belongs to the
+// caller (staxx_update_stack_wants_notify()), proved separately below.
+$pNoNotifyAnywhere = staxx_update_policy_from_meta(['services' => ['x' => ['x' => []]], 'x' => []], 'x', $settings);
+ok('policy: nothing set at either scope leaves every notify event null, not resolved',
+   $pNoNotifyAnywhere['notifyFound'] === null && $pNoNotifyAnywhere['notifyInstalled'] === null
+   && $pNoNotifyAnywhere['notifyFailed'] === null, json_encode($pNoNotifyAnywhere));
+
 $pBadNotify = staxx_update_policy($fixtureName, 'bad-notify');
 ok('policy: a notify value that is not really a boolean is ignored, falls through to the stack',
-   $pBadNotify['notify'] === true && $pBadNotify['from'] === 'stack', json_encode($pBadNotify));
+   $pBadNotify['notifyFound'] === true && $pBadNotify['notifyInstalled'] === true
+   && $pBadNotify['notifyFailed'] === true && $pBadNotify['from'] === 'stack', json_encode($pBadNotify));
 
 /* -------------------------------------------------- 3. the quiet window -- */
 
@@ -641,23 +671,15 @@ if ($liveBusy) {
 
 /* --------------------------------------------------------- 14. notify -- */
 
-// staxx_update_notify() is void and fires a real shell command — the only
-// safe way to exercise it here is to confirm it does nothing at all when the
-// setting is off, which is the refusal this whole feature leans on. It is
-// never called with any switch on, since that would send a real notification
-// through Unraid's own notify script on this box. PLAN_150 item 2: failure
-// notices start ON by default, so this is now three switches to check, not
-// one — the call is safe only when all three are off.
-if (!$settings['notifyFound'] && !$settings['notifyInstalled'] && !$settings['notifyFailed']) {
-  // No observable side effect to assert against directly; this simply
-  // confirms the call does not fatal and does not throw with every switch off.
-  staxx_update_notify('test', 'staxx updaterun test — should never be seen');
-  ok('notify: a call with every switch off does not error', true);
-} else {
-  skip('notify: a call with every switch off does not error',
-       'at least one UPDATE_NOTIFY_* switch is currently on on this box, and this file must not '
-       . 'flip it just to test silence');
-}
+// PLAN_154 removed staxx_update_notify()'s own "all three switches off"
+// gate — a container may now want a message the server's own default would
+// suppress, so the decision moved entirely to the caller (proved in
+// sections 16/16b/17 below, none of which ever reach staxx_update_notify()
+// itself). That means staxx_update_notify() now ALWAYS sends when called,
+// so it must never be called directly from this file at all any more —
+// there is no "every switch off" shape left to safely call it against.
+skip('notify: staxx_update_notify() itself is never called directly',
+     'PLAN_154 — it always sends now; the gate moved to every caller, proved without it below');
 
 /* ------------------------------------------------------ 15. naming helpers -- */
 
@@ -683,15 +705,76 @@ ok('name-or-count: six entries are just counted, not named',
 
 // staxx_update_stack_wants_notify() proved directly against hand-built meta
 // arrays first — no disk, no docker, the fastest possible proof of the OR
-// rule the two message-filtering functions both lean on.
+// rule the two message-filtering functions both lean on. Asked here about
+// 'found' specifically, since that is the event these two fixtures set.
 $metaAllOut = ['services' => ['a' => ['x' => ['update.notify' => false]],
                                'b' => ['x' => ['update.notify' => false]]], 'x' => []];
 $metaMixed  = ['services' => ['a' => ['x' => ['update.notify' => false]],
                                'b' => ['x' => ['update.notify' => true]]], 'x' => []];
 ok('stack-wants-notify: every service opted out means the stack is not named',
-   staxx_update_stack_wants_notify($metaAllOut, $settings) === false);
+   staxx_update_stack_wants_notify('found', $metaAllOut, $settings) === false);
 ok('stack-wants-notify: one service opted in is enough to name the whole stack',
-   staxx_update_stack_wants_notify($metaMixed, $settings) === true);
+   staxx_update_stack_wants_notify('found', $metaMixed, $settings) === true);
+
+/* ------------------------------------- 16b. PLAN_154 per-event override -- */
+
+// A hand-built $global, so "server failures-only" and "server all off" are
+// real, controlled combinations rather than whatever this box happens to
+// have configured right now — staxx_update_stack_wants_notify() only ever
+// reads 'notifyFound'/'notifyInstalled'/'notifyFailed' off it.
+$gFailuresOnly = ['notifyFound' => false, 'notifyInstalled' => false, 'notifyFailed' => true];
+$gAllOff       = ['notifyFound' => false, 'notifyInstalled' => false, 'notifyFailed' => false];
+
+// Container on Default (no x-unraid update block at all) — every event
+// follows the server's own switch, never the "any switch on" collapse this
+// plan removed.
+$metaDefault = ['services' => ['a' => ['x' => []]], 'x' => []];
+ok('override: server failures-only + container Default -> failures only, not everything',
+   staxx_update_stack_wants_notify('failed', $metaDefault, $gFailuresOnly) === true
+   && staxx_update_stack_wants_notify('found', $metaDefault, $gFailuresOnly) === false
+   && staxx_update_stack_wants_notify('installed', $metaDefault, $gFailuresOnly) === false);
+
+// Server all off, container explicitly wants 'found' — proves a container
+// can override the server's switch UPWARD, which the old collapse-to-one-
+// boolean design could never express.
+$metaFoundTrue = ['services' => ['a' => ['x' => ['update.notify.found' => true]]], 'x' => []];
+ok('override: server all off + container found:true -> found, proving override upward',
+   staxx_update_stack_wants_notify('found', $metaFoundTrue, $gAllOff) === true
+   && staxx_update_stack_wants_notify('installed', $metaFoundTrue, $gAllOff) === false);
+
+// Container sets only 'failed' — the other two must still follow the
+// server, not silently inherit the container's own explicit answer.
+$metaFailedOnly = ['services' => ['a' => ['x' => ['update.notify.failed' => true]]], 'x' => []];
+ok('override: container sets failed only -> the other two still follow the server',
+   staxx_update_stack_wants_notify('failed', $metaFailedOnly, $gFailuresOnly) === true
+   && staxx_update_stack_wants_notify('found', $metaFailedOnly, $gAllOff) === false
+   && staxx_update_stack_wants_notify('installed', $metaFailedOnly, $gAllOff) === false);
+
+// The older boolean spelling, at either extreme — 'exactly as before'.
+$metaNotifyTrue  = ['services' => ['a' => ['x' => ['update.notify' => true]]], 'x' => []];
+$metaNotifyFalse = ['services' => ['a' => ['x' => ['update.notify' => false]]], 'x' => []];
+ok('override: notify:true sets all three events on',
+   staxx_update_stack_wants_notify('found', $metaNotifyTrue, $gAllOff) === true
+   && staxx_update_stack_wants_notify('installed', $metaNotifyTrue, $gAllOff) === true
+   && staxx_update_stack_wants_notify('failed', $metaNotifyTrue, $gAllOff) === true);
+$gAllOn = ['notifyFound' => true, 'notifyInstalled' => true, 'notifyFailed' => true];
+ok('override: notify:false sets all three events off',
+   staxx_update_stack_wants_notify('found', $metaNotifyFalse, $gAllOn) === false
+   && staxx_update_stack_wants_notify('installed', $metaNotifyFalse, $gAllOn) === false
+   && staxx_update_stack_wants_notify('failed', $metaNotifyFalse, $gAllOn) === false);
+
+// One service wants failures, another wants nothing (Default, server off) —
+// the stack's failure message fires, its found message does not.
+$metaOneWantsFailures = [
+  'services' => [
+    'wants-failures' => ['x' => ['update.notify.failed' => true]],
+    'wants-nothing'  => ['x' => []],
+  ],
+  'x' => [],
+];
+ok('override: one service wants failures, the other wants nothing -> failure yes, found no',
+   staxx_update_stack_wants_notify('failed', $metaOneWantsFailures, $gAllOff) === true
+   && staxx_update_stack_wants_notify('found', $metaOneWantsFailures, $gAllOff) === false);
 
 // staxx_update_found_containers() against the real fixture: its stack-level
 // notify is true, so every service that does not say otherwise is named,
@@ -741,9 +824,10 @@ ok('queue-notify-names: an all-opted-out stack leaves the failed list empty',
    $queueNames['failed'] === [], json_encode($queueNames));
 
 // An unknown stack (no compose file staxx_update_stack_files() can find)
-// falls back to the global default rather than being silently dropped —
-// the same "global default" the policy walk itself falls back to.
-$globalWants = staxx_update_policy_fallback($settings)['notify'];
+// falls back to the global default rather than being silently dropped — a
+// 'done' item asks about 'installed' specifically, the same event the
+// policy walk itself would fall back to for it.
+$globalWants = staxx_update_policy_fallback($settings)['notifyInstalled'];
 $queueUnknown = staxx_update_queue_notify_names(
   [['stack' => 'staxx-no-such-stack', 'state' => 'done']], $settings
 );

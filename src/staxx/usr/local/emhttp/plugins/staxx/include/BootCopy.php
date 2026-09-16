@@ -239,10 +239,14 @@ function staxx_boot_copy_stack(string $rel, string &$error): bool {
   }
 
   // A stack that had an override at its last copy and does not now must not
-  // leave that override sitting on the shelf looking current.
-  $overrideName = staxx_expected_override_basename($main);
-  if ($overrideName !== '' && !in_array($overrideName, $wanted, true)) {
-    @unlink($dir.'/'.$overrideName);
+  // leave that override sitting on the shelf looking current — checked
+  // against all four names an override could be called (PLAN_155 C5), not
+  // just the one guessed from the main file's own extension, since a stack
+  // may switch which of the four names its override carries between copies.
+  foreach (staxx_override_names() as $overrideName) {
+    if (!in_array($overrideName, $wanted, true)) {
+      @unlink($dir.'/'.$overrideName);
+    }
   }
 
   // The .env file too, since a compose file full of ${PLACEHOLDERS} is not

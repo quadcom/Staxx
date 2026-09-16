@@ -1971,13 +1971,14 @@
     // whether-or-not-the-file-has-it way those three do.
     out.push(harvestWebui(serviceMap, lines));
 
-    // PLAN_150 phase 4a — the per-container update controls (When/Notify
-    // me), straight after the web page port for the same reason: a fixed
-    // slot in the Container group whether or not the file has anything to
-    // say, so the group's shape never depends on what the file contains.
+    // PLAN_150 phase 4a — the per-container update controls (When, and
+    // PLAN_154's three notify switches), straight after the web page port
+    // for the same reason: a fixed slot in the Container group whether or
+    // not the file has anything to say, so the group's shape never depends
+    // on what the file contains. Always mode plus three notify targets, in
+    // that order — see harvestUpdatePolicy()'s own return.
     var policy = harvestUpdatePolicy(serviceMap, lines, stackPolicy);
-    out.push(policy[0]);
-    out.push(policy[1]);
+    for (var pi = 0; pi < policy.length; pi++) out.push(policy[pi]);
 
     harvestLeaves(out, serviceMap, lines);
 
@@ -2141,7 +2142,9 @@
     // reason: a dotted target with no 'x-unraid' entry in LEAVES would
     // otherwise humanise to something like 'Update Mode'.
     if (t.target === 'x-unraid.update.mode') return 'When';
-    if (t.target === 'x-unraid.update.notify') return 'Notify me';
+    // PLAN_155's Notifications row — one field for all three switches now,
+    // so there is one title rather than a per-event lookup.
+    if (t.target === 'x-unraid.update.notify') return 'Notifications';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
     if (t.binder === 'port') return 'Port ' + t.target.split('/')[0];
     // depends_on's long form: 'depends_on.<name>' titles as the dependency's
@@ -2834,13 +2837,64 @@
     return null;
   }
 
-  // The schema's notify: is a real boolean, so only the two literal words
-  // count — a quoted "true" or a number is exactly the kind of thing a
-  // person typed on purpose and this must not silently reinterpret.
+  // A notify: line's own scalar — whether that is the whole key (the older
+  // boolean spelling) or one event inside the object form — is a real
+  // boolean either way, so only the two literal words count: a quoted
+  // "true" or a number is exactly the kind of thing a person typed on
+  // purpose and this must not silently reinterpret.
   function updateNotifyWord(raw) {
     if (raw === 'true') return true;
     if (raw === 'false') return false;
     return null;
+  }
+
+  // The three events PLAN_154 split notify: into, in the order the schema
+  // and every writer (this file's addNested/insertChild path, and
+  // merge-suggest.js's own CM.addRootNested calls) list them.
+  var NOTIFY_EVENTS = ['found', 'installed', 'failed'];
+
+  // Reads x-unraid.update.notify wherever it appears, whichever shape it is
+  // written in: a bare boolean is the older spelling, kept for good, and
+  // sets all three events to that one value; the object form sets each
+  // independently, an event it leaves out reading as null — "no opinion",
+  // which for a service means Default and for the stack block means the
+  // stack itself is not the one to ask. Returns {found, installed, failed}
+  // (each true/false/null), `pairs` (the object form's own child pairs,
+  // present only when notify: really is a map — the write side uses this to
+  // find an existing line to edit), `unreadable` (per event, for a map entry
+  // that is neither true nor false) and `blockUnreadable` for a notify: this
+  // cannot read at all — an unrecognised scalar word, a list, an anchor —
+  // in which case every event reads as unreadable together, since there is
+  // no safe way to guess what any one of them was supposed to mean.
+  function readNotifyBlock(notifyPair) {
+    var out = { found: null, installed: null, failed: null, pairs: null,
+                unreadable: null, blockUnreadable: null };
+    if (!notifyPair || !notifyPair.value) return out;
+
+    if (notifyPair.value.kind === 'scalar') {
+      var word = updateNotifyWord(notifyPair.value.value);
+      if (word === null) { out.blockUnreadable = { raw: notifyPair.value.value }; return out; }
+      out.found = out.installed = out.failed = word;
+      return out;
+    }
+
+    if (notifyPair.value.kind === 'map') {
+      out.pairs = {};
+      out.unreadable = {};
+      NOTIFY_EVENTS.forEach(function (ev) {
+        var p = notifyPair.value.pairs[ev] || null;
+        out.pairs[ev] = p;
+        if (!p) return;
+        var raw = scalarWordOf(p);
+        var word = raw === null ? null : updateNotifyWord(raw);
+        if (word === null) { out.unreadable[ev] = { raw: raw || '' }; return; }
+        out[ev] = word;
+      });
+      return out;
+    }
+
+    out.blockUnreadable = { raw: '' };   // a list, alias or other shape this cannot read
+    return out;
   }
 
   // The three pairs (or null) an x-unraid.update: block holds, at whichever
@@ -2885,7 +2939,7 @@
       mode: mode,                                        // 'manual' | 'auto' | null
       auto: mode === 'auto' ? (delay === 0 ? 'immediate' : 'delayed') : null,
       delay: delay,
-      notify: updateNotifyWord(scalarWordOf(pairs.notify))    // true | false | null
+      notify: readNotifyBlock(pairs.notify)               // {found, installed, failed}, each true/false/null
     };
   }
 
@@ -2914,7 +2968,8 @@
   // control itself wrote; Immediate writes two keys together), so both are
   // recognised and written by their exact target string instead.
   function harvestUpdatePolicy(serviceMap, lines, stackPolicy) {
-    stackPolicy = stackPolicy || { mode: null, auto: null, delay: null, notify: null };
+    stackPolicy = stackPolicy || { mode: null, auto: null, delay: null,
+                                    notify: { found: null, installed: null, failed: null } };
 
     var xu = serviceMap.pairs['x-unraid'];
     var xmap = xu && xu.value && xu.value.kind === 'map' ? xu.value : null;
@@ -2944,8 +2999,9 @@
     // states only `notify` has already taken the stack out of the picture
     // for mode and delay too — a Default row that then said "follows this
     // stack's setting" would be naming a value nothing actually uses.
+    var ownNotify = readNotifyBlock(pairs.notify);
     var serviceSpeaks = modeRecognised !== null ||
-                        updateNotifyWord(scalarWordOf(pairs.notify)) !== null ||
+                        ownNotify.found !== null || ownNotify.installed !== null || ownNotify.failed !== null ||
                         (scalarWordOf(pairs.delay) !== null && /^\d+$/.test(scalarWordOf(pairs.delay)));
 
     var modeChoice, modeScope, modeAuto, modeDelay;
@@ -2986,35 +3042,71 @@
       unreadable: modeUnreadable
     };
 
-    /* ---- notify ("Notify me") -------------------------------------------- */
+    /* ---- notify (one two-state switch per event, all three written
+     * together — PLAN_155, superseding PLAN_154's three Default/On/Off
+     * rows) --------------------------------------------------------------
+     * One target for the whole block rather than one per event: the UI now
+     * shows a single row of three on/off switches and writes all three at
+     * once, so there is nothing left for a per-event target string to
+     * address separately. `hasOwn` is true the moment the service states
+     * ANY event itself — that is what turns the row from "showing what the
+     * server/stack currently say" into "showing (and only ever writing)
+     * this container's own answers", per Adrian's ruling.
+     */
 
-    var notifyRaw = scalarWordOf(pairs.notify);
-    var notifyRecognised = notifyRaw === null ? null : updateNotifyWord(notifyRaw);
-    var notifyUnreadable = (notifyRaw !== null && notifyRecognised === null) ? { raw: notifyRaw } : null;
+    var notifyEvents = {}, notifyHasOwn = false,
+        notifyBlockUnreadable = ownNotify.blockUnreadable || null;
 
-    var notifyChoice, notifyScope;
-    if (notifyRecognised !== null) {
-      notifyChoice = notifyRecognised ? 'yes' : 'no';
-      notifyScope = 'service';
-    } else {
-      notifyChoice = 'default';
-      notifyScope = (!serviceSpeaks && stackPolicy.notify !== null) ? 'stack' : null;
-    }
+    // One event this parser cannot read (a map entry that is neither true
+    // nor false) makes the whole row unreadable, not just that switch — a
+    // row of three two-state switches has no way to draw "the other two are
+    // fine, this one is a mystery word" without guessing at what a flip of
+    // one of the readable two should do to the one that is not.
+    NOTIFY_EVENTS.forEach(function (ev) {
+      if (ownNotify.unreadable && ownNotify.unreadable[ev]) notifyBlockUnreadable = notifyBlockUnreadable || ownNotify.unreadable[ev];
+    });
 
-    var notifySpot = notifyRecognised !== null ? scalarSpot(pairs.notify.value) : null;
+    NOTIFY_EVENTS.forEach(function (ev) {
+      var recognised = ownNotify[ev];              // true | false | null
+
+      var choice, scope;
+      if (recognised !== null) {
+        choice = recognised ? 'yes' : 'no';
+        scope = 'service';
+        notifyHasOwn = true;
+      } else {
+        choice = 'default';
+        scope = (!serviceSpeaks && stackPolicy.notify && stackPolicy.notify[ev] !== null) ? 'stack' : null;
+      }
+
+      notifyEvents[ev] = {
+        choice: choice,
+        scope: scope,
+        stackChoice: stackPolicy.notify ? stackPolicy.notify[ev] : null
+      };
+    });
+
     var notifyTarget = target('policy', 'x-unraid.update.notify', {
-      parts: { value: part(notifyRaw || '', notifySpot) },
+      // A part is required for setPart()'s own early "nothing to write
+      // through" guard (see its comment beside `if (!p) return false;`) —
+      // this field's real value lives in `.policy.events` below, never in
+      // `.parts.value`, so an empty placeholder with no spot is enough.
+      parts: { value: part('', null) },
       range: pairs.notify ? { start: pairs.notify.leadStart, end: pairs.notify.end } : null,
-      comment: notifySpot ? readComment(pairs.notify.value.comment) : undefined,
-      commentSpot: notifySpot ? commentSpot(pairs.notify.value, lines) : null,
-      absent: !notifySpot
+      // Always true, whether or not the file has a notify: line — the same
+      // "no ordinary spot to lock onto" meaning modeTarget's own absent
+      // carries for an unreadable value, not "no line in the file" (this
+      // field is never routed through the generic value-spot path
+      // fieldsFor() otherwise uses to decide `usable`/`locked`; without
+      // this, a service with its own notify: object read as locked the
+      // moment it existed, since neither part here ever carries a spot).
+      absent: true
     });
     notifyTarget.policy = {
       field: 'notify',
-      choice: notifyChoice,
-      scope: notifyScope,
-      stackChoice: stackPolicy.notify,
-      unreadable: notifyUnreadable
+      hasOwn: notifyHasOwn,
+      unreadable: notifyBlockUnreadable,
+      events: notifyEvents
     };
 
     return [modeTarget, notifyTarget];
@@ -3578,23 +3670,54 @@
       return true;
     }
 
+    // The Notifications row (PLAN_155, superseding PLAN_154's per-event
+    // Default/On/Off rows) — f.target is 'x-unraid.update.notify', `value`
+    // is a plain object {found, installed, failed} of booleans. There is no
+    // "Default" here any more: leaving the row untouched never calls this at
+    // all, and flipping any one switch writes all three together, so a
+    // container's own object always states a complete, unambiguous answer
+    // rather than mixing its own choice for one event with a guess at what
+    // it meant for the other two.
     if (f.target === 'x-unraid.update.notify' && which === 'value') {
       if (f.policy && f.policy.unreadable) return false;
+      if (!value || typeof value !== 'object') return false;
 
       var notifyPair = ownUpdatePair(doc, f.service, 'notify');
 
-      if (value === 'default') {
-        if (!notifyPair) return true;
-        return removeUpdateKey(doc, f.service, ['x-unraid', 'update', 'notify']);
+      // The older boolean spelling can't hold three independent answers, so
+      // the first flip replaces it outright with the object form.
+      if (notifyPair && notifyPair.value && notifyPair.value.kind === 'scalar') {
+        if (!removeUpdateKey(doc, f.service, ['x-unraid', 'update', 'notify'])) return false;
+        notifyPair = null;
       }
 
-      var boolWord = value === 'yes' ? 'true' : 'false';
-      if (notifyPair && notifyPair.value && notifyPair.value.kind === 'scalar') {
-        if (notifyPair.value.value === boolWord) return true;
-        return writeScalar(doc, scalarSpot(notifyPair.value), boolWord, 'bare');
+      if (notifyPair && (!notifyPair.value || notifyPair.value.kind !== 'map')) return false;   // sealed/list/alias
+
+      if (!notifyPair) {
+        if (addNested(doc, form, f.service, ['x-unraid', 'update', 'notify'], null) < 0) return false;
       }
-      if (notifyPair) return false;   // an existing notify: line this parser cannot safely overwrite
-      return addNested(doc, form, f.service, ['x-unraid', 'update', 'notify'], boolWord, true) >= 0;
+
+      for (var ei = 0; ei < NOTIFY_EVENTS.length; ei++) {
+        var ev = NOTIFY_EVENTS[ei];
+        var want = !!value[ev];
+        var boolWord = want ? 'true' : 'false';
+        var notifyMapPair = ownUpdatePair(doc, f.service, 'notify');
+        // A freshly-created notify: key (the branch just above) is bare —
+        // no value yet, never mind a map of pairs — so .value.pairs is only
+        // safe to read once it genuinely holds a map. insertChild() itself
+        // turns a bare key into one on its first child, same as the older
+        // boolean-conversion path already relied on.
+        var evPair = (notifyMapPair && notifyMapPair.value && notifyMapPair.value.kind === 'map')
+          ? notifyMapPair.value.pairs[ev] : null;
+        if (evPair && evPair.value && evPair.value.kind === 'scalar') {
+          if (evPair.value.value !== boolWord && !writeScalar(doc, scalarSpot(evPair.value), boolWord, 'bare')) return false;
+        } else if (evPair) {
+          return false;   // an existing notify.<event> line this parser cannot safely overwrite
+        } else if (!notifyMapPair || insertChild(doc, notifyMapPair, ev, boolWord, null, true) < 0) {
+          return false;
+        }
+      }
+      return true;
     }
 
     // healthcheck.test is one file line shown as two fields (see

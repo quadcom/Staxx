@@ -130,15 +130,12 @@ function staxx_update_bool($raw): ?bool {
  * The two independent axes that decide one service's behaviour — whether it
  * is applied for you (mode) and whether it is named in update messages
  * (notify) — resolved service first, then the stack itself, then the global
- * default. A scope only wins outright when it declares at least one of the
- * three keys — a stack that sets only 'update.delay' still inherits the
- * global mode, it does not fall through to the global delay too, and a scope
- * declaring only 'update.notify' still inherits mode and delay from further
- * down. An unrecognised mode, a non-numeric or out-of-range delay, or a
- * notify value that is not really a boolean is ignored at that scope exactly
- * as it would be at the global one, so a typo in a compose file cannot
- * silently turn automatic updates — or being mentioned in a notification —
- * on or off for a service.
+ * default. A scope wins mode and delay outright when it declares either one
+ * — a stack that sets only 'update.delay' still inherits the global mode, it
+ * does not fall through to the global delay too. An unrecognised mode, or a
+ * non-numeric or out-of-range delay, is ignored at that scope exactly as it
+ * would be at the global one, so a typo in a compose file cannot silently
+ * turn automatic updates on or off for a service.
  *
  * mode is always returned as 'manual' or 'auto'. 'off' and 'notify' are the
  * older three-way spelling, read from a hand-written file for good, but they
@@ -146,13 +143,23 @@ function staxx_update_bool($raw): ?bool {
  * asks solely whether it is 'auto' — so both normalise to 'manual' here and
  * no caller downstream ever has to know the old spelling existed.
  *
- * notify has no compose-file global fallback of its own yet: for now it is
- * derived from the three server-wide notify switches — on if any one of
- * "found", "installed" or "failed" is on. A container is either mentioned in
- * whichever messages the server sends, or it is not; there is no per-
- * container say yet in which of the three it is mentioned in.
+ * notify (PLAN_154) is NOT part of that mode/delay handoff — a scope setting
+ * only 'update.notify' does not thereby also decide mode and delay, and a
+ * scope setting mode/delay does not thereby also decide notify. It resolves
+ * separately, per event (found/installed/failed), service then stack: the
+ * first of those two scopes that has an opinion about a given event wins it,
+ * and a scope with no opinion about that event — because it set neither the
+ * plain boolean nor that event's own key — leaves it null rather than
+ * falling through to the server-wide switch itself. That last step is left
+ * to the caller (see staxx_update_stack_wants_notify()) because "container
+ * says nothing" and "container says follow the server" have to stay
+ * distinguishable at this layer, even though today they resolve the same
+ * way. A plain boolean `notify` (the older spelling) answers all three
+ * events at once; the older reader ignores anything it does not recognise,
+ * so a scope carrying an unrecognised shape at either key is treated as
+ * having no opinion, same as an absent key.
  *
- * @return array{mode:string, delay:int, notify:bool, from:string}
+ * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, from:string}
  */
 function staxx_update_policy(string $stack, string $service): array {
   $global = staxx_update_settings();
@@ -171,11 +178,29 @@ function staxx_update_policy(string $stack, string $service): array {
   return staxx_update_policy_from_meta($meta, $service, $global);
 }
 
-/** The global-only answer, when there is nothing more specific to read. */
+/**
+ * The global-only answer, when there is nothing more specific to read. Unlike
+ * staxx_update_policy_from_meta()'s own notifyXxx keys, these are never null
+ * — the server-wide switches are the bottom of the chain, so there is
+ * nothing left for them to defer to.
+ */
 function staxx_update_policy_fallback(array $global): array {
-  $globalNotify = $global['notifyFound'] || $global['notifyInstalled'] || $global['notifyFailed'];
   return ['mode' => $global['mode'], 'delay' => $global['delay'],
-          'notify' => $globalNotify, 'from' => 'global'];
+          'notifyFound' => $global['notifyFound'], 'notifyInstalled' => $global['notifyInstalled'],
+          'notifyFailed' => $global['notifyFailed'], 'from' => 'global'];
+}
+
+/**
+ * One scope's own opinion of one notify event — true, false, or null for "no
+ * opinion here". A plain boolean at 'update.notify' (the older spelling)
+ * answers every event; otherwise this event's own 'update.notify.<event>'
+ * key is read on its own, so a container can set 'failed' and say nothing
+ * about the other two.
+ */
+function staxx_update_notify_scope_value(array $x, string $event): ?bool {
+  $whole = staxx_update_bool($x['update.notify'] ?? null);
+  if ($whole !== null) return $whole;
+  return staxx_update_bool($x['update.notify.'.$event] ?? null);
 }
 
 /**
@@ -188,39 +213,53 @@ function staxx_update_policy_fallback(array $global): array {
  *
  * @param array $meta staxx_compose_meta()'s return for one stack
  * @param array $global staxx_update_settings()'s return
- * @return array{mode:string, delay:int, notify:bool, from:string}
+ * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, from:string}
  */
 function staxx_update_policy_from_meta(array $meta, string $service, array $global): array {
-  $fallback = staxx_update_policy_fallback($global);
-  $globalNotify = $fallback['notify'];
-
   $modes = ['manual', 'off', 'notify', 'auto'];
   $scopes = [
     'service' => (array)($meta['services'][$service]['x'] ?? []),
     'stack'   => (array)($meta['x'] ?? []),
   ];
 
-  foreach ($scopes as $from => $x) {
+  // mode and delay: the first scope that sets either one wins both, exactly
+  // as before PLAN_154 — notify plays no part in this any more.
+  $mode = null; $delay = null; $from = 'global';
+  foreach ($scopes as $scopeName => $x) {
     $rawMode  = (string)($x['update.mode'] ?? '');
     $rawDelay = $x['update.delay'] ?? null;
 
-    $mode = in_array($rawMode, $modes, true) ? $rawMode : null;
-    if ($mode === 'off' || $mode === 'notify') $mode = 'manual';
-    $delay = (is_numeric($rawDelay) && (int)$rawDelay == $rawDelay
+    $scopeMode = in_array($rawMode, $modes, true) ? $rawMode : null;
+    if ($scopeMode === 'off' || $scopeMode === 'notify') $scopeMode = 'manual';
+    $scopeDelay = (is_numeric($rawDelay) && (int)$rawDelay == $rawDelay
               && (int)$rawDelay >= 0 && (int)$rawDelay <= 720) ? (int)$rawDelay : null;
-    $notify = staxx_update_bool($x['update.notify'] ?? null);
 
-    if ($mode !== null || $delay !== null || $notify !== null) {
-      return [
-        'mode'   => $mode ?? $global['mode'],
-        'delay'  => $delay ?? $global['delay'],
-        'notify' => $notify ?? $globalNotify,
-        'from'   => $from,
-      ];
+    if ($scopeMode !== null || $scopeDelay !== null) {
+      $mode = $scopeMode ?? $global['mode'];
+      $delay = $scopeDelay ?? $global['delay'];
+      $from = $scopeName;
+      break;
+    }
+  }
+  if ($mode === null) { $mode = $global['mode']; $delay = $global['delay']; }
+
+  // notify: each event resolved on its own, service first, then stack — see
+  // staxx_update_notify_scope_value() and the docblock above for why a scope
+  // with nothing to say leaves an event null rather than borrowing the
+  // server's switch itself.
+  $events = ['found' => null, 'installed' => null, 'failed' => null];
+  foreach ($scopes as $x) {
+    foreach ($events as $event => $resolved) {
+      if ($resolved !== null) continue;
+      $events[$event] = staxx_update_notify_scope_value($x, $event);
     }
   }
 
-  return $fallback;
+  return [
+    'mode' => $mode, 'delay' => $delay,
+    'notifyFound' => $events['found'], 'notifyInstalled' => $events['installed'],
+    'notifyFailed' => $events['failed'], 'from' => $from,
+  ];
 }
 
 /* ------------------------------------------------------------- the window -- */
@@ -1373,45 +1412,47 @@ function staxx_update_queue_tick(): array {
 
   // Every item finished, one way or another — up to two messages for the
   // whole pass, never one per stack, and only once per queue. Two separate
-  // messages rather than one combining both, because they are gated on two
-  // independent switches: someone with 'installed' off and 'failed' on must
-  // still hear that something broke, and someone the other way round must
-  // not be told about a success they asked not to hear about. Each message
-  // only ever describes its own subject, so there is nothing for the two to
-  // double up on.
+  // messages rather than one combining both, because 'installed' and
+  // 'failed' are independent events: someone who wants to hear about a
+  // failure but not a success must still hear the one that broke, and the
+  // other way round. Each message only ever describes its own subject.
+  //
+  // PLAN_154 — there is no longer a global gate here before even asking:
+  // staxx_update_queue_notify_names() already resolves each stack's own
+  // 'installed'/'failed' want per container, following the server's switch
+  // for whichever event a container leaves unset, so a container that
+  // overrides the server's switch upward is not silenced by it.
   $terminal = true;
   foreach ($items as $item) {
     if (!in_array($item['state'] ?? '', ['done', 'failed', 'skipped'], true)) { $terminal = false; break; }
   }
   if ($terminal && $changed && empty($queue['notified'])) {
-    $settings = staxx_update_settings();
-    if ($settings['notifyInstalled'] || $settings['notifyFailed']) {
-      $names       = staxx_update_queue_notify_names($items, $settings);
-      $doneNames   = $names['done'];
-      $failedNames = $names['failed'];
+    $settings    = staxx_update_settings();
+    $names       = staxx_update_queue_notify_names($items, $settings);
+    $doneNames   = $names['done'];
+    $failedNames = $names['failed'];
 
-      if ($doneNames !== [] && $settings['notifyInstalled']) {
-        staxx_update_notify(
-          'StaXX image updates applied',
-          staxx_update_name_or_count($doneNames, 'stack updated', 'stacks updated').'.'
-        );
-      }
-      // A failed pull and a container that will not come back up both land
-      // here as 'failed' — the job's own exit code does not say which, so
-      // neither does this message; see the 'failed' state set above.
-      if ($failedNames !== [] && $settings['notifyFailed']) {
-        staxx_update_notify(
-          'StaXX update failed',
-          staxx_update_name_or_count($failedNames, 'stack failed to update', 'stacks failed to update')
-            . '. Open the job log to see why.'
-        );
-      }
+    if ($doneNames !== []) {
+      staxx_update_notify(
+        'StaXX image updates applied',
+        staxx_update_name_or_count($doneNames, 'stack updated', 'stacks updated').'.'
+      );
     }
-    // Set once the terminal state has been looked at, whether or not either
-    // switch was on — otherwise a queue left idle with both switches off
-    // would re-evaluate this block on every tick for no reason, and turning
-    // a switch on later while the same queue is still sitting there would
-    // fire a stale message for a run that finished earlier.
+    // A failed pull and a container that will not come back up both land
+    // here as 'failed' — the job's own exit code does not say which, so
+    // neither does this message; see the 'failed' state set above.
+    if ($failedNames !== []) {
+      staxx_update_notify(
+        'StaXX update failed',
+        staxx_update_name_or_count($failedNames, 'stack failed to update', 'stacks failed to update')
+          . '. Open the job log to see why.'
+      );
+    }
+    // Set once the terminal state has been looked at, whether or not
+    // anything wanted a message — otherwise a queue left idle would
+    // re-evaluate this block on every tick for no reason, and a setting
+    // changed later while the same queue is still sitting there would fire
+    // a stale message for a run that finished earlier.
     $queue['notified'] = true;
   }
 
@@ -1497,15 +1538,14 @@ function staxx_update_apply_pass(): array {
 
 /**
  * One message through Unraid's own notifier — never one per container.
- * Silent when all three notify switches are off; a caller that only wants
- * to notify on its own tier (queue completion needs "installed"
- * specifically, not just "found") checks the relevant
- * staxx_update_settings() switch itself before calling.
+ * PLAN_154 — this no longer gates on the server's own three switches itself:
+ * a container may override one of them upward (want a message the server's
+ * own default would suppress), so every caller now works out first, per
+ * event and with the server's switch only as the fallback for a container
+ * that says nothing, whether anyone actually wants this message — and calls
+ * here only once that list is non-empty.
  */
 function staxx_update_notify(string $subject, string $body): void {
-  $s = staxx_update_settings();
-  if (!$s['notifyFound'] && !$s['notifyInstalled'] && !$s['notifyFailed']) return;
-
   staxx_sh(
     '/usr/local/emhttp/webGui/scripts/notify'
       .' -e '.escapeshellarg('StaXX')
@@ -1543,16 +1583,22 @@ function staxx_update_name_or_count(array $names, string $singular, string $plur
 }
 
 /**
- * Whether any service in this stack's own compose file resolves to wanting
- * a mention in an update message. The completion and failure notices below
- * work a whole stack at a time — the queue always did, see
+ * Whether any service in this stack's own compose file resolves to wanting a
+ * mention in an update message for one event — 'found', 'installed' or
+ * 'failed'. PLAN_154 split this per event: wanting to hear about a failure
+ * and wanting to hear about a found update are different questions, and a
+ * service that says nothing about an event follows the server's own switch
+ * for that event, not a lumped-together answer. The completion and failure
+ * notices below work a whole stack at a time — the queue always did, see
  * staxx_update_queue_start() — so there is no single "the" service to ask;
  * naming the stack when at least one service inside opted in is the honest
  * reading of a per-container switch applied to a stack-level report.
  */
-function staxx_update_stack_wants_notify(array $meta, array $global): bool {
+function staxx_update_stack_wants_notify(string $event, array $meta, array $global): bool {
+  $key = 'notify'.ucfirst($event);
   foreach (array_keys((array)($meta['services'] ?? [])) as $svc) {
-    if (staxx_update_policy_from_meta($meta, $svc, $global)['notify']) return true;
+    $resolved = staxx_update_policy_from_meta($meta, $svc, $global)[$key];
+    if ($resolved ?? $global[$key]) return true;
   }
   return false;
 }
@@ -1589,9 +1635,12 @@ function staxx_update_found_containers(array $images, array $refs, array $stackF
         $file = $stackFiles[$refStack] ?? '';
         $metaCache[$refStack] = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
       }
+      // This is the 'found' message specifically — a container's own null
+      // (no opinion at either scope) falls to the server's own 'found'
+      // switch, not to whatever it decided for 'installed' or 'failed'.
       $meta  = $metaCache[$refStack];
-      $wants = $meta['ok'] ? staxx_update_policy_from_meta($meta, $refSvc, $global)['notify']
-                           : staxx_update_policy_fallback($global)['notify'];
+      $wants = $meta['ok'] ? (staxx_update_policy_from_meta($meta, $refSvc, $global)['notifyFound'] ?? $global['notifyFound'])
+                           : $global['notifyFound'];
       if ($wants) $wanted[] = staxx_update_container_label($refStack, $refSvc);
     }
   }
@@ -1628,9 +1677,12 @@ function staxx_update_queue_notify_names(array $items, array $global): array {
       $file = $stackFiles[$stackName] ?? '';
       $metaCache[$stackName] = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
     }
+    // 'done' asks about the 'installed' event, 'failed' about 'failed' — the
+    // two are independent switches, not one shared "wants a message" answer.
     $meta  = $metaCache[$stackName];
-    $wants = $meta['ok'] ? staxx_update_stack_wants_notify($meta, $global)
-                         : staxx_update_policy_fallback($global)['notify'];
+    $event = $state === 'done' ? 'installed' : 'failed';
+    $wants = $meta['ok'] ? staxx_update_stack_wants_notify($event, $meta, $global)
+                         : $global['notify'.ucfirst($event)];
     if (!$wants) continue;
 
     if ($state === 'done') $doneNames[] = $stackName; else $failedNames[] = $stackName;

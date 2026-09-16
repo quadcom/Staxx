@@ -93,6 +93,65 @@ check('a real settings change does move the fingerprint',
 check('a second service leaves the first fingerprint alone',
   is_array($twosvc) && ($twosvc['a'] ?? '') === ($plain['a'] ?? '') && isset($twosvc['b']));
 
+/* ---- C6: a file-backed secret or config is a bind mount too ----
+ *
+ * A container using one is mounted at /run/secrets/<name> (a config at
+ * /<name>), whether the author wrote the entry in short or long form. Before
+ * this fix the file-side parser never expected that mount at all, so every
+ * such stack wore "restart to apply" permanently — the false badge that
+ * teaches people to ignore a true one. This calls the file-side parser
+ * directly against a hand-built "docker compose config" text, so it needs no
+ * docker and starts no container: the "live" side below is exactly what
+ * `docker inspect` would report for a container actually started from these
+ * secrets and this config, typed out rather than fetched.
+ */
+require_once '/usr/local/emhttp/plugins/staxx/include/Pending.php';
+
+$secretsDir = $root.'/secrets';
+@mkdir($secretsDir, 0755, true);
+file_put_contents($secretsDir.'/s1.txt', 'a');
+file_put_contents($secretsDir.'/s2.txt', 'b');
+file_put_contents($secretsDir.'/c1.txt', 'c');
+
+$cfgYaml = "secrets:
+  s_short:
+    file: ./s1.txt
+  s_long:
+    file: ./s2.txt
+configs:
+  c1:
+    file: ./c1.txt
+services:
+  a:
+    image: busybox
+    secrets:
+      - source: s_short
+      - source: s_long
+        target: /custom/path/s2
+    configs:
+      - source: c1
+";
+
+$parsed = staxx_pending_parse_file($cfgYaml, $secretsDir);
+
+$expectShort = staxx_pending_mount_key((string)realpath($secretsDir.'/s1.txt'), '/run/secrets/s_short');
+$expectLong  = staxx_pending_mount_key((string)realpath($secretsDir.'/s2.txt'), '/custom/path/s2');
+$expectConf  = staxx_pending_mount_key((string)realpath($secretsDir.'/c1.txt'), '/c1');
+
+check('a short-form file secret becomes an expected mount',
+  in_array($expectShort, $parsed['a']['volumes'] ?? [], true));
+check('a long-form file secret with an explicit target becomes an expected mount',
+  in_array($expectLong, $parsed['a']['volumes'] ?? [], true));
+check('a file-backed config becomes an expected mount',
+  in_array($expectConf, $parsed['a']['volumes'] ?? [], true));
+
+// What a container really started from this file would report — proving the
+// comparison staxx_pending_detail() actually runs finds nothing pending.
+$liveVolumes = [$expectShort, $expectLong, $expectConf];
+check('a container with exactly these secrets/configs shows no pending mounts',
+  array_diff($parsed['a']['volumes'], $liveVolumes) === []
+  && array_diff($liveVolumes, $parsed['a']['volumes']) === []);
+
 /* ---- the real stacks: nobody has edited them, so nothing may be marked ---- */
 
 $marked = [];

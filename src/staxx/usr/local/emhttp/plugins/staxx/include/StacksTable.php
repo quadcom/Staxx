@@ -2240,6 +2240,28 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
                         title="<?= htmlspecialchars(_('This app has been switched over and is running now. Check that it works, then press this to keep it or put the old one back.')) ?>">
                     <?= _('waiting to confirm') ?>
                   </button>
+                <? elseif ($s['mergedInto'] ?? null): ?>
+                  <!-- PLAN_155 — this stack was retired into a brand new stack a merge
+                       wrote, and is stopped and locked (NEEDS-REVIEW.md plus a "retired"
+                       compose profile on every service) rather than left running; see
+                       staxx_record_merged_into()'s own comment in Record.php. Tested
+                       ahead of the review badge below: a retired stack also carries
+                       NEEDS-REVIEW.md (that is how the lock works), so without this order
+                       it would misread as an ordinary import waiting to be reviewed. Remove
+                       sits beside it rather than replacing anything else on the row; it
+                       asks once and then deletes the stack the ordinary way (the same
+                       "Remove stack" flow the row menu already offers) — see the delegated
+                       [data-merge-remove] click handler at the end of stacks.js. -->
+                  <span class="staxx-mergedbadge"
+                        title="<?= htmlspecialchars(_('This stack was joined into another one and cannot be started. It is kept whole. Remove it once you have checked the new stack works.')) ?>">
+                    <?= _('retired into') ?> <?= htmlspecialchars(basename((string)$s['mergedInto']['host'])) ?>
+                  </span>
+                  <button type="button" class="staxx-mergedremove"
+                          data-merge-remove="<?= htmlspecialchars($s['name']) ?>"
+                          data-merge-remove-label="<?= htmlspecialchars($s['leaf']) ?>"
+                          title="<?= htmlspecialchars(_('Remove this stack')) ?>">
+                    <?= _('Remove') ?>
+                  </button>
                 <? elseif ($s['review']): ?>
                   <!-- Imported and not yet reviewed — see the "review lock"
                        section of Stacks.php. Read-only marker; the menu item
@@ -2248,26 +2270,6 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
                         title="<?= htmlspecialchars(_('Imported and not yet reviewed. Check it over, then choose "Take over and start" from the stack menu, or "Clear the lock only" if nothing else holds its container name.')) ?>">
                     <?= _('needs review') ?>
                   </span>
-                <? elseif ($s['mergedInto'] ?? null): ?>
-                  <!-- PLAN_148 phase 6 — this stack was folded into another one and is
-                       left exactly as it was; see staxx_record_merged_into()'s own
-                       comment in Record.php. Purely informational — it does not change
-                       this row's state, and does not stop the stack being started or
-                       used, which is why Remove sits beside it rather than replacing
-                       anything else on the row. Remove asks once and then deletes the
-                       stack the ordinary way (the same "Remove stack" flow the row menu
-                       already offers) — see the delegated [data-merge-remove] click
-                       handler at the end of stacks.js. -->
-                  <span class="staxx-mergedbadge"
-                        title="<?= htmlspecialchars(_('This stack was folded into another one and is left exactly as it was. Remove it once you have checked the merged stack works.')) ?>">
-                    <?= _('folded into') ?> <?= htmlspecialchars(basename((string)$s['mergedInto']['host'])) ?>
-                  </span>
-                  <button type="button" class="staxx-mergedremove"
-                          data-merge-remove="<?= htmlspecialchars($s['name']) ?>"
-                          data-merge-remove-label="<?= htmlspecialchars($s['leaf']) ?>"
-                          title="<?= htmlspecialchars(_('Remove this stack')) ?>">
-                    <?= _('Remove') ?>
-                  </button>
                 <? endif; ?>
                 <? if (isset($drift[$s['name']])): ?>
                   <?= staxx_drift_mark_html($drift[$s['name']]) ?>

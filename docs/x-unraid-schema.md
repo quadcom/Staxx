@@ -228,7 +228,10 @@ service that no longer exists is ignored too, never quietly deleted.
 x-unraid:
   update:
     mode: auto      # manual | auto (off and notify are the older spelling of manual)
-    notify: true    # mention this in update messages; omit to inherit
+    notify:         # mention this in update messages; omit any event to inherit
+      found: true
+      installed: true
+      failed: true
     delay: 6        # hours to wait before applying; omit to inherit
 ```
 
@@ -241,16 +244,26 @@ setting `mode` means "use the global delay with this mode".
 **`off` and `notify` are the older spelling of `manual`, and are still accepted for good** — a file
 written before this pair existed keeps working exactly as it did, with no need to change it.
 
-`notify` says whether this stack (or service) is named in an update message, independent of whether
-it updates itself. Leaving it out means "use the level below this one" — the stack's own setting,
-then the plugin's global one.
+`notify` says whether this stack (or service) is named in an update message — a found update, one
+installed, one that failed — independent of whether it updates itself. It is an object with three
+optional switches, one per kind of message: `found`, `installed`, `failed`. Leaving one out means
+"use the server's own switch for that kind of message" — not the stack's own setting and not the
+plugin's global `mode`/`delay` fallback described below, because that "first level that sets
+anything wins for everything" rule stops at the door of this key. Each of the three switches
+resolves on its own: a container can ask to be named on failure and say nothing about the other two,
+and still get the server's own answer for those.
 
-A **service** can carry the same block (see below) to override this for one container in the stack.
-The order a value is looked up in is: the service's own `update` block, then the stack's, then the
-plugin's global setting — and **the first level that sets any of the three keys wins for all
-three**. Whatever that level leaves unsaid comes from the plugin's global setting, not from the
-level below it. So a service that sets only `notify` takes the global `mode` and `delay`, even when
-the stack around it sets both; to keep the stack's mode as well, say it on the service too.
+**A plain `true` or `false` is still accepted, for good** — the older spelling, from before the three
+were separate. It sets all three switches to that one value in one go; there is no plan to ever stop
+reading it, so a file need never be rewritten just to keep working.
+
+A **service** can carry the same block (see below) to override `mode` and `delay` for one container
+in the stack. The order a value is looked up in for those two is: the service's own `update` block,
+then the stack's, then the plugin's global setting — and **the first level that sets `mode` or
+`delay` wins for both**. Whatever that level leaves unsaid comes from the plugin's global setting,
+not from the level below it. `notify` is not part of that handoff: a service's own `notify` block
+(or boolean) only ever decides the events it actually names, whatever the stack around it says about
+`mode` or `delay`.
 
 ### `imported`
 
@@ -321,8 +334,9 @@ services:
       webui: "http://[IP]:[PORT:8096]/"
       display: basic               # basic | advanced — reserved; see below
       update:
-        mode: manual                # manual | auto; overrides the stack's own setting
-        notify: false                # overrides the stack's own setting for this container alone
+        mode: manual                # manual | auto; overrides the stack's own mode and delay
+        notify:                     # each event overrides the server's own switch for this container alone
+          failed: true
         delay: 12                   # hours; omit to inherit
 ```
 
@@ -337,12 +351,15 @@ fallback when a service does not set its own. A service-level pair exists becaus
 belongs to one image, and a stack can hold several: a media server and its database sit in the
 same file but come from different projects, so one stack-level link cannot speak for both.
 
-`update` means the same thing here as it does at stack level (see [Update](#update) above), and a
-service that sets any key here takes over from the stack for all of them: a database sidecar that
+`update` means the same thing here as it does at stack level (see [Update](#update) above). A
+service that sets `mode` or `delay` here takes over both from the stack: a database sidecar that
 should never auto-update while the rest of the stack does can say `mode: manual` here without
-touching the stack's own setting. Remember that this block replaces the stack's rather than adding
-to it — a service saying only `notify: false` falls back to the *global* mode and delay, not the
-stack's, so write out anything of the stack's you meant to keep.
+touching the stack's own setting. Remember that handoff replaces the stack's rather than adding to
+it — a service saying only `delay: 12` falls back to the *global* mode, not the stack's, so write
+out anything of the stack's you meant to keep. `notify` does not take part in that handoff: each
+event a service's own `notify` names is decided right there, and any event it leaves unset follows
+the server's own switch for that event — never the stack's `notify`, and never the rest of the
+service's own `update` block.
 
 `webui` uses Unraid's existing `[IP]` substitution for the address, and states the port plainly:
 

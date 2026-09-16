@@ -990,11 +990,11 @@
     // it — an explicit rule beside this one is what still lands it in the
     // Container group, as the fourth row.
     if (f.target === 'x-unraid.webui') return 'container';
-    // The two per-container update-policy rows (PLAN_150 phase 4b) reach
-    // inside x-unraid the same way webui does, and carry the same reason for
-    // an explicit rule here: harvestUpdatePolicy() (compose-model.js) leaves
-    // f.fixed false for both, since they are not one of Container's four
-    // fixed rows either.
+    // The per-container update-policy rows — When, and PLAN_154's three
+    // notify switches (PLAN_150 phase 4b) — reach inside x-unraid the same
+    // way webui does, and carry the same reason for an explicit rule here:
+    // harvestUpdatePolicy() (compose-model.js) leaves f.fixed false for all
+    // four, since none is one of Container's four fixed rows either.
     if (f.binder === 'policy') return 'updates';
     // A declaration belongs to no service, so it gets its own bucket per
     // kind rather than falling in with Advanced. A fold field carries this
@@ -4008,14 +4008,17 @@
   }
 
   /* =====================================================================
-   * PLAN_150 phase 4b — the Updates fieldset: two per-container rows (When,
-   * Notify me) built from the two 'policy' fields harvestUpdatePolicy()
-   * (compose-model.js) always pushes for every service. Kept apart from
-   * fieldHtml()/boxHtml() entirely — a tick row is not a text box, and
-   * neither of these two fields is ever offered a value the ordinary
-   * commit()/input-debounce path could write, since a tick has to reach the
-   * disk at once (see writeUpdatePolicy() below) rather than waiting for
-   * Save.
+   * PLAN_150 phase 4b / PLAN_154 / PLAN_155 — the Updates and Notifications
+   * fieldsets: Updates keeps the When row (and Immediate/Delayed); a
+   * separate Notifications fieldset beneath it holds one row of three
+   * on/off switches — New image / Image installed / Installation failed —
+   * built from the two 'policy' fields harvestUpdatePolicy() (compose-
+   * model.js) always pushes for every service (mode, then the single
+   * notify block). Kept apart from fieldHtml()/boxHtml() entirely — a tick
+   * row is not a text box, and neither of these two fields is ever offered
+   * a value the ordinary commit()/input-debounce path could write, since a
+   * tick has to reach the disk at once (see writeUpdatePolicy() below)
+   * rather than waiting for Save.
    * ===================================================================== */
 
   // The row ids the settings panel's own SETTINGS_ROWS gives these two keys
@@ -4058,42 +4061,31 @@
     if (p.scope === 'stack') {
       return 'Follows this stack’s setting: ' + (p.stackChoice === 'auto' ? 'Automatic' : 'Manual');
     }
-    return 'Follows your setting: ' + (UPDATE_SETTINGS.mode === 'auto' ? 'Automatic' : 'Manual');
+    return 'Default = ' + (UPDATE_SETTINGS.mode === 'auto' ? 'Automatic' : 'Manual');
   }
 
-  // What the Notify me row's note says. The Default/some-on case lists what
-  // the server has on, in the order found, installed, fails, joined the same
-  // way the rest of this file lists things ("a, b, and c") — see the plan's
-  // own example, "when one is found, and when one fails".
-  function updateNotifyNoteHtml(f) {
-    var p = f.policy;
-    if (p.choice === 'no')  return 'Never mentioned in an update message.';
-    if (p.choice === 'yes') return 'Included in the update message.';
-    // Default. A stack-level notify: has no wording of its own in the plan's
-    // table, but the same reasoning as mode's stack case applies — a hand-
-    // written stack block is what Default follows, not the server default —
-    // so this borrows mode's phrasing rather than silently ignoring it.
-    if (p.scope === 'stack') {
-      return 'Follows this stack’s setting: ' + (p.stackChoice ? 'Yes' : 'No');
-    }
-    var n = UPDATE_SETTINGS.notify || {};
-    var parts = [];
-    if (n.found)     parts.push('when one is found');
-    if (n.installed) parts.push('when one is installed');
-    if (n.failed)    parts.push('when one fails');
-    if (!parts.length) return 'Follows your setting: no messages';
-    var joined = parts.length === 1 ? parts[0]
-      : parts.slice(0, -1).join(', ') + ', and ' + parts[parts.length - 1];
-    return 'Follows your setting: ' + joined;
+  // The note under the Notifications row (PLAN_155, superseding PLAN_154's
+  // per-event wording above) — only ever drawn when the container has none
+  // of its own three switches set (see updateNotifyGroupHtml()): the ticks
+  // themselves say the answer once the container states its own, so there
+  // is nothing left for a note to add. `events` is the single notify
+  // field's `policy.events` ({found, installed, failed}, each {choice,
+  // scope, stackChoice}) — every one of them is 'default' here by
+  // construction, so the only question left is whose switches are on: a
+  // hand-written stack block's, if one applies, otherwise the server's.
+  function updateNotifyNoteHtml(events) {
+    var stackScoped = NOTIFY_ROW_EVENTS.some(function (ev) { return events[ev[0]].scope === 'stack'; });
+    var on = NOTIFY_ROW_EVENTS.filter(function (ev) {
+      return stackScoped ? !!events[ev[0]].stackChoice : !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[ev[0]]);
+    }).map(function (ev) { return ev[1]; });
+    return 'Default = ' + (on.length ? on.join(', ') : 'none');
   }
 
-  // The control value string setPart() understands for this field's current
-  // state — 'default' | 'manual' | 'auto' | 'auto-immediate' for When,
-  // 'default' | 'no' | 'yes' for Notify me. Read back off the same value
-  // whenever the row is redrawn, so the radio a click just picked is the one
-  // still checked after the reparse it causes.
+  // The control value string setPart() understands for the When field's
+  // current state — 'default' | 'manual' | 'auto' | 'auto-immediate'. Read
+  // back off the same value whenever the row is redrawn, so the radio a
+  // click just picked is the one still checked after the reparse it causes.
   function policyValueOf(f) {
-    if (f.policy.field !== 'mode') return f.policy.choice;
     if (f.policy.choice !== 'auto') return f.policy.choice;
     return f.policy.auto === 'immediate' ? 'auto-immediate' : 'auto';
   }
@@ -4111,16 +4103,14 @@
            '<span class="staxx-tickword">' + esc(label) + '</span></label>';
   }
 
-  // One of the two rows (When / Notify me) inside the fieldset. `pinned`/
-  // `bare` only decide whether the row is drawn disabled (CSS, via the
-  // fieldset's own dim class) — the marks themselves are always drawn from
-  // the field's real state, pinned or not, so "what this would do" stays
-  // readable even while it cannot be changed (PLAN_150's own point about a
-  // grey box nobody can decode).
+  // The When row inside the fieldset. `pinned`/`bare` only decide whether the
+  // row is drawn disabled (CSS, via the fieldset's own dim class) — the marks
+  // themselves are always drawn from the field's real state, pinned or not,
+  // so "what this would do" stays readable even while it cannot be changed
+  // (PLAN_150's own point about a grey box nobody can decode).
   function updatePolicyRowHtml(f, index) {
-    var isMode = f.policy.field === 'mode';
-    var label  = isMode ? 'When' : 'Notify me';
-    var name   = 'staxx-updpolicy-' + f.policy.field + '-' + index;
+    var label = 'When';
+    var name  = 'staxx-updpolicy-' + f.policy.field + '-' + index;
 
     if (f.policy.unreadable) {
       return '<div class="staxx-upd-row" data-row="' + index + '">' +
@@ -4133,35 +4123,39 @@
     }
 
     var value = policyValueOf(f);
-    var topValue = isMode && value === 'auto-immediate' ? 'auto' : value;
-    var options = isMode
-      ? [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']]
-      : [['default', 'Default'], ['no', 'No'], ['yes', 'Yes']];
+    var topValue = value === 'auto-immediate' ? 'auto' : value;
+    var options = [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
     var optsHtml = options.map(function (o) {
       return updTickOptionHtml(name, index, f.policy.field, o[0], o[1], topValue);
     }).join('');
 
     var helpId = 'staxx-updhelp-' + index;
-    var help = isMode ? helpBtnHtml({ title: 'When' }, helpId) : '';
-    var helpPara = isMode ? '<p class="staxx-fieldhint staxx-fieldhelp" id="' + esc(helpId) + '" hidden>' +
+    var help = helpBtnHtml({ title: 'When' }, helpId);
+    var helpPara = '<p class="staxx-fieldhint staxx-fieldhelp" id="' + esc(helpId) + '" hidden>' +
       'Whether StaXX installs a newer version for you, or waits for you to press Update. Default follows ' +
       'your server-wide setting, so changing that changes this container too. Automatic can install as ' +
-      'soon as an update is found, or wait — the wait itself is set once for the whole server.</p>' : '';
+      'soon as an update is found, or wait — the wait itself is set once for the whole server.</p>';
 
-    // Immediate/Delayed — reserved space always in the markup (visibility,
-    // never display: none/hidden — PLAN_150 is explicit that nothing below
-    // this may shift when it appears), only for the When row.
-    var subHtml = '';
-    if (isMode) {
-      var subName = name + '-sub';
-      var subChecked = value === 'auto-immediate' ? 'auto-immediate' : 'auto';
-      subHtml = '<div class="staxx-upd-sub"' + (topValue === 'auto' ? '' : ' style="visibility:hidden"') + '>' +
-        updTickOptionHtml(subName, index, 'mode', 'auto-immediate', 'Immediate', subChecked) +
-        updTickOptionHtml(subName, index, 'mode', 'auto', 'Delayed', subChecked) +
-        '</div>';
-    }
+    // Immediate/Delayed — eases in when Automatic is chosen, rather than the
+    // reserved-space/visibility toggle PLAN_150 used (PLAN_155 supersedes
+    // that for this fieldset, matching the row menu's own animated version
+    // and the merge wizard's). Rendered without '--in' whenever it should
+    // show; a post-render pass (see updRevealIn(), called after the form's
+    // innerHTML lands) adds '--in' a frame later so the browser actually has
+    // a "from" state to transition out of — adding both at once transitions
+    // nothing. Left out of the markup entirely when not Automatic, since
+    // there is nothing to hold reserved space for any more.
+    var subName = name + '-sub';
+    var subChecked = value === 'auto-immediate' ? 'auto-immediate' : 'auto';
+    var subHtml = topValue !== 'auto' ? '' :
+      '<div class="staxx-upd-reveal" data-updreveal="' + index + '">' +
+        '<div class="staxx-upd-sub">' +
+          updTickOptionHtml(subName, index, 'mode', 'auto-immediate', 'Immediate', subChecked) +
+          updTickOptionHtml(subName, index, 'mode', 'auto', 'Delayed', subChecked) +
+        '</div>' +
+      '</div>';
 
-    var note = isMode ? updateModeNoteHtml(f) : updateNotifyNoteHtml(f);
+    var note = updateModeNoteHtml(f);
 
     return '<div class="staxx-upd-row" data-row="' + index + '">' +
              '<span class="staxx-upd-label">' + esc(label) + help + '</span>' +
@@ -4172,6 +4166,61 @@
              '<p class="staxx-upd-note">' + note + '</p>' +
              helpPara +
            '</div>';
+  }
+
+  // The Notifications row (PLAN_155) — one row of three two-state switches,
+  // worded the same everywhere they appear (settings panel, editor, row
+  // menu): New image / Image installed / Installation failed.
+  var NOTIFY_ROW_EVENTS = [['found', 'New image'], ['installed', 'Image installed'], ['failed', 'Installation failed']];
+
+  // One flag switch, the same markup settingsControlHtml()'s 'flags' control
+  // draws (.staxx-tickopt.staxx-flagopt with a checkbox — orange tick on,
+  // red cross off) — reused rather than duplicated, so both places share one
+  // set of rules for what on/off looks like.
+  function updFlagOptionHtml(name, index, event, label, checked) {
+    return '<label class="staxx-tickopt staxx-flagopt"><input type="checkbox" name="' + esc(name) + '" ' +
+           'data-updnotify="' + esc(event) + '" data-row="' + index + '" data-on="true" data-off="false"' +
+           (checked ? ' checked' : '') + '>' +
+           '<svg class="staxx-tickmark staxx-tickmark--tick" viewBox="0 0 16 16" aria-hidden="true">' +
+           '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+           '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
+           '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
+           '<span class="staxx-tickword">' + esc(label) + '</span></label>';
+  }
+
+  // The one Notifications row — no label in front of it (the fieldset's own
+  // legend already says what it is), no per-event Default any more: leaving
+  // it untouched writes nothing, and flipping any one switch writes all
+  // three (see writeUpdatePolicy()'s own comment). `f` is the single notify
+  // policy field harvestUpdatePolicy() pushes for this service.
+  function updateNotifyGroupHtml(f, index) {
+    if (f.policy.unreadable) {
+      return '<div class="staxx-upd-row" data-row="' + index + '">' +
+               '<div class="staxx-upd-options"><span class="staxx-upd-raw">"' +
+                 esc(f.policy.unreadable.raw) + '"</span></div>' +
+               '<p class="staxx-upd-note">This compose file already sets one of these to a word StaXX ' +
+                 'does not recognise, so all three are left exactly as written. Edit them in the Compose ' +
+                 'view.</p>' +
+             '</div>';
+    }
+
+    var events = f.policy.events;
+    var optsHtml = NOTIFY_ROW_EVENTS.map(function (ev) {
+      var e = events[ev[0]];
+      var on = e.scope === 'service' ? e.choice === 'yes'
+             : e.scope === 'stack' ? !!e.stackChoice
+             : !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[ev[0]]);
+      return updFlagOptionHtml('staxx-updnotify-' + index, index, ev[0], ev[1], on);
+    }).join('');
+
+    var rowHtml = '<div class="staxx-upd-row" data-row="' + index + '">' +
+                    '<div class="staxx-upd-options">' +
+                      '<div class="staxx-tickrow" role="group" aria-label="Notifications">' + optsHtml + '</div>' +
+                    '</div>' +
+                  '</div>';
+
+    var note = f.policy.hasOwn ? '' : updateNotifyNoteHtml(events);
+    return rowHtml + (note ? '<p class="staxx-upd-note staxx-upd-note--group">' + note + '</p>' : '');
   }
 
   // This service's image line and whether it has a build: key — read
@@ -4197,14 +4246,21 @@
     return { image: image, pinned: image.indexOf('@') !== -1, hasBuild: hasBuild };
   }
 
-  // The whole fieldset for one service — legend, the two odd-state notices
-  // (pinned/locally-built/bare), then the two rows. `rows` is the two
-  // harvestUpdatePolicy() field indices, in push order (mode, notify).
+  // The two fieldsets for one service — Updates (legend, the two odd-state
+  // notices, then the When row) and, directly beneath it, Notifications
+  // (the one row of three switches) — same fieldset/legend markup and
+  // classes for both, per Adrian's ruling (PLAN_155) that Notifications is
+  // its own fieldset rather than living inside Updates. `rows` is
+  // harvestUpdatePolicy()'s own field indices — mode, then notify, in that
+  // order — but matched here by what each one MEANS (f.policy.field) rather
+  // than by position, so a stray reordering upstream could never silently
+  // swap the two.
   function updatesFieldsetHtml(svc, rows, fields) {
     var info = serviceImageAndBuild(fields, svc.name);
     var pinned = info.pinned;
     var builtOnly = !pinned && info.hasBuild;
     var bare = !pinned && !info.hasBuild && !String(info.image).trim();
+    var dim = pinned || bare;
 
     var notice = '';
     if (pinned) {
@@ -4218,12 +4274,24 @@
       notice = '<p class="staxx-upd-notice">This container has no image, so there is nothing to update.</p>';
     }
 
-    var rowsHtml = rows.map(function (idx) { return updatePolicyRowHtml(fields[idx], idx); }).join('');
+    var modeEntry = null, notifyEntry = null;
+    rows.forEach(function (idx) {
+      var f = fields[idx];
+      if (f.policy.field === 'mode') modeEntry = { f: f, idx: idx };
+      else notifyEntry = { f: f, idx: idx };
+    });
 
-    return '<fieldset class="staxx-updates' + ((pinned || bare) ? ' staxx-updates--dim' : '') + '">' +
+    var updatesHtml = (modeEntry ? updatePolicyRowHtml(modeEntry.f, modeEntry.idx) : '');
+    var notifyHtml = notifyEntry ? updateNotifyGroupHtml(notifyEntry.f, notifyEntry.idx) : '';
+
+    return '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
              '<legend>Updates</legend>' +
              notice +
-             rowsHtml +
+             updatesHtml +
+           '</fieldset>' +
+           '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
+             '<legend>Notifications</legend>' +
+             notifyHtml +
            '</fieldset>';
   }
 
@@ -4266,7 +4334,7 @@
 
     pushUndo(policyField === 'mode'
       ? 'changing when "' + service + '" updates itself'
-      : 'changing whether "' + service + '" is mentioned in update messages');
+      : 'changing "' + service + '"’s update notifications');
 
     var ok = YAML.setPart(MODEL.doc, MODEL, f.id, 'value', value);
     if (!ok) {
@@ -4372,9 +4440,54 @@
     });
   }
 
+  // The Immediate/Delayed reveal eases in — see updatePolicyRowHtml()'s own
+  // comment. Run once after every full render (reparse()) rather than from
+  // whatever caused it, since a rename, an undo or anything else that
+  // reparses can leave the row showing just as much as a click on
+  // Automatic can.
+  function updRevealIn() {
+    formHost.querySelectorAll('.staxx-upd-reveal').forEach(function (el) {
+      requestAnimationFrame(function () { el.classList.add('staxx-upd-reveal--in'); });
+    });
+  }
+
   formHost.addEventListener('change', function (event) {
     var el = event.target;
+
+    if (el.dataset.updnotify !== undefined) {
+      // Every switch in this row is read fresh off the DOM rather than
+      // computed from the one that just changed — the flipped one already
+      // reflects the click, and the write always states all three together
+      // (see writeUpdatePolicy()'s own comment on why there is no per-event
+      // Default any more).
+      var row = el.closest('.staxx-upd-row');
+      var value = { found: false, installed: false, failed: false };
+      row.querySelectorAll('[data-updnotify]').forEach(function (input) {
+        value[input.dataset.updnotify] = input.checked;
+      });
+      writeUpdatePolicy(el.dataset.row | 0, value);
+      return;
+    }
+
     if (el.dataset.updpolicy === undefined) return;
+
+    // Leaving Automatic eases the Immediate/Delayed reveal out before it is
+    // torn down, rather than popping — the mirror of updRevealIn() above,
+    // and the same shape the merge wizard's own update block uses for this.
+    // Entering Automatic (or moving between Default and Manual, which
+    // reveals nothing) needs no such delay: the normal render already eases
+    // it in.
+    if (el.dataset.updpolicy === 'mode') {
+      var reveal = formHost.querySelector('.staxx-upd-reveal[data-updreveal="' + el.dataset.row + '"]');
+      var wasAuto = !!reveal;
+      var newTop = el.value === 'auto-immediate' ? 'auto' : el.value;
+      if (wasAuto && newTop !== 'auto') {
+        reveal.classList.remove('staxx-upd-reveal--in');
+        setTimeout(function () { writeUpdatePolicy(el.dataset.row | 0, el.value); }, 280);
+        return;
+      }
+    }
+
     writeUpdatePolicy(el.dataset.row | 0, el.value);
   });
 
@@ -4387,12 +4500,13 @@
   });
 
   /* =====================================================================
-   * PLAN_150 phase 5 — the row menu's own Updates / Notify me rows. Same
-   * two 'policy' fields as the editor's fieldset above, but the menu opens
-   * with no parsed model of its own to read them off, so this fetches the
-   * stack fresh with the same `read` action the write below already needs,
-   * parses it once, and draws both rows from that. One request answers
-   * both rows, and every service a stack-wide row might have to set.
+   * PLAN_150 phase 5 / PLAN_154 — the row menu's own Updates row and its
+   * three notify rows. Same four 'policy' fields as the editor's fieldset
+   * above, but the menu opens with no parsed model of its own to read them
+   * off, so this fetches the stack fresh with the same `read` action the
+   * write below already needs, parses it once, and draws all four rows
+   * from that. One request answers every row, and every service a
+   * stack-wide row might have to set.
    * ===================================================================== */
 
   // The write side, for the menu. Same two-step shape as writeUpdatePolicy()
@@ -4510,14 +4624,15 @@
            '<span class="staxx-tickword">' + esc(label) + '</span></label>';
   }
 
-  // Fills one row (mode or notify) once the read() has answered. `readable`
-  // is this row's fields, one per service the menu is allowed to set, with
-  // every unreadable one already left out — see policyFieldFor() and the
-  // 'unreadable' guard on each. A stack whose containers disagree shows NO
-  // tick on any option (PLAN_150 rejects a "Mixed" label as noise); pressing
-  // one still sets every one of them, since the write always targets the
-  // full list, not just whichever service happened to agree.
-  function fillUpdateMenuRow(skel, field, readable, name) {
+  // Fills the Updates row (When, plus the eased Immediate/Delayed) once the
+  // read() has answered. `readable` is one field per service the menu is
+  // allowed to set, with every unreadable one already left out — see
+  // policyFieldFor() and the 'unreadable' guard on each. A stack whose
+  // containers disagree shows NO tick on any option (PLAN_150 rejects a
+  // "Mixed" label as noise); pressing one still sets every one of them,
+  // since the write always targets the full list, not just whichever
+  // service happened to agree.
+  function fillUpdateMenuRow(skel, readable, name) {
     if (!readable.length) {
       skel.body.querySelector('.staxx-menu-updloading').textContent =
         'This is set to something StaXX does not recognise — edit it in the Compose view.';
@@ -4526,15 +4641,12 @@
 
     var values = readable.map(policyValueOf);
     var agreed = values.every(function (v) { return v === values[0]; }) ? values[0] : null;
-    var isMode = field === 'mode';
-    var topAgreed = isMode && agreed === 'auto-immediate' ? 'auto' : agreed;
-    var options = isMode
-      ? [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']]
-      : [['default', 'Default'], ['no', 'No'], ['yes', 'Yes']];
+    var topAgreed = agreed === 'auto-immediate' ? 'auto' : agreed;
+    var options = [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
 
     skel.body.querySelector('.staxx-menu-updloading').remove();
 
-    var groupName = 'staxx-menu-updpolicy-' + field;
+    var groupName = 'staxx-menu-updpolicy-mode';
     var tickrow = document.createElement('div');
     tickrow.className = 'staxx-tickrow';
     tickrow.setAttribute('role', 'radiogroup');
@@ -4544,59 +4656,118 @@
     }).join('');
     skel.body.appendChild(tickrow);
 
-    var subEl = null;
-    if (isMode) {
-      subEl = document.createElement('div');
-      subEl.className = 'staxx-menu-updsub' + (topAgreed === 'auto' ? ' staxx-menu-updsub--open' : '');
-      var subChecked = agreed === 'auto-immediate' ? 'auto-immediate' : 'auto';
-      subEl.innerHTML =
-        updMenuTickHtml(groupName + '-sub', 'auto-immediate', 'Immediate', subChecked) +
-        updMenuTickHtml(groupName + '-sub', 'auto', 'Delayed', subChecked);
-      skel.body.appendChild(subEl);
-    }
+    // Immediate/Delayed animates open/closed already (PLAN_150 phase 5) —
+    // the same CSS transition PLAN_155 borrows for the editor's own reveal.
+    var subEl = document.createElement('div');
+    subEl.className = 'staxx-menu-updsub' + (topAgreed === 'auto' ? ' staxx-menu-updsub--open' : '');
+    var subChecked = agreed === 'auto-immediate' ? 'auto-immediate' : 'auto';
+    subEl.innerHTML =
+      updMenuTickHtml(groupName + '-sub', 'auto-immediate', 'Immediate', subChecked) +
+      updMenuTickHtml(groupName + '-sub', 'auto', 'Delayed', subChecked);
+    skel.body.appendChild(subEl);
 
     var services = readable.map(function (f) { return f.service; });
 
     function commit(value) {
-      var allInputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'));
-      if (subEl) allInputs = allInputs.concat(Array.prototype.slice.call(subEl.querySelectorAll('input')));
+      var allInputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'))
+        .concat(Array.prototype.slice.call(subEl.querySelectorAll('input')));
       // Disabled for the round trip, same reasoning as the Autostart switch:
       // a second click landing mid-flight must not race the first.
       allInputs.forEach(function (i) { i.disabled = true; });
 
-      writeUpdatePolicyForServices(name, services, field, value).then(function (applied) {
+      writeUpdatePolicyForServices(name, services, 'mode', value).then(function (applied) {
         allInputs.forEach(function (i) { i.disabled = false; });
         if (!applied) return; // a refusal — failed() already said why
 
         // Every service the write touched now holds this same value, so
         // there is nothing left to disagree about — re-tick from the value
         // just written rather than re-fetching to find out.
-        var newTop = isMode && value === 'auto-immediate' ? 'auto' : value;
+        var newTop = value === 'auto-immediate' ? 'auto' : value;
         tickrow.querySelectorAll('input').forEach(function (i) { i.checked = (i.value === newTop); });
-        if (subEl) {
-          var wantImmediate = value === 'auto-immediate';
-          subEl.classList.toggle('staxx-menu-updsub--open', newTop === 'auto');
-          subEl.querySelectorAll('input').forEach(function (i) {
-            i.checked = (i.value === (wantImmediate ? 'auto-immediate' : 'auto'));
-          });
-        }
+        var wantImmediate = value === 'auto-immediate';
+        subEl.classList.toggle('staxx-menu-updsub--open', newTop === 'auto');
+        subEl.querySelectorAll('input').forEach(function (i) {
+          i.checked = (i.value === (wantImmediate ? 'auto-immediate' : 'auto'));
+        });
         if (menu.hidden) refreshRows(); else menuRedraw = true;
       });
     }
 
     tickrow.addEventListener('change', function (event) { commit(event.target.value); });
-    if (subEl) subEl.addEventListener('change', function (event) { commit(event.target.value); });
+    subEl.addEventListener('change', function (event) { commit(event.target.value); });
   }
 
-  // Builds both rows for one menu. `scopeService` is the one service a
-  // container's own menu sets, or '' for a stack's menu, which sets every
-  // service the file declares — read off the mode target of the same parse
-  // rather than kept anywhere else, since harvestUpdatePolicy() pushes
-  // exactly one per service regardless of how many containers it is
-  // replicated into.
+  // Fills the Notifications row — one row of three flag switches, the same
+  // markup and words as the editor's own (updFlagOptionHtml/NOTIFY_ROW_
+  // EVENTS). A switch shows on only when EVERY readable service currently
+  // answers on for that event — the same caution PLAN_150 took for When's
+  // own tri-state row (never show an agreement that is not really there),
+  // adapted to three independent booleans rather than one three-way choice.
+  // The note (updateNotifyNoteHtml) is shown only when none of the readable
+  // services has an object of its own — the same rule the editor's fieldset
+  // uses — and is removed once a flip gives them one.
+  function fillNotifyMenuRow(skel, readable, name) {
+    if (!readable.length) {
+      skel.body.querySelector('.staxx-menu-updloading').textContent =
+        'This is set to something StaXX does not recognise — edit it in the Compose view.';
+      return;
+    }
+    skel.body.querySelector('.staxx-menu-updloading').remove();
+
+    function effectiveOf(f, ev) {
+      var e = f.policy.events[ev];
+      if (e.scope === 'service') return e.choice === 'yes';
+      if (e.scope === 'stack') return !!e.stackChoice;
+      return !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[ev]);
+    }
+
+    var tickrow = document.createElement('div');
+    tickrow.className = 'staxx-tickrow';
+    tickrow.setAttribute('role', 'group');
+    tickrow.setAttribute('aria-label', skel.label.textContent);
+    tickrow.innerHTML = NOTIFY_ROW_EVENTS.map(function (ev) {
+      var on = readable.every(function (f) { return effectiveOf(f, ev[0]); });
+      return updFlagOptionHtml('staxx-menu-updnotify', 0, ev[0], ev[1], on);
+    }).join('');
+    skel.body.appendChild(tickrow);
+
+    var hasOwn = readable.some(function (f) { return f.policy.hasOwn; });
+    var note = null;
+    if (!hasOwn) {
+      note = document.createElement('p');
+      note.className = 'staxx-menu-updnote';
+      note.textContent = updateNotifyNoteHtml(readable[0].policy.events);
+      skel.body.appendChild(note);
+    }
+
+    var services = readable.map(function (f) { return f.service; });
+
+    function commit() {
+      var inputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'));
+      inputs.forEach(function (i) { i.disabled = true; });
+      var value = {};
+      inputs.forEach(function (i) { value[i.dataset.updnotify] = i.checked; });
+
+      writeUpdatePolicyForServices(name, services, 'notify', value).then(function (applied) {
+        inputs.forEach(function (i) { i.disabled = false; });
+        if (!applied) return; // a refusal — failed() already said why
+        if (note) { note.remove(); note = null; }   // the ticks now say it themselves
+        if (menu.hidden) refreshRows(); else menuRedraw = true;
+      });
+    }
+
+    tickrow.addEventListener('change', commit);
+  }
+
+  // Builds the Updates row and the Notifications row for one menu.
+  // `scopeService` is the one service a container's own menu sets, or '' for
+  // a stack's menu, which sets every service the file declares — read off
+  // the mode target of the same parse rather than kept anywhere else, since
+  // harvestUpdatePolicy() pushes exactly one of each per service regardless
+  // of how many containers it is replicated into.
   function addUpdatePolicyMenuItems(name, scopeService) {
-    var modeSkel   = updMenuRowSkeleton('mode', 'Updates');
-    var notifySkel = updMenuRowSkeleton('notify', 'Notify me');
+    var modeSkel = updMenuRowSkeleton('mode', 'Updates');
+    var notifySkel = updMenuRowSkeleton('notify', 'Notifications');
 
     call('read', { name: name }).then(function (readRes) {
       if (!readRes || !readRes.ok) {
@@ -4618,18 +4789,18 @@
       var services = scopeService ? [scopeService] : allServices;
 
       var suffix = (!scopeService && services.length > 1) ? ' — all ' + services.length : '';
-      modeSkel.label.textContent   = 'Updates' + suffix;
-      notifySkel.label.textContent = 'Notify me' + suffix;
+      modeSkel.label.textContent = 'Updates' + suffix;
+      notifySkel.label.textContent = 'Notifications' + suffix;
 
       var modeReadable = services
         .map(function (svc) { return policyFieldFor(form.fields, svc, 'mode'); })
         .filter(function (f) { return f && !f.policy.unreadable; });
+      fillUpdateMenuRow(modeSkel, modeReadable, name);
+
       var notifyReadable = services
         .map(function (svc) { return policyFieldFor(form.fields, svc, 'notify'); })
         .filter(function (f) { return f && !f.policy.unreadable; });
-
-      fillUpdateMenuRow(modeSkel, 'mode', modeReadable, name);
-      fillUpdateMenuRow(notifySkel, 'notify', notifyReadable, name);
+      fillNotifyMenuRow(notifySkel, notifyReadable, name);
     });
   }
 
@@ -5324,11 +5495,12 @@
 
         for (var gi = 0; gi < groups.length; gi++) {
           var grp = groups[gi], rows = buckets[grp.key];
-          // PLAN_150 phase 4b — the Updates fieldset draws itself, rows and
-          // all: its shape (tick marks, a note, a reserved sub-line) does not
-          // fit the label/value/note grid the loop below builds for every
-          // other group. `rows` here is always the two harvestUpdatePolicy()
-          // fields, in the order it pushes them (mode, then notify).
+          // PLAN_150 phase 4b / PLAN_155 — the Updates and Notifications
+          // fieldsets draw themselves, rows and all: their shape (tick
+          // marks, a note, an eased reveal) does not fit the label/value/
+          // note grid the loop below builds for every other group. `rows`
+          // here is always the two harvestUpdatePolicy() fields, in the
+          // order it pushes them (mode, then the single notify block).
           if (grp.key === 'updates') {
             out.push(updatesFieldsetHtml(svc, rows, form.fields));
             continue;
@@ -7304,6 +7476,7 @@
     formHost.innerHTML = form.ok ? renderForm(form) : brokenFormHtml(form);
     formHost.scrollTop = scrollWas;
     paintServiceIcons();   // PLAN_85 — every render repaints from serviceIcons, set once by openEditor()
+    updRevealIn();         // PLAN_155 — ease the Immediate/Delayed reveal in, if this render drew one
 
     setFormGate(form.ok, form.warnings[0] && form.warnings[0].message);
 
@@ -15459,19 +15632,22 @@
     return 'compose.yaml';
   }
 
-  // The override's name, derived from the main compose file's the same way
-  // the server derives it — strip the extension, put .override back in front
-  // of it. Never a fixed list of the four usual names: a file that merely has
-  // "override" in it, sitting beside a main file it is not paired with, is
-  // just another companion file.
-  function stackOverrideName() {
-    var m = /^(.*)\.(ya?ml)$/i.exec(tabLabel());
-    return m ? m[1] + '.override.' + m[2] : null;
-  }
+  // Compose's own override list, in Compose's own order (measured
+  // 2026-09-15, PLAN_155 C5): the main file's name plays no part in which
+  // override pairs with it, so the old rule here — strip the main file's
+  // extension and put .override back in front — was a false premise. Compose
+  // picks the first of these four that exists beside the main file,
+  // whatever the main file is called; every caller below only needs to know
+  // "is this name one Docker could ever pair", not which one actually is.
+  var STACK_OVERRIDE_NAMES = [
+    'compose.override.yml', 'compose.override.yaml',
+    'docker-compose.override.yml', 'docker-compose.override.yaml'
+  ];
 
+  // Exact match, not case-insensitive: Compose on Linux matches these four
+  // names by byte comparison (see staxx_is_override_name() server-side).
   function isStackOverride(name) {
-    var ov = stackOverrideName();
-    return !!ov && name === ov;
+    return STACK_OVERRIDE_NAMES.indexOf(name) !== -1;
   }
 
   // filename -> 'pending' | 'bad', for whichever autosave has not landed (or
@@ -22112,9 +22288,15 @@
   // those are files INSIDE the stack's own folder, going into the zip;
   // these are paths and volumes OUTSIDE it, which the archive never touches
   // and this dialog exists to say so plainly.
-  function confirmRemoveHtml(name, label, dir, entries, mounts) {
+  function confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto) {
     var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
-    var html = '<p>Its containers are stopped and removed.' + where + '</p>' +
+    var html = retiredInto
+      // A merge already stopped this stack and locked it — there is nothing
+      // left running to stop, so the sentence every other removal opens
+      // with would be false here.
+      ? '<p>This stack was ' + esc(retiredInto) + ' and cannot be started.' + where + '</p>'
+      : '<p>Its containers are stopped and removed.' + where + '</p>';
+    html +=
       '<p>Nothing is deleted: the whole folder is zipped up and kept in <code>' + esc(dir) +
       '</code>, named after the stack and the time it was archived.</p>' +
       '<p>The container’s own data in appdata is not part of the stack folder, so it is ' +
@@ -22148,14 +22330,17 @@
     return html;
   }
 
-  function removeStack(name, label) {
+  function removeStack(name, label, retiredInto) {
     if (!confirmModal) {
       // Markup from before this dialog existed. It has no plan to list, so
       // it just states what removal now does before asking once.
       var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
+      var stoppedLine = retiredInto
+        ? 'This stack was ' + retiredInto + ' and cannot be started.'
+        : 'Its containers are stopped and removed.';
       if (!window.confirm(
             'Remove "' + label + '"?\n\n' +
-            'Its containers are stopped and removed.' + where + '\n\n' +
+            stoppedLine + where + '\n\n' +
             'Nothing is deleted — the whole folder is zipped up and kept for you.\n\n' +
             'The container’s own data in appdata is untouched.')) {
         return;
@@ -22195,7 +22380,7 @@
 
       var dir = plan.dir || '';
       var entries = plan.entries || [];
-      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts);
+      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto);
 
       // Asks the one question, retrying in place on a failure so Go still
       // works as a retry — the same shape the old two-stage delete used,
@@ -24819,15 +25004,15 @@
       // PLAN_150 Phase 2: replaces the single UPDATE_NOTIFY three-way choice
       // with three independent switches, one row each, sharing the
       // 'notify-me' block so they draw on one line — see SETTINGS_BLOCKS.
-      key: 'UPDATE_NOTIFY_FOUND', control: 'flags', label: 'One is found', tab: 'updates',
+      key: 'UPDATE_NOTIFY_FOUND', control: 'flags', label: 'New image', tab: 'updates',
       block: 'notify-me'
     },
     {
-      key: 'UPDATE_NOTIFY_INSTALLED', control: 'flags', label: 'One is installed', tab: 'updates',
+      key: 'UPDATE_NOTIFY_INSTALLED', control: 'flags', label: 'Image installed', tab: 'updates',
       block: 'notify-me'
     },
     {
-      key: 'UPDATE_NOTIFY_FAILED', control: 'flags', label: 'One fails', tab: 'updates',
+      key: 'UPDATE_NOTIFY_FAILED', control: 'flags', label: 'Installation failed', tab: 'updates',
       block: 'notify-me'
     },
     {
@@ -24925,7 +25110,7 @@
             'may run past midnight.'
     },
     'notify-me': {
-      tab: 'updates', label: 'Notify me',
+      tab: 'updates', label: 'Notifications',
       help: 'Sent through Unraid\'s own notification system — one message per check or per ' +
             'queue finishing, never one per container. A container can take itself out in its ' +
             'compose file.'
@@ -31197,107 +31382,286 @@
     });
   })();
   /* =====================================================================
-   * PLAN_148 — merging stacks into one. Phases 1 (the window and the
-   * picker), 3 (steps 3-4 on screen), 5 (confirm, and opening the editor
-   * afterwards) and 6 (the leftover's row marker). The examination
-   * (window.StaxxMergeExamine, in merge-examine.js) and the write itself
-   * (window.StaxxMergeWrite, in merge-write.js, and the 'merge' server
-   * action in Merge.php) are built elsewhere — nothing here decides what a
-   * merge does, only how it is asked about and shown.
+   * PLAN_155 — merging stacks: the rebuild. A merge no longer folds one
+   * stack into another; it reads two or more source stacks and writes a
+   * brand new third one, then retires the sources. This block is the whole
+   * browser side of all six steps — the window, the picker, the new
+   * stack's name/folder/identity, the compose-file comparison with inline
+   * change cards, settings and files, the suggestions step, and the
+   * three-column confirm screen that writes the merge and opens the new
+   * stack in the editor.
    *
-   * window.StaxxMergeWrite.buildMergedText() takes the wizard's own answers
-   * as opts.decisions — a choice id (or, for a wiring tickbox, true/false)
-   * keyed by mergeFindingKey() below, which matches merge-write.js's own
-   * findingKey() exactly (kind, stack, and the finding's index into this
-   * call's own findings array). mergeState.decisions is threaded through as
-   * opts.decisions on every buildMergedText() call, so picking a non-
-   * recommended radio rebuilds the merged preview AND the final write
-   * against that answer, not just the wizard's own display of it.
+   * The examination and the write itself live in window.StaxxMergeExamine
+   * (merge-examine.js) and window.StaxxMergeWrite (merge-write.js), plus the
+   * 'merge' server action in Merge.php — built elsewhere. Nothing here
+   * decides what a merge does, only how it is asked about and shown.
+   *
+   * window.StaxxMergeWrite.buildMergedText(sources, opts) takes:
+   *   sources — [{name (source rel), text, envText|null, depth}]
+   *   opts    — {name (new stack rel), decisions, date,
+   *              files (rel -> merge-files reply), newDepth, thisServer}
+   * and returns {text, env, files, changes, findings, refusals,
+   * newProject}. A stack has no icon or description of its own — only a
+   * service does — so no option here ever picks one; each service's own
+   * x-unraid block is carried verbatim. mergeState.decisions and
+   * mergeState.approved are threaded
+   * through every rebuild, so a "Leave it as it was" answer sticks across
+   * every step that reads mergeState.built afterwards.
+   *
+   * Helpers phases D-F will want: mergeRender() (the one entry point that
+   * dispatches on mergeState.step), mergePaintCode() (the shared line-
+   * numbered, syntax-coloured pane — used by step 2's preview and step 3's
+   * panes, and the obvious thing to reuse for steps 4 and 5's own panes),
+   * mergeColorFor(rel) (the per-source colour, stable for the life of the
+   * wizard), mergeCloneIcon(rel) (a row's own icon as an inert span), and
+   * mergeRebuild()/mergeBuildOpts() (rebuilds mergeState.built from the
+   * current answers — cheap enough to call after every keystroke).
    * =====================================================================
    */
 
   var mergeBtn   = document.getElementById('staxx-merge-btn');
   var mergeModal = document.getElementById('staxx-merge-modal');
 
-  var MERGE_STEP_LABELS = ['Which stacks', 'Which takes them in', 'Clashes', 'Wiring', 'Confirm'];
+  var MERGE_STEP_LABELS = [
+    'Which stacks', 'The new stack', 'Compose files',
+    'Settings and files', 'Suggestions', 'Confirm'
+  ];
 
-  var MERGE_STEP3_KINDS = {
-    'storage-volume': 1, 'file-clash': 1, 'settings-join': 1,
-    'container-name-clash': 1, 'port-clash': 1, 'shorthand-clash': 1
-  };
-  var MERGE_STEP4_KINDS = { 'address-rewire': 1, 'port-unneeded': 1, 'left-alone': 1 };
+  // Muted on purpose — these sit behind code all day. Never orange: that is
+  // the product's accent and, from step 3 on, means "this line changed".
+  var MERGE_COLORS = ['#3f8f86', '#7e6bb5', '#a8586a', '#4a7ba8'];
 
-  var MERGE_CHOICE_LABELS = {
-    'keep-existing':   'Go on using the storage that already exists.',
-    'start-empty':     'Start with empty storage.',
-    'stop-here':       'Stop here.',
-    'accept-join':     'Join them, as shown.',
-    'free-port':       'Change the incoming one to a free port.',
-    'stop-publishing': 'Stop publishing it.',
-    'rewire':          'Change it for me, and say so in the file.'
-  };
+  var MERGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 
   var mergeState = null;   // null whenever the wizard is closed and not merely narrow-hidden
 
   function mergeFreshState() {
     return {
       step: 1,
-      picked: [],          // [{name, label}], in the order ticked
-      host: null,          // a rel name from `picked`
-      stacks: {},          // name -> {name, label, text, envText, files, fingerprint, error}
-      decisions: {},       // finding key -> choice id (radio) or true/false (wiring tickbox)
-      built: null,         // last window.StaxxMergeWrite.buildMergedText() result
-      narrowClosed: false, // true only while the 990px rule has hidden an open wizard
+      search: '',           // step 1's own filter text — kept here so a tile-click re-render
+                             // (mergeRenderStep1() runs on every pick) does not lose what was typed
+      picked: [],           // [{name, label}], name = source rel, in the order clicked
+      stacks: {},            // rel -> {name, label, text, envText, fingerprint, filesReply, error}
+      newName: '',
+      newFolder: null,       // null = not chosen; '' = loose; 'Existing' = a folder; {create:'New'}
+      decisions: {},         // change key -> choice id, from a "Leave it as it was" answer
+      approved: {},          // change key -> true, once "Approved" is clicked
+      envNames: {},          // env change key -> a typed-in replacement name, step 4's "Choose a
+                              // name" field. merge-write.js does not read this yet (its
+                              // settings-join decision is accept-join/stop-here only) — carried
+                              // through mergeBuildOpts() so a future write-side change has it
+                              // ready without another round of wiring.
+      built: null,           // last window.StaxxMergeWrite.buildMergedText() result
+      folders: [],           // from 'folder-list', loaded once on entering step 2
+      changeNavIndex: -1,    // step 3's up/down change stepper
+      narrowClosed: false,   // true only while the 990px rule has hidden an open wizard
       scroll: null,
-      search: ''
+      // Step 5 (PLAN_155 phase E) — never fed back into buildMergedText();
+      // see window.StaxxMergeSuggest's own header for why. Rebuilt fresh
+      // every time step 5 is entered (mergeEnterStep5()), so nothing here
+      // needs to survive a trip back to an earlier step.
+      suggest: null,         // {deps:[{from,to}], health:{svc:{...}}, update:{mode,immediate,notify}}
+      imageFacts: {},        // image ref -> Promise of an 'image-facts' reply, cached for the wizard's life
+      globalSettings: null,  // 'settings' reply, read once for step 5's "Your default is..." hint
+      finalText: '',         // built.text plus every suggestion applied — what step 5's own pane shows
+      addedLines: [],        // finalText's own line indices apply() just inserted, for the green highlight
+      step6FormWidth: null,  // step 6's own drag grip — null until dragged, then a clamped px width
+      mergeStop: false,      // step 6's own "Stop the original stacks" switch — off by default
+      mergeStart: false,     // "Start the new stack when done" — turning this on forces mergeStop on
+      stacksLoading: false   // true only while mergeEnterStep2()'s own load is in flight
     };
   }
 
-  function mergeContainerCount(name) {
-    var n = document.querySelectorAll('.staxx-container-row[data-in-stack="' + name + '"]').length;
-    return n > 0 ? n : 1;
+  // A source pane's heading, everywhere one appears from step 3 on: a solid
+  // bar in that source's own colour, white text — Adrian's own design from
+  // the third interactive session (the first build only coloured the text).
+  // The merged/joined file's own heading never calls this; it stays plain.
+  function mergeSourceHeadEl(label, color) {
+    var head = document.createElement('div');
+    head.className = 'staxx-merge-pane-head';
+    head.style.background = color;
+    head.style.color = '#fff';
+    head.textContent = label;
+    return head;
+  }
+
+  /* ---- the amber line-number mark and its hover/focus popover (third
+   * interactive session, replacing the inline reason card under every
+   * changed line). One popover element, reused for every mark, appended
+   * inside #staxx-merge-modal — the dialog is in the browser's top layer
+   * AND (see .staxx-modal's own container-type: inline-size in staxx.css)
+   * a layout-containing block, so position:fixed here is positioned
+   * against the DIALOG's box, not the viewport; appending it to <body>
+   * would both paint underneath the dialog and measure against the wrong
+   * box. It closes when the pointer leaves the mark AND the popover
+   * itself — mouseenter on the popover cancels the pending hide, so
+   * moving from mark to its own "Approved" button works. ---- */
+  var mergePopoverEl = null, mergePopoverHideTimer = null;
+
+  function mergeEnsurePopover() {
+    if (mergePopoverEl || !mergeModal) return mergePopoverEl;
+    mergePopoverEl = document.createElement('div');
+    mergePopoverEl.className = 'staxx-merge-pop';
+    mergePopoverEl.hidden = true;
+    mergePopoverEl.addEventListener('mouseenter', function () { clearTimeout(mergePopoverHideTimer); });
+    mergePopoverEl.addEventListener('mouseleave', mergeSchedulePopoverHide);
+    mergeModal.appendChild(mergePopoverEl);
+    return mergePopoverEl;
+  }
+
+  function mergeSchedulePopoverHide() {
+    clearTimeout(mergePopoverHideTimer);
+    mergePopoverHideTimer = setTimeout(function () {
+      if (mergePopoverEl) mergePopoverEl.hidden = true;
+    }, 150);
+  }
+
+  // Called before any decision the popover's own buttons make, all of
+  // which rebuild the code pane the mark lived in — the mark that opened
+  // it is gone once that happens, so nothing is left to close the popover
+  // on mouseleave and it would otherwise sit open, stale, indefinitely.
+  function mergeHidePopoverNow() {
+    clearTimeout(mergePopoverHideTimer);
+    if (mergePopoverEl) mergePopoverEl.hidden = true;
+  }
+
+  function mergeShowPopover(anchor, contentEl) {
+    var pop = mergeEnsurePopover();
+    if (!pop) return;
+    clearTimeout(mergePopoverHideTimer);
+    pop.innerHTML = '';
+    pop.appendChild(contentEl);
+    pop.hidden = false;
+    // Measured against the dialog's own box, not the viewport — see this
+    // function group's header comment on why position:fixed lands there.
+    var mr = mergeModal.getBoundingClientRect();
+    var ar = anchor.getBoundingClientRect();
+    var left = Math.max(8, Math.min(ar.left - mr.left, mr.width - pop.offsetWidth - 8));
+    pop.style.top = (ar.bottom - mr.top + 6) + 'px';
+    pop.style.left = left + 'px';
+  }
+
+  // Wires one line-number mark to open cardBuilder(change)'s own card (the
+  // existing mergeReasonCard()/mergeEnvReasonCard() DOM, reused verbatim so
+  // its buttons keep working through the wizard's one delegated click
+  // listener — a popover is just a different place to park that same
+  // markup, not a second copy of it). A <button> rather than a bare span so
+  // Tab reaches it and focus opens the same popover hover does.
+  function mergeAttachMark(numEl, change, cardBuilder) {
+    var mark = document.createElement('button');
+    mark.type = 'button';
+    mark.className = 'staxx-merge-gmark';
+    mark.setAttribute('aria-label', change.title);
+    mark.dataset.mergeMarkKey = change.key;   // see mergeReopenMarkForKey()
+    function open() { mergeShowPopover(mark, cardBuilder(change)); }
+    mark.addEventListener('mouseenter', open);
+    mark.addEventListener('focus', open);
+    mark.addEventListener('mouseleave', mergeSchedulePopoverHide);
+    mark.addEventListener('blur', mergeSchedulePopoverHide);
+    // A click must always end with THIS mark's card open, not merely rely on
+    // the mouseenter/focus above — a touch tap or a scripted .click() fires
+    // neither reliably, and the modal-wide pointerdown handler that closes a
+    // popover on an outside click (PLAN_156 F10) runs before this click, so
+    // stopping it here (rather than trusting that handler's own exemption of
+    // ".staxx-merge-gmark") means opening is never racing a half-applied
+    // close from the same gesture.
+    mark.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+    numEl.appendChild(mark);
+  }
+
+  // Focusing the mark opens its own popover (see mergeAttachMark() above) —
+  // used after a render that just rebuilt the mark a popover was open on,
+  // so a decision needing a further answer (step 4's "Choose a name") does
+  // not make the person hover all over again to reach the field it opens.
+  function mergeReopenMarkForKey(key) {
+    var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key;
+    var mark = mergeModal && mergeModal.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + selector + '"]');
+    if (mark) mark.focus();
   }
 
   // A stack's identity everywhere merge-write.js/merge-examine.js treat a
   // name as something Docker itself would recognise (a volume name, a
-  // rename suffix) or match findings back to their own stack — never for
-  // reading, writing or displaying a folder location, which stays the full
-  // path. See CLAUDE.md: a stack's NAME is its directory leaf, the same
-  // string Docker stamps as the compose project name; its full path
-  // (e.g. "DEV-TESTING/demo-db") is only its identity under the store root.
+  // rename suffix) or match a "# From <leaf>" marker back to its source —
+  // never for reading, writing or displaying a folder location, which stays
+  // the full rel. See CLAUDE.md: a stack's NAME is its directory leaf; its
+  // full path (e.g. "DEV-TESTING/demo-db") is its identity under the store
+  // root, and that is what `sources[].name` and every change's `stack`
+  // field carry under this rebuild's contract.
   function mergeLeafName(name) {
     var parts = String(name || '').split('/');
     return parts[parts.length - 1];
   }
 
-  /* --------------------------------------------------------- data pull -- */
-
-  function mergeStackFiles(name) {
-    return call('files', { name: name }).then(function (res) {
-      if (!res.ok) return [];
-      // The compose file itself is not a "companion" — see merge-write.js's
-      // own descriptorFromText(), which only ever wants the OTHER names
-      // beside it.
-      return res.files.filter(function (f) { return !f.compose; }).map(function (f) { return f.name; });
-    });
+  function mergeColorFor(rel) {
+    var idx = mergeState.picked.findIndex(function (p) { return p.name === rel; });
+    return MERGE_COLORS[(idx < 0 ? 0 : idx) % MERGE_COLORS.length];
   }
 
+  function mergeDepthFor(rel) {
+    var row = rowFor(rel);
+    return (row && row.dataset.inFolder) ? 1 : 0;
+  }
+
+  // A row's own icon, cloned into a plain, inert picture — never a second
+  // copy of the row's own action button. pointer-events:none makes a click
+  // on it hit-test straight through to the tile it sits inside, so the
+  // tile's own click handler fires exactly as if the icon were not there.
+  function mergeCloneIcon(rel) {
+    var span = document.createElement('span');
+    span.className = 'staxx-merge-tile-icon';
+    var row = rowFor(rel);
+    var srcIcon = row ? row.querySelector('.staxx-icon') : null;
+    if (srcIcon) {
+      var clone = srcIcon.cloneNode(true);
+      clone.removeAttribute('id');
+      Array.prototype.slice.call(clone.attributes).forEach(function (a) {
+        if (a.name.indexOf('data-') === 0 || a.name.indexOf('aria-') === 0 || a.name === 'title') {
+          clone.removeAttribute(a.name);
+        }
+      });
+      clone.tabIndex = -1;
+      clone.style.pointerEvents = 'none';
+      span.appendChild(clone);
+    }
+    return span;
+  }
+
+  /* --------------------------------------------------------- data pull -- */
+
   function mergeLoadStack(name, label) {
-    return Promise.all([call('read', { name: name }), mergeStackFiles(name)]).then(function (results) {
-      var readRes = results[0], files = results[1];
+    return Promise.all([
+      call('read', { name: name }),
+      call('merge-files', { name: name })
+    ]).then(function (results) {
+      var readRes = results[0], filesRes = results[1];
       if (!readRes.ok) return { name: name, label: label, error: readRes.error || 'Could not read this stack.' };
 
-      var hasEnv = files.indexOf('.env') >= 0;
-      var envPromise = hasEnv
-        ? call('file-read', { name: name, file: '.env' }).then(function (r) {
-            return (r && r.ok && !r.binary && typeof r.text === 'string') ? r.text : null;
-          })
-        : Promise.resolve(null);
-
-      return envPromise.then(function (envText) {
+      // merge-files deliberately excludes .env (it is joined, not copied),
+      // so whether one exists is answered the same way the old picker asked
+      // it — a direct read, treated as "no settings file" on any failure
+      // rather than surfacing a second error for something optional.
+      var overrideName = (filesRes && filesRes.ok) ? (filesRes.override || null) : null;
+      return Promise.all([
+        call('file-read', { name: name, file: '.env' }),
+        overrideName ? call('file-read', { name: name, file: overrideName }) : Promise.resolve(null)
+      ]).then(function (r2) {
+        var r = r2[0], overrideRes = r2[1];
+        var envText = (r && r.ok && !r.binary && typeof r.text === 'string') ? r.text : null;
+        // PLAN_155 C3: a paired override's own text, only when merge-files
+        // named one and it could actually be read — descriptorFromText()
+        // applies it onto the main file before anything else reads either.
+        var overrideText = (overrideRes && overrideRes.ok && !overrideRes.binary && typeof overrideRes.text === 'string')
+          ? overrideRes.text : null;
         return {
-          name: name, label: label, text: readRes.body, envText: envText,
-          files: files, fingerprint: readRes.fingerprint
+          name: name, label: label, text: readRes.body, envText: envText, overrideText: overrideText,
+          fingerprint: readRes.fingerprint,
+          // 'read' already resolves each service's own ./.staxx/<file> icon
+          // against ITS folder — step 6's own form preview reuses this
+          // rather than resolving anything itself, since merging never
+          // renames a service and so never disagrees on whose icon is
+          // whose (see mergeServiceIconsMap()).
+          icons: readRes.icons || {},
+          filesReply: (filesRes && filesRes.ok) ? { files: filesRes.files || [], large: filesRes.large || null } : { files: [], large: null }
         };
       });
     });
@@ -31311,62 +31675,93 @@
     });
   }
 
-  function mergeEnsureHost() {
-    if (mergeState.host && mergeState.picked.some(function (p) { return p.name === mergeState.host; })) return;
-    var best = mergeState.picked[0];
-    mergeState.picked.forEach(function (p) {
-      if (mergeContainerCount(p.name) > mergeContainerCount(best.name)) best = p;
+  // PLAN_155 C3: a source with a paired override is fed to buildMergedText()
+  // as the APPLIED text — override onto main, before anything downstream
+  // reads either — with that application's own change records carried
+  // alongside so buildMergedText() can fold them into its own `changes`.
+  // buildMergedText() never applies an override itself; this is the one
+  // place that happens for the actual write, matching mergeRenderStep2Cards()
+  // above, which does the same for the per-source preview cards.
+  function mergeSourcesForBuild() {
+    return mergeState.picked.map(function (p) {
+      var s = mergeState.stacks[p.name] || {};
+      var text = s.text || '', overrideChanges = [];
+      if (s.overrideText && window.StaxxMergeWrite) {
+        try {
+          var desc = window.StaxxMergeWrite.descriptorFromText(p.name, text, s.envText, [], { overrideText: s.overrideText });
+          text = desc.text;
+          overrideChanges = desc.overrideChanges || [];
+        } catch (e) { /* left unapplied — mergeRebuild()'s own try/catch reports the real failure */ }
+      }
+      // rel (PLAN_155 C4): p.name already IS the source's own full rel —
+      // carried under its own name too so a "../" path is resolved by
+      // folder, not merely by depth (see merge-examine.js's own comment).
+      return { name: p.name, text: text, envText: s.envText || null, depth: mergeDepthFor(p.name), rel: p.name, overrideChanges: overrideChanges };
     });
-    mergeState.host = best ? best.name : null;
+  }
+
+  function mergeFilesMap() {
+    var out = {};
+    mergeState.picked.forEach(function (p) {
+      var s = mergeState.stacks[p.name];
+      if (s && s.filesReply) out[p.name] = s.filesReply;
+    });
+    return out;
+  }
+
+  function mergeTodayDate() {
+    var d = new Date();
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  // A best-effort rel for the merged preview even while step 2's name/folder
+  // answer is not yet valid — the preview is never written anywhere, so an
+  // invalid or placeholder name costs nothing. mergeValidate()'s own `rel`
+  // is used instead whenever it has one.
+  function mergeBestEffortRel() {
+    var name = (mergeState.newName || '').trim() || 'new-stack';
+    var folder = mergeState.newFolder;
+    var folderName = (folder && typeof folder === 'object') ? folder.create : folder;
+    return folderName ? (folderName + '/' + name) : name;
+  }
+
+  function mergeNewDepth() {
+    var folder = mergeState.newFolder;
+    if (folder === null || folder === undefined) return 0;
+    var folderName = (typeof folder === 'object') ? folder.create : folder;
+    return folderName ? 1 : 0;
+  }
+
+  function mergeBuildOpts() {
+    var v = mergeValidate();
+    return {
+      name: v.rel || mergeBestEffortRel(),
+      decisions: mergeState.decisions,
+      date: mergeTodayDate(),
+      files: mergeFilesMap(),
+      newDepth: mergeNewDepth(),
+      envNames: mergeState.envNames   // see mergeFreshState()'s own comment — not read yet
+      // thisServer is left unset here on purpose: the page's own address
+      // (location.hostname) is very often not the literal LAN address a
+      // compose file's own author wrote, and supplying one that does not
+      // match would turn addresses the wiring pass already accepts on the
+      // strength of a matching published port into ones left alone instead
+      // — a regression, not a tightening.
+    };
   }
 
   function mergeRebuild() {
-    if (!mergeState.host || !window.StaxxMergeWrite) { mergeState.built = null; return; }
-    var hostData = mergeState.stacks[mergeState.host];
-    var incomingData = mergeState.picked
-      .filter(function (p) { return p.name !== mergeState.host; })
-      .map(function (p) { return mergeState.stacks[p.name]; });
-
-    if (!hostData || hostData.error || incomingData.some(function (s) { return !s || s.error; })) {
+    if (!window.StaxxMergeWrite) { mergeState.built = null; return; }
+    var sources = mergeSourcesForBuild();
+    if (sources.some(function (s) { var d = mergeState.stacks[s.name]; return !d || d.error; })) {
       mergeState.built = null;
       return;
     }
-
-    // buildMergedText() hands each of these straight to merge-write.js's own
-    // descriptorFromText() as the descriptor's `name` — which merge-examine.js
-    // then uses to build the volume's real name, a settings rename suffix and
-    // so on, so it has to be the stack's leaf (mergeLeafName above), not the
-    // path mergeState.stacks is keyed by.
-    var host = {
-      name: mergeLeafName(hostData.name), text: hostData.text, envText: hostData.envText, files: hostData.files
-    };
-    var incoming = incomingData.map(function (s) {
-      return { name: mergeLeafName(s.name), text: s.text, envText: s.envText, files: s.files };
-    });
-
-    // thisServer is left unset here on purpose: the page's own address
-    // (location.hostname) is very often not the literal LAN address a
-    // compose file's own author wrote (a name versus an IP), and supplying
-    // one that does not match would turn addresses the port-evidence
-    // fallback already accepts correctly today into ones left alone
-    // instead — a regression, not a tightening. merge-examine.js's own
-    // wiring pass accepts an IPv4 literal or bare hostname on the strength
-    // of a matching published port alone when no list is supplied, which is
-    // exactly the case the demo stacks (and real CA installs) exercise.
-    var mergeOpts = { decisions: mergeState.decisions };
-
     try {
-      mergeState.built = window.StaxxMergeWrite.buildMergedText(host, incoming, mergeOpts);
-      // Finding detection does not depend on the decisions themselves, so a
-      // default filled in just now needs a second pass to actually apply —
-      // see mergeFillPortClashDefaults()'s own comment.
-      if (mergeFillPortClashDefaults()) {
-        mergeState.built = window.StaxxMergeWrite.buildMergedText(host, incoming, mergeOpts);
-      }
+      mergeState.built = window.StaxxMergeWrite.buildMergedText(sources, mergeBuildOpts());
     } catch (e) {
-      mergeState.built = { composeText: '', envText: null, findings: [], refusals: [
-        { kind: 'file-clash', severity: 'refusal', stack: null, facts: { name: '' } }
-      ] };
+      mergeState.built = null;
       var errorEl = document.getElementById('staxx-merge-error');
       if (errorEl) { errorEl.hidden = false; errorEl.textContent = 'Could not work out this merge: ' + (e && e.message || e); }
     }
@@ -31377,7 +31772,10 @@
   function mergeOpen() {
     mergeState = mergeFreshState();
     if (mergeModal) mergeModal.showModal();
+    var searchInput = document.getElementById('staxx-merge-search-input');
+    if (searchInput) searchInput.value = '';
     mergeRender();
+    if (searchInput) searchInput.focus();
   }
 
   function mergeClose() {
@@ -31406,6 +31804,18 @@
   var mergeCancelBtn = document.getElementById('staxx-merge-cancel');
   if (mergeCancelBtn) mergeCancelBtn.addEventListener('click', mergeClose);
 
+  // Wired once, here, rather than re-bound on every mergeRenderStep1() —
+  // the box sits outside the container that function clears, so it is never
+  // torn down and never needs its listener put back.
+  var mergeSearchInput = document.getElementById('staxx-merge-search-input');
+  if (mergeSearchInput) {
+    mergeSearchInput.addEventListener('input', function () {
+      if (!mergeState) return;
+      mergeState.search = mergeSearchInput.value;
+      mergeRenderStep1();
+    });
+  }
+
   // Below 990px the merge button is hidden by CSS, so a wizard can only ever
   // be open here because the window was WIDE a moment ago. It must be
   // properly closed — dialog.close(), not display:none — because a <dialog>
@@ -31414,16 +31824,16 @@
   // wizard knows lives in mergeState, untouched by closing it.
   var mergeNarrowQuery = window.matchMedia ? window.matchMedia('(max-width: 990px)') : null;
 
+  function mergeVisibleStepEl() {
+    return document.getElementById('staxx-merge-step' + mergeState.step);
+  }
+
   function mergeOnNarrowChange(narrow) {
     if (!mergeModal) return;
     if (narrow) {
       if (mergeState && mergeModal.open) {
-        var sourcesEl = document.getElementById('staxx-merge-sources');
-        var decisionsEl = document.getElementById('staxx-merge-decisions');
-        mergeState.scroll = {
-          sources: sourcesEl ? sourcesEl.scrollLeft : 0,
-          decisions: decisionsEl ? decisionsEl.scrollTop : 0
-        };
+        var visible = mergeVisibleStepEl();
+        mergeState.scroll = { top: visible ? visible.scrollTop : 0 };
         mergeState.narrowClosed = true;
         mergeModal.close();
       }
@@ -31431,11 +31841,8 @@
       mergeState.narrowClosed = false;
       mergeModal.showModal();
       mergeRender();
-      var scroll = mergeState.scroll || {};
-      var sourcesEl2 = document.getElementById('staxx-merge-sources');
-      var decisionsEl2 = document.getElementById('staxx-merge-decisions');
-      if (sourcesEl2) sourcesEl2.scrollLeft = scroll.sources || 0;
-      if (decisionsEl2) decisionsEl2.scrollTop = scroll.decisions || 0;
+      var visible2 = mergeVisibleStepEl();
+      if (visible2 && mergeState.scroll) visible2.scrollTop = mergeState.scroll.top || 0;
     }
   }
 
@@ -31459,6 +31866,8 @@
     });
   }
 
+  // Reads the main grid's own rows, so the folder order and the order within
+  // each folder are already the grid's and need no work of their own.
   function mergePickerEntries() {
     var out = [];
     Array.prototype.forEach.call(document.querySelectorAll('.staxx-stack-row[data-stack-row]'), function (row) {
@@ -31466,762 +31875,2742 @@
       var folder = row.dataset.inFolder || '';
       var btn = row.querySelector('[data-menu="stack"]');
       var labelEl = row.querySelector('.staxx-name-text');
+      // A retired stack also carries NEEDS-REVIEW.md (that is how its lock
+      // works), so the merge badge has to be tested before the plain
+      // "under review" reason or a retired stack would misread as an
+      // ordinary import waiting to be looked at (PLAN_155).
+      var mergedBadge = row.querySelector('.staxx-mergedbadge');
       var reason = '';
       if (!btn || btn.dataset.hasfile === '0') reason = 'no compose file';
       else if (btn.dataset.parses === '0') reason = 'file cannot be read';
+      else if (mergedBadge) reason = mergedBadge.textContent.trim();
       else if (btn.dataset.review === '1') reason = 'under review';
-      else if (btn.dataset.override === '1') reason = 'has a second settings file';
       out.push({ name: name, label: labelEl ? labelEl.textContent : name, folder: folder, reason: reason });
     });
     return out;
   }
 
-  function mergeRenderPickerCount() {
-    var el = document.getElementById('staxx-merge-picker-count');
-    if (!el) return;
-    var n = mergeState.picked.length;
-    el.textContent = n === 0 ? 'Nothing picked yet.'
-      : n === 1 ? '1 picked — pick at least one more.'
-      : n + ' picked.';
-  }
+  /* ------------------------------------------------------- step 1 pane -- */
 
-  function mergeRenderPicker() {
-    var host = document.getElementById('staxx-merge-picker');
+  function mergeRenderStep1() {
+    // The search box lives outside this container (see StacksPage.php) so a
+    // tile click, which calls this function on every pick, never clears what
+    // was typed or steals the caret out of the field.
+    var host = document.getElementById('staxx-merge-step1-tiles');
     if (!host) return;
+    host.innerHTML = '';
+
     var entries = mergePickerEntries();
-    var q = (mergeState.search || '').toLowerCase();
+    var q = (mergeState.search || '').trim().toLowerCase();
     if (q) {
       entries = entries.filter(function (e) {
-        return e.label.toLowerCase().indexOf(q) >= 0 || e.folder.toLowerCase().indexOf(q) >= 0;
+        return e.label.toLowerCase().indexOf(q) >= 0 || (e.folder || '').toLowerCase().indexOf(q) >= 0;
       });
     }
 
-    var groups = {};
-    var order = [];
+    var groups = {}, order = [];
     entries.forEach(function (e) {
       var key = e.folder || '';
       if (!groups[key]) { groups[key] = []; order.push(key); }
       groups[key].push(e);
     });
 
-    var html = '<div class="staxx-merge-picker-search">' +
-      '<input type="text" id="staxx-merge-search-input" placeholder="' + esc('Find a stack…') +
-      '" value="' + esc(mergeState.search || '') + '"></div>';
-
-    order.forEach(function (key) {
-      html += '<div class="staxx-merge-picker-group"><h4>' + esc(key || 'Loose stacks') + '</h4>';
-      groups[key].forEach(function (e) {
-        if (e.reason) {
-          html += '<div class="staxx-merge-pick-row staxx-merge-pick-row--disabled">' +
-            '<span class="staxx-merge-pick-reason">' + esc(e.reason) + '</span>' +
-            '<span>' + esc(e.label) + '</span></div>';
-        } else {
-          var checked = mergeState.picked.some(function (p) { return p.name === e.name; });
-          html += '<label class="staxx-merge-pick-row">' +
-            '<input type="checkbox" data-merge-pick="' + esc(e.name) + '" data-merge-pick-label="' + esc(e.label) + '"' +
-            (checked ? ' checked' : '') + '><span>' + esc(e.label) + '</span></label>';
-        }
-      });
-      html += '</div>';
-    });
-
-    html += '<p class="staxx-merge-picker-count" id="staxx-merge-picker-count"></p>';
-    host.innerHTML = html;
-
-    var searchInput = document.getElementById('staxx-merge-search-input');
-    if (searchInput) {
-      searchInput.addEventListener('input', function () {
-        var pos = searchInput.selectionStart;
-        mergeState.search = searchInput.value;
-        mergeRenderPicker();
-        var again = document.getElementById('staxx-merge-search-input');
-        if (again) { again.focus(); again.setSelectionRange(pos, pos); }
-      });
+    if (q && !order.length) {
+      var empty = document.createElement('p');
+      empty.className = 'staxx-merge-picker-count';
+      empty.textContent = 'Nothing matches.';
+      host.appendChild(empty);
     }
 
-    Array.prototype.forEach.call(host.querySelectorAll('[data-merge-pick]'), function (cb) {
-      cb.addEventListener('change', function () {
-        var name = cb.dataset.mergePick, label = cb.dataset.mergePickLabel;
-        if (cb.checked) mergeState.picked.push({ name: name, label: label });
-        else mergeState.picked = mergeState.picked.filter(function (p) { return p.name !== name; });
-        mergeRenderPickerCount();
-        var nextBtn = document.getElementById('staxx-merge-next');
-        if (nextBtn) nextBtn.disabled = mergeState.picked.length < 2;
+    order.forEach(function (key) {
+      var heading = document.createElement('h4');
+      heading.className = 'staxx-merge-tile-heading';
+      heading.textContent = key || 'Loose stacks';
+      host.appendChild(heading);
+
+      var wrap = document.createElement('div');
+      wrap.className = 'staxx-merge-tiles';
+      groups[key].forEach(function (e) {
+        var picked = mergeState.picked.some(function (p) { return p.name === e.name; });
+        var tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'staxx-merge-tile' +
+          (picked ? ' staxx-merge-tile--picked' : '') +
+          (e.reason ? ' staxx-merge-tile--disabled' : '');
+        if (e.reason) tile.disabled = true;
+        if (!e.reason) tile.dataset.mergeTile = e.name;
+        tile.dataset.mergeTileLabel = e.label;
+        tile.appendChild(mergeCloneIcon(e.name));
+        var nameEl = document.createElement('span');
+        nameEl.className = 'staxx-merge-tile-name';
+        nameEl.textContent = e.label;
+        nameEl.title = e.label;   // the long-name truncation loose end — see PLAN_155
+        tile.appendChild(nameEl);
+        if (e.reason) {
+          var reasonEl = document.createElement('span');
+          reasonEl.className = 'staxx-merge-tile-reason';
+          reasonEl.textContent = e.reason;
+          tile.appendChild(reasonEl);
+        }
+        wrap.appendChild(tile);
       });
+      host.appendChild(wrap);
     });
 
-    mergeRenderPickerCount();
+    var count = document.createElement('p');
+    count.className = 'staxx-merge-picker-count';
+    count.textContent = mergeState.picked.length === 0 ? 'Nothing picked yet.'
+      : mergeState.picked.length === 1 ? '1 picked — pick at least one more.'
+      : mergeState.picked.length + ' picked.';
+    host.appendChild(count);
   }
 
-  function mergeRenderCards() {
-    var host = document.getElementById('staxx-merge-sources');
+  /* ------------------------------------------------------- step 2 pane -- */
+
+  // The common lead shared by every picked leaf, e.g. "demo-" for demo-db
+  // and demo-web — trimmed of a trailing separator to give the plain
+  // suggestion ("demo"), and kept whole to build the joined one
+  // ("demo-db-web": the trimmed lead plus each leaf's own remainder).
+  function mergeCommonPrefix(strings) {
+    if (!strings.length) return '';
+    var prefix = strings[0];
+    for (var i = 1; i < strings.length && prefix; i++) {
+      var s = strings[i], j = 0;
+      while (j < prefix.length && j < s.length && prefix.charAt(j) === s.charAt(j)) j++;
+      prefix = prefix.slice(0, j);
+    }
+    return prefix;
+  }
+
+  function mergeNameSuggestions() {
+    var leaves = mergeState.picked.map(function (p) { return mergeLeafName(p.name); });
+    if (leaves.length < 2) return [];
+    var rawPrefix = mergeCommonPrefix(leaves);
+    var base = rawPrefix.replace(/[-_]+$/, '');
+    var suffixes = leaves.map(function (l) { return l.slice(rawPrefix.length); }).filter(function (s) { return s; });
+    var joined = base ? (base + '-' + suffixes.join('-')) : leaves.join('-');
+
+    var out = [];
+    if (base) out.push(base + 'app');
+    if (base) out.push(base);
+    if (joined) out.push(joined);
+
+    var seen = {}, result = [];
+    out.forEach(function (s) { if (s && !seen[s]) { seen[s] = 1; result.push(s); } });
+    return result;
+  }
+
+  // Only 'bad' and 'exists' ever carry a message — Next is simply disabled
+  // while the name or folder is still unset, with nothing said about it,
+  // since there is nothing wrong yet to report.
+  function mergeValidate() {
+    var name = (mergeState.newName || '').trim();
+    var folder = mergeState.newFolder;
+    var isCreate = !!(folder && typeof folder === 'object');
+    var haveFolder = folder !== null && folder !== undefined && (!isCreate || !!folder.create);
+
+    if (!name || !haveFolder) return { state: 'incomplete' };
+    if (!MERGE_NAME_RE.test(name)) {
+      return {
+        state: 'bad',
+        message: 'That name cannot be used. Only letters, numbers, dashes, dots and underscores.'
+      };
+    }
+
+    var folderName = isCreate ? folder.create : folder;
+    var rel = folderName ? (folderName + '/' + name) : name;
+    var rels = mergePickerEntries().map(function (e) { return e.name; });
+    var clash = rels.indexOf(rel) >= 0;
+    if (!clash && folderName === '') {
+      clash = (mergeState.folders || []).some(function (f) { return f.name === name; });
+    }
+    if (clash) {
+      return {
+        state: 'exists', rel: rel,
+        message: 'There is already a stack at ' + rel + '. Pick another name or another folder.'
+      };
+    }
+    return { state: 'good', rel: rel };
+  }
+
+  function mergeRenderFolderChips() {
+    var host = document.getElementById('staxx-merge-folder-chips');
     if (!host) return;
-    var html = '<p class="staxx-merge-footnote">' +
-      esc('Which one takes the other in? It keeps its name, its folder, its icon and its history.') +
-      '</p><div class="staxx-merge-cards">';
+    host.innerHTML = '';
+    var options = [{ id: '', label: 'Loose stacks' }]
+      .concat((mergeState.folders || []).map(function (f) { return { id: f.name, label: f.name }; }))
+      .concat([{ id: '__new__', label: 'New folder…' }]);
 
-    mergeState.picked.forEach(function (p) {
-      var isHost = p.name === mergeState.host;
-      var row = rowFor(p.name);
-      var folder = row ? (row.dataset.inFolder || '') : '';
-      var btn = row ? row.querySelector('[data-menu="stack"]') : null;
-      var running = !!(btn && btn.dataset.running === '1');
-      var count = mergeContainerCount(p.name);
-      html += '<div class="staxx-merge-card' + (isHost ? ' staxx-merge-card--host' : '') + '">' +
-        '<label><input type="radio" name="staxx-merge-host" value="' + esc(p.name) + '"' + (isHost ? ' checked' : '') +
-        '> <strong>' + esc(p.label) + '</strong></label>' +
-        '<p>' + esc(folder ? 'In ' + folder : 'A loose stack') + '</p>' +
-        '<p>' + esc(count + (count === 1 ? ' container' : ' containers') + ' — ' + (running ? 'running' : 'stopped')) + '</p>' +
-        '<p>' + (isHost
-          ? esc('Takes the others in. Keeps its name, folder, icon and history.')
-          : esc('Folded in. Arrives as a container inside the other stack.')) +
-        '</p></div>';
-    });
-
-    html += '</div><p class="staxx-merge-footnote">' +
-      esc('Which containers actually have to be rebuilt depends on what you decide next — the last step will name them.') +
-      '</p>';
-    host.innerHTML = html;
-
-    Array.prototype.forEach.call(host.querySelectorAll('[name="staxx-merge-host"]'), function (radio) {
-      radio.addEventListener('change', function () {
-        mergeState.host = radio.value;
-        mergeRebuild();
-        mergeRender();
-      });
+    options.forEach(function (o) {
+      var isCreate = mergeState.newFolder && typeof mergeState.newFolder === 'object';
+      var picked = o.id === '__new__' ? isCreate : (!isCreate && mergeState.newFolder === o.id);
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'staxx-merge-tile staxx-merge-chip-tile' + (picked ? ' staxx-merge-tile--picked' : '');
+      chip.dataset.mergeFolderChip = o.id;
+      chip.textContent = o.label;
+      host.appendChild(chip);
     });
   }
 
-  // Coarse but honest: neither merge-examine.js nor merge-write.js hands
-  // back a line number for what a finding touched, so a finding's own facts
-  // (a name, a port, an address) are matched as plain substrings against
-  // each pane's text instead of true spans. Good enough to point at the
-  // right handful of lines; not a claim of exact ranges.
-  function mergeFindingNeedles(f) {
-    var facts = f.facts || {}, out = [];
-    ['volume', 'oldName', 'newName', 'name', 'from', 'to', 'service', 'port', 'heldBy', 'envVar', 'toService', 'value']
-      .forEach(function (k) {
-        if (facts[k] !== undefined && facts[k] !== null && facts[k] !== '') out.push(String(facts[k]));
-      });
-    return out;
-  }
+  // The one shared, line-numbered, syntax-coloured pane every read-only view
+  // from here on uses (step 2's preview, step 3's source and merged panes,
+  // and whatever step 4/5 build). Colouring comes straight from
+  // window.StaxxYaml.highlight() — the same tokeniser the live editor
+  // paints with — so a merged file reads identically here and once opened
+  // for real. `decorate(row, lineIndex, lineText)` is called for every row
+  // so a caller can add stripes, change classes or click handlers without
+  // this function knowing anything about findings or sources.
+  // `plain` skips window.StaxxYaml.highlight() — a settings file is not
+  // YAML, and colouring it as if it were paints comments right but leaves
+  // "KEY=value" lines looking like a parse the tokeniser gave up on.
+  function mergePaintCode(container, text, decorate, plain) {
+    container.innerHTML = '';
+    var lines = (text || '').split('\n');
+    var carry = '';
+    var frag = document.createDocumentFragment();
+    lines.forEach(function (line, i) {
+      var row = document.createElement('div');
+      row.className = 'staxx-merge-codeline';
+      row.dataset.line = i;
 
-  function mergeLinesMatching(text, needles) {
-    var out = {};
-    if (!needles || !needles.length || !text) return out;
-    text.split('\n').forEach(function (line, i) {
-      for (var j = 0; j < needles.length; j++) {
-        if (needles[j] && line.indexOf(needles[j]) >= 0) { out[i] = true; break; }
+      var num = document.createElement('span');
+      num.className = 'staxx-merge-codenum';
+      num.textContent = String(i + 1);
+      row.appendChild(num);
+
+      var content = document.createElement('span');
+      content.className = 'staxx-merge-codetext';
+      if (plain) {
+        content.textContent = line;
+      } else {
+        var res;
+        try { res = window.StaxxYaml.highlight(line, carry); } catch (e) { res = { html: esc(line), carry: '' }; }
+        carry = res.carry || '';
+        content.innerHTML = res.html;
       }
+      row.appendChild(content);
+
+      if (typeof decorate === 'function') decorate(row, i, line);
+      frag.appendChild(row);
     });
-    return out;
+    container.appendChild(frag);
   }
 
-  function mergeLineFindingMap(text, stackFilter) {
+  function mergeRenderStep2() {
+    var host = document.getElementById('staxx-merge-step2');
+    if (!host) return;
+    host.innerHTML = '';
+
+    var left = document.createElement('div');
+    left.className = 'staxx-merge-step2-left';
+
+    var nameLabel = document.createElement('label');
+    nameLabel.className = 'staxx-merge-step2-label';
+    nameLabel.textContent = 'Stack name';
+    left.appendChild(nameLabel);
+
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'staxx-merge-name-input';
+    nameInput.placeholder = 'a name for the joined stack';
+    nameInput.value = mergeState.newName || '';
+    left.appendChild(nameInput);
+
+    var chipsWrap = document.createElement('div');
+    chipsWrap.className = 'staxx-merge-name-chips';
+    mergeNameSuggestions().forEach(function (s) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'staxx-btn staxx-merge-namechip';
+      chip.textContent = s;
+      chip.dataset.mergeNameChip = s;
+      chipsWrap.appendChild(chip);
+    });
+    left.appendChild(chipsWrap);
+
+    var help = document.createElement('p');
+    help.className = 'staxx-merge-help';
+    help.textContent = 'Letters, numbers, dashes and underscores. This becomes the folder it lives in and the ' +
+      'name Docker stamps on its containers.';
+    left.appendChild(help);
+
+    var folderLabel = document.createElement('label');
+    folderLabel.className = 'staxx-merge-step2-label';
+    folderLabel.textContent = 'Folder location';
+    left.appendChild(folderLabel);
+
+    var folderChips = document.createElement('div');
+    folderChips.className = 'staxx-merge-folder-chips';
+    folderChips.id = 'staxx-merge-folder-chips';
+    left.appendChild(folderChips);
+
+    var isCreate = mergeState.newFolder && typeof mergeState.newFolder === 'object';
+    var newFolderField = document.createElement('input');
+    newFolderField.type = 'text';
+    newFolderField.className = 'staxx-merge-newfolder-input';
+    newFolderField.placeholder = 'New folder name';
+    newFolderField.hidden = !isCreate;
+    if (isCreate) newFolderField.value = mergeState.newFolder.create || '';
+    left.appendChild(newFolderField);
+
+    // Nothing shows here while the name is valid (or not yet judged) — only
+    // the one thing that is actually wrong, if anything is.
+    var nameError = document.createElement('p');
+    nameError.className = 'staxx-merge-name-error';
+    nameError.id = 'staxx-merge-name-error';
+    nameError.hidden = true;
+    left.appendChild(nameError);
+
+    host.appendChild(left);
+
+    // No YAML preview here any more (Adrian, 2026-09-15) — a stack's own
+    // summary card is more use at this point than a file nothing has typed
+    // a name into yet. The scroll is the column's own, not the whole step's,
+    // so the name/folder half on the left never moves.
+    var right = document.createElement('div');
+    right.className = 'staxx-merge-step2-right';
+    mergeRenderStep2Cards(right);
+    host.appendChild(right);
+
+    mergeRenderFolderChips();
+    mergeUpdateStep2Live();
+
+    nameInput.addEventListener('input', function () {
+      mergeState.newName = nameInput.value;
+      mergeUpdateStep2Live();
+    });
+    newFolderField.addEventListener('input', function () {
+      mergeState.newFolder = { create: newFolderField.value };
+      mergeUpdateStep2Live();
+    });
+  }
+
+  // Everything on step 2 that changes as you type or click, without
+  // rebuilding the inputs themselves — rebuilding those on every keystroke
+  // would drop focus and the cursor position.
+  function mergeUpdateStep2Live() {
+    var v = mergeValidate();
+    var errEl = document.getElementById('staxx-merge-name-error');
+    if (errEl) {
+      var wrong = v.state === 'bad' || v.state === 'exists';
+      errEl.hidden = !wrong;
+      errEl.textContent = wrong ? v.message : '';
+    }
+    var nextBtn = document.getElementById('staxx-merge-next');
+    // Also gated on mergeState.stacksLoading, not just the name/folder —
+    // this runs on every keystroke, so a name typed out (and so already
+    // valid) before mergeEnterStep2()'s own load finishes used to leave
+    // Next clickable while mergeState.stacks was still incomplete for one
+    // of the picked stacks. Stepping to 3 then built its pane from an
+    // empty string (mergeRenderSourcesBand() reads mergeState.stacks[rel]
+    // directly, not mergeState.built), which reads exactly like that stack
+    // had been dropped — the fault behind "Back to step 1 and Next again
+    // dropped one of the two picked stacks" (PLAN_155).
+    if (nextBtn && mergeState.step === 2) nextBtn.disabled = v.state !== 'good' || !!mergeState.stacksLoading;
+    // No rebuild here — the right-hand cards are each source's own summary,
+    // unaffected by the name or folder, and the merged file itself is only
+    // built once Next is pressed (see mergeNext()'s own step-2 branch).
+  }
+
+  /* -------------------------------------------------- step 2's own cards -- */
+
+  // The row's own state pill (and update/pending/clash pills riding beside
+  // it), inert — cloned rather than re-derived, so this never disagrees
+  // with what the grid itself is showing right now.
+  function mergeCardStatePill(rel) {
+    var wrap = document.createElement('span');
+    wrap.className = 'staxx-merge-card-state';
+    var row = rowFor(rel);
+    var stateCell = row ? row.querySelector('.staxx-cell--state') : null;
+    if (stateCell) wrap.innerHTML = stateCell.innerHTML;
+    return wrap;
+  }
+
+  // One of the grid's own CPU/memory/network figures, exactly as it reads
+  // there right now (dash and all, for a stopped stack) — read rather than
+  // recomputed, so this can never drift from what the row itself shows.
+  function mergeCardStat(rel, stat) {
+    var row = rowFor(rel);
+    var cell = row ? row.querySelector('.staxx-num[data-stat="' + stat + '"] .staxx-statv') : null;
+    return cell ? cell.innerHTML : '—';
+  }
+
+  function mergeCardDefRow(table, label, valueHtml) {
+    var row = document.createElement('div');
+    row.className = 'staxx-merge-card-row';
+    var l = document.createElement('span');
+    l.className = 'staxx-merge-card-label';
+    l.textContent = label;
+    row.appendChild(l);
+    var v = document.createElement('div');
+    v.className = 'staxx-merge-card-value';
+    v.innerHTML = valueHtml;
+    row.appendChild(v);
+    table.appendChild(row);
+  }
+
+  // One card per picked source — everything a person would want to check
+  // before naming and placing the new stack, since the file itself is not
+  // shown here any more (see mergeRenderStep2()'s own comment). Ports and
+  // folders are read straight off the compose text with the real parser
+  // (window.StaxxMergeWrite.descriptorFromText, the same reader the merge
+  // itself uses), never guessed at with a regex.
+  function mergeRenderStep2Cards(host) {
+    host.innerHTML = '';
+    mergeState.picked.forEach(function (p) {
+      var data = mergeState.stacks[p.name] || {};
+      var card = document.createElement('div');
+      card.className = 'staxx-merge-card';
+      card.style.borderLeftColor = mergeColorFor(p.name);
+
+      if (data.error || !window.StaxxMergeWrite) {
+        card.textContent = p.label + ': ' + (data.error || 'Could not read this stack.');
+        host.appendChild(card);
+        return;
+      }
+
+      var desc;
+      try {
+        desc = window.StaxxMergeWrite.descriptorFromText(p.name, data.text, data.envText, [],
+          { overrideText: data.overrideText || undefined });
+      }
+      catch (e) { desc = null; }
+      var services = (desc && desc.compose && desc.compose.services) || {};
+      var svcNames = Object.keys(services);
+
+      var head = document.createElement('div');
+      head.className = 'staxx-merge-card-head';
+      head.appendChild(mergeCloneIcon(p.name));
+
+      var content = document.createElement('div');
+      content.className = 'staxx-merge-card-content';
+
+      var titleLine = document.createElement('div');
+      titleLine.className = 'staxx-merge-card-title';
+      var nameEl = document.createElement('span');
+      nameEl.className = 'staxx-merge-card-name';
+      nameEl.textContent = mergeLeafName(p.name);
+      titleLine.appendChild(nameEl);
+      var slash = p.name.lastIndexOf('/');
+      if (slash >= 0) {
+        var folderEl = document.createElement('span');
+        folderEl.className = 'staxx-merge-card-folder';
+        folderEl.textContent = p.name.slice(0, slash);
+        titleLine.appendChild(folderEl);
+      }
+      titleLine.appendChild(mergeCardStatePill(p.name));
+      content.appendChild(titleLine);
+
+      svcNames.forEach(function (svcName) {
+        var svc = services[svcName];
+        var line = document.createElement('div');
+        line.className = 'staxx-merge-card-svcline';
+        var svcNameEl = document.createElement('span');
+        svcNameEl.className = 'staxx-merge-card-svcname';
+        svcNameEl.textContent = svcName;
+        line.appendChild(svcNameEl);
+        var imgEl = document.createElement('span');
+        imgEl.className = 'staxx-merge-card-image';
+        imgEl.textContent = svc.image || '';
+        line.appendChild(imgEl);
+        if (svc.restart) {
+          var restartEl = document.createElement('span');
+          restartEl.className = 'staxx-merge-card-restart';
+          restartEl.textContent = 'restart: ' + svc.restart;
+          line.appendChild(restartEl);
+        }
+        content.appendChild(line);
+      });
+
+      head.appendChild(content);
+      card.appendChild(head);
+
+      var table = document.createElement('div');
+      table.className = 'staxx-merge-card-table';
+
+      var row = rowFor(p.name);
+      var addrCell = row ? row.querySelector('.staxx-cell--address') : null;
+      var addrHtml = addrCell ? addrCell.innerHTML : esc('—');
+      mergeCardDefRow(table, 'Web address', addrHtml);
+
+      var portLines = [];
+      svcNames.forEach(function (svcName) {
+        (services[svcName].ports || []).forEach(function (pt) {
+          if (pt.host) portLines.push(esc(pt.host + ' → ' + pt.container));
+        });
+      });
+      mergeCardDefRow(table, 'Ports', portLines.length ? portLines.join('<br>') : esc('—'));
+
+      var folderLines = [];
+      svcNames.forEach(function (svcName) {
+        (services[svcName].volumes || []).forEach(function (vol) {
+          var suffix = vol.ro ? ' (read-only)' : (vol.type === 'named' ? ' (Docker-managed)' : '');
+          folderLines.push(esc(vol.source + ' → ' + vol.target + suffix));
+        });
+      });
+      mergeCardDefRow(table, 'Folders', folderLines.length ? folderLines.join('<br>') : esc('—'));
+
+      var envLines = (desc && desc.env && desc.env.lines) || [];
+      var settingCount = envLines.filter(function (l) { return l.type === 'setting'; }).length;
+      mergeCardDefRow(table, 'Settings', settingCount ? (settingCount + ' in .env') : 'none');
+
+      mergeCardDefRow(table, 'CPU / memory', mergeCardStat(p.name, 'cpu') + ' · ' + mergeCardStat(p.name, 'mem'));
+      mergeCardDefRow(table, 'Network', mergeCardStat(p.name, 'net'));
+
+      card.appendChild(table);
+      host.appendChild(card);
+    });
+  }
+
+  /* ------------------------------------------------------- step 3 pane -- */
+
+  // Every merged line belongs to whichever "# From <leaf>" marker last
+  // appeared above it — the header and the x-unraid block, before the first
+  // marker, belong to none and get no stripe.
+  function mergeLeafToRel() {
     var map = {};
-    if (!mergeState.built) return map;
-    mergeState.built.findings.forEach(function (f, idx) {
-      if (f.severity === 'clean') return;
-      if (stackFilter !== undefined && f.stack !== stackFilter) return;
-      var hit = mergeLinesMatching(text, mergeFindingNeedles(f));
-      Object.keys(hit).forEach(function (i) { if (map[i] === undefined) map[i] = idx; });
+    mergeState.picked.forEach(function (p) { map[mergeLeafName(p.name)] = p.name; });
+    return map;
+  }
+
+  function mergeSourceMapForLines(text) {
+    var leafToRel = mergeLeafToRel();
+    var map = {}, current = null;
+    (text || '').split('\n').forEach(function (line, i) {
+      var m = /^#\s*From\s+(\S+)/.exec(line.trim());
+      if (m) current = leafToRel[m[1].replace(/[.:,]+$/, '')] || current;
+      map[i] = current;
     });
     return map;
   }
 
-  function mergeRenderCodeLines(container, text, map, cls) {
-    container.innerHTML = '';
-    (text || '').split('\n').forEach(function (line, i) {
-      var row = document.createElement('div');
-      var hit = map[i] !== undefined;
-      row.className = 'staxx-merge-line' + (hit ? ' ' + cls : '');
-      row.textContent = line.length ? line : ' ';
-      row.dataset.line = i;
-      if (hit) {
-        row.dataset.mergeFindingIndex = map[i];
-        row.addEventListener('click', function () { mergeJumpToFinding(map[i]); });
-      }
-      container.appendChild(row);
+  function mergeChangesByMergedLine() {
+    var map = {};
+    (mergeState.built && mergeState.built.changes || []).forEach(function (c) {
+      if (c.file !== 'env' && !c.removed) map[c.line] = c;
     });
+    return map;
   }
 
-  function mergeRenderMergedCode() {
+  // A removed record's own line is where its GHOST row is shown — it is
+  // not in the final text at all, so several can share one insertion
+  // point without colliding with mergeChangesByMergedLine() above.
+  function mergeRemovedByMergedLine(envOnly) {
+    var map = {};
+    (mergeState.built && mergeState.built.changes || []).forEach(function (c) {
+      if (c.removed && (envOnly ? c.file === 'env' : c.file !== 'env')) {
+        (map[c.line] = map[c.line] || []).push(c);
+      }
+    });
+    return map;
+  }
+
+  function mergeChangesBySourceLine(rel) {
+    var map = {};
+    (mergeState.built && mergeState.built.changes || []).forEach(function (c) {
+      if (c.file !== 'env' && c.stack === rel) map[c.sourceLine] = c;
+    });
+    return map;
+  }
+
+  // Every change's own KEY that actually ends up with a mark somewhere a
+  // person can find it — the merged pane (a normal row winning its own
+  // `.line`, the same `map[i] = c` overwrite mergeChangesByMergedLine()
+  // above uses, or a ghost row, which never collides since several can
+  // share one insertion point) or its own source pane (winning `.stack` +
+  // `.sourceLine` the same way). PLAN_156 second walk, F7: the heading used
+  // to count every record regardless, so a record that resolved nowhere
+  // (or lost a shared line to another record) still added to "16 changes"
+  // while only 15 marks existed to click on. Counting painted KEYS instead
+  // means the two can never disagree again.
+  function mergePaintedChangeKeys() {
+    var compose = ((mergeState.built && mergeState.built.changes) || []).filter(function (c) { return c.file !== 'env'; });
+    var mergedWinner = {};
+    compose.forEach(function (c) {
+      if (c.removed || typeof c.line !== 'number') return;
+      mergedWinner[c.line] = c;
+    });
+    var sourceWinner = {};
+    compose.forEach(function (c) {
+      if (typeof c.sourceLine !== 'number') return;
+      sourceWinner[c.stack + '|' + c.sourceLine] = c;
+    });
+    var painted = {};
+    compose.forEach(function (c) {
+      if (c.removed && typeof c.line === 'number') { painted[c.key] = true; return; }
+      if (typeof c.line === 'number' && mergedWinner[c.line] === c) { painted[c.key] = true; return; }
+      if (typeof c.sourceLine === 'number' && sourceWinner[c.stack + '|' + c.sourceLine] === c) painted[c.key] = true;
+    });
+    return Object.keys(painted);
+  }
+
+  // Built once and reused two ways: as the content of a hover/focus popover
+  // (mergeAttachMark()) for a compose-file line, the shape settled in the
+  // third interactive session — the reason cards that used to sit inline
+  // under every changed line are gone, replaced by this popover on the
+  // line's own amber mark. The buttons keep their dataset attributes
+  // unchanged, so the wizard's one delegated click listener needs no
+  // separate wiring for "a button that happens to live in a popover".
+  // A port clash's own card (PLAN_155 C10) — the wording and second button
+  // are specific to it ("Keep <n> here (move <a>'s instead)" rather than a
+  // plain "Leave it as it was"), so it is built here instead of the generic
+  // card below, which knows nothing about which side moves or the free port
+  // examine() picked.
+  function mergePortClashCard(change, finding) {
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var h = document.createElement('strong');
+    h.textContent = 'Two services publish port ' + finding.facts.port;
+    var p = document.createElement('p');
+    p.textContent = finding.facts.heldBy + ' and ' + finding.facts.service + ' both publish ' + finding.facts.port +
+      ' on this server; only one can. ' + finding.facts.service + '’s moves to ' + finding.facts.freePort +
+      ', the next free port StaXX found.';
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+
+    var approveBtn = document.createElement('button');
+    approveBtn.type = 'button';
+    approveBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.approved[change.key] ? ' staxx-merge-approve--on' : '');
+    approveBtn.textContent = 'Approved';
+    approveBtn.dataset.mergeApprove = change.key;
+
+    var swapBtn = document.createElement('button');
+    swapBtn.type = 'button';
+    swapBtn.className = 'staxx-btn staxx-merge-leave' + (mergeState.decisions[change.key] === 'swap' ? ' staxx-merge-approve--on' : '');
+    swapBtn.textContent = 'Keep ' + finding.facts.port + ' here (move ' + finding.facts.heldBy + '’s instead)';
+    swapBtn.dataset.mergePortSwap = change.key;
+
+    buttons.appendChild(approveBtn);
+    buttons.appendChild(swapBtn);
+    card.appendChild(h);
+    card.appendChild(p);
+    card.appendChild(buttons);
+    return card;
+  }
+
+  function mergeReasonCard(change) {
+    var finding = mergeFindingByKey(change.key);
+    if (finding && finding.kind === 'port-clash') return mergePortClashCard(change, finding);
+
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var h = document.createElement('strong');
+    h.textContent = change.title;
+    var p = document.createElement('p');
+    p.textContent = change.reason;
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+
+    var approveBtn = document.createElement('button');
+    approveBtn.type = 'button';
+    approveBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.approved[change.key] ? ' staxx-merge-approve--on' : '');
+    approveBtn.textContent = 'Approved';
+    approveBtn.dataset.mergeApprove = change.key;
+
+    var leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.className = 'staxx-btn staxx-merge-leave';
+    leaveBtn.textContent = 'Leave it as it was';
+    leaveBtn.dataset.mergeLeave = change.key;
+
+    buttons.appendChild(approveBtn);
+    buttons.appendChild(leaveBtn);
+    card.appendChild(h);
+    card.appendChild(p);
+    card.appendChild(buttons);
+    return card;
+  }
+
+  function mergeRenderMergedPane() {
     var codeEl = document.getElementById('staxx-merge-merged-code');
+    var countEl = document.getElementById('staxx-merge-changecount');
     if (!codeEl) return;
-    if (!mergeState.built) { codeEl.innerHTML = ''; return; }
-    var map = mergeLineFindingMap(mergeState.built.composeText || '');
-    mergeRenderCodeLines(codeEl, mergeState.built.composeText || '', map, 'staxx-merge-line--green');
+    codeEl.innerHTML = '';
+    if (!mergeState.built) { if (countEl) countEl.textContent = ''; return; }
+
+    var text = mergeState.built.text || '';
+    var sourceMap = mergeSourceMapForLines(text);
+    var changeMap = mergeChangesByMergedLine();
+    var removedByLine = mergeRemovedByMergedLine(false);
+    var lines = text.split('\n');
+    var carry = '';
+    var frag = document.createDocumentFragment();
+    var dispNum = 1;   // a ghost row occupies a display number of its own —
+                        // it is not in the written file, so this never has
+                        // to match the file's real 1-based line numbers.
+
+    // A line removed outright (the emptied ports: key, third interactive
+    // session) is shown as a struck ghost row at the point it used to sit,
+    // rather than left in the file as "ports: []" — the mark still opens
+    // the same popover, whose own wording says the line is gone.
+    function ghostRow(c, rel) {
+      var row = document.createElement('div');
+      row.className = 'staxx-merge-codeline staxx-merge-codeline--changed staxx-merge-codeline--struck staxx-merge-codeline--ghost';
+      row.style.borderLeftColor = rel ? mergeColorFor(rel) : 'transparent';
+      row.style.borderLeftWidth = '0.7rem';
+      row.dataset.mergeChangeKey = c.key;
+      var num = document.createElement('span');
+      num.className = 'staxx-merge-codenum';
+      num.textContent = String(dispNum++);
+      mergeAttachMark(num, c, mergeReasonCard);
+      row.appendChild(num);
+      var content = document.createElement('span');
+      content.className = 'staxx-merge-codetext';
+      content.textContent = c.removedText || '';
+      row.appendChild(content);
+      frag.appendChild(row);
+    }
+
+    for (var i = 0; i <= lines.length; i++) {
+      (removedByLine[i] || []).forEach(function (c) { ghostRow(c, sourceMap[i] || sourceMap[i - 1]); });
+      if (i === lines.length) break;   // trailing ghosts only past the last real line
+
+      var line = lines[i];
+      var change = changeMap[i];
+      var rel = sourceMap[i];
+      var stripeColor = rel ? mergeColorFor(rel) : 'transparent';
+
+      var row = document.createElement('div');
+      row.className = 'staxx-merge-codeline' + (change ? ' staxx-merge-codeline--changed' : '');
+      row.style.borderLeftColor = stripeColor;
+      row.style.borderLeftWidth = change ? '0.7rem' : '0.3rem';
+      if (change) row.dataset.mergeChangeKey = change.key;
+
+      var num = document.createElement('span');
+      num.className = 'staxx-merge-codenum';
+      num.textContent = String(dispNum++);
+      if (change) mergeAttachMark(num, change, mergeReasonCard);
+      row.appendChild(num);
+
+      var content = document.createElement('span');
+      content.className = 'staxx-merge-codetext';
+      var res;
+      try { res = window.StaxxYaml.highlight(line, carry); } catch (e) { res = { html: esc(line), carry: '' }; }
+      carry = res.carry || '';
+      content.innerHTML = res.html;
+      row.appendChild(content);
+
+      frag.appendChild(row);
+    }
+    codeEl.appendChild(frag);
+
+    // Counted by KEY, not by row (third interactive session) — records
+    // sharing a key are one decision, and approving one approves all of
+    // them, so the tally in the heading has to agree with that. Counted by
+    // PAINTED key (PLAN_156 second walk, F7), not every key the merge wrote
+    // — a record with nowhere to be shown must never inflate this number.
+    var keyList = mergePaintedChangeKeys();
+    var approvedCount = keyList.filter(function (k) { return mergeState.approved[k]; }).length;
+    if (countEl) {
+      countEl.textContent = !keyList.length ? 'No changes.'
+        : keyList.length + ' change' + (keyList.length === 1 ? '' : 's') + ', ' +
+          (approvedCount ? approvedCount + ' approved' : 'none approved yet');
+    }
   }
 
-  function mergeRenderSourcePanes() {
-    var host = document.getElementById('staxx-merge-sources');
+  function mergeRenderSourcesBand() {
+    var host = document.getElementById('staxx-merge-sourcesband');
     if (!host) return;
     host.innerHTML = '';
-    mergeState.picked.forEach(function (p) {
-      var isHost = p.name === mergeState.host;
-      var data = mergeState.stacks[p.name];
-      var pane = document.createElement('div');
-      pane.className = 'staxx-merge-pane';
-      // Matched against f.stack below (mergeJumpToFinding, mergeLineFindingMap),
-      // which is the LEAF — see mergeLeafName().
-      pane.dataset.mergeStack = mergeLeafName(p.name);
+    host.style.flex = mergeState.picked.length + ' 1 0';
 
-      var head = document.createElement('div');
-      head.className = 'staxx-merge-pane-head';
-      head.innerHTML = '<span>' + esc(p.label) + '</span>' +
-        '<span class="staxx-merge-tag' + (isHost ? ' staxx-merge-tag--host' : '') + '">' +
-        esc(isHost ? 'takes the others in' : 'folded in') + '</span>';
+    mergeState.picked.forEach(function (p) {
+      var rel = p.name;
+      var data = mergeState.stacks[rel];
+      var color = mergeColorFor(rel);
+
+      var pane = document.createElement('div');
+      pane.className = 'staxx-merge-sourcepane';
+      pane.dataset.mergeSourceStack = rel;
+
+      pane.appendChild(mergeSourceHeadEl(p.label, color));
 
       var code = document.createElement('div');
       code.className = 'staxx-merge-code';
-      var text = (data && !data.error) ? data.text : '';
-      var map = mergeLineFindingMap(text, mergeLeafName(p.name));
-      mergeRenderCodeLines(code, text, map, 'staxx-merge-line--amber');
-
-      pane.appendChild(head);
       pane.appendChild(code);
+
+      // PLAN_155 C3: shows the APPLIED text (main file plus its paired
+      // override, when it has one) — that is the stack as compose runs it,
+      // and the override's own marks are what say which lines came from
+      // the second file. Same computation mergeSourcesForBuild() feeds the
+      // actual write with, so the line numbers here and in mergeState.built
+      // agree.
+      var text = (data && !data.error) ? data.text : '';
+      if (data && !data.error && data.overrideText && window.StaxxMergeWrite) {
+        try {
+          var appliedDesc = window.StaxxMergeWrite.descriptorFromText(rel, text, data.envText, [], { overrideText: data.overrideText });
+          text = appliedDesc.text;
+        } catch (e) { /* left unapplied — the source pane just shows the main file alone */ }
+      }
+      var changeMap = mergeChangesBySourceLine(rel);
+      var struckAbove = {};
+      Object.keys(changeMap).forEach(function (li) {
+        if (changeMap[li].struckComment) struckAbove[Number(li) - 1] = true;
+      });
+
+      mergePaintCode(code, text, function (row, i) {
+        var change = changeMap[i];
+        if (change) {
+          row.classList.add('staxx-merge-codeline--changed');
+          row.style.borderLeftColor = color;
+          row.style.borderLeftWidth = '0.3rem';
+          row.dataset.mergeChangeKey = change.key;
+        }
+        if (struckAbove[i]) row.classList.add('staxx-merge-codeline--struck');
+      });
+
       host.appendChild(pane);
     });
   }
 
-  function mergeFlashEl(el) {
-    if (!el) return;
-    el.classList.remove('staxx-merge-line--flash');
-    void el.offsetWidth;   // restart the animation on a repeat click
-    el.classList.add('staxx-merge-line--flash');
+  // A refusal is a raw finding, not a prepared change — it never carries a
+  // ready-made sentence, so this is the one place that writes one. Shared
+  // by steps 3 and 4 since 'outside-link' (the only refusal-severity kind
+  // today) is a companion-file finding step 4 owns, not a compose one.
+  function mergeRefusalText(r) {
+    if (typeof r === 'string') return r;
+    if (r.kind === 'outside-link') {
+      return mergeLeafName(r.stack) + '’s “' + r.facts.path + '” points outside the stack folder, ' +
+        'so it cannot be copied.';
+    }
+    return (r.title ? r.title + ' — ' : '') + (r.reason || r.message || 'This cannot be merged as it stands.');
   }
 
-  function mergeJumpToFinding(idx) {
-    if (!mergeState.built) return;
-    var f = mergeState.built.findings[idx];
-    if (!f) return;
+  function mergeRenderStep3() {
+    var host = document.getElementById('staxx-merge-step3');
+    if (!host) return;
+    host.innerHTML = '';
 
-    var block = document.querySelector('[data-merge-finding-index="' + idx + '"]');
-    if (block) { block.scrollIntoView({ block: 'nearest' }); block.classList.add('staxx-merge-decision--current'); }
+    var refusalNote = document.createElement('div');
+    refusalNote.className = 'staxx-error';
+    refusalNote.id = 'staxx-merge-refusal-note';
+    var refusals = (mergeState.built && mergeState.built.refusals) || [];
+    if (refusals.length) {
+      refusalNote.textContent = refusals.map(mergeRefusalText).join(' ');
+    } else {
+      refusalNote.hidden = true;
+    }
+    host.appendChild(refusalNote);
 
-    function flashIn(containerSelector) {
-      var container = document.querySelector(containerSelector);
-      if (!container) return;
-      var rows = container.querySelectorAll('[data-merge-finding-index="' + idx + '"]');
-      var first = null;
-      Array.prototype.forEach.call(rows, function (row) { if (!first) first = row; mergeFlashEl(row); });
-      if (first) first.scrollIntoView({ block: 'center' });
+    var row = document.createElement('div');
+    row.className = 'staxx-merge-step3-row';
+    row.id = 'staxx-merge-step3-row';
+
+    var band = document.createElement('div');
+    band.className = 'staxx-merge-sourcesband';
+    band.id = 'staxx-merge-sourcesband';
+    row.appendChild(band);
+
+    var merged = document.createElement('div');
+    merged.className = 'staxx-merge-mergedpane';
+    merged.style.flex = '1 1 0';
+    var mergedHead = document.createElement('div');
+    mergedHead.className = 'staxx-merge-pane-head';
+    var mergedTitle = document.createElement('span');
+    mergedTitle.textContent = 'Merged file';
+    var mergedCount = document.createElement('span');
+    mergedCount.className = 'staxx-merge-changecount';
+    mergedCount.id = 'staxx-merge-changecount';
+    var mergedNav = document.createElement('span');
+    mergedNav.className = 'staxx-merge-changenav';
+    var upBtn = document.createElement('button');
+    upBtn.type = 'button'; upBtn.className = 'staxx-btn'; upBtn.textContent = '↑';
+    upBtn.dataset.mergeChangeNav = 'up';
+    var downBtn = document.createElement('button');
+    downBtn.type = 'button'; downBtn.className = 'staxx-btn'; downBtn.textContent = '↓';
+    downBtn.dataset.mergeChangeNav = 'down';
+    mergedNav.appendChild(upBtn);
+    mergedNav.appendChild(downBtn);
+    mergedHead.appendChild(mergedTitle);
+    mergedHead.appendChild(mergedCount);
+    mergedHead.appendChild(mergedNav);
+    merged.appendChild(mergedHead);
+    var mergedCode = document.createElement('div');
+    mergedCode.className = 'staxx-merge-code';
+    mergedCode.id = 'staxx-merge-merged-code';
+    merged.appendChild(mergedCode);
+    row.appendChild(merged);
+
+    host.appendChild(row);
+
+    mergeRenderSourcesBand();
+    mergeRenderMergedPane();
+  }
+
+  function mergeAlignAndFlash(sourceRow, mergedRow) {
+    if (!sourceRow || !mergedRow) return;
+    var mergedPane = document.getElementById('staxx-merge-merged-code');
+    if (!mergedPane) return;
+    // getBoundingClientRect(), not offsetTop — offsetTop is measured against
+    // the offsetParent, which lands well off target the moment either pane
+    // has its own scroll container in between (PLAN_155).
+    var srcRect = sourceRow.getBoundingClientRect();
+    var mergedRectBefore = mergedRow.getBoundingClientRect();
+    mergedPane.scrollTop += (mergedRectBefore.top - srcRect.top);
+
+    [sourceRow, mergedRow].forEach(function (el) {
+      el.classList.add('staxx-merge-codeline--flash');
+      setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+    });
+  }
+
+  function mergeChangeRows() {
+    return Array.prototype.slice.call(document.querySelectorAll('#staxx-merge-merged-code [data-merge-change-key]'));
+  }
+
+  function mergeStepChange(dir) {
+    var rows = mergeChangeRows();
+    if (!rows.length) return;
+    var idx = mergeState.changeNavIndex;
+    idx = ((idx + dir) % rows.length + rows.length) % rows.length;
+    mergeState.changeNavIndex = idx;
+    rows[idx].scrollIntoView({ block: 'center' });
+    rows[idx].classList.add('staxx-merge-codeline--flash');
+    setTimeout(function () { rows[idx].classList.remove('staxx-merge-codeline--flash'); }, 1500);
+  }
+
+  /* ------------------------------------------------------- step 4 pane -- */
+
+  // Everything below builds "Settings and files": the .env join on top,
+  // the companion-file plan below it. Phase D — see the PLAN_155 header
+  // comment above for the shapes this reads (mergeState.built.env/files/
+  // findings) and CLAUDE.md's second rule: nothing here decides what is
+  // kept, only shows the decision and lets it be changed.
+
+  function mergeHumanBytes(n) {
+    if (!n || n < 1) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + ' ' + units[i];
+  }
+
+  function mergeJoinNames(names) {
+    if (names.length <= 1) return names.join('');
+    if (names.length === 2) return names.join(' and ');
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  function mergeFindingsByKind(kind) {
+    return ((mergeState.built && mergeState.built.findings) || []).filter(function (f) { return f.kind === kind; });
+  }
+
+  function mergeFindingByKey(key) {
+    return ((mergeState.built && mergeState.built.findings) || []).filter(function (f) { return f.key === key; })[0] || null;
+  }
+
+  // Mirrors merge-write.js's own decisionValue() (not exported, so read
+  // fresh here): an unset decision reads as whichever choice the finding
+  // itself marked recommended.
+  function mergeFindingDecision(f) {
+    var stored = mergeState.decisions[f.key];
+    if (stored !== undefined) return stored;
+    var rec = null;
+    (f.choices || []).forEach(function (c) { if (c.recommended) rec = c.id; });
+    return rec;
+  }
+
+  function mergeSettingsJoinFinding() {
+    return mergeFindingsByKind('settings-join')[0] || null;
+  }
+
+  // Every plain setting name used by more than one source ends up in this
+  // finding's own facts either way — matched (sameValueNames) or disputed
+  // (renamed) — so both together are the complete list of "family" names
+  // without re-deriving anything merge-examine.js already worked out.
+  // Maps a renamed merged-side name back to the root too, since the right
+  // pane shows the suffixed name, not the original.
+  function mergeEnvNameToRoot() {
+    var map = {};
+    var f = mergeSettingsJoinFinding();
+    if (!f) return map;
+    var roots = {};
+    f.facts.renamed.forEach(function (r) { roots[r.from] = true; map[r.to] = r.from; });
+    f.facts.sameValueNames.forEach(function (sv) { roots[sv.name] = true; });
+    Object.keys(roots).forEach(function (r) { map[r] = r; });
+    return map;
+  }
+
+  function mergeEnvChangesBySourceLine(rel) {
+    var map = {};
+    (mergeState.built && mergeState.built.changes || []).forEach(function (c) {
+      if (c.file === 'env' && c.stack === rel) map[c.sourceLine] = c;
+    });
+    return map;
+  }
+
+  function mergeEnvChangesByMergedLine() {
+    var map = {};
+    (mergeState.built && mergeState.built.changes || []).forEach(function (c) {
+      if (c.file === 'env' && !c.removed) map[c.line] = c;
+    });
+    return map;
+  }
+
+  function mergeEnvChangeCurrentName(change) {
+    var envText = (mergeState.built && mergeState.built.env) || '';
+    var line = envText.split('\n')[change.line] || '';
+    var m = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(line);
+    return m ? m[1] : '';
+  }
+
+  // The env join's own reason card — same shape as mergeReasonCard(), but
+  // the second button's label and behaviour depend on which of the two
+  // kinds of settings-join change this is (PLAN_155's step 4 section):
+  // a dedupe offers "Keep both", a rename offers "Choose a name" and, once
+  // clicked, an inline field. Neither is read by merge-write.js's
+  // settings-join decision today (accept-join/stop-here only) — see
+  // mergeFreshState()'s comment on envNames.
+  function mergeEnvReasonCard(change) {
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var h = document.createElement('strong');
+    h.textContent = change.title;
+    var p = document.createElement('p');
+    p.textContent = change.reason;
+    card.appendChild(h);
+    card.appendChild(p);
+
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+
+    var approveBtn = document.createElement('button');
+    approveBtn.type = 'button';
+    approveBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.approved[change.key] ? ' staxx-merge-approve--on' : '');
+    approveBtn.textContent = 'Approved';
+    approveBtn.dataset.mergeApprove = change.key;
+    buttons.appendChild(approveBtn);
+
+    if (change.key.indexOf('|dedupe|') >= 0) {
+      var keepBtn = document.createElement('button');
+      keepBtn.type = 'button';
+      keepBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.decisions[change.key] === 'keep-both' ? ' staxx-merge-approve--on' : '');
+      keepBtn.textContent = 'Keep both';
+      keepBtn.dataset.mergeEnvKeepboth = change.key;
+      buttons.appendChild(keepBtn);
+    } else if (mergeState.decisions[change.key] === 'choose-name') {
+      var field = document.createElement('input');
+      field.type = 'text';
+      field.className = 'staxx-merge-envname-input';
+      field.value = mergeState.envNames[change.key] || mergeEnvChangeCurrentName(change);
+      field.dataset.mergeEnvNameField = change.key;
+      buttons.appendChild(field);
+    } else {
+      var chooseBtn = document.createElement('button');
+      chooseBtn.type = 'button';
+      chooseBtn.className = 'staxx-btn staxx-merge-approve';
+      chooseBtn.textContent = 'Choose a name';
+      chooseBtn.dataset.mergeEnvChoose = change.key;
+      buttons.appendChild(chooseBtn);
     }
 
-    if (f.stack) flashIn('.staxx-merge-pane[data-merge-stack="' + f.stack + '"] .staxx-merge-code');
-    flashIn('#staxx-merge-merged-code');
+    card.appendChild(buttons);
+    return card;
   }
 
-  function mergeDescribeFinding(f) {
-    var t = f.facts || {};
-    switch (f.kind) {
-      case 'storage-volume':
-        return {
-          heading: '"' + f.stack + '" keeps its data in storage Docker manages, not a folder on your array.',
-          body: 'It is really named "' + t.oldName + '", and once folded in it would go looking for "' +
-            t.newName + '" instead — the database would come up empty.'
-        };
-      case 'file-clash':
-        return f.severity === 'refusal'
-          ? { heading: '"' + t.name + '" already exists in the host\'s folder.',
-              body: 'Folding "' + f.stack + '" in would overwrite it, so the merge is refused until it is renamed or moved.' }
-          : { heading: '"' + t.name + '" from "' + f.stack + '" is copied in.',
-              body: 'It is copied into the host\'s folder so its short paths keep working.' };
-      case 'settings-join':
-        var renamed = (t.renamed || []).map(function (r) { return r.from + ' → ' + r.to; }).join(', ');
-        return {
-          heading: '"' + f.stack + '" brings its own settings list (.env).',
-          body: 'It is joined into one file: the host\'s own settings come first and are untouched, and "' +
-            f.stack + '"\'s own are added under their own heading.' +
-            (t.sameValueNames && t.sameValueNames.length ? ' ' + t.sameValueNames.join(', ') + ' already match and are not repeated.' : '') +
-            (renamed ? ' ' + renamed + ' mean different things on each side, so the incoming one is renamed.' : '')
-        };
-      case 'container-name-clash':
-        return {
-          heading: '"' + t.from + '" is used by more than one container.',
-          body: '"' + f.stack + '"\'s own is renamed to "' + t.to + '", and everything that referred to it follows.'
-        };
-      case 'port-clash':
-        return {
-          heading: 'Port ' + t.port + ' is claimed by more than one container.',
-          body: '"' + t.service + '" in "' + f.stack + '" and "' + t.heldBy + '" both publish port ' + t.port + '.'
-        };
-      case 'shorthand-clash':
-        return {
-          heading: '"' + t.from + '" (' + t.declKind + ') means different things on each side.',
-          body: '"' + f.stack + '"\'s own is renamed to "' + t.to + '", and everything using it follows.'
-        };
-      case 'address-rewire':
-        return {
-          heading: '"' + t.service + '" in "' + f.stack + '" reaches another one of these over the network.',
-          body: 'It is set to "' + t.from + '". Inside one stack that becomes "' + t.toService + ':' + t.toPort +
-            '" — the real port, not the one published to your network.'
-        };
-      case 'port-unneeded':
-        return {
-          heading: 'Port ' + t.port + ' was published so another container could reach "' + t.service + '" from outside.',
-          body: 'Once they are one stack, nothing needs it — closing it is one less way in.'
-        };
-      case 'left-alone':
-        return {
-          heading: '"' + t.envVar + '" in "' + f.stack + '"',
-          body: (t.note || '') + ' (currently "' + t.value + '").'
-        };
-      default:
-        return { heading: f.kind, body: '' };
-    }
-  }
-
-  function mergeChoiceLabel(c) {
-    return MERGE_CHOICE_LABELS[c.id] || c.id;
-  }
-
-  function mergeFindingKey(f, idx) {
-    return f.kind + '|' + (f.stack || '') + '|' + idx;
-  }
-
-  // A 'free-port' decision is stored as { id: 'free-port', port: N } once a
-  // number is attached; a plain choice (e.g. 'stop-publishing') is stored as
-  // its bare id string. This reads the id either way, so the radio that
-  // matches a stored decision is found whichever shape it took.
-  function mergeStoredId(stored) {
-    return (stored && typeof stored === 'object') ? stored.id : stored;
-  }
-
-  // Every port this merge already publishes, across every stack taking
-  // part — not just the host and the one incoming stack a clash was found
-  // in, because folding in a third stack later must not repeat a port a
-  // second one is already using. Read straight from each stack's own text,
-  // since mergeState.built only ever holds the HOST's own file plus
-  // findings, never every participant's services.
-  function mergePortsTakenAcrossMerge() {
-    var taken = {};
-    if (!window.StaxxMergeWrite) return taken;
-    mergeState.picked.forEach(function (p) {
+  function mergeEnvSourceEntries() {
+    return mergeState.picked.filter(function (p) {
       var s = mergeState.stacks[p.name];
-      if (!s || s.error) return;
-      var desc, services;
-      try { desc = window.StaxxMergeWrite.descriptorFromText(s.name, s.text, s.envText, s.files); }
-      catch (e) { return; }
-      services = (desc && desc.compose && desc.compose.services) || {};
-      Object.keys(services).forEach(function (svcName) {
-        (services[svcName].ports || []).forEach(function (pt) {
-          if (pt.host) taken[Number(pt.host)] = true;
-        });
-      });
+      return s && !s.error && typeof s.envText === 'string';
     });
-    return taken;
   }
 
-  // The taken set above, plus every OTHER port-clash finding's own chosen
-  // free port — so two clashes resolved in the same sitting cannot suggest,
-  // or accept, the same new port for both. excludeKey leaves the finding
-  // being checked or suggested for out of its own comparison.
-  function mergeEffectiveTakenPorts(excludeKey) {
-    var taken = mergePortsTakenAcrossMerge();
-    if (!mergeState.built) return taken;
-    mergeState.built.findings.forEach(function (f, idx) {
-      if (f.kind !== 'port-clash') return;
-      var k = mergeFindingKey(f, idx);
-      if (k === excludeKey) return;
-      var stored = mergeState.decisions[k];
-      if (stored && typeof stored === 'object' && stored.port) taken[Number(stored.port)] = true;
+  // The source panes only — step 4's own left column, above the file
+  // lists (third interactive session: the joined file moved out into its
+  // own full-height right column, so this half no longer builds one).
+  function mergeRenderSettingsSourceBand(host) {
+    var entries = mergeEnvSourceEntries();
+    if (!entries.length) {
+      var none = document.createElement('p');
+      none.className = 'staxx-merge-help';
+      none.textContent = 'None of these stacks have a settings (.env) file.';
+      host.appendChild(none);
+      return;
+    }
+
+    var band = document.createElement('div');
+    band.className = 'staxx-merge-sourcesband';
+
+    var nameToRoot = mergeEnvNameToRoot();
+
+    entries.forEach(function (p) {
+      var rel = p.name, data = mergeState.stacks[rel], color = mergeColorFor(rel);
+      var pane = document.createElement('div');
+      pane.className = 'staxx-merge-sourcepane';
+      pane.appendChild(mergeSourceHeadEl(p.label, color));
+      var code = document.createElement('div');
+      code.className = 'staxx-merge-code';
+      pane.appendChild(code);
+
+      var changeMap = mergeEnvChangesBySourceLine(rel);
+      mergePaintCode(code, data.envText || '', function (lrow, i, lineText) {
+        var change = changeMap[i];
+        if (change) {
+          lrow.classList.add('staxx-merge-codeline--changed');
+          lrow.style.borderLeftColor = color;
+          lrow.style.borderLeftWidth = '0.3rem';
+        }
+        var m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(lineText);
+        if (m && nameToRoot[m[1]]) {
+          lrow.classList.add('staxx-merge-envname');
+          lrow.dataset.mergeEnvFamily = nameToRoot[m[1]];
+        }
+      }, true);   // plain — this is a settings file, not YAML
+
+      band.appendChild(pane);
     });
-    return taken;
+    host.appendChild(band);
   }
 
-  // The first port above the clashing one that nothing in this merge
-  // already publishes. Not a guarantee the wider server has it free —
-  // nothing here can know that — only that resolving the clash this way
-  // will not immediately create a new one.
-  function mergeSuggestFreePort(clashPort, taken) {
-    var p = Number(clashPort) + 1;
-    while (p <= 65535 && taken[p]) p += 1;
-    return p <= 65535 ? p : null;
+  // The right-hand column: the joined settings file, one pane spanning the
+  // step's full height (third interactive session). Its heading is a
+  // neutral grey bar rather than a source colour, since nothing here
+  // belongs to one stack — see mergeRenderStep4()'s grid, which lines its
+  // top edge up with the source headings rather than the SETTINGS label
+  // above them.
+  function mergeRenderJoinedSettingsPane(host) {
+    var head = document.createElement('div');
+    head.className = 'staxx-merge-pane-head staxx-merge-pane-head--neutral';
+    head.textContent = 'The joined settings file';
+    host.appendChild(head);
+    var code = document.createElement('div');
+    code.className = 'staxx-merge-code';
+    code.id = 'staxx-merge-settings-merged-code';
+    host.appendChild(code);
+
+    var nameToRoot = mergeEnvNameToRoot();
+    var envText = (mergeState.built && mergeState.built.env) || '';
+    var changeMap = mergeEnvChangesByMergedLine();
+    var removedByLine = mergeRemovedByMergedLine(true);
+    var lines = envText.split('\n');
+    var frag = document.createDocumentFragment();
+    var dispNum = 1;
+
+    // A duplicate setting (both stacks agreeing) is dropped from the
+    // written file just like step 3's emptied ports: key — shown as a
+    // struck ghost at the point its own line would have sat, not left in
+    // as a comment saying it was skipped.
+    function ghostRow(c) {
+      var lrow = document.createElement('div');
+      lrow.className = 'staxx-merge-codeline staxx-merge-codeline--changed staxx-merge-codeline--struck staxx-merge-codeline--ghost';
+      var num = document.createElement('span');
+      num.className = 'staxx-merge-codenum';
+      num.textContent = String(dispNum++);
+      mergeAttachMark(num, c, mergeEnvReasonCard);
+      lrow.appendChild(num);
+      var content = document.createElement('span');
+      content.className = 'staxx-merge-codetext';
+      content.textContent = c.removedText || '';
+      lrow.appendChild(content);
+      frag.appendChild(lrow);
+    }
+
+    for (var i = 0; i <= lines.length; i++) {
+      (removedByLine[i] || []).forEach(ghostRow);
+      if (i === lines.length) break;
+
+      var line = lines[i];
+      var lrow = document.createElement('div');
+      lrow.className = 'staxx-merge-codeline';
+      var num = document.createElement('span');
+      num.className = 'staxx-merge-codenum';
+      num.textContent = String(dispNum++);
+      lrow.appendChild(num);
+      var content = document.createElement('span');
+      content.className = 'staxx-merge-codetext';
+      content.textContent = line;
+      lrow.appendChild(content);
+
+      var m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+      if (m && nameToRoot[m[1]]) {
+        lrow.classList.add('staxx-merge-envname');
+        lrow.dataset.mergeEnvFamily = nameToRoot[m[1]];
+      }
+      var change = changeMap[i];
+      if (change) {
+        lrow.classList.add('staxx-merge-codeline--changed');
+        mergeAttachMark(num, change, mergeEnvReasonCard);
+      }
+      frag.appendChild(lrow);
+    }
+    code.appendChild(frag);
   }
 
-  // Fills in a suggested port for every port-clash finding nobody has
-  // answered yet. Without this, "change it to a free port" is the default
-  // choice but carries no number, so leaving it at its default silently
-  // resolves nothing (merge-write.js's own freePortFrom() refuses to
-  // invent one). Never overwrites a decision that is already there,
-  // whichever choice it recorded. Returns true if anything changed, so the
-  // caller knows to rebuild the merged preview against the new decisions.
-  function mergeFillPortClashDefaults() {
-    if (!mergeState.built) return false;
-    var changed = false;
-    mergeState.built.findings.forEach(function (f, idx) {
-      if (f.kind !== 'port-clash') return;
-      var key = mergeFindingKey(f, idx);
-      if (mergeState.decisions[key] !== undefined) return;
-      var suggestion = mergeSuggestFreePort(f.facts.port, mergeEffectiveTakenPorts(key));
-      if (suggestion) {
-        mergeState.decisions[key] = { id: 'free-port', port: suggestion };
-        changed = true;
+  /* -------------------------------------------------------- files pane -- */
+
+  function mergeFileClashCard(finding) {
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var names = finding.facts.sources.map(mergeLeafName);
+    var h = document.createElement('strong');
+    h.textContent = 'Same name from more than one stack';
+    var p = document.createElement('p');
+    p.textContent = mergeJoinNames(names) + ' both have ' + (finding.facts.isDir ? 'a folder' : 'a file') +
+      ' called “' + finding.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.';
+    card.appendChild(h);
+    card.appendChild(p);
+
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+    var decision = mergeFindingDecision(finding);
+    [['rename', 'Rename'], ['keep-one', 'Keep one'], ['leave-behind', 'Leave it behind']].forEach(function (pair) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'staxx-btn staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : '');
+      btn.textContent = pair[1];
+      btn.dataset.mergeFileChoice = finding.key;
+      btn.dataset.mergeFileChoiceValue = pair[0];
+      buttons.appendChild(btn);
+    });
+    card.appendChild(buttons);
+    return card;
+  }
+
+  function mergeUnreferencedCard(finding) {
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var h = document.createElement('strong');
+    h.textContent = 'Not used by anything in the compose file';
+    var p = document.createElement('p');
+    p.textContent = '“' + finding.facts.path + '” would be copied even though nothing in ' +
+      mergeLeafName(finding.stack) + '’s compose file points at it.';
+    card.appendChild(h);
+    card.appendChild(p);
+
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+    var decision = mergeFindingDecision(finding);
+    [['copy', 'Copy'], ['leave-behind', 'Leave it behind']].forEach(function (pair) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'staxx-btn staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : '');
+      btn.textContent = pair[1];
+      btn.dataset.mergeFileChoice = finding.key;
+      btn.dataset.mergeFileChoiceValue = pair[0];
+      buttons.appendChild(btn);
+    });
+    card.appendChild(buttons);
+    return card;
+  }
+
+  // PLAN_156 F13: is this file named by the source's own env_file:, so its
+  // row can say it travels untouched rather than being folded into the
+  // joined settings file? Mirrors staxx_compose_names_file()'s env_file
+  // reading in Merge.php's own Stacks.php — duplicated rather than shared,
+  // the same call this file already makes for compose-model.js's own
+  // parser (a structural read against a tree) versus a plain text scan.
+  function mergeFileNamedByEnvFile(text, path) {
+    if (!text) return false;
+    var q = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var bare = '(?:\\.{1,2}/)?' + q;
+    var inline = new RegExp('env_file:\\s*\\[?\\s*["\']?' + bare + '["\']?\\s*\\]?\\s*$', 'i');
+    var lines = text.split(/\r\n|\r|\n/);
+    for (var i = 0; i < lines.length; i++) {
+      if (inline.test(lines[i])) return true;
+      if (/^\s*env_file:\s*$/i.test(lines[i])) {
+        for (var j = i + 1; j < lines.length; j++) {
+          var m = /^\s*-\s*["']?([^"'\s][^"']*)["']?\s*$/.exec(lines[j]);
+          if (!m) break;
+          var item = m[1].trim();
+          if (item === path || item === './' + path || item === '../' + path) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function mergeRenderFileSourcePane(pane, p) {
+    var rel = p.name, data = mergeState.stacks[rel];
+    var files = (data && data.filesReply && data.filesReply.files) || [];
+    var large = data && data.filesReply && data.filesReply.large;
+
+    if (large) {
+      var warn = document.createElement('p');
+      warn.className = 'staxx-merge-filewarn';
+      warn.textContent = p.label + '’s “' + large.path + '” is over 10MB and will still be copied in full.';
+      pane.appendChild(warn);
+    }
+
+    if (!files.length) {
+      var noneEl = document.createElement('p');
+      noneEl.className = 'staxx-merge-help';
+      noneEl.textContent = 'No files beside the compose file.';
+      pane.appendChild(noneEl);
+      return;
+    }
+
+    var unrefByPath = {};
+    mergeFindingsByKind('unreferenced').forEach(function (f) {
+      if (f.stack === rel) unrefByPath[f.facts.path] = f;
+    });
+
+    var list = document.createElement('div');
+    list.className = 'staxx-merge-filelist';
+    files.forEach(function (entry) {
+      var row = document.createElement('div');
+      row.className = 'staxx-merge-filerow' + (entry.outside ? ' staxx-merge-filerow--outside' : '');
+      var name = document.createElement('span');
+      name.className = 'staxx-merge-filename';
+      name.textContent = entry.path + (entry.dir ? '/' : '');
+      row.appendChild(name);
+      if (!entry.dir) {
+        var size = document.createElement('span');
+        size.className = 'staxx-merge-filesize';
+        size.textContent = mergeHumanBytes(entry.size);
+        row.appendChild(size);
+      }
+      if (entry.keyLike) {
+        var note = document.createElement('span');
+        note.className = 'staxx-merge-filenote';
+        note.textContent = 'a copy will exist in two places';
+        row.appendChild(note);
+      }
+      if (entry.outside) {
+        var onote = document.createElement('span');
+        onote.className = 'staxx-merge-filenote staxx-merge-filenote--refusal';
+        onote.textContent = 'not copied — points outside the stack';
+        row.appendChild(onote);
+      }
+      if (!entry.dir && mergeFileNamedByEnvFile(data && data.text, entry.path)) {
+        var envNote = document.createElement('span');
+        envNote.className = 'staxx-merge-filenote';
+        envNote.textContent = 'Named by env_file: — copied as it is, never joined with the settings file.';
+        row.appendChild(envNote);
+      }
+      list.appendChild(row);
+
+      var unref = unrefByPath[entry.path];
+      if (unref) list.appendChild(mergeUnreferencedCard(unref));
+    });
+    pane.appendChild(list);
+  }
+
+  function mergeAnyEnvFile() {
+    return mergeState.picked.some(function (p) {
+      var s = mergeState.stacks[p.name];
+      return s && !s.error && /^\s*env_file:/m.test(s.text || '');
+    });
+  }
+
+  // The file lists' own clashes belong to neither source pane (a clash
+  // names two or more stacks at once) — shown once, above the source
+  // panes, the same reasoncard shape a clash always used.
+  function mergeRenderFilesBand(host) {
+    mergeFindingsByKind('file-clash').forEach(function (f) { host.appendChild(mergeFileClashCard(f)); });
+
+    var band = document.createElement('div');
+    band.className = 'staxx-merge-sourcesband';
+    mergeState.picked.forEach(function (p) {
+      var pane = document.createElement('div');
+      pane.className = 'staxx-merge-sourcepane';
+      pane.appendChild(mergeSourceHeadEl(p.label, mergeColorFor(p.name)));
+      mergeRenderFileSourcePane(pane, p);
+      band.appendChild(pane);
+    });
+    host.appendChild(band);
+
+    if (mergeAnyEnvFile()) {
+      var note = document.createElement('p');
+      note.className = 'staxx-merge-help';
+      note.textContent = 'Extra settings files named by env_file are copied as they are, not joined.';
+      host.appendChild(note);
+    }
+  }
+
+  // The "What the new stack's folder will contain" pane is gone (third
+  // interactive session) — its file count and total size moved to step 6's
+  // own consequences column (mergeStep6Consequences()'s "N files come
+  // along"), which already states them, so nothing here needs to.
+  function mergeRenderStep4() {
+    var host = document.getElementById('staxx-merge-step4');
+    if (!host) return;
+    host.innerHTML = '';
+
+    var refusalNote = document.createElement('div');
+    refusalNote.className = 'staxx-error';
+    var refusals = (mergeState.built && mergeState.built.refusals) || [];
+    if (refusals.length) {
+      refusalNote.textContent = refusals.map(mergeRefusalText).join(' ');
+    } else {
+      refusalNote.hidden = true;
+    }
+    host.appendChild(refusalNote);
+
+    // A CSS grid rather than nested flex boxes: the joined pane's own
+    // grid-area spans the settings and files rows together, which is what
+    // lines its heading up with the source headings rather than the
+    // SETTINGS label above them (third interactive session's own ruling —
+    // see .staxx-merge-step4-grid in staxx.css for the area names).
+    var grid = document.createElement('div');
+    grid.className = 'staxx-merge-step4-grid';
+    host.appendChild(grid);
+
+    var settingsHead = document.createElement('h4');
+    settingsHead.className = 'staxx-merge-tile-heading staxx-merge-step4-slabel';
+    settingsHead.textContent = 'Settings';
+    grid.appendChild(settingsHead);
+
+    var srow = document.createElement('div');
+    srow.className = 'staxx-merge-step4-srow';
+    grid.appendChild(srow);
+    mergeRenderSettingsSourceBand(srow);
+
+    var filesHead = document.createElement('h4');
+    filesHead.className = 'staxx-merge-tile-heading staxx-merge-step4-flabel';
+    filesHead.textContent = 'Files';
+    grid.appendChild(filesHead);
+
+    var frow = document.createElement('div');
+    frow.className = 'staxx-merge-step4-frow';
+    grid.appendChild(frow);
+    mergeRenderFilesBand(frow);
+
+    var joined = document.createElement('div');
+    joined.className = 'staxx-merge-step4-joined';
+    grid.appendChild(joined);
+    mergeRenderJoinedSettingsPane(joined);
+  }
+
+  /* ------------------------------------------------------- step 5 pane -- *
+   * PLAN_155's sixth step, "Suggestions" — added to the design after the
+   * five-step layout was already settled, hence the placeholder every
+   * earlier phase left for it. Never feeds back into buildMergedText():
+   * this reads mergeState.built.text (already settled by steps 3-4) and
+   * layers depends_on/healthcheck/x-unraid.update on top of it through
+   * window.StaxxMergeSuggest, which mergeState.finalText always holds the
+   * result of. See that file's own header for why one call always starts
+   * from the same pristine built.text rather than chaining onto its own
+   * previous output.
+   * ----------------------------------------------------------------- */
+
+  // The dependency board's own palette — deliberately not MERGE_COLORS
+  // (that one names the source STACKS a merge is reading from; this names
+  // the SERVICES inside the merged file, an unrelated axis that can run to
+  // eight entries on a busy merge).
+  var MERGE_SVC_COLORS = ['#e0715f', '#5aa9e6', '#c9a227', '#7ec97e', '#b07fd4', '#4fbfa8', '#e08fc0', '#8fa2e0'];
+
+  function mergeSvcColor(services, svc) {
+    var idx = services.indexOf(svc);
+    return MERGE_SVC_COLORS[(idx < 0 ? 0 : idx) % MERGE_SVC_COLORS.length];
+  }
+
+  // The merged file's own services, in file order — read straight off the
+  // parse tree rather than through YAML.buildForm(), which has no notion
+  // of "just the service names" on its own. Mirrors merge-write.js's own
+  // servicesMapOf(); duplicated rather than shared for the same reason
+  // that file gives for having its own copy — this is a structural read
+  // against the parser's tree, not a form-side helper.
+  function mergeSuggestServices(doc) {
+    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
+    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    return map ? map.keys.slice() : [];
+  }
+
+  function mergeSuggestHasHealthcheck(doc, service) {
+    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
+    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var pair = map ? map.pairs[service] : null;
+    var own = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
+    return !!(own && own.pairs['healthcheck']);
+  }
+
+  function mergeSuggestServiceImage(form, service) {
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image' && f.parts && f.parts.value) {
+        return f.parts.value.value;
+      }
+    }
+    return '';
+  }
+
+  // "Covered already" — the file's own compose text already carries a
+  // healthcheck for this service, so there is nothing for the step to add
+  // (PLAN_155, second interactive session: the db-images "known check"
+  // shortcut this row used to offer is gone — no known-image shortcut ever
+  // writes a check into the file at this step, only a check the person
+  // types by hand). The image's own DECLARED check is the other way a row
+  // can be `covered`, read separately in mergeEnterStep5() below since it
+  // needs an async round trip this synchronous half cannot make.
+  function mergeSuggestSyncHealth(doc, form, service) {
+    if (mergeSuggestHasHealthcheck(doc, service)) return { covered: true };
+    return { on: false, source: 'later' };
+  }
+
+  // 'image-facts' is asked once per image and cached for the wizard's own
+  // life — a merge rarely names more than a handful of distinct images. A
+  // local inspect often has nothing under `healthcheck` (the image was
+  // pulled before StaXX read that field, or was never pulled at all), so a
+  // declared check that fails to turn up locally is asked for again against
+  // the registry — the same `source:'hub', config:'1'` fallback the
+  // editor's own image import already uses to fill in facts a local
+  // inspect cannot answer.
+  function mergeImageFacts(image) {
+    if (!mergeState.imageFacts[image]) {
+      mergeState.imageFacts[image] = call('image-facts', { image: image, source: 'local' })
+        .then(function (res) {
+          var facts = (res && res.ok) ? res.facts : null;
+          if (facts && facts.healthcheck && facts.healthcheck.declared) return facts;
+          return call('image-facts', { image: image, source: 'hub', config: '1' })
+            .then(function (res2) { return (res2 && res2.ok) ? res2.facts : facts; })
+            .catch(function () { return facts; });
+        })
+        .catch(function () { return null; });
+    }
+    return mergeState.imageFacts[image];
+  }
+
+  function mergeSuggestRecompute() {
+    if (!window.StaxxMergeSuggest || !mergeState.built) {
+      mergeState.finalText = mergeState.built ? mergeState.built.text : '';
+      mergeState.addedLines = [];
+      return;
+    }
+    try {
+      var r = window.StaxxMergeSuggest.apply(mergeState.built.text, mergeState.suggest);
+      mergeState.finalText = r.text;
+      mergeState.addedLines = r.added;
+    } catch (e) {
+      mergeState.finalText = mergeState.built.text;
+      mergeState.addedLines = [];
+    }
+  }
+
+  // PLAN_156 F14: one {from, to} pair for every address-rewire finding step
+  // 3 left approved (mergeFindingDecision(), the same truthy check
+  // merge-write.js's own decisionValue() makes before it rewrites the line) —
+  // step 5 then opens with those lines already drawn rather than making the
+  // person redraw what step 3 already settled. 'from' is looked up through
+  // the service-rename map merge-examine.js's own plan builds from a
+  // container-name-clash finding (rebuilt here from mergeState.built.findings
+  // rather than threaded through, since buildMergedText() never returns its
+  // internal plan): an address held by a service that clashed and was
+  // renamed (PLAN_155 C7's "web" to "web_t155-web") must depend on its own
+  // new name, or the line would draw from a service the merged file no
+  // longer has. 'to' is left exactly as the finding names it, the same
+  // choice merge-write.js's own rewrite makes for the same field.
+  function mergeSeededDeps() {
+    var findings = (mergeState.built && mergeState.built.findings) || [];
+    var renamed = {};
+    findings.forEach(function (f) {
+      if (f.kind === 'container-name-clash' && f.facts.field === 'service') {
+        renamed[f.stack + '/' + f.facts.from] = f.facts.to;
       }
     });
-    return changed;
-  }
-
-  // Plain words beside the field, or null once the number in it can
-  // actually be sent. A number outside 1-65535, or one that repeats a port
-  // already published elsewhere in this merge, is refused here rather than
-  // silently carried forward into a merge that would not fix the clash.
-  function mergePortClashError(key) {
-    var stored = mergeState.decisions[key];
-    var raw = (stored && typeof stored === 'object') ? stored.port : null;
-    if (raw === null || raw === undefined || raw === '') return 'Enter a port number.';
-    var n = Number(raw);
-    if (!isFinite(n) || Math.floor(n) !== n || n < 1 || n > 65535) return 'Port numbers run from 1 to 65535.';
-    if (mergeEffectiveTakenPorts(key)[n]) return 'Port ' + n + ' is already published elsewhere in this merge.';
-    return null;
-  }
-
-  // Whether any port-clash finding currently answered "free port" carries a
-  // number that cannot be sent — the gate the step 3 Next button checks so
-  // the merge cannot proceed on an answer that would resolve nothing.
-  function mergeHasBadPortClash() {
-    if (!mergeState.built) return false;
-    return mergeState.built.findings.some(function (f, idx) {
-      if (f.kind !== 'port-clash') return false;
-      var key = mergeFindingKey(f, idx);
-      if (mergeStoredId(mergeState.decisions[key]) !== 'free-port') return false;
-      return !!mergePortClashError(key);
+    var deps = [];
+    findings.forEach(function (f) {
+      if (f.kind !== 'address-rewire' || !mergeFindingDecision(f)) return;
+      var from = renamed[f.stack + '/' + f.facts.service] || f.facts.service;
+      var to = f.facts.toService;
+      if (from === to) return;
+      if (!deps.some(function (d) { return d.from === from && d.to === to; })) deps.push({ from: from, to: to });
     });
+    return deps;
   }
 
-  // The small number field shown beside "change it to a free port" once
-  // that choice is selected — its own change rebuilds the merged pane
-  // immediately, exactly as picking any other decision already does.
-  function mergePortClashField(key) {
-    var wrap = document.createElement('span');
-    wrap.className = 'staxx-merge-portfield';
+  // Rebuilt fresh every time step 5 is entered (see mergeFreshState()'s own
+  // comment) — cheap, and it means a trip back to steps 1-4 to change
+  // something can never leave a stale suggestion pointed at a service that
+  // no longer exists. The synchronous half (a source file's own existing
+  // healthcheck) answers immediately; the image's own declared check needs
+  // a round trip and updates the row once it lands, exactly like step 2's
+  // own live validator.
+  function mergeEnterStep5() {
+    mergeState.suggest = { deps: mergeSeededDeps(), health: {},
+      update: { mode: 'default', immediate: false, notify: mergeDefaultNotify() } };
+    mergeState.finalText = mergeState.built ? mergeState.built.text : '';
+    mergeState.addedLines = [];
+    if (!mergeState.built) { mergeRender(); return; }
 
-    var input = document.createElement('input');
-    input.type = 'number';
-    input.min = '1';
-    input.max = '65535';
-    input.className = 'staxx-merge-portfield-input';
-    var stored = mergeState.decisions[key];
-    var port = (stored && typeof stored === 'object' && stored.port) ? stored.port : '';
-    input.value = port;
-    input.addEventListener('click', function (event) { event.stopPropagation(); });
-    input.addEventListener('change', function (event) {
-      event.stopPropagation();
-      var n = input.value === '' ? null : Number(input.value);
-      mergeState.decisions[key] = { id: 'free-port', port: n };
-      mergeRebuild();
-      mergeRender();
+    var doc = YAML.parse(mergeState.built.text);
+    var form = YAML.buildForm(doc);
+    var services = mergeSuggestServices(doc);
+    var suggest = mergeState.suggest;
+
+    services.forEach(function (service) {
+      suggest.health[service] = mergeSuggestSyncHealth(doc, form, service);
     });
-    wrap.appendChild(input);
+    mergeSuggestRecompute();
+    mergeRender();
 
-    var err = mergePortClashError(key);
-    var msg = document.createElement('div');
-    if (err) {
-      msg.className = 'staxx-merge-portfield-error';
-      msg.textContent = err;
-    } else {
-      msg.className = 'staxx-merge-portfield-note';
-      msg.textContent = 'Nothing in this merge publishes port ' + port + ' — not a guarantee it is free on the whole server.';
+    if (!mergeState.globalSettings) {
+      call('settings', {}).then(function (res) {
+        if (!mergeState) return;
+        mergeState.globalSettings = (res && res.ok) ? res.settings : {};
+        // The switches opened at a guessed default before this reply
+        // landed (mergeDefaultNotify()'s own fallback) — replace it with
+        // the server's real answer now, but only while nobody has touched
+        // a switch yet; a touched row already says exactly what it means.
+        var notify = mergeState.suggest && mergeState.suggest.update && mergeState.suggest.update.notify;
+        if (notify && !notify.touched) mergeState.suggest.update.notify = mergeDefaultNotify();
+        if (mergeState.step === 5) mergeRenderStep5();
+      });
     }
-    wrap.appendChild(msg);
-    return wrap;
+
+    services.forEach(function (service) {
+      if (suggest.health[service].source !== 'later') return;   // already answered without a network call
+      var image = mergeSuggestServiceImage(form, service);
+      if (!image) return;
+      mergeImageFacts(image).then(function (facts) {
+        // The wizard may have moved off step 5, or even closed, by the time
+        // this lands — `suggest` is the exact object this closure captured,
+        // so comparing it against the live one is what stops a stale reply
+        // overwriting an answer for a wizard the person has since restarted.
+        if (!mergeState || mergeState.suggest !== suggest) return;
+        var hc = facts && facts.healthcheck;
+        if (hc && hc.declared && hc.test && hc.test.length) {
+          suggest.health[service] = { covered: true };
+          mergeSuggestRecompute();
+          if (mergeState.step === 5) mergeRenderStep5();
+          return;
+        }
+
+        // PLAN_155 C12 (PLAN_156 F15) — the same well-known-image table the
+        // editor's own health offer consults (window.StaxxDbImages, read
+        // through chooseHealthCheck() so the plan's fixed source order is
+        // never re-decided here), so Redis/MariaDB/etc. get a real
+        // suggestion on this step too, not only once the stack is running
+        // and the editor can probe it live. `ownCheck`/`fileCheck` are both
+        // false here on purpose — a declared check already returned above,
+        // and a file-carried one already made this row `covered` before
+        // step 5 even asked (mergeSuggestSyncHealth()). `published`/`tools`
+        // are left out: those answer a live probe this step never makes,
+        // and are only ever consulted after the well-known table has
+        // already said no — out of scope for this fault.
+        if (!window.StaxxHealthOffer || !window.StaxxDbImages) return;
+        var choice = window.StaxxHealthOffer.chooseHealthCheck({
+          ownCheck: false, fileCheck: false,
+          dbEntry: window.StaxxDbImages.lookupImage(image),
+          env: envForService(form, service)
+        });
+        if (!choice.offer) return;
+        // Defaulted ON (something waits): committed straight away, the same
+        // 'own' shape a hand-typed check uses (merge-suggest.js only ever
+        // writes one whose source is 'own'), pre-filled rather than blank —
+        // never left at `known`-and-on, which would leave the "No — I want
+        // to add my own" button and the one-line sentence both trying to
+        // describe the same undecided row. Defaulted OFF, it stays at
+        // `later` so the sentence and the plain switch are all there is
+        // until the person turns it on (see the health-toggle handler).
+        var offer = choice.offer;
+        var waited = (mergeState.suggest.deps || []).some(function (d) { return d.to === service; });
+        suggest.health[service] = waited
+          ? { on: true, source: 'own', test: offer.test, interval: offer.interval, timeout: offer.timeout, retries: offer.retries }
+          : { on: false, source: 'later', known: offer };
+        mergeSuggestRecompute();
+        if (mergeState.step === 5) mergeRenderStep5();
+      });
+    });
   }
 
-  function mergeFindingsForStep(step) {
-    if (!mergeState.built) return [];
-    var kinds = step === 3 ? MERGE_STEP3_KINDS : MERGE_STEP4_KINDS;
-    var out = [];
-    mergeState.built.findings.forEach(function (f, i) { if (kinds[f.kind]) out.push({ f: f, i: i }); });
+  function mergeAddDep(from, to) {
+    if (from === to) return;
+    var exists = mergeState.suggest.deps.some(function (d) { return d.from === from && d.to === to; });
+    if (!exists) mergeState.suggest.deps.push({ from: from, to: to });
+    mergeSuggestRecompute();
+    mergeRenderStep5();
+  }
+
+  function mergeDepBoardEls() {
+    var board = document.getElementById('staxx-merge-depboard');
+    return { board: board, svg: board ? board.querySelector('.staxx-merge-deplines') : null };
+  }
+
+  // A line leaves a "waits for" chip from its RIGHT edge and arrives at a
+  // "this" chip on its LEFT edge, so the curve lives in the open space
+  // between the two columns — the columns are pinned to the board's edges
+  // for exactly that reason (Adrian, 2026-09-15: the person drags from the
+  // left edge of the board across to the right edge). A midpoint-to-
+  // midpoint line drew straight through the chips' own text.
+  function mergeChipCenter(boardRect, chipEl) {
+    var r = chipEl.getBoundingClientRect();
+    var x = chipEl.dataset.depChip === 'to' ? r.left : r.right;
+    return { x: x - boardRect.left, y: r.top + r.height / 2 - boardRect.top };
+  }
+
+  // A solid cubic curve between two chip midpoints — a straight line was
+  // tried first and rejected on the same five-service mock the rest of
+  // this board's rules were settled against: several nearly-horizontal
+  // lines read as one smear, where the S-curve keeps each one legible.
+  function mergeCurvePath(p1, p2) {
+    var midX = (p1.x + p2.x) / 2;
+    return 'M ' + p1.x + ' ' + p1.y + ' C ' + midX + ' ' + p1.y + ', ' + midX + ' ' + p2.y + ', ' + p2.x + ' ' + p2.y;
+  }
+
+  function mergeDrawDepLines(services) {
+    var els = mergeDepBoardEls();
+    if (!els.board || !els.svg) return;
+    var rect = els.board.getBoundingClientRect();
+    els.svg.setAttribute('width', rect.width);
+    els.svg.setAttribute('height', rect.height);
+    els.svg.innerHTML = '';
+
+    (mergeState.suggest.deps || []).forEach(function (d, idx) {
+      var fromChip = els.board.querySelector('[data-dep-chip="from"][data-dep-svc="' + d.from + '"]');
+      var toChip = els.board.querySelector('[data-dep-chip="to"][data-dep-svc="' + d.to + '"]');
+      if (!fromChip || !toChip) return;
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', mergeCurvePath(mergeChipCenter(rect, fromChip), mergeChipCenter(rect, toChip)));
+      path.setAttribute('class', 'staxx-merge-depline');
+      path.setAttribute('stroke', mergeSvcColor(services, d.from));
+      path.dataset.depFrom = d.from;
+      path.dataset.depTo = d.to;
+      path.dataset.depIndex = idx;
+      els.svg.appendChild(path);
+    });
+  }
+
+  // Hovering either column fades everything not connected to that one
+  // service to 12% and thickens what remains — without it, four lines
+  // already tangle in the middle on a five-service file (PLAN_155).
+  // `fromSvc`/`toSvc` are which COLUMN was hovered, never both at once.
+  function mergeDepBoardHover(fromSvc, toSvc) {
+    var board = document.getElementById('staxx-merge-depboard');
+    if (!board) return;
+    var active = fromSvc || toSvc;
+    var chips = board.querySelectorAll('[data-dep-chip]');
+    var lines = board.querySelectorAll('.staxx-merge-depline:not(.staxx-merge-depline--drag)');
+    if (!active) {
+      chips.forEach(function (c) { c.classList.remove('staxx-merge-depchip--faded'); });
+      lines.forEach(function (l) { l.classList.remove('staxx-merge-depline--faded', 'staxx-merge-depline--thick'); });
+      return;
+    }
+    var connected = {};
+    connected[active] = true;
+    (mergeState.suggest.deps || []).forEach(function (d) {
+      if (fromSvc && d.from === fromSvc) connected[d.to] = true;
+      if (toSvc && d.to === toSvc) connected[d.from] = true;
+    });
+    chips.forEach(function (c) {
+      c.classList.toggle('staxx-merge-depchip--faded', !connected[c.dataset.depSvc]);
+    });
+    lines.forEach(function (l) {
+      var relevant = (fromSvc && l.dataset.depFrom === fromSvc) || (toSvc && l.dataset.depTo === toSvc);
+      l.classList.toggle('staxx-merge-depline--faded', !relevant);
+      l.classList.toggle('staxx-merge-depline--thick', relevant);
+    });
+  }
+
+  function mergeRenderDepBlock(host, services) {
+    var block = document.createElement('div');
+    block.className = 'staxx-merge-suggest-block';
+    var q = document.createElement('h4');
+    q.className = 'staxx-merge-suggest-q';
+    q.textContent = 'Dependencies';
+    block.appendChild(q);
+
+    var board = document.createElement('div');
+    board.className = 'staxx-merge-depboard';
+    board.id = 'staxx-merge-depboard';
+
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'staxx-merge-deplines');
+    board.appendChild(svg);
+
+    var cols = document.createElement('div');
+    cols.className = 'staxx-merge-depcols';
+
+    // A block is a plain box on both sides now — neutral border, neutral
+    // text — with the service's own colour living only in the square, the
+    // same square on both columns (Adrian, second interactive session:
+    // a coloured border and coloured text were the first build's, and were
+    // rejected). The dotted grab handle sits on the block's INNER edge —
+    // right edge in the left column, left edge in the right column — so
+    // its DOM order is mirrored between the two sides rather than styled
+    // there with a flip.
+    function column(headText, side) {
+      var col = document.createElement('div');
+      col.className = 'staxx-merge-depcol';
+      var head = document.createElement('div');
+      head.className = 'staxx-merge-depcol-head';
+      head.textContent = headText;
+      col.appendChild(head);
+      services.forEach(function (service) {
+        var chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'staxx-merge-depchip' + (side === 'to' ? ' staxx-merge-depchip--to' : '');
+        chip.dataset.depChip = side;
+        chip.dataset.depSvc = service;
+
+        var sq = document.createElement('span');
+        sq.className = 'staxx-merge-depsq';
+        sq.style.background = mergeSvcColor(services, service);
+
+        var name = document.createElement('span');
+        name.className = 'staxx-merge-depchip-name';
+        name.textContent = service;
+
+        var handle = document.createElement('span');
+        handle.className = 'staxx-merge-dephandle';
+        handle.setAttribute('aria-hidden', 'true');
+        handle.appendChild(document.createElement('span'));
+        handle.appendChild(document.createElement('span'));
+        handle.appendChild(document.createElement('span'));
+
+        if (side === 'to') {
+          chip.appendChild(handle);
+          chip.appendChild(sq);
+          chip.appendChild(name);
+          chip.addEventListener('mouseenter', function () { mergeDepBoardHover(null, service); });
+        } else {
+          chip.appendChild(sq);
+          chip.appendChild(name);
+          chip.appendChild(handle);
+          chip.addEventListener('mouseenter', function () { mergeDepBoardHover(service, null); });
+        }
+        chip.addEventListener('mouseleave', function () { mergeDepBoardHover(null, null); });
+        col.appendChild(chip);
+      });
+      return col;
+    }
+
+    cols.appendChild(column('waits for →', 'from'));
+    cols.appendChild(column('→ this', 'to'));
+    board.appendChild(cols);
+    block.appendChild(board);
+
+    var help = document.createElement('p');
+    help.className = 'staxx-merge-help';
+    help.textContent = 'A line waits for the other service to START, which is not the same as READY — a ' +
+      'database can be up for twenty seconds before it accepts a connection, which is exactly when the app ' +
+      'tries and fails. Give the target a health check below and the wait becomes a real one.';
+    block.appendChild(help);
+
+    host.appendChild(block);
+  }
+
+  // Verbatim wording from the second interactive session (PLAN_155) — four
+  // kinds now: `covered` needs no switch at all (the file already has one,
+  // or the image declares its own — Docker runs either unasked); a `known`
+  // row (PLAN_155 C12) names the well-known check StaXX would write if the
+  // switch is left on; everything else is the plain "Add one" switch, off
+  // or on, and turning IT on shows this same sentence until the person asks
+  // to write their own instead.
+  function mergeHealthSourceSentence(h) {
+    if (h.covered) return 'Its image has a health check built in, so there is nothing to add — ' +
+      'anything waiting for it waits until it is healthy.';
+    if (h.source === 'own') return 'Write your own below.';
+    if (h.known) return 'StaXX knows a check for this image: ' + offerCommandText(h.known.test) + '.';
+    return 'StaXX will work a check out once the stack is running, try it inside the container, ' +
+      'and offer it to you in the editor.';
+  }
+
+  function mergeRenderHealthForm(service, h) {
+    var form = document.createElement('div');
+    form.className = 'staxx-merge-healthform';
+
+    function field(label, type, key, value, extra) {
+      var wrap = document.createElement('label');
+      wrap.className = 'staxx-merge-healthfield';
+      var span = document.createElement('span');
+      span.textContent = label;
+      wrap.appendChild(span);
+      var input = document.createElement('input');
+      input.type = type;
+      input.className = 'staxx-merge-healthinput';
+      input.dataset.healthField = key;
+      input.dataset.healthSvc = service;
+      input.value = value;
+      if (extra) Object.keys(extra).forEach(function (k) { input.setAttribute(k, extra[k]); });
+      wrap.appendChild(input);
+      return wrap;
+    }
+
+    form.appendChild(field('Test', 'text', 'test', ((h.test || []).slice(1) || []).join(' ')));
+    form.appendChild(field('Every', 'text', 'interval', h.interval || '30s'));
+    form.appendChild(field('Give up after', 'text', 'timeout', h.timeout || '10s'));
+    form.appendChild(field('Retries', 'number', 'retries', String(h.retries || 3), { min: '1' }));
+    return form;
+  }
+
+  function mergeRenderHealthRow(service, count, services) {
+    var h = mergeState.suggest.health[service] || { on: false, source: 'later' };
+    var row = document.createElement('div');
+    row.className = 'staxx-merge-healthrow';
+
+    var top = document.createElement('div');
+    top.className = 'staxx-merge-healthrow-top';
+
+    var chip = document.createElement('span');
+    chip.className = 'staxx-merge-svcchip';
+    chip.style.background = mergeSvcColor(services, service);
+    top.appendChild(chip);
+
+    var name = document.createElement('span');
+    name.className = 'staxx-merge-healthrow-name';
+    name.textContent = service;
+    top.appendChild(name);
+
+    if (!h.covered) {
+      var toggle = document.createElement('label');
+      toggle.className = 'staxx-switch staxx-merge-healthswitch';
+      toggle.innerHTML = '<input type="checkbox" role="switch" data-health-toggle="' + esc(service) + '"' +
+        (h.on ? ' checked' : '') + '><span class="staxx-switch-track" aria-hidden="true"></span>' +
+        '<span class="staxx-switch-text">' + esc('Add one') + '</span>';
+      top.appendChild(toggle);
+    }
+    row.appendChild(top);
+
+    var sentence = document.createElement('p');
+    sentence.className = 'staxx-merge-healthrow-sentence';
+    sentence.textContent = (count > 0 ? (count + ' service' + (count === 1 ? '' : 's') + ' wait' +
+      (count === 1 ? 's' : '') + ' for it.') : 'Nothing waits for it.') + ' ' + mergeHealthSourceSentence(h);
+    row.appendChild(sentence);
+
+    // Switched on with nothing decided yet: the button that hands the
+    // decision to the person instead of waiting for StaXX to work one out
+    // later (source stays 'later' until this is clicked). Once source is
+    // 'own' the form takes the button's place.
+    if (!h.covered && h.on && h.source === 'later') {
+      var writeBtn = document.createElement('button');
+      writeBtn.type = 'button';
+      writeBtn.className = 'staxx-btn staxx-merge-healthown';
+      writeBtn.dataset.healthOwn = service;
+      writeBtn.textContent = 'No — I want to add my own';
+      row.appendChild(writeBtn);
+    }
+
+    if (!h.covered && h.on && h.source === 'own') row.appendChild(mergeRenderHealthForm(service, h));
+
+    return row;
+  }
+
+  function mergeRenderHealthBlock(host, services) {
+    var block = document.createElement('div');
+    block.className = 'staxx-merge-suggest-block';
+    var q = document.createElement('h4');
+    q.className = 'staxx-merge-suggest-q';
+    q.textContent = 'Health checks';
+    block.appendChild(q);
+
+    var counts = {};
+    services.forEach(function (s) { counts[s] = 0; });
+    (mergeState.suggest.deps || []).forEach(function (d) { if (counts[d.to] !== undefined) counts[d.to]++; });
+    var ordered = services.slice().sort(function (a, b) { return counts[b] - counts[a]; });
+
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-healthcard';
+    ordered.forEach(function (service) { card.appendChild(mergeRenderHealthRow(service, counts[service], services)); });
+    block.appendChild(card);
+
+    host.appendChild(block);
+  }
+
+  // `label` may be falsy — the Updates/Install rows carry no label of their
+  // own, since the section heading above them already says what they
+  // choose (Adrian, second interactive session, PLAN_155); the three
+  // notification rows each keep their event's name at the left, same as
+  // every other tick row on the page.
+  function mergeTickRow(label, name, options, value) {
+    var row = document.createElement('div');
+    row.className = 'staxx-merge-updaterow';
+    if (label) {
+      var lab = document.createElement('span');
+      lab.className = 'staxx-merge-updaterow-label';
+      lab.textContent = label;
+      row.appendChild(lab);
+    }
+    var tickRow = document.createElement('div');
+    tickRow.className = 'staxx-tickrow';
+    options.forEach(function (o) {
+      var opt = document.createElement('label');
+      opt.className = 'staxx-tickopt';
+      opt.innerHTML = '<input type="radio" name="' + esc(name) + '" value="' + esc(o[0]) + '"' +
+        (o[0] === value ? ' checked' : '') + '>' +
+        '<svg class="staxx-tickmark" viewBox="0 0 16 16" aria-hidden="true">' +
+        '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+        '<span class="staxx-tickword">' + esc(o[1]) + '</span>';
+      tickRow.appendChild(opt);
+    });
+    row.appendChild(tickRow);
+    return row;
+  }
+
+  // The wizard's own new-stack row starts at the server's own current
+  // answers (third interactive session — the row is a fresh stack that was
+  // never set, not a container with PLAN_154's own Default state to hand
+  // back). `failed` alone defaults true, matching Defines.php's own
+  // retired-key fallback.
+  function mergeDefaultNotify() {
+    var g = mergeState.globalSettings || {};
+    return {
+      touched: false,
+      found: g.UPDATE_NOTIFY_FOUND === 'true',
+      installed: g.UPDATE_NOTIFY_INSTALLED === 'true',
+      failed: g.UPDATE_NOTIFY_FAILED !== 'false'
+    };
+  }
+
+  var MERGE_NOTIFY_EVENTS = [['found', 'New image'], ['installed', 'Image installed'], ['failed', 'Installation failed']];
+
+  // One of the three switches, drawn exactly as the settings panel's own
+  // two-state control (`.staxx-tickopt.staxx-flagopt`) — orange tick on,
+  // red cross off, never a faded third state: the third interactive
+  // session's ruling that a brand-new stack has no "Default" to fall back
+  // to, unlike a container already on disk.
+  function mergeNotifyFlagHtml(name, label, checked) {
+    return '<label class="staxx-tickopt staxx-flagopt"><input type="checkbox" data-merge-notify="' + esc(name) +
+      '" data-on="true" data-off="false"' + (checked ? ' checked' : '') + '>' +
+      '<svg class="staxx-tickmark staxx-tickmark--tick" viewBox="0 0 16 16" aria-hidden="true">' +
+      '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+      '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
+      '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
+      '<span class="staxx-tickword">' + esc(label) + '</span></label>';
+  }
+
+  function mergeRenderUpdateBlock(host) {
+    var block = document.createElement('div');
+    block.className = 'staxx-merge-suggest-block';
+    var q = document.createElement('h4');
+    q.className = 'staxx-merge-suggest-q';
+    q.textContent = 'Updates';
+    block.appendChild(q);
+
+    var u = mergeState.suggest.update;
+    var g = mergeState.globalSettings || {};
+
+    // Unlabelled — the heading above already says what this row chooses
+    // (Adrian, second interactive session, PLAN_155).
+    block.appendChild(mergeTickRow(null, 'staxx-merge-update-mode',
+      [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']], u.mode));
+
+    // Choosing Manual or Automatic IS the override, so the hint has nothing
+    // left to say once either is picked (Adrian's rule, PLAN_155).
+    if (u.mode === 'default') {
+      var hint = document.createElement('p');
+      hint.className = 'staxx-merge-help';
+      hint.textContent = 'Default = ' + (g.UPDATE_MODE === 'auto' ? 'Automatic' : 'Manual');
+      block.appendChild(hint);
+    }
+
+    // Eased in, not popped — Automatic reveals a second row nobody asked
+    // to see yet. The class goes on now and `--in` on the next frame, so
+    // the browser actually has something to transition FROM (adding both
+    // at once transitions nothing); leaving Automatic is the mirror of
+    // this in the change handler below, which removes `--in` and waits out
+    // the same transition before the row's content is torn down.
+    if (u.mode === 'auto') {
+      var reveal = document.createElement('div');
+      reveal.className = 'staxx-merge-reveal';
+      reveal.id = 'staxx-merge-update-reveal';
+
+      reveal.appendChild(mergeTickRow(null, 'staxx-merge-update-install',
+        [['immediate', 'Immediately'], ['delay', 'After the delay']], u.immediate ? 'immediate' : 'delay'));
+
+      var windowOn = g.UPDATE_WINDOW !== 'false';
+      var facts = document.createElement('p');
+      facts.className = 'staxx-merge-help';
+      facts.textContent = 'The delay itself (' + (g.UPDATE_DELAY_HOURS || '0') + ' hours)' +
+        (windowOn ? ' and the quiet time (' + (g.UPDATE_WINDOW_START || '00:00') + ' to ' +
+          (g.UPDATE_WINDOW_END || '00:00') + ')' : '') + ' are your global settings.';
+      reveal.appendChild(facts);
+
+      block.appendChild(reveal);
+      requestAnimationFrame(function () { reveal.classList.add('staxx-merge-reveal--in'); });
+    }
+
+    var nq = document.createElement('h4');
+    nq.className = 'staxx-merge-suggest-q';
+    nq.textContent = 'Notifications';
+    block.appendChild(nq);
+
+    // One row, three switches, no label in front and no note beneath
+    // (third interactive session — the three Default/On/Off rows PLAN_154
+    // gave a container already on disk are wrong for a stack that was
+    // never set, and go). Leave all three untouched and the row follows
+    // the server; flip any one and all three are written — see
+    // merge-suggest.js's own writeNotify().
+    var notify = u.notify || {};
+    var notifyRow = document.createElement('div');
+    notifyRow.className = 'staxx-merge-updaterow';
+    var notifyTicks = document.createElement('div');
+    notifyTicks.className = 'staxx-tickrow';
+    notifyTicks.innerHTML = MERGE_NOTIFY_EVENTS.map(function (ev) {
+      return mergeNotifyFlagHtml(ev[0], ev[1], !!notify[ev[0]]);
+    }).join('');
+    notifyRow.appendChild(notifyTicks);
+    block.appendChild(notifyRow);
+
+    host.appendChild(block);
+  }
+
+  function mergeRenderStep5() {
+    var host = document.getElementById('staxx-merge-step5');
+    if (!host) return;
+    host.innerHTML = '';
+    if (!mergeState.built || !mergeState.suggest) return;
+
+    var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+
+    var left = document.createElement('div');
+    left.className = 'staxx-merge-step5-left';
+    mergeRenderDepBlock(left, services);
+    mergeRenderHealthBlock(left, services);
+    mergeRenderUpdateBlock(left);
+    host.appendChild(left);
+
+    var right = document.createElement('div');
+    right.className = 'staxx-merge-step5-right';
+    var rightHead = document.createElement('div');
+    rightHead.className = 'staxx-merge-pane-head';
+    rightHead.textContent = 'The new file';
+    right.appendChild(rightHead);
+    var codeWrap = document.createElement('div');
+    codeWrap.className = 'staxx-merge-code';
+    codeWrap.id = 'staxx-merge-step5-code';
+    right.appendChild(codeWrap);
+    host.appendChild(right);
+
+    mergePaintCode(codeWrap, mergeState.finalText, function (row, i) {
+      if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
+    });
+
+    mergeDrawDepLines(services);
+  }
+
+  // The code pane after any change that does not otherwise reshape the
+  // step's own controls (typing in a health-check field) — never a full
+  // mergeRenderStep5(), which would rebuild the input the person is
+  // mid-keystroke in and drop focus (the same reasoning mergeUpdateStep2Live()
+  // gives for its own live pane).
+  function mergeRepaintStep5Code() {
+    mergeSuggestRecompute();
+    var codeEl = document.getElementById('staxx-merge-step5-code');
+    if (codeEl) {
+      mergePaintCode(codeEl, mergeState.finalText, function (row, i) {
+        if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
+      });
+    }
+    var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+    mergeDrawDepLines(services);
+  }
+
+  // Dragging starts on a "from" chip and ends on a "to" chip — pointer
+  // events rather than HTML5 drag-and-drop, since the line in progress
+  // needs a live coordinate on every move, not just a drop target. Wired
+  // once against the modal itself (it survives every step 5 re-render)
+  // rather than per-chip, the same delegation the rest of the wizard's
+  // clicks already use. Solid, in the leaving service's own colour, no
+  // dash — a finished line and a line being drawn read the same
+  // (Adrian, second interactive session, PLAN_155).
+  if (mergeModal) {
+    mergeModal.addEventListener('pointerdown', function (event) {
+      var chip = event.target.closest ? event.target.closest('[data-dep-chip="from"]') : null;
+      if (!chip || !mergeState || mergeState.step !== 5) return;
+      event.preventDefault();
+      var els = mergeDepBoardEls();
+      if (!els.board || !els.svg) return;
+      var rect = els.board.getBoundingClientRect();
+      var start = mergeChipCenter(rect, chip);
+      var fromService = chip.dataset.depSvc;
+      var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+      var dragLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      dragLine.setAttribute('class', 'staxx-merge-depline staxx-merge-depline--drag');
+      dragLine.setAttribute('stroke', mergeSvcColor(services, fromService));
+      els.svg.appendChild(dragLine);
+      mergeDepBoardHover(fromService, null);
+
+      function move(e) {
+        var x = e.clientX - rect.left, y = e.clientY - rect.top;
+        dragLine.setAttribute('d', mergeCurvePath(start, { x: x, y: y }));
+      }
+      function up(e) {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        dragLine.remove();
+        mergeDepBoardHover(null, null);
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        var toChip = target && target.closest ? target.closest('[data-dep-chip="to"]') : null;
+        if (toChip && toChip.dataset.depSvc !== fromService) mergeAddDep(fromService, toChip.dataset.depSvc);
+      }
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+    });
+
+    // Click a line to remove it (PLAN_155). A separate listener from the
+    // wizard's big shared click delegate above: an SVG <path> is not one of
+    // the element shapes that one already knows how to route.
+    mergeModal.addEventListener('click', function (event) {
+      var path = event.target.closest ? event.target.closest('.staxx-merge-depline:not(.staxx-merge-depline--drag)') : null;
+      if (!path || !mergeState) return;
+      var idx = parseInt(path.dataset.depIndex, 10);
+      if (isNaN(idx)) return;
+      mergeState.suggest.deps.splice(idx, 1);
+      mergeSuggestRecompute();
+      mergeRenderStep5();
+    });
+
+    mergeModal.addEventListener('click', function (event) {
+      var btn = event.target.closest ? event.target.closest('[data-health-own]') : null;
+      if (!btn || !mergeState) return;
+      mergeState.suggest.health[btn.dataset.healthOwn] =
+        { on: true, source: 'own', mode: 'CMD-SHELL', test: ['CMD-SHELL', ''], interval: '30s', timeout: '10s', retries: 3 };
+      mergeSuggestRecompute();
+      mergeRenderStep5();
+    });
+
+    mergeModal.addEventListener('change', function (event) {
+      var el = event.target;
+      if (!mergeState || !mergeState.suggest) return;
+      if (el.dataset && el.dataset.healthToggle) {
+        var hSvc = el.dataset.healthToggle;
+        var h = mergeState.suggest.health[hSvc];
+        if (h && h.known && el.checked) {
+          // PLAN_155 C12: turning a known check on for the first time
+          // commits it, the same 'own' shape a hand-typed check uses (see
+          // the async resolution above for why it is never left sitting
+          // at `known`-and-on).
+          var k = h.known;
+          mergeState.suggest.health[hSvc] = { on: true, source: 'own', test: k.test, interval: k.interval, timeout: k.timeout, retries: k.retries };
+        } else if (h) {
+          h.on = el.checked;
+        }
+        mergeSuggestRecompute();
+        mergeRenderStep5();
+      } else if (el.name === 'staxx-merge-update-mode') {
+        // Leaving Automatic eases the Install row out before it is torn
+        // down, rather than popping — see mergeRenderUpdateBlock()'s own
+        // comment on the matching ease-in. Entering Automatic (or moving
+        // between Default and Manual, which reveals nothing) needs no
+        // such delay: the normal render already eases in.
+        var wasAuto = mergeState.suggest.update.mode === 'auto';
+        var newMode = el.value;
+        var reveal = wasAuto && newMode !== 'auto' ?
+          document.getElementById('staxx-merge-update-reveal') : null;
+        if (reveal) {
+          reveal.classList.remove('staxx-merge-reveal--in');
+          setTimeout(function () {
+            if (!mergeState) return;
+            mergeState.suggest.update.mode = newMode;
+            mergeSuggestRecompute();
+            mergeRenderStep5();
+          }, 280);
+        } else {
+          mergeState.suggest.update.mode = newMode;
+          mergeSuggestRecompute();
+          mergeRenderStep5();
+        }
+      } else if (el.name === 'staxx-merge-update-install') {
+        mergeState.suggest.update.immediate = el.value === 'immediate';
+        mergeSuggestRecompute();
+        mergeRenderStep5();
+      } else if (el.dataset && el.dataset.mergeNotify) {
+        // The first flip is what turns "follow the server" into "this
+        // stack's own answer" — every switch after that is just an update
+        // to a row that is already explicit (third interactive session).
+        mergeState.suggest.update.notify.touched = true;
+        mergeState.suggest.update.notify[el.dataset.mergeNotify] = el.checked;
+        mergeSuggestRecompute();
+        mergeRenderStep5();
+      }
+    });
+
+    // Health-form fields only ever repaint the right-hand pane (see
+    // mergeRepaintStep5Code()'s own comment) — a full re-render here would
+    // drop focus on every keystroke.
+    mergeModal.addEventListener('input', function (event) {
+      var el = event.target;
+      if (!el.dataset || !el.dataset.healthField || !mergeState || !mergeState.suggest) return;
+      var h = mergeState.suggest.health[el.dataset.healthSvc];
+      if (!h) return;
+      if (el.dataset.healthField === 'test') {
+        h.mode = h.mode || 'CMD-SHELL';
+        h.test = [h.mode, el.value];
+      } else if (el.dataset.healthField === 'retries') {
+        h.retries = parseInt(el.value, 10) || 1;
+      } else {
+        h[el.dataset.healthField] = el.value;
+      }
+      mergeRepaintStep5Code();
+    });
+
+    // The board's own width decides where its curves land (mergeChipCenter
+    // reads it off getBoundingClientRect() every draw), so a window resize
+    // is the one thing that can leave every line pointing at where a chip
+    // used to be. Wired once for the page's whole life, the same as every
+    // other step 5 listener above — the `mergeState.step !== 5` guard is
+    // what stands in for "removed on close", since there is nothing left
+    // to redraw once the wizard is shut or off this step, and one listener
+    // that does nothing most of the time is lighter than adding and
+    // removing it on every open and close.
+    window.addEventListener('resize', function () {
+      if (!mergeState || mergeState.step !== 5 || !mergeModal.open) return;
+      mergeDrawDepLines(mergeSuggestServices(YAML.parse(mergeState.built.text)));
+    });
+  }
+
+  /* ------------------------------------------------------- step 6 pane -- */
+
+  // "in DEV-TESTING" or "loose" — the plan's own "New stack X, in Y|loose".
+  function mergeFolderPhrase() {
+    var folder = mergeState.newFolder;
+    var name = (folder && typeof folder === 'object') ? folder.create : folder;
+    return name ? ('in ' + name) : 'loose';
+  }
+
+  // The subject list on the "retired" line — "a and b", "a, b and c" —
+  // never a comma before the final "and" here; mergeJoinClauses() below is
+  // the other punctuation the plan's own examples use, for a sentence built
+  // out of several clauses rather than several names.
+  function mergeJoinNames(names) {
+    if (names.length <= 1) return names[0] || '';
+    if (names.length === 2) return names[0] + ' and ' + names[1];
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  function mergeJoinClauses(parts) {
+    if (parts.length <= 1) return parts[0] || '';
+    if (parts.length === 2) return parts[0] + ', and ' + parts[1];
+    return parts.slice(0, -1).join(', ') + ', and ' + parts[parts.length - 1];
+  }
+
+  // "The database is reached inside the stack, and port 3307 is closed." —
+  // built from the approved changes' own titles rather than typed out
+  // again, so it can never disagree with what step 3 actually approved.
+  // Only the first title keeps its capital, since the rest are now the
+  // second-or-later clause of one sentence.
+  function mergeApprovedSummary(changes) {
+    var parts = changes.map(function (c, i) {
+      var t = c.title || '';
+      return i === 0 ? t : (t.charAt(0).toLowerCase() + t.slice(1));
+    });
+    var sentence = mergeJoinClauses(parts);
+    return sentence + (/[.!?]$/.test(sentence) ? '' : '.');
+  }
+
+  function mergeFilesTotals(filesOut) {
+    var total = 0, count = 0, anyKeyLike = false;
+    filesOut.forEach(function (f) {
+      var srcFiles = (mergeState.stacks[f.from] && mergeState.stacks[f.from].filesReply && mergeState.stacks[f.from].filesReply.files) || [];
+      var entry = srcFiles.filter(function (e) { return e.path === f.path; })[0];
+      if (entry && !entry.dir) total += entry.size || 0;
+      if (entry && entry.keyLike) anyKeyLike = true;
+      count++;
+    });
+    return { total: total, count: count, anyKeyLike: anyKeyLike };
+  }
+
+  // Whether the source carrying a storage-carry finding looks like a
+  // database — checked against every service in that source stack, not
+  // only the one that mounts the volume: a source with a named volume to
+  // carry across is, in practice, the database stack itself, and finding
+  // the exact mounting service would mean a second copy of merge-write.js's
+  // own volume-to-service walk for a wording nicety.
+  function mergeStorageCarryIsDb(finding) {
+    var data = mergeState.stacks[finding.stack];
+    if (!data || !data.text || !window.StaxxDbImages) return false;
+    var doc;
+    try { doc = YAML.parse(data.text); } catch (e) { return false; }
+    var form = YAML.buildForm(doc);
+    return mergeSuggestServices(doc).some(function (svc) {
+      return !!window.StaxxDbImages.lookupImage(mergeSuggestServiceImage(form, svc));
+    });
+  }
+
+  // The right column's own blocks — verbatim wording from the plan, names
+  // and counts substituted in. Rebuilt on every render since anything here
+  // can have changed on a trip back to an earlier step (an approval, a
+  // file decision, the folder).
+  function mergeStep6Consequences() {
+    var built = mergeState.built;
+    if (!built) return [];
+    var v = mergeValidate();
+    var rel = v.rel || built.newProject || '';
+    var leaf = built.newProject || rel.split('/').pop() || rel;
+    var text = mergeState.finalText || built.text || '';
+    var blocks = [];
+
+    // A stack has no icon or description of its own — only a service does
+    // — so there is no "whose identity" to name here any more.
+    blocks.push({ title: 'New stack ' + leaf + ', ' + mergeFolderPhrase(), sub: 'Its history starts here.' });
+
+    var serviceCount = 0;
+    try { serviceCount = mergeSuggestServices(YAML.parse(text)).length; } catch (e) { /* unreachable — step 3/4 already refuse an unparsable merge before step 6 */ }
+    blocks.push({
+      title: serviceCount > 2 ? ('All ' + serviceCount + ' containers are built again') : 'Both containers are built again',
+      sub: 'Docker cannot move a container between stacks.'
+    });
+
+    var storageFinding = (built.findings || []).filter(function (f) { return f.kind === 'storage-carry'; })[0];
+    if (storageFinding) {
+      var isDb = mergeStorageCarryIsDb(storageFinding);
+      blocks.push({
+        title: (isDb ? 'The database' : 'The storage') + ' keeps its data',
+        sub: 'Its storage is named outright, so nothing moves.'
+      });
+    }
+
+    var approved = (built.changes || []).filter(function (c) { return c.file !== 'env' && mergeState.approved[c.key]; });
+    if (approved.length) {
+      blocks.push({
+        title: approved.length + ' change' + (approved.length === 1 ? '' : 's') + ' you approved',
+        sub: mergeApprovedSummary(approved)
+      });
+    }
+
+    var filesOut = (built.files || []).filter(function (f) { return f.to !== null; });
+    if (filesOut.length) {
+      var totals = mergeFilesTotals(filesOut);
+      blocks.push({
+        title: totals.count + ' file' + (totals.count === 1 ? '' : 's') + ' come along',
+        sub: mergeHumanBytes(totals.total) +
+          (totals.anyKeyLike ? ' — a key or certificate is among them, and a copy of it will now exist in two places.' : '.')
+      });
+    }
+
+    if (/^\s*build:/m.test(text)) {
+      blocks.push({
+        title: 'A fresh image is built',
+        sub: 'build: names an image after the stack, so the old one is left behind.'
+      });
+    }
+
+    var names = mergeState.picked.map(function (p) { return p.label; });
+    blocks.push({
+      title: mergeJoinNames(names) + ' are retired',
+      sub: 'Stopped, kept whole, but unable to start — they would fight this stack for the same ports and storage.',
+      warn: true
+    });
+    blocks.push({
+      title: 'Nothing is deleted',
+      sub: 'Each retired one offers Remove on its own row when you are ready.',
+      warn: true
+    });
+
+    return blocks;
+  }
+
+  function mergeRenderConsequences(host) {
+    host.innerHTML = '';
+    mergeStep6Consequences().forEach(function (b) {
+      var card = document.createElement('div');
+      card.className = 'staxx-merge-consequence' + (b.warn ? ' staxx-merge-consequence--warn' : '');
+      var h = document.createElement('h5');
+      h.textContent = b.title;
+      var p = document.createElement('p');
+      p.textContent = b.sub;
+      card.appendChild(h);
+      card.appendChild(p);
+      host.appendChild(card);
+    });
+    mergeRenderStopStartSwitches(host);
+  }
+
+  // A source keeping data in a folder inside its own directory — the one
+  // case "Companion files" item 6 warns about: copying it while the
+  // container still writes to it can leave that copy torn. A plain text
+  // scan for a relative bind source is enough here (the wizard already
+  // refuses anything it cannot parse before step 6 is reachable).
+  function mergeAnyInsideBindMount() {
+    return mergeState.picked.some(function (p) {
+      var s = mergeState.stacks[p.name];
+      return s && !s.error && /-\s*["']?\.\/[^:\s"']+:/.test(s.text || '');
+    });
+  }
+
+  function mergeStopStartNote() {
+    if (mergeState.mergeStart) {
+      return 'The new stack cannot run beside the originals — they share ports and storage — so ' +
+        'starting it stops them first.';
+    }
+    if (mergeState.mergeStop) {
+      return 'The originals are stopped and retired; the new stack is written and opened in the ' +
+        'editor for you to start yourself.';
+    }
+    var note = 'The originals keep running for now. Stop them yourself before starting the new ' +
+      'stack, or the two will fight over the same ports and storage.';
+    if (mergeAnyInsideBindMount()) {
+      note += ' One of them keeps its own data in a folder inside the stack, and copying that ' +
+        'folder while the container is still writing to it can leave the copy subtly broken.';
+    }
+    return note;
+  }
+
+  // Both off by default (Adrian, third interactive session) — stopping the
+  // originals, and starting the new stack, are the person's own choice,
+  // not something the wizard does for them. Turning Start on forces Stop
+  // on and locks it: the new stack cannot run beside stacks that still
+  // hold its own ports and storage.
+  function mergeRenderStopStartSwitches(host) {
+    var wrap = document.createElement('div');
+    wrap.className = 'staxx-merge-step6-switches';
+
+    function switchLabel(id, text, checked, disabled) {
+      var label = document.createElement('label');
+      label.className = 'staxx-switch staxx-merge-step6-switch';
+      label.innerHTML = '<input type="checkbox" role="switch" data-merge-switch="' + id + '"' +
+        (checked ? ' checked' : '') + (disabled ? ' disabled' : '') + '>' +
+        '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+        '<span class="staxx-switch-text">' + esc(text) + '</span>';
+      return label;
+    }
+
+    wrap.appendChild(switchLabel('stop', 'Stop the original stacks', mergeState.mergeStop, mergeState.mergeStart));
+    wrap.appendChild(switchLabel('start', 'Start the new stack when done', mergeState.mergeStart, false));
+
+    var note = document.createElement('p');
+    note.className = 'staxx-merge-help';
+    note.textContent = mergeStopStartNote();
+    wrap.appendChild(note);
+
+    host.appendChild(wrap);
+  }
+
+  // The stack editor's own form-rendering code — YAML.buildForm() and
+  // renderForm() — reused here as a READ-ONLY preview. Reusing the real
+  // rendering was tried against pointing the editor's live wiring at a
+  // second container, and rejected: that wiring (rename, add/remove rows,
+  // the icon picker, every field's own commit-on-change) is bound once,
+  // permanently, to the live editor's own #staxx-form element, in well
+  // over a hundred places throughout this file — not a "modest change" to
+  // retarget. So every control drawn here is disabled straight after
+  // insertion: the picture is the real form, the interaction is not.
+  //
+  // renderForm() does not take the form/doc it draws as a parameter for
+  // everything it needs — foldFieldsFor() (a fold row's own siblings) and
+  // the macvlan/ipvlan Ports group both read the live editor's own MODEL
+  // global instead, which is null whenever no stack is open in the editor
+  // — exactly the case here, since the merge wizard and the editor are
+  // never open at once. Everything else renderForm's call chain touches
+  // (devIndex, devLoaded, stackOpen, FILES...) already defaults to a safe
+  // empty value at the top of this file and was checked by reading every
+  // one of those call sites; MODEL is the only one that is null instead of
+  // empty. So it is seeded with this column's own form for the render and
+  // put back straight after, in case an editor session is ever open behind
+  // this wizard after all.
+  // A stack's icons are per-service (staxx_service_icons_for_stack(), read
+  // by mergeLoadStack() above), and a merge never renames a service — so a
+  // plain union across every picked source, first one to name a service
+  // wins, is the whole answer to "whose icon is whose" without resolving a
+  // single ./.staxx/<file> path here.
+  function mergeServiceIconsMap() {
+    var out = {};
+    mergeState.picked.forEach(function (p) {
+      var s = mergeState.stacks[p.name];
+      if (!s || !s.icons) return;
+      Object.keys(s.icons).forEach(function (svc) { if (!out[svc]) out[svc] = s.icons[svc]; });
+    });
     return out;
   }
 
-  function mergeHasRefusal() {
-    return !!(mergeState && mergeState.built && mergeState.built.refusals && mergeState.built.refusals.length);
-  }
-
-  function mergeRenderDecisions() {
-    var lead = document.getElementById('staxx-merge-decisions-lead');
-    var list = document.getElementById('staxx-merge-decisions-list');
-    var clean = document.getElementById('staxx-merge-clean');
-    if (!lead || !list || !clean) return;
-    list.innerHTML = '';
-    clean.innerHTML = '';
-
-    if (!mergeState.built) { lead.textContent = ''; return; }
-
-    if (mergeHasRefusal()) {
-      var r = mergeState.built.refusals[0];
-      var d = mergeDescribeFinding(r);
-      lead.textContent = d.body || d.heading;
-      var errBlock = document.createElement('div');
-      errBlock.className = 'staxx-merge-decision staxx-merge-decision--automatic';
-      errBlock.textContent = 'The merge is refused until this is fixed. Close the wizard, sort it out, and start again.';
-      list.appendChild(errBlock);
-      return;
-    }
-
-    var step = mergeState.step;
-    var entries = mergeFindingsForStep(step);
-
-    if (step === 3) {
-      var decisionCount = entries.filter(function (e) { return e.f.severity !== 'clean'; }).length;
-      lead.textContent = decisionCount
-        ? decisionCount + ' thing' + (decisionCount === 1 ? '' : 's') + ' need' + (decisionCount === 1 ? 's' : '') +
-          ' a decision. Everything else was checked and is fine.'
-        : 'Nothing clashes. Everything was checked and is fine.';
-    } else {
-      var wiringCount = entries.filter(function (e) { return e.f.kind !== 'left-alone'; }).length;
-      lead.textContent = 'Once they are one stack these two talk to each other inside it, by name, without going ' +
-        'out to your network and back. StaXX found ' + wiringCount + ' place' + (wiringCount === 1 ? '' : 's') +
-        ' that need changing and will not touch anything it is unsure of.';
-    }
-
-    var cleanEntries = [];
-    entries.forEach(function (entry) {
-      var f = entry.f, idx = entry.i;
-      if (f.kind === 'left-alone' || f.severity === 'clean') { cleanEntries.push(entry); return; }
-
-      var desc = mergeDescribeFinding(f);
-      var block = document.createElement('div');
-      block.className = 'staxx-merge-decision' + (f.choices ? '' : ' staxx-merge-decision--automatic');
-      block.dataset.mergeFindingIndex = idx;
-
-      var h = document.createElement('h5');
-      h.textContent = desc.heading;
-      var p = document.createElement('p');
-      p.textContent = desc.body;
-      block.appendChild(h);
-      block.appendChild(p);
-
-      if (f.choices && f.choices.length) {
-        var choicesBox = document.createElement('div');
-        choicesBox.className = 'staxx-merge-decision-choices';
-        var key = mergeFindingKey(f, idx);
-        var isTick = f.severity === 'wiring';
-
-        f.choices.forEach(function (c) {
-          var label = document.createElement('label');
-          var input = document.createElement('input');
-          input.type = isTick ? 'checkbox' : 'radio';
-          if (!isTick) input.name = 'staxx-merge-decision-' + idx;
-          var stored = mergeState.decisions[key];
-          var isOn = isTick
-            ? (stored === undefined ? !!c.ticked : !!stored)
-            : (stored === undefined ? !!c.recommended : mergeStoredId(stored) === c.id);
-          input.checked = isOn;
-          input.addEventListener('change', function (event) {
-            event.stopPropagation();
-            if (isTick) {
-              mergeState.decisions[key] = input.checked;
-            } else if (c.id === 'free-port') {
-              // Switching onto this choice keeps a number already picked;
-              // landing on it fresh suggests one rather than sending
-              // 'free-port' with nothing attached, which resolves nothing.
-              var already = mergeState.decisions[key];
-              var port = (already && typeof already === 'object' && already.port)
-                ? already.port
-                : mergeSuggestFreePort(f.facts.port, mergeEffectiveTakenPorts(key));
-              mergeState.decisions[key] = { id: 'free-port', port: port };
-            } else {
-              mergeState.decisions[key] = c.id;
-            }
-            mergeRebuild();
-            mergeRender();
-          });
-          label.appendChild(input);
-          label.appendChild(document.createTextNode(' ' + mergeChoiceLabel(c)));
-          choicesBox.appendChild(label);
-
-          if (f.kind === 'port-clash' && c.id === 'free-port' && isOn) {
-            choicesBox.appendChild(mergePortClashField(key));
-          }
-        });
-        block.appendChild(choicesBox);
-      }
-
-      block.addEventListener('click', function (event) {
-        if (event.target.tagName === 'INPUT' || event.target.tagName === 'LABEL') return;
-        mergeJumpToFinding(idx);
-      });
-
-      list.appendChild(block);
+  // Scoped to this one preview column rather than calling the page's own
+  // paintServiceIcons() (which queries the whole document) — the wizard and
+  // the real editor are never open at once, but there is no reason for a
+  // read-only preview to reach past its own column regardless.
+  function mergePaintFormIcons(container, iconsMap) {
+    Array.prototype.forEach.call(container.querySelectorAll('[data-svc-icon]'), function (node) {
+      var entry = iconsMap[node.dataset.svcIcon];
+      if (entry && entry.html) node.innerHTML = entry.html;
     });
-
-    if (cleanEntries.length) {
-      var h5 = document.createElement('h5');
-      h5.textContent = step === 3 ? 'Checked and fine' : 'Left alone';
-      clean.appendChild(h5);
-      cleanEntries.forEach(function (entry) {
-        var line = document.createElement('div');
-        line.textContent = entry.f.kind === 'clean'
-          ? String((entry.f.facts && entry.f.facts.category) || '')
-          : mergeDescribeFinding(entry.f).heading;
-        clean.appendChild(line);
-      });
-    }
   }
 
-  function mergeRenderConfirm() {
-    var lead = document.getElementById('staxx-merge-decisions-lead');
-    var list = document.getElementById('staxx-merge-decisions-list');
-    var clean = document.getElementById('staxx-merge-clean');
-    if (!lead || !list || !clean) return;
-    list.innerHTML = '';
-    clean.innerHTML = '';
-    lead.textContent = 'Nothing has been written yet. This is what will happen when you press the button.';
+  function mergeRenderFormColumn(container, text) {
+    var doc = null, form = null;
+    try { doc = YAML.parse(text); } catch (e) { /* form stays null; form.ok below reports it */ }
+    if (doc) { form = YAML.buildForm(doc, netDrivers(), envNameList()); form.doc = doc; }
 
+    var savedModel = MODEL;
+    MODEL = form;
+    try {
+      container.innerHTML = form
+        ? (form.ok ? renderForm(form) : brokenFormHtml(form))
+        : '<p class="staxx-form-empty">' + esc('Nothing to show yet.') + '</p>';
+    } catch (e) {
+      // Shown inside the column rather than left to the page's own
+      // script-error dialog — a broken preview here is not a reason to
+      // lose the code and consequence columns beside it.
+      container.innerHTML = '<p class="staxx-form-empty">' +
+        esc('The form view could not be built: ' + ((e && e.message) || e)) + '</p>';
+    } finally {
+      MODEL = savedModel;
+    }
+
+    Array.prototype.forEach.call(container.querySelectorAll('input, select, textarea, button'), function (el) {
+      el.disabled = true;
+    });
+    Array.prototype.forEach.call(container.querySelectorAll('a[href]'), function (el) {
+      el.removeAttribute('href');
+      el.removeAttribute('target');
+      el.tabIndex = -1;
+    });
+  }
+
+  var MERGE_STEP6_MIN = 260;     // px — the plan's own floor for the form column
+  var MERGE_STEP6_GUTTER = 420;  // px reserved so the code pane always keeps this much room
+
+  function mergeStep6FormWidth(panesWidth) {
+    var w = mergeState.step6FormWidth || 520;   // ~52rem at this sheet's 10px root
+    var max = Math.max(MERGE_STEP6_MIN, panesWidth - MERGE_STEP6_GUTTER);
+    return Math.max(MERGE_STEP6_MIN, Math.min(w, max));
+  }
+
+  function mergeRenderStep6() {
+    var host = document.getElementById('staxx-merge-step6');
+    if (!host) return;
+    host.innerHTML = '';
     if (!mergeState.built) return;
 
-    var hostEntry = mergeState.picked.filter(function (p) { return p.name === mergeState.host; })[0];
-    var hostLabel = hostEntry ? hostEntry.label : mergeState.host;
-    var incomingEntries = mergeState.picked.filter(function (p) { return p.name !== mergeState.host; });
-    var incomingNames = incomingEntries.map(function (p) { return p.label; }).join(', ');
+    var panesWidth = host.getBoundingClientRect().width || 1200;
+    var formWidth = mergeStep6FormWidth(panesWidth);
+    var text = mergeState.finalText || mergeState.built.text || '';
 
-    var changes = [];
-    mergeState.built.findings.forEach(function (f) {
-      if (f.kind === 'address-rewire') {
-        changes.push(f.stack + '/' + f.facts.service + ': ' + f.facts.envVar + ' — ' + f.facts.from + ' → ' +
-          f.facts.toService + ':' + f.facts.toPort);
-      } else if (f.kind === 'container-name-clash') {
-        changes.push(f.facts.from + ' → ' + f.facts.to);
-      } else if (f.kind === 'shorthand-clash') {
-        changes.push(f.facts.declKind + ' ' + f.facts.from + ' → ' + f.facts.to);
-      } else if (f.kind === 'storage-volume') {
-        changes.push(f.facts.volume + ': kept as "' + f.facts.oldName + '"');
-      }
-    });
+    var formCol = document.createElement('div');
+    formCol.className = 'staxx-merge-step6-form staxx-form';
+    formCol.style.flex = '0 0 ' + formWidth + 'px';
+    mergeRenderFormColumn(formCol, text);
+    mergePaintFormIcons(formCol, mergeServiceIconsMap());
+    host.appendChild(formCol);
 
-    var gains = document.createElement('div');
-    gains.className = 'staxx-merge-confirm-block';
-    gains.innerHTML = '<h5>' + esc(hostLabel + ' gains ' + incomingNames) + '</h5>' +
-      '<p>' + esc('They arrive exactly as they were — same image, same settings, comments and all.') + '</p>' +
-      (changes.length ? ('<ul>' + changes.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul>') : '') +
-      '<p>' + esc('This lands as one entry in ' + hostLabel + '’s history, so one step back undoes the whole merge.') + '</p>';
-    list.appendChild(gains);
+    var grip = document.createElement('div');
+    grip.className = 'staxx-merge-step6-grip';
+    host.appendChild(grip);
 
-    incomingEntries.forEach(function (p) {
-      var block = document.createElement('div');
-      block.className = 'staxx-merge-confirm-block';
-      block.innerHTML = '<h5>' + esc(p.label + ' is left exactly as it is') + '</h5>' +
-        '<p>' + esc('Its folder, file and history are untouched. Once the merged stack has run, StaXX will offer ' +
-          'to remove it — its own record of which builds it has run comes across, so it can still be rolled back.') +
-        '</p>';
-      list.appendChild(block);
-    });
+    var codeCol = document.createElement('div');
+    codeCol.className = 'staxx-merge-step6-code staxx-merge-code';
+    host.appendChild(codeCol);
+    mergePaintCode(codeCol, text, function () {});
 
-    var running = mergeState.picked.filter(function (p) {
-      var row = rowFor(p.name);
-      var btn = row ? row.querySelector('[data-menu="stack"]') : null;
-      return !!(btn && btn.dataset.running === '1');
-    });
-    var hostRebuilt = mergeState.built.findings.some(function (f) {
-      return f.kind === 'address-rewire' && f.stack === mergeLeafName(mergeState.host);
-    });
-    var rebuilt = incomingEntries.map(function (p) { return p.label; }).concat(hostRebuilt ? [hostLabel] : []);
+    var right = document.createElement('div');
+    right.className = 'staxx-merge-step6-right';
+    mergeRenderConsequences(right);
+    host.appendChild(right);
 
-    var stopBlock = document.createElement('div');
-    stopBlock.className = 'staxx-merge-confirm-block';
-    if (!running.length) {
-      stopBlock.innerHTML = '<h5>' + esc('Nothing is running') + '</h5>' +
-        '<p>' + esc('Starting a leftover afterwards would fight over the same storage the merged stack now uses.') + '</p>';
-    } else {
-      stopBlock.innerHTML = '<h5>' + esc('What has to stop, and what gets rebuilt') + '</h5>' +
-        '<p>' + esc('Running containers in ' + running.map(function (p) { return p.label; }).join(', ') +
-          ' hold a port or storage the merged stack now wants, so they stop first.') + '</p>' +
-        '<p>' + esc('When the merged stack next starts, Docker rebuilds: ' + rebuilt.join(', ') + '.') + '</p>';
-    }
-    list.appendChild(stopBlock);
+    mergeInitStep6Drag(grip, formCol, host);
   }
+
+  // Bound fresh on every mergeRenderStep6() call — the three columns it
+  // grips are themselves rebuilt on every render (leaving and re-entering
+  // step 6, an approval changing the right column), so there is never a
+  // stale listener left holding a reference to a removed element.
+  function mergeInitStep6Drag(grip, formCol, host) {
+    var dragging = false, startX = 0, startW = 0;
+    grip.addEventListener('pointerdown', function (e) {
+      dragging = true;
+      startX = e.clientX;
+      startW = formCol.getBoundingClientRect().width;
+      grip.setPointerCapture(e.pointerId);
+    });
+    grip.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var panesWidth = host.getBoundingClientRect().width;
+      var max = Math.max(MERGE_STEP6_MIN, panesWidth - MERGE_STEP6_GUTTER);
+      var w = Math.max(MERGE_STEP6_MIN, Math.min(startW + (e.clientX - startX), max));
+      mergeState.step6FormWidth = w;
+      formCol.style.flex = '0 0 ' + w + 'px';
+    });
+    function endStep6Drag() { dragging = false; }
+    grip.addEventListener('pointerup', endStep6Drag);
+    grip.addEventListener('pointercancel', endStep6Drag);
+  }
+
+  /* --------------------------------------------------------- dispatch -- */
 
   function mergeRender() {
     if (!mergeState) return;
+    mergeHidePopoverNow();   // PLAN_156 F10: a mark's popover never survives a step change
     mergeRenderSteps();
 
-    var pickerEl    = document.getElementById('staxx-merge-picker');
-    var sourcesEl   = document.getElementById('staxx-merge-sources');
-    var mergedEl    = document.getElementById('staxx-merge-merged');
-    var decisionsEl = document.getElementById('staxx-merge-decisions');
-    var backBtn     = document.getElementById('staxx-merge-back');
-    var nextBtn     = document.getElementById('staxx-merge-next');
-    var errorEl     = document.getElementById('staxx-merge-error');
-    if (!pickerEl || !sourcesEl || !mergedEl || !decisionsEl || !backBtn || !nextBtn) return;
+    var step1El = document.getElementById('staxx-merge-step1');
+    var step2El = document.getElementById('staxx-merge-step2');
+    var step3El = document.getElementById('staxx-merge-step3');
+    var step4El = document.getElementById('staxx-merge-step4');
+    var step5El = document.getElementById('staxx-merge-step5');
+    var step6El = document.getElementById('staxx-merge-step6');
+    var backBtn = document.getElementById('staxx-merge-back');
+    var nextBtn = document.getElementById('staxx-merge-next');
+    var errorEl = document.getElementById('staxx-merge-error');
+    if (!step1El || !step2El || !step3El || !step4El || !step5El || !step6El || !backBtn || !nextBtn) return;
 
     if (errorEl) errorEl.hidden = true;
     backBtn.disabled = mergeState.step === 1;
-    nextBtn.textContent = mergeState.step === 5 ? 'Merge' : 'Next';
-    nextBtn.disabled = false;
+    nextBtn.textContent = mergeState.step === 6 ? 'Merge' : 'Next';
+
+    step1El.hidden = mergeState.step !== 1;
+    step2El.hidden = mergeState.step !== 2;
+    step3El.hidden = mergeState.step !== 3;
+    step4El.hidden = mergeState.step !== 4;
+    step5El.hidden = mergeState.step !== 5;
+    step6El.hidden = mergeState.step !== 6;
 
     if (mergeState.step === 1) {
-      pickerEl.hidden = false;
-      sourcesEl.hidden = true;
-      mergedEl.hidden = true;
-      decisionsEl.hidden = true;
-      mergeRenderPicker();
+      mergeRenderStep1();
       nextBtn.disabled = mergeState.picked.length < 2;
-      return;
-    }
-
-    pickerEl.hidden = true;
-    sourcesEl.hidden = false;
-
-    if (mergeState.step === 2) {
-      mergedEl.hidden = !mergeState.built;
-      decisionsEl.hidden = true;
-      mergeRenderCards();
-      if (mergeState.built) mergeRenderMergedCode();
-      nextBtn.disabled = !mergeState.host;
-      return;
-    }
-
-    mergedEl.hidden = false;
-    decisionsEl.hidden = false;
-    mergeRenderSourcePanes();
-    mergeRenderMergedCode();
-
-    if (mergeState.step === 5) {
-      mergeRenderConfirm();
+    } else if (mergeState.step === 2) {
+      mergeRenderStep2();   // sets nextBtn.disabled itself, via mergeUpdateStep2Live()
+    } else if (mergeState.step === 3) {
+      mergeRenderStep3();
+      var refusals = (mergeState.built && mergeState.built.refusals) || [];
+      nextBtn.disabled = refusals.length > 0;
+    } else if (mergeState.step === 4) {
+      mergeRenderStep4();
+      var refusals4 = (mergeState.built && mergeState.built.refusals) || [];
+      nextBtn.disabled = refusals4.length > 0;
+    } else if (mergeState.step === 5) {
+      // Every suggestion here is optional (PLAN_155: "everything is off by
+      // default"), so there is never a refusal to gate Next on.
+      mergeRenderStep5();
+      nextBtn.disabled = false;
     } else {
-      mergeRenderDecisions();
-      if (mergeState.step === 3) nextBtn.disabled = mergeHasRefusal() || mergeHasBadPortClash();
+      mergeRenderStep6();
+      nextBtn.disabled = !mergeState.built;
     }
+  }
+
+  function mergeEnterStep2() {
+    var nextBtn = document.getElementById('staxx-merge-next');
+    if (nextBtn) nextBtn.disabled = true;
+    mergeState.stacksLoading = true;
+    var loadFolders = mergeState.folders.length
+      ? Promise.resolve()
+      : call('folder-list').then(function (res) { if (res && res.ok) mergeState.folders = res.folders || []; });
+    Promise.all([mergeLoadAllPicked(), loadFolders]).then(function () {
+      if (!mergeState) return;   // the wizard may have been cancelled mid-load
+      mergeState.stacksLoading = false;
+      mergeRebuild();
+      mergeRender();
+    });
   }
 
   function mergeNext() {
     if (!mergeState) return;
-    var nextBtn = document.getElementById('staxx-merge-next');
-
     if (mergeState.step === 1) {
       if (mergeState.picked.length < 2) return;
       mergeState.step = 2;
-      if (nextBtn) nextBtn.disabled = true;
-      mergeLoadAllPicked().then(function () {
-        mergeEnsureHost();
-        mergeRebuild();
-        mergeRender();
-      });
+      mergeEnterStep2();
       return;
     }
     if (mergeState.step === 2) {
-      if (!mergeState.host || !mergeState.built) return;
+      if (mergeValidate().state !== 'good' || mergeState.stacksLoading) return;
+      // The build itself now happens here rather than after every keystroke
+      // — step 2's own pane stopped showing the merged file (it shows each
+      // source's own summary instead), so there was nothing left on that
+      // step for a live rebuild to feed.
+      mergeRebuild();
       mergeState.step = 3;
       mergeRender();
       return;
     }
     if (mergeState.step === 3) {
-      if (mergeHasRefusal()) return;
+      var refusals = (mergeState.built && mergeState.built.refusals) || [];
+      if (refusals.length) return;
       mergeState.step = 4;
       mergeRender();
       return;
     }
     if (mergeState.step === 4) {
+      var refusals4 = (mergeState.built && mergeState.built.refusals) || [];
+      if (refusals4.length) return;
       mergeState.step = 5;
-      mergeRender();
+      mergeEnterStep5();
       return;
     }
     if (mergeState.step === 5) {
-      mergeSubmit();
+      mergeState.step = 6;
+      mergeRender();
+      return;
     }
+    if (mergeState.step === 6) mergeSubmit();
   }
 
   function mergeBack() {
@@ -32235,67 +34624,291 @@
   if (mergeNextBtn) mergeNextBtn.addEventListener('click', mergeNext);
   if (mergeBackBtn) mergeBackBtn.addEventListener('click', mergeBack);
 
+  // PLAN_156 F10: the mark popover's own mouseleave/blur only closes it when
+  // the pointer or focus leaves the mark itself — a click straight from one
+  // mark to somewhere else with no gap between misses both. Any pointer-down
+  // outside the popover (and outside the mark that opens it, so the click
+  // that opens it on touch does not immediately close it again) closes it.
+  if (mergeModal) {
+    mergeModal.addEventListener('pointerdown', function (event) {
+      if (!mergePopoverEl || mergePopoverEl.hidden) return;
+      var t = event.target;
+      if (t.closest && (t.closest('.staxx-merge-pop') || t.closest('.staxx-merge-gmark'))) return;
+      mergeHidePopoverNow();
+    });
+  }
+
+  /* ---------------------------------------------------------- clicks -- */
+
+  // One delegated handler for every clickable thing steps 1-3 draw, so a
+  // full re-render never needs anything re-bound — the same reason every
+  // other per-row control on this page is wired this way.
+  if (mergeModal) {
+    mergeModal.addEventListener('click', function (event) {
+      var target = event.target;
+
+      var tile = target.closest && target.closest('[data-merge-tile]');
+      if (tile) {
+        var relName = tile.dataset.mergeTile, label = tile.dataset.mergeTileLabel;
+        var idx = mergeState.picked.findIndex(function (p) { return p.name === relName; });
+        if (idx >= 0) mergeState.picked.splice(idx, 1);
+        else mergeState.picked.push({ name: relName, label: label });
+        mergeRenderStep1();
+        var nextBtn = document.getElementById('staxx-merge-next');
+        if (nextBtn) nextBtn.disabled = mergeState.picked.length < 2;
+        return;
+      }
+
+      var nameChip = target.closest && target.closest('[data-merge-name-chip]');
+      if (nameChip) {
+        mergeState.newName = nameChip.dataset.mergeNameChip;
+        var nameInput = document.querySelector('.staxx-merge-name-input');
+        if (nameInput) nameInput.value = mergeState.newName;
+        mergeUpdateStep2Live();
+        return;
+      }
+
+      var folderChip = target.closest && target.closest('[data-merge-folder-chip]');
+      if (folderChip) {
+        var fid = folderChip.dataset.mergeFolderChip;
+        mergeState.newFolder = fid === '__new__' ? { create: '' } : fid;
+        mergeRenderFolderChips();
+        var newFolderField = document.querySelector('.staxx-merge-newfolder-input');
+        if (newFolderField) {
+          newFolderField.hidden = fid !== '__new__';
+          if (fid === '__new__') newFolderField.focus();
+        }
+        mergeUpdateStep2Live();
+        return;
+      }
+
+      var approveBtn = target.closest && target.closest('[data-merge-approve]');
+      if (approveBtn) {
+        mergeState.approved[approveBtn.dataset.mergeApprove] = true;
+        mergeHidePopoverNow();   // the mark it opened from does not survive the render below
+        if (mergeState.step === 4) mergeRenderStep4(); else mergeRenderMergedPane();
+        return;
+      }
+
+      var keepBothBtn = target.closest && target.closest('[data-merge-env-keepboth]');
+      if (keepBothBtn) {
+        mergeState.decisions[keepBothBtn.dataset.mergeEnvKeepboth] = 'keep-both';
+        mergeHidePopoverNow();
+        mergeRebuild();
+        mergeRenderStep4();
+        return;
+      }
+
+      var chooseNameBtn = target.closest && target.closest('[data-merge-env-choose]');
+      if (chooseNameBtn) {
+        var chooseKey = chooseNameBtn.dataset.mergeEnvChoose;
+        mergeState.decisions[chooseKey] = 'choose-name';
+        mergeRebuild();
+        mergeRenderStep4();
+        // The render just rebuilt the mark this popover opened from, taking
+        // the field it now needs to show with it — reopen on the new mark
+        // for the same key rather than leaving the person to hover again.
+        mergeReopenMarkForKey(chooseKey);
+        return;
+      }
+
+      var fileChoiceBtn = target.closest && target.closest('[data-merge-file-choice]');
+      if (fileChoiceBtn) {
+        mergeState.decisions[fileChoiceBtn.dataset.mergeFileChoice] = fileChoiceBtn.dataset.mergeFileChoiceValue;
+        mergeRebuild();
+        mergeRenderStep4();
+        return;
+      }
+
+      // Any line naming a setting more than one source sets — clicking one
+      // outlines every line that shares it, both sides, and scrolls the
+      // merged pane to it. No underline sits on them at rest (PLAN_155's
+      // step 4: a dashed one was tried and rejected as noise).
+      var envFamilyEl = target.closest && target.closest('[data-merge-env-family]');
+      if (envFamilyEl) {
+        var root = envFamilyEl.dataset.mergeEnvFamily;
+        var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(root) : root;
+        var familyEls = document.querySelectorAll('#staxx-merge-step4 [data-merge-env-family="' + selector + '"]');
+        familyEls.forEach(function (el) {
+          el.classList.add('staxx-merge-codeline--flash');
+          setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+        });
+        var mergedMatch = document.querySelector('#staxx-merge-settings-merged-code [data-merge-env-family="' + selector + '"]');
+        if (mergedMatch) mergedMatch.scrollIntoView({ block: 'center' });
+        return;
+      }
+
+      var leaveBtn = target.closest && target.closest('[data-merge-leave]');
+      if (leaveBtn) {
+        var key = leaveBtn.dataset.mergeLeave;
+        var finding = mergeFindingByKey(key);
+        if (finding && finding.choices) {
+          var nonRecommended = finding.choices.filter(function (c) { return !c.recommended; })[0];
+          if (nonRecommended) mergeState.decisions[key] = nonRecommended.id;
+        }
+        mergeHidePopoverNow();
+        mergeRebuild();
+        mergeRenderStep3();
+        return;
+      }
+
+      // A port clash's own second button (PLAN_155 C10) — "Keep <n> here"
+      // toggles which side moves rather than merely rejecting the change,
+      // so it is its own decision value ('swap'), not the finding's
+      // non-recommended choice the generic leaveBtn above reads.
+      var portSwapBtn = target.closest && target.closest('[data-merge-port-swap]');
+      if (portSwapBtn) {
+        var swapKey = portSwapBtn.dataset.mergePortSwap;
+        if (mergeState.decisions[swapKey] === 'swap') delete mergeState.decisions[swapKey];
+        else mergeState.decisions[swapKey] = 'swap';
+        mergeHidePopoverNow();
+        mergeRebuild();
+        mergeRenderStep3();
+        return;
+      }
+
+      var navBtn = target.closest && target.closest('[data-merge-change-nav]');
+      if (navBtn) {
+        mergeStepChange(navBtn.dataset.mergeChangeNav === 'up' ? -1 : 1);
+        return;
+      }
+
+      var sourceChangedRow = target.closest && target.closest('.staxx-merge-sourcepane [data-merge-change-key]');
+      if (sourceChangedRow) {
+        var ckey = sourceChangedRow.dataset.mergeChangeKey;
+        var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(ckey) : ckey;
+        var mergedRow = document.querySelector('#staxx-merge-merged-code [data-merge-change-key="' + selector + '"]');
+        mergeAlignAndFlash(sourceChangedRow, mergedRow);
+      }
+    });
+
+    // The "Choose a name" field is rebuilt on every mergeRenderStep4(), so
+    // it is bound once here, delegated, rather than re-attached per call —
+    // 'change' (not 'input') so typing does not tear the field down under
+    // the caret on every keystroke.
+    mergeModal.addEventListener('change', function (event) {
+      var field = event.target.closest && event.target.closest('[data-merge-env-name-field]');
+      if (!field) return;
+      var key = field.dataset.mergeEnvNameField;
+      mergeState.envNames[key] = field.value;
+      mergeState.decisions[key] = 'choose-name';
+      mergeRebuild();
+      mergeRenderStep4();
+    });
+
+    // Step 6's own two switches. Turning Start on forces Stop on too — the
+    // new stack cannot run beside stacks that still hold its own ports and
+    // storage — and the checkbox stays disabled while Start is on, so
+    // there is nothing here to re-check on a Stop click that could not
+    // happen anyway.
+    mergeModal.addEventListener('change', function (event) {
+      var el = event.target.closest && event.target.closest('[data-merge-switch]');
+      if (!el || !mergeState) return;
+      if (el.dataset.mergeSwitch === 'start') {
+        mergeState.mergeStart = el.checked;
+        if (el.checked) mergeState.mergeStop = true;
+      } else if (el.dataset.mergeSwitch === 'stop') {
+        mergeState.mergeStop = el.checked;
+      }
+      if (mergeState.step === 6) mergeRenderStep6();
+    });
+  }
+
   /* ------------------------------------------------------------- write -- */
 
-  function mergeSubmit() {
-    if (!mergeState || !mergeState.built || !window.StaxxMergeWrite) return;
+  function mergeSetSubmitBusy(busy) {
     var nextBtn = document.getElementById('staxx-merge-next');
+    var backBtn = document.getElementById('staxx-merge-back');
+    var cancelBtn = document.getElementById('staxx-merge-cancel');
+    if (nextBtn) { nextBtn.disabled = busy; nextBtn.textContent = busy ? 'Writing…' : 'Merge'; }
+    if (backBtn) backBtn.disabled = busy;
+    if (cancelBtn) cancelBtn.disabled = busy;
+  }
+
+  // The write itself. Everything before this point only ever builds text
+  // in the browser; this is the one call that touches disk, so the whole
+  // contract (new-stack write, fingerprint check, companion-file copy,
+  // retirement) is the server's — see Merge.php and the 'merge' section of
+  // PLAN_155's "Build order and the browser-to-server contract".
+  function mergeSubmit() {
+    var built = mergeState.built;
+    var v = mergeValidate();
+    // Next is disabled well before this can be reached with either of these
+    // false, but mergeNext() calls straight through to here rather than
+    // re-checking, so the guard lives here instead of being duplicated.
+    if (!built || v.state !== 'good' || !window.StaxxMergeWrite) return;
+
     var errorEl = document.getElementById('staxx-merge-error');
-    if (errorEl) errorEl.hidden = true;
-    if (nextBtn) nextBtn.disabled = true;
+    if (errorEl) { errorEl.hidden = true; errorEl.innerHTML = ''; }
+    mergeSetSubmitBusy(true);
 
-    var hostEntry = mergeState.picked.filter(function (p) { return p.name === mergeState.host; })[0];
-    var incomingRels = mergeState.picked
-      .filter(function (p) { return p.name !== mergeState.host; })
-      .map(function (p) { return p.name; });
+    var date = mergeTodayDate();
+    var newLeaf = built.newProject || v.rel.split('/').pop();
 
-    // Every arriving service, mapped to its own name unless examine() (via
-    // buildMergedText's own findings) renamed it — read straight off those
-    // findings, never recomputed, so this can never disagree with what the
-    // merged text actually holds. See Merge.php's own comment on
-    // staxx_merge_carry_image_history() for why an untouched name still has
-    // to be in this map at all (it is what lets past builds stay rollable).
-    var imageHistoryMap = {};
-    incomingRels.forEach(function (rel) {
-      var data = mergeState.stacks[rel];
-      var svcMap = {};
-      if (data && !data.error) {
-        var desc = window.StaxxMergeWrite.descriptorFromText(rel, data.text, data.envText, data.files);
-        Object.keys(desc.compose.services).forEach(function (svcName) { svcMap[svcName] = svcName; });
+    var fingerprints = {}, retired = {}, retiredOverride = {};
+    mergeState.picked.forEach(function (p) {
+      var data = mergeState.stacks[p.name] || {};
+      fingerprints[p.name] = data.fingerprint || '';
+      retired[p.name] = window.StaxxMergeWrite.retireText(data.text || '', newLeaf, date);
+      // PLAN_155 C3: a source's paired override needs the same "retired"
+      // profile treatment — a service the override adds must be retired
+      // too, and one both files hold just gets a harmless second copy of
+      // the profile line, since compose appends profile lists.
+      if (data.overrideText) {
+        retiredOverride[p.name] = window.StaxxMergeWrite.retireText(data.overrideText, newLeaf, date);
       }
-      // f.stack is the LEAF (see mergeLeafName()); `rel` stays the full path
-      // here because it is what Merge.php needs to find this stack's own
-      // folder and image-history record.
-      mergeState.built.findings.forEach(function (f) {
-        if (f.kind === 'container-name-clash' && f.facts.field === 'service' && f.stack === mergeLeafName(rel)) {
-          svcMap[f.facts.from] = f.facts.to;
-        }
-      });
-      imageHistoryMap[rel] = svcMap;
     });
 
     var fields = {
-      name: mergeState.host,
-      incoming: JSON.stringify(incomingRels),
-      body: mergeState.built.composeText,
-      fingerprint: (mergeState.stacks[mergeState.host] || {}).fingerprint || '',
-      imageHistory: JSON.stringify(imageHistoryMap)
+      name: v.rel,
+      sources: JSON.stringify(mergeState.picked.map(function (p) { return p.name; })),
+      fingerprints: JSON.stringify(fingerprints),
+      body: mergeState.finalText || built.text,
+      files: JSON.stringify(built.files || []),
+      retired: JSON.stringify(retired),
+      retiredOverride: JSON.stringify(retiredOverride),
+      // Both switches, third interactive session: retirement on disk
+      // happens either way, but the server's own stop step only runs when
+      // stop is set, and start only queues the ordinary up job afterwards.
+      stop: mergeState.mergeStop ? '1' : '0',
+      start: mergeState.mergeStart ? '1' : '0'
     };
-    if (mergeState.built.envText !== null && mergeState.built.envText !== undefined) {
-      fields.env = mergeState.built.envText;
-    }
+    // Omitted rather than sent empty — a joined .env is genuinely absent
+    // for a merge with no settings file at all, not a blank one to write.
+    if (built.env !== null && built.env !== undefined) fields.env = built.env;
 
-    call('merge', fields, 120000).then(function (res) {
-      if (nextBtn) nextBtn.disabled = false;
-      if (!res.ok) {
-        if (errorEl) { errorEl.hidden = false; errorEl.textContent = res.error || 'Could not merge these stacks.'; }
+    // Generous timeout: every source is stopped synchronously, one after
+    // another, before anything is written, and staxx_sh() alone allows
+    // each stop up to 120s — so the ceiling here has to scale with how
+    // many sources this merge is stopping, not assume there is only one.
+    call('merge', fields, 120000 * mergeState.picked.length).then(function (res) {
+      if (res && res.ok) {
+        var newRel = res.name || v.rel, newLabel = built.newProject || newLeaf;
+        mergeState = null;
+        mergeClose();
+        // Nothing is started — editStack() only ever reads and opens.
+        editStack(newRel, newLabel);
+        setTimeout(refreshRows, 140);
         return;
       }
-      var hostName = mergeState.host, hostLabel = hostEntry ? hostEntry.label : mergeState.host;
-      mergeState = null;
-      mergeClose();
-      editStack(hostName, hostLabel);
-      setTimeout(refreshRows, 140);
+
+      mergeSetSubmitBusy(false);
+      if (!errorEl) return;
+      errorEl.hidden = false;
+      if (res && res.conflict) {
+        // Something about a source changed since this wizard read it
+        // (fingerprint mismatch) — nothing has been written, so the only
+        // honest way forward is to read everything again from the start.
+        errorEl.textContent = (res.error || 'Something changed since this wizard opened.') + ' ';
+        var again = document.createElement('button');
+        again.type = 'button';
+        again.className = 'staxx-btn';
+        again.textContent = 'Start again';
+        again.addEventListener('click', function () { mergeClose(); mergeOpen(); });
+        errorEl.appendChild(again);
+      } else {
+        errorEl.textContent = (res && res.error) || 'Could not complete the merge.';
+      }
     });
   }
 
@@ -32310,7 +34923,12 @@
   document.addEventListener('click', function (event) {
     var btn = event.target.closest && event.target.closest('[data-merge-remove]');
     if (!btn) return;
-    removeStack(btn.dataset.mergeRemove, btn.dataset.mergeRemoveLabel || btn.dataset.mergeRemove);
+    // The badge sits beside this button on the same row and already reads
+    // "retired into <leaf>" — reusing its text is simpler than adding a
+    // second data attribute that would only ever repeat it.
+    var badge = btn.parentElement ? btn.parentElement.querySelector('.staxx-mergedbadge') : null;
+    removeStack(btn.dataset.mergeRemove, btn.dataset.mergeRemoveLabel || btn.dataset.mergeRemove,
+      badge ? badge.textContent.trim() : null);
   });
 
 })();

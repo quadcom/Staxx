@@ -159,10 +159,21 @@ NEGATIVE = [
     ),
     (
         # PLAN_150: notify is the new independent axis — whether this stack
-        # is mentioned in update messages — and must stay a real boolean,
-        # never the on/off-shaped string the old mode enum used.
+        # is mentioned in update messages — and must stay a real boolean or
+        # (PLAN_154) the three-switch object below, never the on/off-shaped
+        # string the old mode enum used.
         "stack update notify given as a string, not a boolean",
         {"x-unraid": {"update": {"notify": "true"}}},
+    ),
+    (
+        # PLAN_154 — notify's object shape has exactly three named events;
+        # anything else is refused the same way an unknown update key is.
+        "stack update notify object with an unknown event key",
+        {"x-unraid": {"update": {"notify": {"found": True, "skipped": False}}}},
+    ),
+    (
+        "stack update notify object with a non-boolean event value",
+        {"x-unraid": {"update": {"notify": {"failed": "true"}}}},
     ),
     (
         "unknown key inside a stack update block",
@@ -199,6 +210,14 @@ NEGATIVE = [
     (
         "service update notify given as a string, not a boolean",
         service_doc(update={"notify": "yes"}),
+    ),
+    (
+        "service update notify object with an unknown event key",
+        service_doc(update={"notify": {"installed": True, "quiet": True}}),
+    ),
+    (
+        "service update notify object with a non-boolean event value",
+        service_doc(update={"notify": {"found": 1}}),
     ),
     (
         "unknown key inside a service update block",
@@ -355,6 +374,16 @@ POSITIVE = [
     ("stack update notify set false", {"x-unraid": {"update": {"notify": False}}}),
     ("service update notify set true", service_doc(update={"notify": True})),
     ("service update notify set false", service_doc(update={"notify": False})),
+    # PLAN_154 — the object shape: every key optional, and a subset is fine —
+    # a container may set only one event and leave the other two to the server.
+    ("stack update notify as an object naming all three events",
+     {"x-unraid": {"update": {"notify": {"found": True, "installed": False, "failed": True}}}}),
+    ("stack update notify as an object naming only one event",
+     {"x-unraid": {"update": {"notify": {"failed": True}}}}),
+    ("stack update notify as an empty object",
+     {"x-unraid": {"update": {"notify": {}}}}),
+    ("service update notify as an object naming only one event",
+     service_doc(update={"notify": {"found": True}})),
     ("a valid imported block for each of the four routes", {"x-unraid": {"imported": {
         "from": "unraid-template", "on": "2026-08-30",
     }}}),

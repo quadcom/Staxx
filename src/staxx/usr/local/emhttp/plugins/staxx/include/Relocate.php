@@ -408,9 +408,16 @@ function staxx_relocate_progress(?callable $log, array &$progress, string $rel, 
  * copied; $progress carries the running file count between calls and across
  * the recursion, and defaults to a fresh, disabled counter so an existing
  * call with no logger still works unchanged.
+ *
+ * $excludeRel skips entries by their path relative to THIS call's own $src —
+ * for a merge plan that names both a folder and one child of it under a
+ * different name, that child is copied separately by its own entry, and
+ * would otherwise be copied twice under two different names (PLAN_155 C13).
+ * Empty for every caller except the merge one.
  */
 function staxx_relocate_copy_tree(string $src, string $dst, string &$error, ?callable $log = null,
-                                   string $rel = '', array &$progress = ['done' => 0, 'total' => 0, 'pct' => -1]): bool {
+                                   string $rel = '', array &$progress = ['done' => 0, 'total' => 0, 'pct' => -1],
+                                   array $excludeRel = []): bool {
   $error = '';
   if (!is_dir($dst) && !@mkdir($dst, 0755, true)) {
     $error = 'Could not create the folder "'.$dst.'".';
@@ -428,6 +435,7 @@ function staxx_relocate_copy_tree(string $src, string $dst, string &$error, ?cal
     $from    = $src.'/'.$name;
     $to      = $dst.'/'.$name;
     $relPath = $rel === '' ? $name : $rel.'/'.$name;
+    if (in_array($relPath, $excludeRel, true)) continue;
 
     if (is_link($from)) {
       $target = @readlink($from);
@@ -438,7 +446,7 @@ function staxx_relocate_copy_tree(string $src, string $dst, string &$error, ?cal
       continue;
     }
     if (is_dir($from)) {
-      if (!staxx_relocate_copy_tree($from, $to, $error, $log, $relPath, $progress)) return false;
+      if (!staxx_relocate_copy_tree($from, $to, $error, $log, $relPath, $progress, $excludeRel)) return false;
       continue;
     }
     if (!@copy($from, $to)) {

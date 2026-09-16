@@ -1013,16 +1013,55 @@ function staxx_create_refusal(string $name, bool $adopt): string {
 }
 
 /**
- * The main file plus its override, if one sits beside it — Docker's own
+ * The four filenames Compose's own loader recognises as an override, in the
+ * exact order it tries them: the first one it finds beside a main file is
+ * the one it pairs, independent of what the main file itself is called.
+ * Measured 2026-09-15 against Compose directly (PLAN_155 C5) — StaXX used to
+ * assume compose.yaml paired only with compose.override.*, never with a
+ * docker-compose.override.* sitting in the same folder; that was never true
+ * of Compose, which had already been pairing them, so a stack with an
+ * override under one of the other three names was being started with a
+ * different configuration by StaXX than by plain `docker compose up`.
+ */
+function staxx_override_names(): array {
+  return [
+    'compose.override.yml', 'compose.override.yaml',
+    'docker-compose.override.yml', 'docker-compose.override.yaml',
+  ];
+}
+
+/** Whether $file is one of the four names Compose would ever pair as an
+ * override, whatever the main file beside it is called. Used wherever a
+ * name has to be recognised as "an override" before it exists on disk —
+ * a first-ever save, or one still being typed and checked — where
+ * staxx_compose_files() has nothing written yet to answer from.
+ *
+ * Exact match, not case-insensitive: Compose on Linux matches these four
+ * names by byte comparison, so 'Compose.override.yml' is just another
+ * companion file to it and must be to us too (measured 2026-09-15).
+ */
+function staxx_is_override_name(string $file): bool {
+  foreach (staxx_override_names() as $name) {
+    if ($file === $name) return true;
+  }
+  return false;
+}
+
+/**
+ * The main file plus its override, if one sits beside it — Compose's own
  * pairing rule, not a scan of the folder. $main is a FILE PATH, not a
  * directory: staxx_find_compose_file() already answers "what is this
  * stack's one compose file", and this only ever widens that single answer
  * into a pair.
  *
- * Strict on purpose: compose.yaml pairs only with compose.override.*, never
- * with docker-compose.override.* sitting in the same folder. A looser match
- * — anything with "override" in its name — would run a file nobody
- * connected to this stack on purpose.
+ * The main file's own name plays no part in which override pairs with it —
+ * Compose picks its main file and its override independently, each from its
+ * own four-name list, and only warns if more than one candidate exists in
+ * either list. This follows the override list in the same order, so when
+ * two override files sit in the same folder the one Compose would use is
+ * the one paired here and the other is left where it lies (see
+ * staxx_stack_extras() and the self-test, which say so rather than staying
+ * silent about it).
  *
  * @return string[] [] for '', else [$main] or [$main, $override]
  */
@@ -1030,32 +1069,13 @@ function staxx_compose_files(string $main): array {
   if ($main === '') return [];
   $files = [$main];
 
-  $dot = strrpos($main, '.');
-  if ($dot !== false) {
-    $base = substr($main, 0, $dot);
-    foreach (['yaml', 'yml'] as $ext) {         // at most two is_file() calls
-      $candidate = $base.'.override.'.$ext;
-      if (is_file($candidate)) { $files[] = $candidate; break; }
-    }
+  $dir = dirname($main);
+  foreach (staxx_override_names() as $name) {   // Compose's own order — first found wins
+    $candidate = $dir.'/'.$name;
+    if (is_file($candidate)) { $files[] = $candidate; break; }
   }
 
   return $files;   // order matters: the override wins only because it comes second
-}
-
-/**
- * The override basename this stack's main file would pair with, whether or
- * not that override exists yet — same rule staxx_compose_files() itself
- * follows on the way in: same directory, same base name, same extension.
- * Used to check a first-ever override save, when staxx_compose_files() has
- * nothing on disk yet to report as $pair[1].
- */
-function staxx_expected_override_basename(string $main): string {
-  if ($main === '') return '';
-  $dot = strrpos($main, '.');
-  if ($dot === false) return '';
-  $ext = substr($main, $dot + 1);
-  if (!in_array($ext, ['yaml', 'yml'], true)) return '';
-  return basename(substr($main, 0, $dot)).'.override.'.$ext;
 }
 
 /**
@@ -1836,6 +1856,13 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       $meta['x'][$parts[1].'.'.$parts[2]] = $value;
       continue;
     }
+    // PLAN_154 — `update.notify` can itself be an object (`{found, installed,
+    // failed}`) rather than a plain boolean, so one more level has to widen
+    // the same way, e.g. `update.notify.found`.
+    if ($parts[0] === 'x-unraid' && count($parts) === 4) {
+      $meta['x'][$parts[1].'.'.$parts[2].'.'.$parts[3]] = $value;
+      continue;
+    }
 
     if ($parts[0] !== 'services' || count($parts) < 3) continue;
     $service = $parts[1];
@@ -1873,6 +1900,10 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       // Same one-level widening as the stack-scope block above, e.g.
       // services.<name>.x-unraid.update.mode arrives as x['update.mode'].
       $meta['services'][$service]['x'][$parts[3].'.'.$parts[4]] = $value;
+    } elseif ($parts[2] === 'x-unraid' && count($parts) === 6) {
+      // PLAN_154 — the same second level of widening as the stack scope above,
+      // for a service's own `update.notify.<event>`.
+      $meta['services'][$service]['x'][$parts[3].'.'.$parts[4].'.'.$parts[5]] = $value;
     } elseif ($parts[2] === 'networks' && count($parts) === 5 && $parts[4] === 'ipv4_address') {
       // A service on more than one network with more than one fixed address
       // is not a case worth ranking — the first one found wins.
@@ -3287,8 +3318,19 @@ function staxx_selftest(): array {
   // Pure PHP, like everything else here — no external command, so this stays
   // instant and checkable from the server with no browser.
   $awaitingReview = 0;
+  // PLAN_155 C5 — a folder holding more than one of the four override names
+  // is not refused (Compose itself just warns and picks one), but StaXX runs
+  // exactly the one Compose would and must say which one it ignored rather
+  // than leave the other sitting there looking live.
+  $ignoredOverrides = [];
   foreach ($scan['stacks'] as $found) {
     if (staxx_review_file($found['dir']) !== '') $awaitingReview++;
+    $present = array_values(array_filter(staxx_override_names(),
+      fn($name) => is_file($found['dir'].'/'.$name)));
+    if (count($present) > 1) {
+      $ignoredOverrides[] = $found['rel'].': using '.$present[0].', ignoring '
+                          . implode(', ', array_slice($present, 1));
+    }
   }
 
   // PLAN_61 stage 4 — reads the update-check state file staxx_updates_moved_
@@ -3515,6 +3557,9 @@ function staxx_selftest(): array {
     'stacks awaiting review' => $entry(
                                $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
                                $reviewBad ? 'bad' : 'plain'),
+    'stacks with more than one override file' => $entry(
+                               $ignoredOverrides === [] ? 'none' : implode("\n  ", $ignoredOverrides),
+                               $ignoredOverrides === [] ? 'plain' : 'bad'),
     'images pulling from a registry their template has left' => $entry($movedReport, $movedBad ? 'bad' : 'plain'),
     'unraid templates on disk'  => $entry($templatesReport),
     'compose manager projects on disk' => $entry($projectsReport),
@@ -3856,10 +3901,11 @@ function staxx_stack_extras(string $rel, string &$error): ?array {
     return null;
   }
 
-  // Derived from what is actually paired to this stack, not a flat list of
-  // every name compose could ever read — otherwise a folder holding
-  // compose.yaml plus an unrelated docker-compose.override.yml would treat
-  // that unrelated file as though it belonged to the stack too.
+  // Derived from what is actually paired to this stack (staxx_compose_files(),
+  // Compose's own four-name order — PLAN_155 C5), not a flat list of every
+  // name compose could ever read: if two override files sit in this folder,
+  // only the one Compose would use counts as part of the stack; the other is
+  // a genuinely unrelated file and stays offered as an extra to archive.
   $composeNames = array_map('basename', staxx_compose_files(staxx_find_compose_file($dir)));
 
   $out = [];
@@ -4298,6 +4344,20 @@ function staxx_review_file(string $dir): string {
 function staxx_review_locked(string $rel): bool {
   if (!staxx_valid_path($rel)) return false;
   return staxx_review_file(staxx_stack_dir($rel)) !== '';
+}
+
+/**
+ * The rel of the new stack this one was retired into by a merge (PLAN_155),
+ * or '' when it was not. A merge locks its sources with the very same
+ * NEEDS-REVIEW.md file an import uses, so staxx_review_locked() reads TRUE
+ * for a retired stack too — every refusal built on that check must ask this
+ * FIRST, since the merge mark is the true reason and "imported and not
+ * reviewed" would be the wrong story to tell about a stack that was never
+ * imported at all.
+ */
+function staxx_retired_into(string $rel): string {
+  $mark = staxx_record_merged_into($rel);
+  return (string)($mark['host'] ?? '');
 }
 
 /* ------------------------------------------------------------ handover ----
@@ -6078,8 +6138,7 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
   // way back before this. Anything else in the folder is a companion file
   // and is not this stack's compose history.
   $mainPath = staxx_find_compose_file(dirname($path));
-  if ($mainPath !== ''
-      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+  if ($mainPath !== '' && staxx_is_override_name($file)) {
     $recordNote = '';
     if (!staxx_record_capture($rel, $file, $recordNote) && $recordNote !== '') {
       error_log('StaXX: history not kept for '.$rel.'/'.$file.': '.$recordNote);
@@ -6106,9 +6165,7 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
   // nothing else: the compose file, its override, and — since PLAN_129 — its
   // .env, without which a file full of ${PLACEHOLDERS} defines nothing. Any
   // other companion (a certificate, a script) never belongs on the shelf.
-  if ($file === '.env'
-      || ($mainPath !== ''
-          && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0)) {
+  if ($file === '.env' || ($mainPath !== '' && staxx_is_override_name($file))) {
     $bootNote = '';
     if (!staxx_boot_copy_stack($rel, $bootNote) && $bootNote !== '') {
       error_log('StaXX: boot copy not written for '.$rel.': '.$bootNote);
@@ -6131,8 +6188,7 @@ function staxx_delete_file(string $rel, string $file, string &$error): bool {
   // it one. The variable keeps its old name; it means "part of the definition".
   $mainPath = staxx_find_compose_file(dirname($path));
   $isOverride = $file === '.env'
-             || ($mainPath !== ''
-                 && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0);
+             || ($mainPath !== '' && staxx_is_override_name($file));
 
   if (is_link($path)) {
     if (!@unlink($path)) { $error = 'Could not delete "'.$file.'".'; return false; }
@@ -6549,6 +6605,13 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // split below, so a locked stack is refused for the right reason — and at
   // every scope, whole-stack or single-service — even when compose or docker
   // also happen to be unavailable.
+  $retiredInto = staxx_retired_into($name);
+  if ($retiredInto !== '') {
+    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+           . 'and the "retired" profile lines to bring it back.';
+    return '';
+  }
   if (staxx_review_locked($name)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
            . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
@@ -6888,6 +6951,13 @@ function staxx_log_start(string $stack, string $service, string &$error): string
   // Checked before anything about the environment or the service, exactly as
   // staxx_start_job() orders it: a locked stack is refused for the right
   // reason even when compose or docker also happen to be unavailable.
+  $retiredInto = staxx_retired_into($stack);
+  if ($retiredInto !== '') {
+    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+           . 'and the "retired" profile lines to bring it back.';
+    return '';
+  }
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
            . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
@@ -7105,6 +7175,13 @@ function staxx_log_download(string $stack, string $service, string &$error): str
 
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
 
+  $retiredInto = staxx_retired_into($stack);
+  if ($retiredInto !== '') {
+    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+           . 'and the "retired" profile lines to bring it back.';
+    return '';
+  }
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
            . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
@@ -7259,6 +7336,13 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
     return '';
   }
 
+  $retiredInto = staxx_retired_into($stack);
+  if ($retiredInto !== '') {
+    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+           . 'and the "retired" profile lines to bring it back.';
+    return '';
+  }
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
            . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
@@ -7719,6 +7803,13 @@ function staxx_cfile_container(string $stack, string $service, string &$error): 
     return '';
   }
 
+  $retiredInto = staxx_retired_into($stack);
+  if ($retiredInto !== '') {
+    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+           . 'and the "retired" profile lines to bring it back.';
+    return '';
+  }
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
            . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'

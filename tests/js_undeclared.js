@@ -31,7 +31,8 @@ var FILES = [
   // Strict mode like the rest, and it splices lines into a live document —
   // an undeclared name here kills the editor's offer bar silently (PLAN_84).
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/meta-scaffold.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/health-offer.js'
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/health-offer.js',
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js'
 ];
 
 var KEYWORD = /^(?:if|for|while|do|else|return|case|switch|try|catch|typeof|new|delete|void|in|of|instanceof|null|true|false|this|function|var|let|const)$/;

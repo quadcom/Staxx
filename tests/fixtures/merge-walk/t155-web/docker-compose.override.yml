@@ -1,0 +1,6 @@
+# This file does nothing beside compose.yaml. It would pair with a file named
+# docker-compose.yml and move the site to 19999. Left here on purpose.
+services:
+  web:
+    ports:
+      - "19999:80"

@@ -1,0 +1,48 @@
+# OLD COPY — t155-db before the healthcheck was added. Not read by anything.
+x-unraid:
+  version: 1
+  overview: Walkthrough fixture (PLAN_156). MariaDB with one seeded table.
+  category: Tools:Utilities
+
+services:
+  db:
+    image: mariadb:11.4
+    container_name: t155-mariadb
+    ports:
+      # Published so other stacks can reach it. Inside one stack this line is not needed.
+      - "13306:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/root_password
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      TZ: ${TZ}
+    env_file: ./db.env
+    volumes:
+      - data:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - /mnt/user/appdata/t155/db-backups:/backups
+    secrets:
+      - root_password
+      - db_password
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+    x-unraid:
+      icon: ./.staxx/icon.png
+
+volumes:
+  data:
+
+networks:
+  backend:
+
+secrets:
+  root_password:
+    file: ./secrets/root_password.txt
+  db_password:
+    file: ./secrets/db_password.txt

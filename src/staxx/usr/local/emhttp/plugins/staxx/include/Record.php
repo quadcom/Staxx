@@ -435,13 +435,19 @@ function staxx_record_prune(string $rel): void {
 }
 
 /**
- * The mark a leftover stack's own record carries once PLAN_148's merge has
- * folded it into another stack — {host, at}, or null when it has never been
- * folded into anything. This is the one fact the leftover's row marker and
- * its "Remove" button draw from (staxx_list_stacks() surfaces it per stack
- * as 'mergedInto'), so it survives a reload and reads back exactly as any
- * other best-effort fact in this file: missing or unreadable is simply "not
- * merged", never an error.
+ * The mark a retired stack's own record carries once PLAN_155's merge has
+ * folded it into a brand new stack — {host, at}, or null when it has never
+ * been retired. This is the one fact the retired stack's row badge and its
+ * "Remove" button draw from (staxx_list_stacks() surfaces it per stack as
+ * 'mergedInto'), so it survives a reload and reads back exactly as any other
+ * best-effort fact in this file: missing or unreadable is simply "not
+ * retired", never an error.
+ *
+ * The key is still called 'host' on disk, from when a merge folded a stack
+ * into a survivor rather than retiring it into a new one — see PLAN_155's
+ * "The record mark keeps its shape". Renaming it would be a migration for no
+ * reason: nothing reads differently, and every existing mergedInto entry
+ * already on a real server would otherwise need rewriting.
  */
 function staxx_record_merged_into(string $rel): ?array {
   if (!staxx_valid_path($rel)) return null;
@@ -449,16 +455,17 @@ function staxx_record_merged_into(string $rel): ?array {
 }
 
 /**
- * Sets the mark above. Called once, on the leftover's own folder, at the end
- * of a successful merge — never on the host, which gains containers rather
- * than being folded into anything. Best-effort like the rest of this file:
- * a merge that has already written the host's file and copied its
- * companion files must not be undone over a marker failing to save, so a
- * caller logs a failure here rather than treating the whole merge as
- * refused.
+ * Sets the mark above. Called once per source, on its own folder, at the end
+ * of a successful merge — after the new stack's file is written and after
+ * that source has been retired (its own compose text rewritten with the
+ * "retired" profile lines and NEEDS-REVIEW.md put in place), never before.
+ * Best-effort like the rest of this file: a merge that has already written
+ * the new stack and retired this source must not be undone over a marker
+ * failing to save, so a caller logs a failure here rather than treating the
+ * whole merge as refused.
  */
-function staxx_record_mark_merged_into(string $rel, string $hostRel): bool {
-  if (!staxx_valid_path($rel) || !staxx_valid_path($hostRel)) return false;
+function staxx_record_mark_merged_into(string $rel, string $newRel): bool {
+  if (!staxx_valid_path($rel) || !staxx_valid_path($newRel)) return false;
   $dir = staxx_record_dir($rel);
   if (!@is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
 
@@ -468,7 +475,7 @@ function staxx_record_mark_merged_into(string $rel, string $hostRel): bool {
     'next'       => $record['next'] ?? 1,
     'versions'   => $record['versions'] ?? [],
     'images'     => $record['images'] ?? [],
-    'mergedInto' => ['host' => $hostRel, 'at' => time()],
+    'mergedInto' => ['host' => $newRel, 'at' => time()],
   ]);
 }
 

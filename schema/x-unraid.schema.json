@@ -191,8 +191,22 @@
           "description": "manual = never applied on its own; you press Update yourself. auto = applied once the delay below has passed. 'off' and 'notify' are the older spelling of 'manual' and are still accepted."
         },
         "notify": {
-          "type": "boolean",
-          "description": "Whether this stack (or service) is mentioned in update notifications. Absent at every level means the server-wide setting decides. Note that whichever level sets ANY key in this block answers for all of them, and fills what it leaves unsaid from the server-wide setting rather than from the level below it."
+          "description": "Whether this stack (or service) is mentioned in update notifications — a single yes/no for all three kinds of message, or (preferred) an object turning each one on or off separately: a found update, one installed, one that failed. Note that whichever level sets ANY key in this block answers for mode and delay too, and fills what it leaves unsaid there from the server-wide setting rather than from the level below it — but that rule stops at the door of this key. Inside notify, an event this level leaves out always falls to the server-wide switch for that event, never to the level below.",
+          "oneOf": [
+            {
+              "type": "boolean",
+              "description": "The older spelling, kept for good: sets found, installed and failed together to the same value."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "found": { "type": "boolean", "description": "Mentioned when an update is found. Absent means the server-wide switch decides." },
+                "installed": { "type": "boolean", "description": "Mentioned when an update is installed. Absent means the server-wide switch decides." },
+                "failed": { "type": "boolean", "description": "Mentioned when an update fails. Absent means the server-wide switch decides." }
+              },
+              "additionalProperties": false
+            }
+          ]
         },
         "delay": {
           "type": "integer",

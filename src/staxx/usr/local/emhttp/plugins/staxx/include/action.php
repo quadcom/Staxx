@@ -406,14 +406,13 @@ switch ($action) {
    * file, but writing a main file beside one changes what that override
    * applies to, so the editor asks this once before the person saves.
    *
-   * There is no main file on disk yet to pair an override against, so this
-   * cannot read staxx_compose_files() directly the way 'check' and
-   * 'file-save' do. What it can do is ask staxx_expected_override_basename()
-   * the same question those pairings turn on — same directory, same base
-   * name, same extension — aimed at the one filename this route will ever
-   * write into a fileless folder (staxx_save_stack()'s own fallback,
-   * compose.yaml). Anything else sitting in the folder is not this stack's
-   * override under that rule, and is rightly none of this answer's business.
+   * There is no main file on disk yet, but staxx_compose_files() does not
+   * need one to exist — it only reads the folder $main would sit in — so
+   * this reads it the same way 'check' and 'file-save' do, aimed at the one
+   * path this route will ever write into a fileless folder
+   * (staxx_save_stack()'s own fallback, compose.yaml). Whichever of
+   * Compose's four override names is found there is this stack's override
+   * (PLAN_155 C5); nothing else sitting in the folder is.
    *
    * PLAN_102 5b — the same question also reports whether this stack has any
    * kept history at all (staxx_record_list() reads the hidden index only; it
@@ -427,8 +426,9 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
     $adoptDir      = staxx_stack_dir($name);
-    $overrideName  = staxx_expected_override_basename($adoptDir.'/compose.yaml');
-    $hasOverride   = $overrideName !== '' && is_file($adoptDir.'/'.$overrideName);
+    $overridePath  = staxx_compose_files($adoptDir.'/compose.yaml')[1] ?? '';
+    $overrideName  = $overridePath !== '' ? basename($overridePath) : '';
+    $hasOverride   = $overrideName !== '';
     $versions      = staxx_record_list($name);
     $newest        = $versions[0] ?? null;
     staxx_reply([
@@ -452,11 +452,12 @@ switch ($action) {
    *
    * An optional `file` field says which of the stack's two files is being
    * typed. Absent (or '') means the main file, checked with its own override
-   * (if it has one) layered after it. Anything else has to be exactly this
-   * stack's derived override basename — the only other file a two-file
-   * stack has — checked with the real main file placed before it; anything
-   * else is refused outright rather than silently checked as if it were the
-   * main file.
+   * (if it has one) layered after it. Anything else has to name the
+   * stack's real override, if it already has one on disk, or — for a
+   * stack's first-ever override save, when there is nothing on disk yet to
+   * name — any of the four names Compose would ever pair (PLAN_155 C5);
+   * anything else is refused outright rather than silently checked as if it
+   * were the main file.
    */
   case 'check':
     $body   = (string)($_POST['body'] ?? '');
@@ -468,12 +469,17 @@ switch ($action) {
 
     $before = ''; $after = '';
     if ($target !== '') {
-      // Derived from the main file's own name, not read off $pair — an
-      // override that does not exist yet has no entry in $pair for that to
-      // read, and without this its very first save skipped validation
-      // entirely because nothing here recognised its name.
-      $overrideName = isset($pair[1]) ? basename($pair[1]) : staxx_expected_override_basename($main);
-      if ($overrideName === '' || $target !== $overrideName) {
+      // An override already on disk has to be checked under its own real
+      // name — a second file under a different one of the four names would
+      // not be the file Compose pairs, and must not be silently checked as
+      // if it were. Only when none exists yet (this stack's first-ever
+      // override save) does any of the four names pass, since there is
+      // nothing on disk yet to hold it to one in particular.
+      $existingOverride = isset($pair[1]) ? basename($pair[1]) : '';
+      $validTarget = $existingOverride !== ''
+        ? $target === $existingOverride
+        : staxx_is_override_name($target);
+      if (!$validTarget) {
         staxx_reply([
           'ok'    => true,
           'valid' => false,
@@ -544,64 +550,116 @@ switch ($action) {
   case 'archive-list':
     staxx_reply(['ok' => true, 'dir' => staxx_archive_root(), 'files' => staxx_archive_list()]);
 
-  /* --------------------------------------------------- PLAN_148 — merge ----
+  /* --------------------------------------------------- PLAN_155 — merge ----
    *
-   * The wizard (a later phase) has already built the merged compose text
-   * and the joined .env text in the browser, service by service, via
+   * The wizard has already built the merged compose text, the joined .env
+   * text, and each source's own retirement text (the "retired" profile
+   * lines and a dated comment) in the browser, service by service, via
    * javascript/merge-write.js — the same rule as everywhere else on this
    * page: nothing that decides what a file should say happens here, only
-   * what touches the filesystem. See Merge.php's own header for the whole
-   * shape of what this does.
+   * what touches the filesystem. See Merge.php's own header, and
+   * staxx_merge_stacks()'s, for the whole shape of what this does and the
+   * order it happens in.
    *
-   * $name is the host stack, exactly as 'save' already uses it. 'incoming'
-   * is a JSON array of the other stacks being folded in; 'body' is the
+   * $name is the NEW stack's rel and does not exist yet — nothing here
+   * requires it to; staxx_merge_stacks() itself is what refuses one that
+   * already does. 'sources' is a JSON array of the stacks being merged
+   * (two or more); 'fingerprints' is a JSON object of source rel => the
+   * fingerprint the wizard read that source at, guarding the same "changed
+   * since it was opened" race 'save' already refuses on; 'body' is the
    * merged compose text; 'env' is the joined .env text, or omitted when
-   * nothing incoming carried one; 'fingerprint' guards against the same
-   * "changed since it was opened" race 'save' already refuses on;
-   * 'imageHistory' is optional and, when given, maps each incoming stack to
-   * { origService: finalService } for whichever of its services should
-   * carry their build history across — see staxx_merge_stacks()'s own
-   * comment.
+   * nothing carried settings; 'files' is a JSON array of
+   * {from, path, to} companion-file copies ('to': null means "leave this
+   * one behind"); 'retired' is a JSON object of source rel => that
+   * source's own rewritten compose text; 'retiredOverride' is the same
+   * shape for a source's paired OVERRIDE file (PLAN_155 C3) and is optional
+   * — only a source that has one appears in it.
    */
   case 'merge':
-    $incoming = json_decode((string)($_POST['incoming'] ?? ''), true);
-    if (!is_array($incoming) || $incoming === [] || array_keys($incoming) !== range(0, count($incoming) - 1)) {
-      staxx_reply(['ok' => false, 'error' => 'No stacks to fold in arrived with this request.']);
+    $sources = json_decode((string)($_POST['sources'] ?? ''), true);
+    if (!is_array($sources) || $sources === [] || array_keys($sources) !== range(0, count($sources) - 1)) {
+      staxx_reply(['ok' => false, 'error' => 'No stacks to merge arrived with this request.']);
     }
-    foreach ($incoming as $incRel) {
-      if (!is_string($incRel) || $incRel === '') {
-        staxx_reply(['ok' => false, 'error' => 'The list of stacks to fold in did not arrive as valid data.']);
+    foreach ($sources as $srcRel) {
+      if (!is_string($srcRel) || $srcRel === '') {
+        staxx_reply(['ok' => false, 'error' => 'The list of stacks to merge did not arrive as valid data.']);
       }
     }
 
-    $mergedBody  = (string)($_POST['body'] ?? '');
-    $fingerprint = (string)($_POST['fingerprint'] ?? '');
-    $onDisk      = staxx_stack_fingerprint($name);
-    if ($fingerprint === '' || ($onDisk !== '' && $onDisk !== $fingerprint)) {
-      staxx_reply([
-        'ok'       => false,
-        'conflict' => true,
-        'error'    => 'This file has changed since the merge was set up — by another tab, an image '
-                    . 'update, or a hand edit on the server. Close the merge window and start it again.',
-      ]);
+    $fingerprints = json_decode((string)($_POST['fingerprints'] ?? ''), true);
+    if (!is_array($fingerprints)) {
+      staxx_reply(['ok' => false, 'error' => 'The fingerprint list did not arrive as valid data.']);
     }
 
-    $mergedEnv = array_key_exists('env', $_POST) ? (string)$_POST['env'] : null;
+    $mergedBody = (string)($_POST['body'] ?? '');
+    $mergedEnv  = array_key_exists('env', $_POST) ? (string)$_POST['env'] : null;
 
-    $imageHistory = [];
-    if (($_POST['imageHistory'] ?? '') !== '') {
-      $decodedHistory = json_decode((string)$_POST['imageHistory'], true);
-      if (!is_array($decodedHistory)) {
-        staxx_reply(['ok' => false, 'error' => 'The image-history map did not arrive as valid data.']);
+    $mergeFiles = [];
+    if (($_POST['files'] ?? '') !== '') {
+      $decodedFiles = json_decode((string)$_POST['files'], true);
+      if (!is_array($decodedFiles)) {
+        staxx_reply(['ok' => false, 'error' => 'The file list did not arrive as valid data.']);
       }
-      $imageHistory = $decodedHistory;
+      $mergeFiles = $decodedFiles;
     }
+
+    $retired = json_decode((string)($_POST['retired'] ?? ''), true);
+    if (!is_array($retired)) {
+      staxx_reply(['ok' => false, 'error' => 'The retirement text did not arrive as valid data.']);
+    }
+
+    // Optional — only present for a source with a paired override
+    // (PLAN_155 C3) — so a blank field is read as "none", not a refusal.
+    $retiredOverride = [];
+    if (($_POST['retiredOverride'] ?? '') !== '') {
+      $decodedOverride = json_decode((string)$_POST['retiredOverride'], true);
+      if (!is_array($decodedOverride)) {
+        staxx_reply(['ok' => false, 'error' => 'The override retirement text did not arrive as valid data.']);
+      }
+      $retiredOverride = $decodedOverride;
+    }
+
+    // PLAN_155 "Step 6 as settled": the two consequences-column switches,
+    // both off unless the browser sent exactly '1' — the safe reading for
+    // anything else is "off", the same rule every other boolean flag on this
+    // endpoint follows.
+    $stop  = (string)($_POST['stop']  ?? '0') === '1';
+    $start = (string)($_POST['start'] ?? '0') === '1';
+
+    // PLAN_156 "0b": the only record of what the browser decided, written
+    // before staxx_merge_stacks() runs so a refused merge is recorded too.
+    // It overwrites itself every merge — no history, no rotation — and
+    // lives in /tmp so a reboot clears it. Mode 0600 because the .env text
+    // may hold settings a person considers private. Never allowed to stop
+    // the merge, so every step here is silenced.
+    @mkdir('/tmp/staxx', 0700, true);
+    @file_put_contents('/tmp/staxx/merge-last.json', json_encode([
+      'at' => date('c'), 'name' => $name, 'sources' => $sources,
+      'fingerprints' => $fingerprints, 'body' => $mergedBody, 'env' => $mergedEnv,
+      'files' => $mergeFiles, 'retired' => $retired, 'retiredOverride' => $retiredOverride,
+      'stop' => $stop, 'start' => $start,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    @chmod('/tmp/staxx/merge-last.json', 0600);
 
     $facts = null;
-    if (!staxx_merge_stacks($name, $incoming, $mergedBody, $mergedEnv, $imageHistory, $error, $facts)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+    if (!staxx_merge_stacks($name, $sources, $fingerprints, $mergedBody, $mergedEnv, $mergeFiles, $retired, $stop, $start, $error, $facts, $retiredOverride)) {
+      // $facts carries ['conflict' => true] on a fingerprint mismatch — see
+      // staxx_merge_stacks()'s own comment — and is otherwise empty, so
+      // merging it in here costs nothing on every other refusal.
+      staxx_reply(['ok' => false, 'error' => $error] + (array)$facts);
     }
     staxx_reply(['ok' => true] + (array)$facts);
+
+  // ---- merge-files: everything one stack's own folder holds, nested, for
+  // the merge wizard to offer as companion files worth carrying into a
+  // brand new stack — see staxx_merge_files()'s own comment in Merge.php ----
+  case 'merge-files':
+    $listing = staxx_merge_files($name, $error);
+    if ($listing === null) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply([
+      'ok' => true, 'files' => $listing['files'], 'large' => $listing['large'],
+      'override' => $listing['override'],
+    ]);
 
   /* --------------------------------------------------- PLAN_76 — export ----
    *
@@ -780,12 +838,14 @@ switch ($action) {
     // compose's complaint until something valid is typed or the file is
     // deleted again — visible and reversible, which an impossible button is
     // not.
-    // Derived from the main file's own name, not read off $pair — an
-    // override that does not exist yet has no entry in $pair for that to
-    // read, and without this its very first save skipped validation
-    // entirely (nothing here recognised the name it was being saved under).
-    $overrideName = isset($pair[1]) ? basename($pair[1]) : staxx_expected_override_basename($main);
-    if ($overrideName !== '' && $overrideName === $file && trim($body) !== '') {
+    // An override already on disk is recognised by its real name; a stack's
+    // first-ever override save has nothing on disk yet to read off $pair, so
+    // it is recognised by being one of the four names Compose would ever
+    // pair (PLAN_155 C5) — without this, a first save under any name but
+    // one specific guess skipped validation entirely.
+    $existingOverride = isset($pair[1]) ? basename($pair[1]) : '';
+    $isOverrideSave = $existingOverride !== '' ? $file === $existingOverride : staxx_is_override_name($file);
+    if ($isOverrideSave && trim($body) !== '') {
       if (!staxx_validate_compose($body, $error, $dir, $warnings, $main, '')) {
         staxx_reply(['ok' => false, 'error' => $error]);
       }

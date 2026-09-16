@@ -1,0 +1,6 @@
+services:
+  web:
+    ports:
+      - "18081:8080"
+    environment:
+      ADMINER_DESIGN: pepa-linha

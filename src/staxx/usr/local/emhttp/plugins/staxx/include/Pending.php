@@ -162,16 +162,76 @@ function staxx_pending_read_items(string $yaml, string $seqKey, array $fields): 
 }
 
 /**
+ * The stack folder's own top-level `secrets:` or `configs:` section — each
+ * name's `file:` path, or whether it is `external:` instead (docker manages
+ * it itself, so there is no host file to compare). A name with neither is
+ * treated the same as external: skipped below, since it is not a bind mount
+ * either.
+ *
+ * @return array<string, array{file:?string, external:bool}>
+ */
+function staxx_pending_read_top_defs(string $yaml, string $topKey): array {
+  $out = [];
+
+  $atTop      = false;
+  $name       = null;
+  $nameIndent = null;
+
+  foreach (explode("\n", $yaml) as $raw) {
+    $line = rtrim($raw, "\r");
+    if (trim($line) === '' || preg_match('/^\s*#/', $line)) continue;
+
+    $indent = strlen($line) - strlen(ltrim($line, ' '));
+    $body   = ltrim($line, ' ');
+
+    if (!$atTop) {
+      if ($indent === 0 && $body === $topKey.':') $atTop = true;
+      continue;
+    }
+
+    if ($indent === 0) break;   // a sibling top-level key — section over
+
+    if ($nameIndent === null) $nameIndent = $indent;
+
+    if ($indent === $nameIndent) {
+      $name = rtrim($body, ':');
+      $out[$name] = ['file' => null, 'external' => false];
+      continue;
+    }
+
+    if ($name === null || $indent <= $nameIndent) continue;
+
+    if (preg_match('/^file\s*:\s*(.*)$/', $body, $m)) {
+      $value = trim($m[1]);
+      if (strlen($value) > 1 && ($value[0] === '"' || $value[0] === "'")) $value = substr($value, 1, -1);
+      if ($value !== '') $out[$name]['file'] = $value;
+    } elseif (preg_match('/^external\s*:\s*(.*)$/', $body, $m)) {
+      $out[$name]['external'] = trim($m[1]) === 'true';
+    }
+  }
+
+  return $out;
+}
+
+/**
  * Every service's intent, read from the same `docker compose config` text
  * staxx_crosslinks_config_yaml() already has cached. Ports are reduced to
  * "published:target/protocol" and bind-mount volumes to "host:container" —
  * the same shape the live side is built into below, so the two can be
  * compared with a plain array_diff().
  *
+ * A `secrets:` or `configs:` entry backed by a real file is a bind mount too
+ * — compose puts it at /run/secrets/<name> (/<name> for a config) whether
+ * the author wrote it in short or long form — so each one is folded into
+ * `volumes` here rather than kept as its own thing. Without this, every
+ * service using one reported that mount as removed on every render: the file
+ * still asks for it, but nothing here ever said to expect it. `$dir` is the
+ * stack folder a relative `file:` path is resolved against.
+ *
  * @return array<string, array{image:?string, env:array<string,string>,
  *                              ports:string[], volumes:string[]}>
  */
-function staxx_pending_parse_file(string $yaml): array {
+function staxx_pending_parse_file(string $yaml, string $dir): array {
   $out = [];
 
   foreach (staxx_yaml_flatten($yaml) as $path => $value) {
@@ -205,6 +265,29 @@ function staxx_pending_parse_file(string $yaml): array {
     foreach ($items as $item) {
       if (($item['type'] ?? '') !== 'bind' || !isset($item['source'], $item['target'])) continue;
       $out[$svc]['volumes'][] = staxx_pending_mount_key($item['source'], $item['target']);
+    }
+  }
+
+  $topDefs = [
+    'secrets' => ['/run/secrets/', staxx_pending_read_top_defs($yaml, 'secrets')],
+    'configs' => ['/',              staxx_pending_read_top_defs($yaml, 'configs')],
+  ];
+  foreach ($topDefs as $seqKey => [$defaultPrefix, $defs]) {
+    foreach (staxx_pending_read_items($yaml, $seqKey, ['source', 'target']) as $svc => $items) {
+      if (!isset($out[$svc])) $out[$svc] = ['image' => null, 'env' => [], 'ports' => [], 'volumes' => []];
+      foreach ($items as $item) {
+        $source = $item['source'] ?? null;
+        if ($source === null || !isset($defs[$source])) continue;
+        $def = $defs[$source];
+        if ($def['external'] || $def['file'] === null) continue;   // no host file — not a bind mount
+
+        $hostFile = $def['file'];
+        if ($hostFile === '' || $hostFile[0] !== '/') $hostFile = rtrim($dir, '/').'/'.$hostFile;
+        $hostFile = (string)(@realpath($hostFile) ?: $hostFile);
+
+        $target = $item['target'] ?? ($defaultPrefix.$source);
+        $out[$svc]['volumes'][] = staxx_pending_mount_key($hostFile, $target);
+      }
     }
   }
 
@@ -319,7 +402,7 @@ function staxx_pending_detail(string $name): array {
   $yaml = staxx_crosslinks_config_yaml($file);
   if ($yaml === '') return ['ok' => true, 'services' => []];   // compose unavailable, or the file no longer resolves
 
-  $fileServices = staxx_pending_parse_file($yaml);
+  $fileServices = staxx_pending_parse_file($yaml, $dir);
   if ($fileServices === []) return ['ok' => true, 'services' => []];
 
   $services = [];

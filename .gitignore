@@ -69,3 +69,6 @@ desktop.ini
 /tools/preview-docs.js
 /tools/publish-preview.sh
 /tools/publish-review.js
+
+# the merge walkthrough's dry-run output (node tests/merge_walk_dryrun.js); never committed.
+tests/fixtures/merge-walk/.dryrun/

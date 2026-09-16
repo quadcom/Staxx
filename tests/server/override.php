@@ -1,7 +1,10 @@
 <?php
 /* The two-file (main + override) compose support: staxx_compose_files(),
- * staxx_compose_file_args(), the strict pairing rule, and how it feeds
- * staxx_stack_extras(), staxx_archive_stack() and staxx_validate_compose().
+ * staxx_compose_file_args(), Compose's own override-pairing rule (PLAN_155
+ * C5 — measured against Compose directly, 2026-09-15: the first existing
+ * name from its own four-name override list, independent of what the main
+ * file is called), and how it feeds staxx_stack_extras(),
+ * staxx_archive_stack() and staxx_validate_compose().
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
  * blank, so without seeding it there is no stack root to test against at
@@ -72,21 +75,43 @@ ok('compose.yaml + compose.override.yml pairs up too',
    $pairYml === [$dir.'/compose.yaml', $dir.'/compose.override.yml'], json_encode($pairYml));
 @unlink($dir.'/compose.override.yml');
 
-// ---- strict pairing: the wrong basename is never picked up ----
+// ---- cross-name pairing: Compose picks its override independently of what
+// the main file is called (PLAN_155 C5) — a main file named compose.yaml
+// pairs with docker-compose.override.yml just as readily as with
+// compose.override.yaml ----
 
 file_put_contents($dir.'/docker-compose.override.yml', $compose);
-$strict1 = staxx_compose_files($dir.'/compose.yaml');
-ok('compose.yaml does NOT pair with docker-compose.override.yml',
-   $strict1 === [$dir.'/compose.yaml'], json_encode($strict1));
+$cross1 = staxx_compose_files($dir.'/compose.yaml');
+ok('compose.yaml pairs with docker-compose.override.yml too',
+   $cross1 === [$dir.'/compose.yaml', $dir.'/docker-compose.override.yml'], json_encode($cross1));
 @unlink($dir.'/docker-compose.override.yml');
 
 @rename($dir.'/compose.yaml', $dir.'/docker-compose.yml');
 file_put_contents($dir.'/compose.override.yaml', $compose);
-$strict2 = staxx_compose_files($dir.'/docker-compose.yml');
-ok('docker-compose.yml does NOT pair with compose.override.yaml',
-   $strict2 === [$dir.'/docker-compose.yml'], json_encode($strict2));
+$cross2 = staxx_compose_files($dir.'/docker-compose.yml');
+ok('docker-compose.yml pairs with compose.override.yaml too',
+   $cross2 === [$dir.'/docker-compose.yml', $dir.'/compose.override.yaml'], json_encode($cross2));
 @unlink($dir.'/compose.override.yaml');
 @rename($dir.'/docker-compose.yml', $dir.'/compose.yaml');
+
+// ---- two overrides present: the first in Compose's own order wins, and
+// the other is left alone rather than being paired too ----
+
+file_put_contents($dir.'/compose.override.yaml', $compose);
+file_put_contents($dir.'/docker-compose.override.yml', $compose);
+$twoOv = staxx_compose_files($dir.'/compose.yaml');
+ok('with both present, compose.override.yaml (earlier in Compose\'s order) wins',
+   $twoOv === [$dir.'/compose.yaml', $dir.'/compose.override.yaml'], json_encode($twoOv));
+@unlink($dir.'/compose.override.yaml');
+@unlink($dir.'/docker-compose.override.yml');
+
+file_put_contents($dir.'/docker-compose.override.yml', $compose);
+file_put_contents($dir.'/docker-compose.override.yaml', $compose);
+$twoOv2 = staxx_compose_files($dir.'/compose.yaml');
+ok('...and between the two docker-compose names, the .yml one (earlier) wins',
+   $twoOv2 === [$dir.'/compose.yaml', $dir.'/docker-compose.override.yml'], json_encode($twoOv2));
+@unlink($dir.'/docker-compose.override.yml');
+@unlink($dir.'/docker-compose.override.yaml');
 
 // ---- a filename that merely contains the word "override" is never paired --
 
@@ -120,8 +145,13 @@ ok('a path holding a single quote survives, still quoted',
 
 /* -------------------------------------------------- staxx_stack_extras -- */
 
-file_put_contents($dir.'/compose.override.yaml', $compose);                 // the real, paired override
-file_put_contents($dir.'/docker-compose.override.yml', 'unrelated: true');  // NOT paired — override-shaped only
+// compose.override.yaml sits earlier than docker-compose.override.yml in
+// Compose's own order, so with both present it is the one that pairs; the
+// other is a genuine second override file that Compose itself would ignore,
+// and staxx_stack_extras() has to say the same rather than treat it as part
+// of the stack too.
+file_put_contents($dir.'/compose.override.yaml', $compose);                 // the one that pairs
+file_put_contents($dir.'/docker-compose.override.yml', 'unrelated: true');  // ignored, same as Compose ignores it
 
 $err = '';
 $extras = staxx_stack_extras($rel, $err);
@@ -129,7 +159,7 @@ ok('staxx_stack_extras() runs clean', $extras !== null, $err);
 $extraNames = array_column((array)$extras, 'name');
 ok('the paired override is NOT listed as an extra file',
    !in_array('compose.override.yaml', $extraNames, true), implode(', ', $extraNames));
-ok('the unrelated override-shaped file IS listed as an extra file',
+ok('the second, ignored override file IS listed as an extra file',
    in_array('docker-compose.override.yml', $extraNames, true), implode(', ', $extraNames));
 
 /* ------------------------------------------------ staxx_archive_stack -- */

@@ -1285,7 +1285,7 @@ console.log('\nJ. The always-present Container settings');
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
   ok('a service with no other settings yields three fixed fields, a web page port, ' +
-     'two update-policy rows, and sixteen blank leaves',
+     'two update-policy rows (When and PLAN_155\'s single Notifications row), and sixteen blank leaves',
      svcFields.length === 22 &&
      svcFields.slice(0, 3).every(function (f) { return f.fixed; }) &&
      svcFields[3].target === 'x-unraid.webui' && svcFields[3].absent && !svcFields[3].path &&
@@ -1519,9 +1519,11 @@ var FIXTURE_10_ADVANCED = [
   // then added the web page port as a fourth Container field, straight
   // after restart — web has no x-unraid: block at all, so it reads back
   // blank, the same as an absent Container row. PLAN_150 phase 4a adds the
-  // two per-container update-policy rows straight after that, also blank —
-  // web sets no x-unraid.update: either. So the count is twenty-nine, not
-  // the ten keys the original file has at the top of web:. Pinning f.id
+  // When row straight after that, also blank, and PLAN_155's single
+  // Notifications row follows it — web sets no x-unraid.update: either, so
+  // both read back blank. So the count is twenty-nine, not the ten keys the
+  // original file has at the top of web:.
+  // Pinning f.id
   // rather than binder/target is deliberate — a list
   // field's id carries its list key and index
   // (web/list.networks#0/frontend_net), which is what stops the same name
@@ -10616,84 +10618,131 @@ console.log('\nAS. PLAN_150 phase 1 — nested placeholder retraction (update.mo
 })();
 
 /* =========================================================================
- * AT. PLAN_150 phase 4a — the per-container update-policy fields: reading
- *     mode/notify at service and stack scope, writing every one of the
- *     format table's transitions, and the refusals nothing here may guess
- *     past (an unrecognised value, a sealed block, an unread tail).
+ * AT. PLAN_150 phase 4a / PLAN_155 — the per-container update-policy
+ *     fields: reading mode/notify at service and stack scope, writing every
+ *     one of the format table's transitions, and the refusals nothing here
+ *     may guess past (an unrecognised value, a sealed block, an unread
+ *     tail). Notify is now one field of three switches, all written
+ *     together, rather than PLAN_154's three independent Default/On/Off
+ *     rows.
  * ========================================================================= */
-console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields');
+console.log('\nAT. PLAN_150 phase 4a / PLAN_155 — the per-container update-policy fields');
+
+// PLAN_155 — the single notify field every stack/service test below reads,
+// rather than repeating the lookup.
+function notifyField(form, service) {
+  return Y.fieldById(form, service + '/policy/x-unraid.update.notify');
+}
 
 (function () {
-  // No x-unraid anywhere at all — both rows read as Default, following
-  // neither a stack block nor anything of their own.
+  // No x-unraid anywhere at all — the When row and the Notifications row
+  // read as Default, following neither a stack block nor anything of
+  // their own.
   var doc = Y.parse('services:\n  a:\n    image: alpine\n');
   var form = Y.buildForm(doc);
   var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
-  var notify = Y.fieldById(form, 'a/policy/x-unraid.update.notify');
+  var n = notifyField(form, 'a');
 
   ok('mode reads as Default with no scope at all',
      !!mode && mode.policy.choice === 'default' && mode.policy.scope === null &&
      mode.policy.stackChoice === null && !mode.policy.unreadable,
      mode && JSON.stringify(mode.policy));
-  ok('notify reads as Default with no scope at all',
-     !!notify && notify.policy.choice === 'default' && notify.policy.scope === null &&
-     notify.policy.stackChoice === null && !notify.policy.unreadable,
-     notify && JSON.stringify(notify.policy));
-  ok('both rows title correctly', mode.title === 'When' && notify.title === 'Notify me');
+  ok('the Notifications row has no object of its own, and every event is Default with no scope',
+     !!n && !n.policy.hasOwn && !n.policy.unreadable &&
+     ['found', 'installed', 'failed'].every(function (ev) {
+       return n.policy.events[ev].choice === 'default' && n.policy.events[ev].scope === null &&
+              n.policy.events[ev].stackChoice === null;
+     }), n && JSON.stringify(n.policy));
+  ok('both rows title correctly', mode.title === 'When' && n.title === 'Notifications');
 })();
 
 (function () {
   // A stack-level block only — the service says nothing of its own, so
   // Default follows THIS STACK's setting, not the server's; the renderer
-  // needs stackChoice to say so.
+  // needs stackChoice to say so. notify: true here is the older boolean
+  // spelling, read as all three events set to that one value.
   var src = 'x-unraid:\n  update:\n    mode: auto\n    delay: 6\n    notify: true\n' +
             'services:\n  a:\n    image: alpine\n';
   var form = Y.buildForm(Y.parse(src));
   var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
-  var notify = Y.fieldById(form, 'a/policy/x-unraid.update.notify');
+  var n = notifyField(form, 'a');
 
   ok('mode is Default, sourced from the stack block',
      mode.policy.choice === 'default' && mode.policy.scope === 'stack' &&
      mode.policy.stackChoice === 'auto', JSON.stringify(mode.policy));
-  ok('notify is Default, sourced from the stack block',
-     notify.policy.choice === 'default' && notify.policy.scope === 'stack' &&
-     notify.policy.stackChoice === true, JSON.stringify(notify.policy));
+  ok('the row has no object of its own', !n.policy.hasOwn, JSON.stringify(n.policy));
+  ['found', 'installed', 'failed'].forEach(function (ev) {
+    ok(ev + ' is Default, sourced from the stack block\'s boolean',
+       n.policy.events[ev].choice === 'default' && n.policy.events[ev].scope === 'stack' &&
+       n.policy.events[ev].stackChoice === true, JSON.stringify(n.policy.events[ev]));
+  });
+})();
+
+(function () {
+  // A stack-level object form, only some events set — an event the stack
+  // itself leaves out is not "stack scope" for that event, since the stack
+  // has no opinion on it either (an unset event always falls through to the
+  // server, never borrows a scope from its neighbours).
+  var src = 'x-unraid:\n  update:\n    notify:\n      failed: true\n' +
+            'services:\n  a:\n    image: alpine\n';
+  var form = Y.buildForm(Y.parse(src));
+  var n = notifyField(form, 'a');
+
+  ok('failed is Default, sourced from the stack block',
+     n.policy.events.failed.choice === 'default' && n.policy.events.failed.scope === 'stack' &&
+     n.policy.events.failed.stackChoice === true, JSON.stringify(n.policy.events.failed));
+  ok('found has no stack opinion, so Default names no source',
+     n.policy.events.found.choice === 'default' && n.policy.events.found.scope === null &&
+     n.policy.events.found.stackChoice === null, JSON.stringify(n.policy.events.found));
+  ok('installed likewise',
+     n.policy.events.installed.choice === 'default' && n.policy.events.installed.scope === null &&
+     n.policy.events.installed.stackChoice === null, JSON.stringify(n.policy.events.installed));
 })();
 
 (function () {
   // A service-level block only — the stack has nothing, so the service's
-  // own value is both the choice AND its source.
+  // own value is both the choice AND its source. Setting only `failed`
+  // leaves found/installed on Default, following the server rather than
+  // each other — but the row as a whole now has an object of its own, since
+  // the container states even one event itself.
   var src = 'services:\n  a:\n    image: alpine\n' +
-            '    x-unraid:\n      update:\n        mode: manual\n        notify: false\n';
+            '    x-unraid:\n      update:\n        mode: manual\n        notify:\n          failed: false\n';
   var form = Y.buildForm(Y.parse(src));
   var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
-  var notify = Y.fieldById(form, 'a/policy/x-unraid.update.notify');
+  var n = notifyField(form, 'a');
 
   ok('mode reads the service\'s own Manual',
      mode.policy.choice === 'manual' && mode.policy.scope === 'service' &&
      mode.policy.stackChoice === null, JSON.stringify(mode.policy));
-  ok('notify reads the service\'s own No',
-     notify.policy.choice === 'no' && notify.policy.scope === 'service',
-     JSON.stringify(notify.policy));
+  ok('the row has its own object', n.policy.hasOwn, JSON.stringify(n.policy));
+  ok('failed reads the service\'s own No',
+     n.policy.events.failed.choice === 'no' && n.policy.events.failed.scope === 'service',
+     JSON.stringify(n.policy.events.failed));
+  ok('found and installed stay Default — one event set does not answer for the others',
+     n.policy.events.found.choice === 'default' && n.policy.events.installed.choice === 'default',
+     JSON.stringify([n.policy.events.found, n.policy.events.installed]));
 })();
 
 (function () {
   // Both scopes set something, and disagree — the service wins, but the
-  // stack's own value still rides along for the "Default" note's sake.
+  // stack's own value still rides along for the "Default = " note's sake.
   var src = 'x-unraid:\n  update:\n    mode: manual\n    notify: false\n' +
             'services:\n  a:\n    image: alpine\n' +
             '    x-unraid:\n      update:\n        mode: auto\n        delay: 0\n        notify: true\n';
   var form = Y.buildForm(Y.parse(src));
   var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
-  var notify = Y.fieldById(form, 'a/policy/x-unraid.update.notify');
+  var n = notifyField(form, 'a');
 
   ok('the service\'s Automatic/Immediate wins over the stack\'s Manual',
      mode.policy.choice === 'auto' && mode.policy.scope === 'service' &&
      mode.policy.auto === 'immediate' && mode.policy.delay === 0 &&
      mode.policy.stackChoice === 'manual', JSON.stringify(mode.policy));
-  ok('the service\'s Yes wins over the stack\'s No',
-     notify.policy.choice === 'yes' && notify.policy.scope === 'service' &&
-     notify.policy.stackChoice === false, JSON.stringify(notify.policy));
+  ok('the row has its own object', n.policy.hasOwn, JSON.stringify(n.policy));
+  ['found', 'installed', 'failed'].forEach(function (ev) {
+    ok(ev + ': the service\'s Yes wins over the stack\'s No',
+       n.policy.events[ev].choice === 'yes' && n.policy.events[ev].scope === 'service' &&
+       n.policy.events[ev].stackChoice === false, JSON.stringify(n.policy.events[ev]));
+  });
 })();
 
 (function () {
@@ -10770,26 +10819,69 @@ console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields'
 })();
 
 (function () {
-  // The whole Notify me sequence: Default -> Yes -> No -> Default.
+  // A flip from nothing writes the full object, all three keys explicit,
+  // found/installed/failed in that order — there is no per-event Default
+  // any more (PLAN_155 supersedes PLAN_154's tri-state rows): a container's
+  // own object always states a complete answer, and touching any one switch
+  // writes all three together.
   var doc = Y.parse('services:\n  a:\n    image: alpine\n');
   var form = Y.buildForm(doc);
   var id = 'a/policy/x-unraid.update.notify';
 
-  ok('Default -> Yes writes a bare true', Y.setPart(doc, form, id, 'value', 'yes'));
+  ok('a flip writes the object form with all three keys, in order',
+     Y.setPart(doc, form, id, 'value', { found: false, installed: true, failed: true }));
   var out1 = Y.serialise(doc);
-  ok('notify: true, unquoted', /notify: true(\s|$)/.test(out1), out1);
+  ok('found, then installed, then failed, unquoted',
+     /notify:\s*\n\s*found: false\s*\n\s*installed: true\s*\n\s*failed: true(\s|$)/.test(out1), out1);
 
   form = Y.buildForm(doc);
-  ok('Yes -> No overwrites in place', Y.setPart(doc, form, id, 'value', 'no'));
+  var reread = notifyField(form, 'a');
+  ok('reading it back shows the container\'s own answers, and hasOwn is true',
+     reread.policy.hasOwn && reread.policy.events.found.choice === 'no' &&
+     reread.policy.events.installed.choice === 'yes' && reread.policy.events.failed.choice === 'yes',
+     JSON.stringify(reread.policy));
+
+  ok('writing the same three answers again succeeds',
+     Y.setPart(doc, form, id, 'value', { found: false, installed: true, failed: true }));
+  ok('...and leaves the text unchanged', Y.serialise(doc) === out1, firstDiff(out1, Y.serialise(doc)));
+
+  form = Y.buildForm(doc);
+  ok('a second flip overwrites all three again',
+     Y.setPart(doc, form, id, 'value', { found: true, installed: true, failed: false }));
   var out2 = Y.serialise(doc);
-  ok('notify: false, unquoted, once', /notify: false(\s|$)/.test(out2) &&
-     (out2.match(/notify:/g) || []).length === 1, out2);
+  ok('all three now read the new answers, still one of each key',
+     /found: true/.test(out2) && /installed: true/.test(out2) && /failed: false/.test(out2) &&
+     (out2.match(/found:/g) || []).length === 1, out2);
+})();
 
-  form = Y.buildForm(doc);
-  ok('No -> Default removes the line', Y.setPart(doc, form, id, 'value', 'default'));
-  var out3 = Y.serialise(doc);
-  ok('no notify: line survives, and the block is gone with it',
-     out3.indexOf('notify:') < 0 && out3.indexOf('update:') < 0, out3);
+(function () {
+  // The older boolean spelling can't hold three independent answers, so a
+  // flip replaces it outright with the object form the first time the row
+  // is touched.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        notify: true\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('a flip replaces the boolean with the object form',
+     Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value',
+               { found: false, installed: true, failed: true }));
+  var out = Y.serialise(doc);
+  ok('all three are now explicit, and the old boolean is gone',
+     /found: false/.test(out) && /installed: true/.test(out) && /failed: true/.test(out) &&
+     out.indexOf('notify: true') < 0, out);
+})();
+
+(function () {
+  // A service-level notify: false (the older spelling) reads as all three
+  // off, exactly as before — the shape change on top of it does not touch
+  // how a boolean itself is read. The row has its own object, since this
+  // IS the service's own line, just written in the older spelling.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        notify: false\n';
+  var n = notifyField(Y.buildForm(Y.parse(src)), 'a');
+  ok('its own object, and all three read No',
+     n.policy.hasOwn && n.policy.events.found.choice === 'no' &&
+     n.policy.events.installed.choice === 'no' && n.policy.events.failed.choice === 'no',
+     JSON.stringify(n.policy));
 })();
 
 (function () {
@@ -10801,23 +10893,43 @@ console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields'
             '    x-unraid:\n      update:\n        mode: sometimes\n        notify: maybe\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
-  var notify = Y.fieldById(form, 'a/policy/x-unraid.update.notify');
+  var n = notifyField(form, 'a');
 
   ok('the odd mode word reads as Default, flagged unreadable',
      mode.policy.choice === 'default' && mode.policy.scope === null &&
      mode.policy.unreadable && mode.policy.unreadable.raw === 'sometimes',
      JSON.stringify(mode.policy));
-  ok('the odd notify value reads as Default, flagged unreadable',
-     notify.policy.choice === 'default' && notify.policy.scope === null &&
-     notify.policy.unreadable && notify.policy.unreadable.raw === 'maybe',
-     JSON.stringify(notify.policy));
+  ok('the odd notify value makes the whole row unreadable',
+     n.policy.unreadable && n.policy.unreadable.raw === 'maybe', JSON.stringify(n.policy));
 
   ok('writing over the odd mode is refused',
      !Y.setPart(doc, form, 'a/policy/x-unraid.update.mode', 'value', 'manual'));
   ok('writing over the odd notify is refused',
-     !Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value', 'yes'));
+     !Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value',
+                { found: true, installed: true, failed: true }));
   ok('the file is byte-identical either way', Y.serialise(doc) === src,
      firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A single event holding an unrecognised word inside the object form now
+  // makes the WHOLE row unreadable, not just that switch — a row of three
+  // two-state switches has no way to draw "the other two are fine, this one
+  // is a mystery word" without guessing what a flip of a readable one
+  // should do to the one that is not (PLAN_155 supersedes the old per-event
+  // isolation).
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        notify:\n          found: maybe\n          failed: true\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var n = notifyField(form, 'a');
+
+  ok('the row is unreadable, naming the odd word',
+     n.policy.unreadable && n.policy.unreadable.raw === 'maybe', JSON.stringify(n.policy));
+
+  ok('writing over it is refused entirely',
+     !Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value',
+                { found: true, installed: true, failed: true }));
+  ok('the file is byte-identical', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
 (function () {
@@ -10927,8 +11039,8 @@ console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields'
                    'services:\n  a:\n    image: x\n    x-unraid:\n      update:\n        notify: false\n';
   ok('a service stating only notify no longer claims to follow the stack for When',
      policyOf(notifyOnly, 'a', 'mode').scope === null);
-  ok('...and its Notify row reads as its own',
-     policyOf(notifyOnly, 'a', 'notify').scope === 'service');
+  ok('...and its Failed switch reads as its own',
+     policyOf(notifyOnly, 'a', 'notify').events.failed.scope === 'service');
 })();
 
 (function () {
@@ -10941,7 +11053,8 @@ console.log('\nAT. PLAN_150 phase 4a — the per-container update-policy fields'
   ok('writing mode into a sealed x-unraid: block is refused',
      !Y.setPart(doc, form, 'web/policy/x-unraid.update.mode', 'value', 'manual'));
   ok('...and notify likewise',
-     !Y.setPart(doc, form, 'web/policy/x-unraid.update.notify', 'value', 'yes'));
+     !Y.setPart(doc, form, 'web/policy/x-unraid.update.notify', 'value',
+                { found: true, installed: true, failed: true }));
   ok('the file comes back byte-identical', Y.serialise(doc) === src,
      firstDiff(src, Y.serialise(doc)));
 })();

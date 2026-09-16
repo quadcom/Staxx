@@ -16,7 +16,7 @@ This is the window that opens when you click [a stack's picture](the-stack-list.
 | Stack name box | The folder that holds this stack's file. Renaming it moves the folder. The folder it sits in, if any, is shown in grey beside it. |
 | Sanitise | Hides every value marked sensitive, so a screenshot does not leak them. See [Sanitise mode](hiding-your-values.md). |
 | Password | Opens the password generator, and a hashing tool beside it. See [password generator and hashing tool](passwords-and-hashes.md). |
-| Fill in details | Looks up this stack's icon, links, description and more from the image, its catalogue entry and its own page. |
+| Fill in details | Looks up each container's icon, links, description and more from the image, its catalogue entry and its own page. |
 | Outline | Jumps to a block or service inside the compose file. |
 | Close | Closes the editor. |
 

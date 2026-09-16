@@ -1,0 +1,13 @@
+services:
+  db1:
+    image: mariadb:11
+    ports:
+      - "5432:5432"
+  db2:
+    image: mariadb:11
+    ports:
+      - "5433:5433"
+  db3:
+    image: mariadb:11
+    ports:
+      - "5556:5556"

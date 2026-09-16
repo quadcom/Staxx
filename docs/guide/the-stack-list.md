@@ -198,7 +198,7 @@ Right-click the row to open it. Items appear in this order, and only when they a
 | Has no file | Start a compose file here |
 | Folders | Move to folder (a list), New folder…, Remove from folder (if filed) |
 | Boot | Autostart (on/off switch), Delay |
-| Updates | Updates (Default/Manual/Automatic), Notify me (Default/No/Yes) — see [choosing how a container updates](update-policy.md) |
+| Updates | Updates (Default/Manual/Automatic), then a Notifications box with three switches — New image, Image installed and Installation failed — each simply on or off, starting at the server's own answers until you change one — see [choosing how a container updates](update-policy.md) |
 | Profiles | One switch per profile the file declares — see below |
 | Reference | What do these marks mean? |
 | Last | Remove stack |
