@@ -42,6 +42,12 @@
  *     files: [...],                 // the merge-files reply's own `files` array —
  *                                   // {path,size,mode,dir,link,target,outside,keyLike,referenced}
  *     filesLarge: null | { path },  // that same reply's own `large`
+ *     runningFrom: { configFiles: [...], envFile: '' },  // OPTIONAL — the merge-files reply's own
+ *                                   // `runningFrom` (PLAN_155 C18): what this stack's running
+ *                                   // containers were actually started from, straight from
+ *                                   // compose's own labels. Omitted (or a stack with nothing
+ *                                   // running) is the same as the empty shape shown here — nothing
+ *                                   // is flagged in that case.
  *     env: { lines: [...] } | null, // the stack's own .env, already parsed
  *     compose: {
  *       name: 'explicit-name' | null,   // the compose file's own top-level `name:`, if it set one —
@@ -89,10 +95,10 @@
  *
  *   {
  *     kind: 'storage-carry' | 'file-clash' | 'key-copied' | 'outside-link' |
- *           'unreferenced' | 'large-folder' | 'build-image' | 'depth-path' |
- *           'settings-join' | 'container-name-clash' | 'port-clash' |
- *           'shorthand-clash' | 'address-rewire' | 'port-unneeded' |
- *           'left-alone' | 'clean',
+ *           'hidden-config' | 'unreferenced' | 'large-folder' | 'build-image' |
+ *           'depth-path' | 'settings-join' | 'container-name-clash' |
+ *           'port-clash' | 'shorthand-clash' | 'address-rewire' |
+ *           'port-unneeded' | 'left-alone' | 'clean',
  *     severity: 'refusal' | 'decision' | 'automatic' | 'wiring' | 'info' |
  *               'warning' | 'clean',
  *     stack: 'DEV-TESTING/demo-db' | null,   // the source's own FULL REL, exactly as the caller
@@ -388,6 +394,47 @@
           ],
           lines: lines
         });
+      });
+    });
+    return out;
+  }
+
+  /* =====================================================================
+   * Hidden config (PLAN_155 C18) — a stack's RUNNING containers were
+   * started from files the wizard never reads. The wizard only ever folds
+   * a stack's own compose file plus the one override compose auto-loads
+   * beside it (the names below); an extra `-f` file, an override under any
+   * other name, or a `--env-file` that is not the stack's own `.env`
+   * carries settings that would silently vanish in the merge, so the
+   * stack is refused outright rather than merged incompletely. Checked by
+   * basename only — `runningFrom` supplies whatever the running container
+   * was actually told to use, and a name outside this list is never one
+   * the wizard itself would have picked up.
+   * ===================================================================== */
+
+  var STANDARD_COMPOSE_NAMES = {
+    'compose.yaml': 1, 'compose.yml': 1, 'docker-compose.yaml': 1, 'docker-compose.yml': 1,
+    'compose.override.yaml': 1, 'compose.override.yml': 1,
+    'docker-compose.override.yaml': 1, 'docker-compose.override.yml': 1
+  };
+
+  function basenameOf(p) {
+    var parts = String(p || '').split(/[\/\\]/);
+    return parts[parts.length - 1];
+  }
+
+  function findHiddenConfigFindings(sources) {
+    var out = [];
+    (sources || []).forEach(function (s) {
+      var rf = s.runningFrom || { configFiles: [], envFile: '' };
+      var hiddenFiles = (rf.configFiles || []).filter(function (p) {
+        return !STANDARD_COMPOSE_NAMES[basenameOf(p)];
+      });
+      var hiddenEnv = (rf.envFile && basenameOf(rf.envFile) !== '.env') ? rf.envFile : '';
+      if (!hiddenFiles.length && !hiddenEnv) return;
+      out.push({
+        kind: 'hidden-config', severity: 'refusal', stack: s.name,
+        facts: { files: hiddenFiles, envFile: hiddenEnv }, lines: []
       });
     });
     return out;
@@ -1137,6 +1184,8 @@
     var findings = [];
 
     // Refusals first — nothing past a refusal is written, so it is said first.
+    findings = findings.concat(findHiddenConfigFindings(sources));
+
     findCompanionFindings(sources, docCache).forEach(function (f) {
       if (f.severity === 'refusal') findings.push(f);
     });
@@ -1197,7 +1246,11 @@
     // suggested — sharing the helper is what makes that provable rather
     // than merely likely.
     pickFreePort: pickFreePort,
-    allPublishedPorts: allPublishedPorts
+    allPublishedPorts: allPublishedPorts,
+    // Exposed so the step 2 summary card can flag a hidden-config refusal
+    // for one stack the moment it is read, without waiting on a full
+    // examine() over every picked source.
+    findHiddenConfigFindings: findHiddenConfigFindings
   };
 
   if (typeof window !== 'undefined') window.StaxxMergeExamine = API;

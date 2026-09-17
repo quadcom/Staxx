@@ -1704,9 +1704,15 @@ function staxx_health_from_status(string $status): string {
  * `health` (PLAN_107) costs no extra call — it is read straight out of the
  * status text `{{.Status}}` already carried in this same line.
  *
+ * `envFile` (PLAN_155 C18) is compose's own `--env-file` label — set only
+ * when a stack was started with one, so it reads '' for the ordinary case.
+ * It is what lets the merge wizard notice a running stack pulled its
+ * settings from a file it cannot see.
+ *
  * @return array<int, array{id:string, name:string, state:string, status:string,
  *                          image:string, project:string, service:string,
- *                          configFiles:string, configHash:string, health:string}>
+ *                          configFiles:string, configHash:string, envFile:string,
+ *                          health:string}>
  */
 function staxx_docker_ps_raw(): array {
   static $rows = null;
@@ -1722,7 +1728,8 @@ function staxx_docker_ps_raw(): array {
   $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t'
        . '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t'
        . '{{.Label "com.docker.compose.project.config_files"}}\t'
-       . '{{.Label "com.docker.compose.config-hash"}}\tend';
+       . '{{.Label "com.docker.compose.config-hash"}}\t'
+       . '{{.Label "com.docker.compose.project.environment_file"}}\tend';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
   );
@@ -1752,6 +1759,7 @@ function staxx_docker_ps_raw(): array {
       'service'     => $c[6],
       'configFiles' => $c[7],
       'configHash'  => $c[8] ?? '',
+      'envFile'     => $c[9] ?? '',
       'health'      => staxx_health_from_status($c[3]),
     ];
   }

@@ -368,6 +368,51 @@ function staxx_merge_files(string $rel, string &$error): ?array {
 }
 
 /**
+ * What a stack's own RUNNING containers were actually started from
+ * (PLAN_155 C18) — the files compose stamped onto them, not the files the
+ * wizard can see. A merge only ever reads the main compose file plus the
+ * one override compose auto-loads beside it; a stack started some other
+ * way (an extra `-f` file, an override under a name compose does not
+ * auto-load, a `--env-file`) has settings the wizard would silently drop,
+ * so this is what lets the caller refuse it instead.
+ *
+ * Reuses staxx_docker_ps_raw() rather than shelling out again — the
+ * config_files/environment_file labels are already read there for every
+ * container on the box. The first container whose config_files label
+ * names a path under this stack's own folder is taken as representative;
+ * every container compose starts from one stack shares the same files, so
+ * there is nothing to gain from reading more than one.
+ *
+ * @return array{configFiles:string[], envFile:string} empty when the stack
+ *   has no running container, or none of its containers name a path here.
+ */
+function staxx_merge_running_from(string $rel): array {
+  $none = ['configFiles' => [], 'envFile' => ''];
+  if (!staxx_valid_path($rel)) return $none;
+
+  // Matched against the folder as StaXX names it AND as the filesystem
+  // resolves it: compose stamps the path it was run from, which is the
+  // store path StaXX handed it, while a store on a user share would resolve
+  // to its pool path — a match on only one of the two would never fire.
+  $dir = rtrim(staxx_stack_dir($rel), '/');
+  $real = @realpath($dir);
+  $roots = array_unique(array_filter([$dir, $real === false ? '' : $real]));
+
+  foreach (staxx_docker_ps_raw() as $row) {
+    $configFiles = array_filter(array_map('trim', explode(',', $row['configFiles'] ?? '')));
+    $ownFile = false;
+    foreach ($configFiles as $f) {
+      foreach ($roots as $root) {
+        if (strpos($f, $root.'/') === 0) { $ownFile = true; break 2; }
+      }
+    }
+    if (!$ownFile) continue;
+    return ['configFiles' => array_values($configFiles), 'envFile' => $row['envFile'] ?? ''];
+  }
+  return $none;
+}
+
+/**
  * Is $to a safe relative destination inside the new stack's folder? Shares
  * staxx_valid_filename()'s character set and its ".." and "/" refusals,
  * segment by segment, so an intermediate folder name is held to exactly the

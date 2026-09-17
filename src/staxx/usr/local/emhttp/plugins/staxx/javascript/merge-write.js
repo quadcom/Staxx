@@ -1319,6 +1319,10 @@
       rel: typeof extra.rel === 'string' ? extra.rel : null,
       files: files || [],
       filesLarge: extra.filesLarge || null,
+      // PLAN_155 C18 — what this source's running containers were actually
+      // started from, straight from the merge-files reply; examine()'s
+      // hidden-config finding is what turns a mismatch here into a refusal.
+      runningFrom: extra.runningFrom || { configFiles: [], envFile: '' },
       env: envParsed,
       compose: {
         name: plain.name || null,
@@ -1363,8 +1367,10 @@
   // opts: { date, thisServer, newDepth, decisions, envNames, files }
   //   `name` doubles as the new stack's own rel, passed to examine() as
   //   `newRel` (PLAN_155 C4) — nothing else here needs its own rel field.
-  //   files: { sourceName: { files: [...], large: null|{path} } } — the
-  //     merge-files reply for each source, keyed by name.
+  //   files: { sourceName: { files: [...], large: null|{path},
+  //     runningFrom: {configFiles,envFile} } } — the merge-files reply for
+  //     each source, keyed by name; runningFrom (PLAN_155 C18) is what
+  //     feeds examine()'s hidden-config refusal.
   //   envNames: { changeKey: 'TYPED_NAME' } — the free-text box behind a
   //     settings-join rename's "choose-name" decision (changeKey is that
   //     rename's own change-record key, "<finding key>|rename|<i>"); read
@@ -1407,7 +1413,10 @@
     var descs = sources.map(function (s) {
       var reply = filesReplies[s.name] || {};
       return descriptorFromText(s.name, s.text, s.envText,
-        reply.files || s.files || [], { filesLarge: reply.large || s.filesLarge || null, depth: s.depth, rel: s.rel });
+        reply.files || s.files || [], {
+          filesLarge: reply.large || s.filesLarge || null, depth: s.depth, rel: s.rel,
+          runningFrom: reply.runningFrom || s.runningFrom
+        });
     });
     // PLAN_155 C15 — a rewire's target lives in whichever source declared
     // it, not necessarily the one being edited; this is the lookup the

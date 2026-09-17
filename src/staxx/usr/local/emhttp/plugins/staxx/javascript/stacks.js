@@ -31900,7 +31900,15 @@
           // renames a service and so never disagrees on whose icon is
           // whose (see mergeServiceIconsMap()).
           icons: readRes.icons || {},
-          filesReply: (filesRes && filesRes.ok) ? { files: filesRes.files || [], large: filesRes.large || null } : { files: [], large: null }
+          filesReply: (filesRes && filesRes.ok)
+            ? {
+                files: filesRes.files || [], large: filesRes.large || null,
+                // PLAN_155 C18 — what this stack's running containers were
+                // actually started from; examine()'s hidden-config finding
+                // is what turns a mismatch here into a refusal.
+                runningFrom: filesRes.runningFrom || { configFiles: [], envFile: '' }
+              }
+            : { files: [], large: null, runningFrom: { configFiles: [], envFile: '' } }
         };
       });
     });
@@ -31935,7 +31943,11 @@
       // rel (PLAN_155 C4): p.name already IS the source's own full rel —
       // carried under its own name too so a "../" path is resolved by
       // folder, not merely by depth (see merge-examine.js's own comment).
-      return { name: p.name, text: text, envText: s.envText || null, depth: mergeDepthFor(p.name), rel: p.name, overrideChanges: overrideChanges };
+      return {
+        name: p.name, text: text, envText: s.envText || null, depth: mergeDepthFor(p.name), rel: p.name,
+        overrideChanges: overrideChanges,
+        runningFrom: (s.filesReply && s.filesReply.runningFrom) || { configFiles: [], envFile: '' }
+      };
     });
   }
 
@@ -32612,6 +32624,22 @@
       head.appendChild(content);
       card.appendChild(head);
 
+      // PLAN_155 C18 — flagged the moment merge-files answers, ahead of
+      // the full examine() step 3 runs once Next is pressed, so the
+      // refusal is seen before any time is spent naming or arranging the
+      // merge at all.
+      if (window.StaxxMergeExamine) {
+        var hiddenFindings = window.StaxxMergeExamine.findHiddenConfigFindings(
+          [{ name: p.name, runningFrom: (data.filesReply && data.filesReply.runningFrom) || null }]
+        );
+        if (hiddenFindings.length) {
+          var hiddenNote = document.createElement('p');
+          hiddenNote.className = 'staxx-error staxx-merge-card-refusal';
+          hiddenNote.textContent = mergeRefusalText(hiddenFindings[0]);
+          card.appendChild(hiddenNote);
+        }
+      }
+
       var table = document.createElement('div');
       table.className = 'staxx-merge-card-table';
 
@@ -33047,13 +33075,30 @@
 
   // A refusal is a raw finding, not a prepared change — it never carries a
   // ready-made sentence, so this is the one place that writes one. Shared
-  // by steps 3 and 4 since 'outside-link' (the only refusal-severity kind
-  // today) is a companion-file finding step 4 owns, not a compose one.
+  // by steps 3 and 4 since 'outside-link' and 'hidden-config' are both
+  // companion-file-shaped findings step 4 owns, not a compose one.
   function mergeRefusalText(r) {
     if (typeof r === 'string') return r;
     if (r.kind === 'outside-link') {
       return mergeLeafName(r.stack) + '’s “' + r.facts.path + '” points outside the stack folder, ' +
         'so it cannot be copied.';
+    }
+    if (r.kind === 'hidden-config') {
+      // PLAN_155 C18 — the wizard only ever reads a stack's own compose
+      // file plus its one auto-loaded override, so anything else compose
+      // was actually told to use would be silently dropped from the merge.
+      var leaf = mergeLeafName(r.stack);
+      var tail = 'Whatever it sets would be lost in the merge, so ' + leaf + ' cannot take part until ' +
+        'it is started from its own compose file alone.';
+      var files = r.facts.files || [];
+      if (files.length && r.facts.envFile) {
+        return leaf + ' is running from a file StaXX cannot see: ' + files.join(', ') +
+          ', and a settings file ' + r.facts.envFile + '. ' + tail;
+      }
+      if (files.length) {
+        return leaf + ' is running from a file StaXX cannot see: ' + files.join(', ') + '. ' + tail;
+      }
+      return leaf + ' is running from a settings file StaXX cannot see: ' + r.facts.envFile + '. ' + tail;
     }
     return (r.title ? r.title + ' — ' : '') + (r.reason || r.message || 'This cannot be merged as it stands.');
   }

@@ -659,6 +659,9 @@ switch ($action) {
     staxx_reply([
       'ok' => true, 'files' => $listing['files'], 'large' => $listing['large'],
       'override' => $listing['override'],
+      // PLAN_155 C18: what the stack's RUNNING containers were actually
+      // started from, so the wizard can notice a file it cannot see.
+      'runningFrom' => staxx_merge_running_from($name),
     ]);
 
   /* --------------------------------------------------- PLAN_76 — export ----

@@ -13126,6 +13126,13 @@ dialog::backdrop {
   font-size: 1.3rem;
 }
 
+/* PLAN_155 C18 — the hidden-config refusal note reuses .staxx-error's own
+   red styling; only the spacing is tightened here, to sit inside a card
+   that already has its own padding rather than the page-wide 1rem gap. */
+.staxx-merge-card-refusal {
+  margin: 0 0 1rem;
+}
+
 .staxx-merge-card-head {
   display: flex;
   gap: 1rem;

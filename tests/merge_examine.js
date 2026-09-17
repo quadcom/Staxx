@@ -1533,6 +1533,63 @@ console.log('\nQ. Settings-join per-entry overrides');
 })();
 
 /* =========================================================================
+ * R. Hidden config (PLAN_155 C18) — a stack running from a file the wizard
+ * never reads is refused outright, since whatever it sets would be lost.
+ * ========================================================================= */
+
+console.log('\nR. Hidden config');
+
+(function () {
+  var a = { name: 'appA', text: 'services:\n  web:\n    image: nginx:latest\n' };
+  var b = { name: 'appB', text: 'services:\n  web2:\n    image: nginx:latest\n' };
+
+  // (a) an extra -f file alongside the main one.
+  var descA1 = MW.descriptorFromText('appA', a.text, null, [], {
+    runningFrom: { configFiles: ['/mnt/user/appdata/appA/compose.yaml', '/mnt/user/appdata/appA/extra.yaml'], envFile: '' }
+  });
+  var descB1 = MW.descriptorFromText('appB', b.text, null, [], { runningFrom: { configFiles: [], envFile: '' } });
+  var r1 = M.examine([descA1, descB1]);
+  var hidden1 = findingsOf(r1, 'hidden-config');
+  ok('(a) an extra -f file the wizard cannot see is one refusal, naming it',
+     hidden1.length === 1 && hidden1[0].stack === 'appA' && hidden1[0].facts.files.indexOf('/mnt/user/appdata/appA/extra.yaml') >= 0);
+
+  // (b) a foreign --env-file.
+  var descA2 = MW.descriptorFromText('appA', a.text, null, [], {
+    runningFrom: { configFiles: ['/mnt/user/appdata/appA/compose.yaml'], envFile: '/mnt/user/appdata/appA/prod.env' }
+  });
+  var r2 = M.examine([descA2]);
+  var hidden2 = findingsOf(r2, 'hidden-config');
+  ok('(b) a --env-file that is not .env is a refusal naming it',
+     hidden2.length === 1 && hidden2[0].facts.envFile === '/mnt/user/appdata/appA/prod.env' && hidden2[0].facts.files.length === 0);
+
+  // (c) config list is exactly the source's own compose file — no refusal.
+  var descA3 = MW.descriptorFromText('appA', a.text, null, [], {
+    runningFrom: { configFiles: ['/mnt/user/appdata/appA/compose.yaml'], envFile: '' }
+  });
+  var r3 = M.examine([descA3]);
+  ok('(c) running from just its own compose file is never flagged', findingsOf(r3, 'hidden-config').length === 0);
+
+  // (d) own compose file plus its own auto-loaded override — still fine.
+  var descA4 = MW.descriptorFromText('appA', a.text, null, [], {
+    runningFrom: {
+      configFiles: [
+        '/mnt/user/appdata/appA/compose.yaml',
+        '/mnt/user/appdata/appA/docker-compose.override.yml'
+      ], envFile: ''
+    }
+  });
+  var r4 = M.examine([descA4]);
+  ok('(d) its own compose file plus a standard-named override is never flagged',
+     findingsOf(r4, 'hidden-config').length === 0);
+
+  // (e) no runningFrom at all (nothing running) — never flagged.
+  var descA5 = MW.descriptorFromText('appA', a.text, null, [], {});
+  var r5 = M.examine([descA5]);
+  ok('(e) an empty runningFrom (nothing running) is never flagged',
+     findingsOf(r5, 'hidden-config').length === 0);
+})();
+
+/* =========================================================================
  * Summary
  * ========================================================================= */
 
