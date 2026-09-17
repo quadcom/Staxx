@@ -32885,6 +32885,23 @@
 
     keepScroll(codeEl, function () { mergeRenderMergedPaneInner(codeEl); });
 
+    // A change with no merged line (a dropped stack-level x-unraid, the
+    // version: line) wears its tick or ring on its SOURCE row, since there
+    // is nowhere else to wear it — without one, an answered decision looked
+    // neither approved nor declined and read as a click that did nothing
+    // (Adrian, built walk 2026-09-16). Done here rather than in the source
+    // band's own render because every answer re-renders this pane and not
+    // that band. Rows with a merged twin leave the badge to the twin.
+    Array.prototype.forEach.call(document.querySelectorAll('#staxx-merge-srctrack [data-merge-change-key]'), function (row) {
+      var k = row.dataset.mergeChangeKey;
+      if (codeEl.querySelector('[data-merge-change-key="' + mergeCssEsc(k) + '"]')) return;
+      var text = row.querySelector('.staxx-merge-codetext');
+      if (!text) return;
+      var old = text.querySelector('.staxx-merge-badge');
+      if (old) old.remove();
+      mergeAppendAnswerBadge(text, k);
+    });
+
     // Tallied by KEY, not by row, and by PAINTED key — see
     // mergePaintedChangeKeys()'s own header for both reasons. Outside the
     // keepScroll() call above since it never touches codeEl's own layout.
