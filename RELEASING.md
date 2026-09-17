@@ -155,6 +155,10 @@ if they disagree, but doing them in this order means it never has to.
 8. **Bring the stamped manifest back to `dev`.** The build commits the new checksums to `main` only.
    `git cherry-pick -x <the "Stamp staxx.plg" commit>` — it touches only the version, the two
    checksums and the package name, never the branch entity, so it is safe to carry across.
+   **Skip this step if a dev build has been published since the release**: `dev`'s manifest then
+   already carries its *own* checksums for its *own* package, and main's would overwrite them with
+   values that match nothing on the dev channel. Found cutting the 00.04.01 hotfix on 2026-09-17,
+   an hour after a dev build had stamped `dev`.
 
 9. **Set dev's manifest, and its readme line, to the *next* version you are heading towards**, and
    push. Both `<!ENTITY version>` and `README.md`'s version line move together — see the gotcha
