@@ -35893,6 +35893,17 @@
   function mergeRenderStep6() {
     var host = document.getElementById('staxx-merge-step6');
     if (!host) return;
+    // The three columns are rebuilt from scratch below, so their scroll
+    // positions are read first and put back at the end — a switch at the
+    // FOOT of the right column redraws this whole step, and every toggle
+    // threw the person back to the top (Adrian, 2026-09-17; the same fault
+    // step 5 had, fixed there the night before and not looked for here).
+    var kept = {};
+    ['.staxx-merge-step6-form', '.staxx-merge-step6-code', '.staxx-merge-step6-right'].forEach(function (sel) {
+      var el = host.querySelector(sel);
+      if (el) kept[sel] = el.scrollTop;
+    });
+    var hostTop = host.scrollTop;
     host.innerHTML = '';
     if (!mergeState.built) return;
 
@@ -35922,6 +35933,12 @@
     host.appendChild(right);
 
     mergeInitStep6Drag(grip, formCol, host);
+
+    Object.keys(kept).forEach(function (sel) {
+      var el = host.querySelector(sel);
+      if (el) el.scrollTop = kept[sel];
+    });
+    host.scrollTop = hostTop;
   }
 
   // Bound fresh on every mergeRenderStep6() call — the three columns it

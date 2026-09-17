@@ -745,6 +745,13 @@ piece of engineering in the repository, and the reason the rest of this exists.
   Style every control at `.staxx-scaffold .staxx-xxx` or `.staxx-scaffold button.staxx-xxx` and
   restate font-size, font-weight, line-height, colour, background and border-radius in that rule.
   The exact rules and where they live are in the header of `sheets/staxx.css`.
+- **A redraw keeps its scroll.** Any handler that rebuilds a scrollable panel — a toggle, a
+  choice, an answer — reads the panel's `scrollTop` first and puts it back after (`keepScroll()`
+  in `stacks.js`, or a save/restore by selector when the element itself is replaced). A panel
+  that snaps to the top on every switch was found on the merge wizard's step 5 (2026-09-16) and,
+  the next morning, on step 6 — the same fault, one step over. **When a fault like this is fixed
+  in one place, grep for the sibling renders and check every one in the same pass**; Adrian's
+  words: "these need to be caught when they're being made, rather than found later."
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
   invisible to us and change between releases. Every class used is `staxx-`-prefixed.
 - `staxx.plg` is fully populated — real author, real repo, real checksums. Nothing there guards
