@@ -3565,6 +3565,13 @@ div.title.staxx-has-titlebar {
   display: inline-block;
   margin-left: 0.4rem;
   padding: 0.25rem 0.8rem;
+  /* A transparent hairline, never none: .staxx-pill and .staxx-updatepill
+     both carry a 0.1rem border, and without the same here this chip drew
+     1.6px shorter than the two it sits beside (Adrian, merge step 2,
+     2026-09-16 — the third time a chip has come out a different height). */
+  border: 0.1rem solid transparent;
+  box-sizing: border-box;
+  line-height: 1.4;
   border-radius: 1rem;
   font-size: 1.1rem;
   font-weight: 600;
@@ -3579,7 +3586,7 @@ div.title.staxx-has-titlebar {
    colourless, and font size/weight has to be restated rather than left to
    inherit, which would take the wrong size with it. */
 .staxx-scaffold button.staxx-pendingchip {
-  border: none;
+  border: 0.1rem solid transparent;   /* same height as the pills beside it — see the plain class above */
   cursor: pointer;
   font-family: inherit;
   font-size: 1.1rem;
