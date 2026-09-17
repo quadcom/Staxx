@@ -34970,12 +34970,16 @@
 
     host.appendChild(block);
 
-    // The once-per-wizard demonstration (C17): only when the board is
-    // empty, and only the first time this ever renders that way — the
-    // flag is set the moment it is scheduled, not when it actually plays,
-    // so a redraw within the two seconds never schedules a second one.
-    if (!(mergeState.suggest.deps || []).length && !mergeState.demoShown) {
+    // The once-per-wizard demonstration (C17): the first time step 5
+    // renders, whatever the board already holds — it used to play only on
+    // an EMPTY board, so four stacks that already declare who waits for
+    // whom never saw it at all (Adrian, built walk 2026-09-16). The flag is
+    // set the moment it is scheduled, not when it actually plays, so a
+    // redraw within the two seconds never schedules a second one; the line
+    // count is noted so a line the person draws meanwhile stands it down.
+    if (!mergeState.demoShown) {
       mergeState.demoShown = true;
+      mergeState.demoDepsAtOpen = (mergeState.suggest.deps || []).length;
       setTimeout(function () { mergePlayDepDemo(); }, 2000);
     }
   }
@@ -34987,7 +34991,7 @@
   // beyond the cleanup handle a real drag can cancel it through.
   function mergePlayDepDemo() {
     if (!mergeState || mergeState.step !== 5) return;
-    if ((mergeState.suggest.deps || []).length) return;   // a line appeared meanwhile
+    if ((mergeState.suggest.deps || []).length !== mergeState.demoDepsAtOpen) return;   // a line was drawn or removed meanwhile
     var els = mergeDepBoardEls();
     if (!els.board) return;
     var fromChips = els.board.querySelectorAll('[data-dep-chip="from"]');
