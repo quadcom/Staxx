@@ -31571,10 +31571,16 @@
       var textEl = anchorRow.querySelector('.staxx-merge-codetext');
       var tr = (textEl || anchorRow).getBoundingClientRect();
       var rowLeft = Math.min(tr.right - mr.left + 12, mr.width - pop.offsetWidth - 8);
-      pop.style.top = Math.max(8, Math.min(ar.top - mr.top, mr.height - pop.offsetHeight - 8)) + 'px';
+      var popTop = Math.max(8, Math.min(ar.top - mr.top, mr.height - pop.offsetHeight - 8));
+      pop.style.top = popTop + 'px';
       pop.style.left = Math.max(8, rowLeft) + 'px';
+      // The pointer on the card's left edge aims at the LINE's middle, not
+      // the card's — the two differ whenever the clamp above moved the card.
+      pop.classList.add('staxx-merge-pop--tip');
+      pop.style.setProperty('--tip', ((ar.top - mr.top) + ar.height / 2 - popTop) + 'px');
       return;
     }
+    pop.classList.remove('staxx-merge-pop--tip');
     var left = Math.max(8, Math.min(ar.left - mr.left, mr.width - pop.offsetWidth - 8));
     // A step 4 file row (C17) opens its card overlapping its own lower
     // half — top edge at the row's top + 55% of its own height — so the

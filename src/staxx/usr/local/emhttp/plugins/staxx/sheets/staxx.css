@@ -12861,6 +12861,34 @@ dialog::backdrop {
   box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.45);
 }
 
+/* A line mark's card points at its line (Adrian, built walk 2026-09-16:
+   "a little bump in the border that points to the item it is referring
+   to"). Two triangles on the left edge — the outer one in the border
+   colour, the inner one in the background, a border-width inset — read as
+   the border bulging out. --tip is the line's vertical centre measured
+   from the card's own top, set by mergeShowPopover(), so the pointer stays
+   on the line when the card itself is pushed up or down to fit the
+   window. Only the row-anchored card carries the class; step 4's
+   overlapping cards do not point at anything. */
+.staxx-merge-pop--tip::before,
+.staxx-merge-pop--tip::after {
+  content: "";
+  position: absolute;
+  left: -0.8rem;
+  top: var(--tip, 0.9rem);
+  width: 0;
+  height: 0;
+  border: 0.8rem solid transparent;
+  border-left: 0;
+  border-right-color: var(--sm-line);
+  transform: translateY(-50%);
+}
+
+.staxx-merge-pop--tip::after {
+  left: -0.65rem;
+  border-right-color: var(--sm-bg);
+}
+
 .staxx-merge-pop .staxx-merge-reasoncard {
   margin: 0;
   border: 0;
