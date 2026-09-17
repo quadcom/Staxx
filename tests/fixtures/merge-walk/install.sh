@@ -9,11 +9,11 @@ DEST="$ROOT/stacks/DEV-TESTING"
 for p in 18080 18443 18081 13306 16379; do
   ss -ltn | grep -q ":$p " && { echo "Port $p is already in use on this box. Refusing."; exit 1; }
 done
-for s in t155-web t155-db t155-cache t155-admin t155-shared; do
+for s in t155-web t155-db t155-cache t155-admin; do
   [ -e "$DEST/$s" ] && { echo "$DEST/$s already exists. Run teardown.sh first."; exit 1; }
 done
 HERE=$(cd "$(dirname "$0")" && pwd)
-for s in t155-web t155-db t155-cache t155-admin t155-shared; do cp -r "$HERE/$s" "$DEST/$s"; done
+for s in t155-web t155-db t155-cache t155-admin; do cp -r "$HERE/$s" "$DEST/$s"; done
 # The fixtures arrive via the flash drive, where every file reads as owner-only whatever its
 # mode was; copied as-is nothing inside a container (nginx, mysql, redis) can read them.
 chmod -R u=rwX,go=rX "$DEST"/t155-*
@@ -21,7 +21,15 @@ chmod -R u=rwX,go=rX "$DEST"/t155-*
 # committed fixture: a real LAN address must never sit in the repository.
 IP=$(hostname -I | awk '{print $1}')
 sed -i "s/__BOX_IP__/$IP/g" "$DEST/t155-web/.env" "$DEST/t155-admin/.env"
-mkdir -p /mnt/user/appdata/t155/db-backups
+mkdir -p /mnt/user/appdata/staxx-testing/t155-db/backups
+# The file t155-web maps in from OUTSIDE its own folder lives in appdata at a real absolute path,
+# never as a relative climb out of the store (Adrian, 2026-09-16: "../DEV-TESTING/t155-shared/..."
+# in the merged file read as the shared file being moved into DEV-TESTING; a walk fixture should
+# look like a real setup). The relative-path rewrite itself stays covered off the box, in
+# tests/merge_examine.js's depth-path section.
+mkdir -p /mnt/user/appdata/staxx-testing/shared
+cp "$HERE/appdata-shared/dhparam.pem" /mnt/user/appdata/staxx-testing/shared/dhparam.pem
+chmod 0644 /mnt/user/appdata/staxx-testing/shared/dhparam.pem
 
 # Things git cannot carry: the certificate pair, the 12MB blob, the symlink, the icons, the modes.
 W="$DEST/t155-web"

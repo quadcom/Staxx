@@ -193,9 +193,6 @@ function runWalk(label, LEAVES) {
     if (f.facts.path === 'compose.yaml.bak') decisions[f.key] = 'leave-behind';
   });
 
-  var depthKey = keyFor('depth-path', { oldPath: '../t155-shared/dhparam.pem' });
-  if (depthKey) decisions[depthKey] = 'rewrite';
-
   // The free port examine() already suggested (PLAN_155 C10) — same number
   // pickFreePort() would hand the wizard, since this decision merely
   // confirms the finding's own recommended choice rather than picking one
@@ -536,8 +533,10 @@ if (CHECK) {
       }
     });
 
-    if (text.indexOf('../../DEV-TESTING/t155-shared/dhparam.pem') === -1) {
-      fail(12, 'order ' + o.label + ': the dhparam bind mount does not read "../../DEV-TESTING/t155-shared/dhparam.pem"');
+    // The shared file sits at an absolute appdata path (Adrian, 2026-09-16), so the
+    // merge must carry it through untouched — no depth rewrite, no relative climb.
+    if (text.indexOf('/mnt/user/appdata/staxx-testing/shared/dhparam.pem:/etc/nginx/dhparam.pem:ro') === -1 || text.indexOf('t155-shared') !== -1) {
+      fail(12, 'order ' + o.label + ': the dhparam bind mount is not carried through unchanged from appdata');
     }
   });
 

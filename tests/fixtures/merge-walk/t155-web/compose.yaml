@@ -18,7 +18,7 @@ services:
     volumes:
       - ./conf/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
-      - ../t155-shared/dhparam.pem:/etc/nginx/dhparam.pem:ro
+      - /mnt/user/appdata/staxx-testing/shared/dhparam.pem:/etc/nginx/dhparam.pem:ro
       - ./site:/var/www/html:ro
     depends_on:
       - php

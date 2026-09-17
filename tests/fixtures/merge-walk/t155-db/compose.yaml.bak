@@ -21,7 +21,7 @@ services:
     volumes:
       - data:/var/lib/mysql
       - ./init:/docker-entrypoint-initdb.d:ro
-      - /mnt/user/appdata/t155/db-backups:/backups
+      - /mnt/user/appdata/staxx-testing/t155-db/backups:/backups
     secrets:
       - root_password
       - db_password
