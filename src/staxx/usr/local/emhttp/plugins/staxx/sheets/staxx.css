@@ -4203,24 +4203,13 @@ div.title.staxx-has-titlebar {
 }
 
 /* Round 2, 2026-09-13: below 96rem, Split is two 350px panes — useless — so
-   the whole band below it is form-only or compose-only, and the three-button
-   .staxx-views group (which made the tab strip jump height against Manage,
-   a different height on each) is hidden in favour of one toggle inside the
-   Configure tab (.staxx-viewrow, styled and shown/hidden by stacks.js's
-   syncViewRow() — see .staxx-viewrow rules further down, outside any query).
-   Everything here moved up from the old 60rem step, which used to be where
-   Split got hidden; 60rem now only holds the corner Close. */
+   the whole band below it is form-only or compose-only. The pane collapse
+   below still keys off the dialog's own width, which is right: whichever
+   view is showing, once the DIALOG is this narrow the split makes no sense.
+   The header group and Split button used to hide on this same query, but
+   they moved out to a window-width rule below it (2026-09-17) — see there
+   for why. */
 @container staxx-modal (max-width: 96rem) {
-  /* Two classes on purpose: the group's own display rule sits LATER in the
-     sheet at one class, so at equal strength it would win on source order. */
-  .staxx-modal .staxx-views {
-    display: none;
-  }
-
-  .staxx-viewbtn--split {
-    display: none;
-  }
-
   .staxx-modal-body[data-view="split"] {
     grid-template-columns: 1fr;
   }
@@ -4245,10 +4234,36 @@ div.title.staxx-has-titlebar {
   }
 }
 
+/* 2026-09-17: the header's Form/Split/Compose group and the Split button hide
+   on the WINDOW's width, never the dialog's — the dialog's own width in Form
+   or Compose is a choice those very buttons made (the clamp() rule above
+   glides it down to clamp(52rem, 48vw, 84rem)), so keying their visibility
+   off the dialog it shrinks was self-defeating: measured at an 1823px
+   window, Form took the dialog to 840px, the 96rem container query fired on
+   that shrunk width, and Split became unreachable until the dialog was
+   closed (feedback-board card, 2026-09-17). 990px is where the dialog is
+   already full-screen (see the 990px rule above), so window and dialog width
+   agree from here down and the group can key off either — window is chosen
+   since it is what the toggle in the Configure tab (.staxx-viewrow, shown by
+   stacks.js's syncViewRow()) also measures.
+   PX ON PURPOSE, not rem: a media query's rem is the browser's 16px, not the
+   sheet's 10px root (PLAN_128's trap, restated at the 990px rule above). */
+@media (max-width: 990px) {
+  /* Two classes on purpose: the group's own display rule sits LATER in the
+     sheet at one class, so at equal strength it would win on source order. */
+  .staxx-modal .staxx-views {
+    display: none;
+  }
+
+  .staxx-viewbtn--split {
+    display: none;
+  }
+}
+
 /* Below 60rem, only the corner Close is left here — the view switch moved to
-   the 96rem step above, and the Part 3 two-way button styling that used to
-   sit here is gone with it: .staxx-views is display:none by then, so there
-   is nothing left for it to style. */
+   the 990px window step above, and the Part 3 two-way button styling that
+   used to sit here is gone with it: .staxx-views is display:none by then, so
+   there is nothing left for it to style. */
 @container staxx-modal (max-width: 60rem) {
   /* Adrian, 2026-09-13: on a phone the Close button sits in the dialog's
      very top-right corner, on the title line, rather than at the end of the

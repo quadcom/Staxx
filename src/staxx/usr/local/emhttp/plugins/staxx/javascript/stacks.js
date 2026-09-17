@@ -1977,17 +1977,17 @@
     if (view === 'split') applySplit();
   }
 
-  // PLAN_145 round 2, Part A — below 96rem of dialog width the header's
-  // Form/Split/Compose group is hidden and replaced by one toggle inside the
-  // Configure tab (.staxx-viewrow, two copies in the markup, only one ever
-  // shown — see the comment on each in StacksPage.php). 960 = 96rem at the
-  // sheet's own 10px root, the same trap NOTESTRIP_BREAKPOINT above is kept
-  // beside its own CSS figure for: nothing here can read a container query's
-  // threshold back out, so it is restated rather than shared.
-  var VIEWROW_BREAKPOINT = 960;
+  // 2026-09-17 — this toggle shows at the same WINDOW width the stylesheet
+  // hides the header's Form/Split/Compose group at (the 990px media query),
+  // not the dialog's own width: the dialog's width in Form or Compose is a
+  // choice those very header buttons made, so measuring the dialog meant the
+  // group could shrink the dialog below the threshold and then have nothing
+  // left to show it again. 990 is plain CSS px, not the sheet's rem — see the
+  // CSS rule's own comment for why it has to be window width either way.
+  var VIEWROW_BREAKPOINT = 990;
 
   function syncViewRow() {
-    var narrow = modal.getBoundingClientRect().width <= VIEWROW_BREAKPOINT;
+    var narrow = window.innerWidth <= VIEWROW_BREAKPOINT;
     var rows = modal.querySelectorAll('.staxx-viewrow');
     for (var i = 0; i < rows.length; i++) {
       rows[i].hidden = !narrow;
