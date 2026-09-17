@@ -2313,6 +2313,10 @@ function staxx_container_index(): array {
       'service'    => $r['service'],
       'configHash' => $r['configHash'] ?? '',
       'health'     => $r['health'] ?? 'none',
+      // Carried raw so staxx_stack_containers() can tell a moved stack's own
+      // leftover container from a twin stack's, by checking whether the file
+      // this label names still exists.
+      'configFiles' => $r['configFiles'],
     ];
 
     $index['byProject'][$row['project']][] = $row;
@@ -2898,7 +2902,10 @@ function staxx_container_net(): array {
  *
  * Its compose file is asked for first, because that ties a container to THIS
  * folder rather than to a name that another stack could also be using. The
- * project name is the fallback for a stack whose file has moved.
+ * project name is the fallback for a stack whose file has moved. A sibling
+ * container that compose has not recreated since the move still carries the
+ * OLD path in its own label, so the file match is topped up with any same-
+ * project container whose label names no file that still exists on disk.
  *
  * @param array $s one entry from staxx_list_stacks()
  */
@@ -2926,6 +2933,32 @@ function staxx_stack_containers(array $s): array {
 
   if ($s['file'] !== '' && isset($index['byFile'][$s['file']])) {
     $result = $index['byFile'][$s['file']];
+
+    // A relocated store or a stack filed into a folder changes the path this
+    // stack is matched on, but a container compose has not recreated since
+    // still carries the OLD path in its own label — it vanishes from the row
+    // the moment ANY sibling service recreates and starts matching here first,
+    // even though it is still running. Compose itself treats it as part of
+    // the project (it will relabel it on its next recreate), so top the file
+    // match up with same-project containers not already found this way. Only
+    // ones whose label names NO file that still exists: a container whose
+    // label names a file that DOES exist may belong to a twin stack using the
+    // same project name elsewhere, and that clash is exactly what matching on
+    // the file first, rather than the project, is here to guard against.
+    $project = $result[0]['project'] ?? '';
+    $seen    = array_column($result, null, 'id');
+    foreach (($index['byProject'][$project] ?? []) as $row) {
+      if (isset($seen[$row['id']])) continue;
+      $stale = true;
+      foreach (explode(',', $row['configFiles']) as $file) {
+        $file = trim($file);
+        if ($file !== '' && file_exists($file)) { $stale = false; break; }
+      }
+      if ($stale) $result[] = $row;
+    }
+    usort($result, fn($a, $b) => strnatcasecmp($a['service'].'/'.$a['name'],
+                                                $b['service'].'/'.$b['name']));
+
     if ($key !== null) $memo[$key] = $result;
     return $result;
   }

@@ -15135,7 +15135,7 @@
     if (first) devPick(first.dataset.dev);
   });
 
-  // focusService (PLAN_44 A2): a container icon opens straight at its own
+  // focusService (PLAN_44 A2): a container icon opens scrolled to its own
   // section of the form, rather than at the top of the file.
   // manageSelect (PLAN_44 C1/A4) is undefined for every ordinary opener, which
   // leaves the dialog on Configure exactly as it always has. The Logs button
@@ -15394,13 +15394,16 @@
     // draw the bare, uncloseable compose tab and stop there.
     if (isNew) renderTabs(); else filesLoad();
 
-    // A container's icon opens straight at its own section of the form.
+    // A container's icon opens straight at its own section of the form, in
+    // whatever view the editor opens in anyway — Split on a desktop, the same
+    // as the stack's own icon. It used to force Form here (PLAN_44 A2), which
+    // made the two icons open two different editors; Adrian, 2026-09-17: the
+    // default is Split, whichever icon was clicked.
     // Scrolling only works now the dialog is showing (same reason as
     // measure()/paintGutter() above) — a service the file no longer has is
     // left at the top, which is information, not a fault.
     var svcSection = null;
     if (focusService) {
-      setView('form');
       svcSection = formHost.querySelector(
         '.staxx-svc[data-service="' + focusService.replace(/"/g, '\\"') + '"]');
       if (svcSection) svcSection.scrollIntoView({ block: 'start' });
