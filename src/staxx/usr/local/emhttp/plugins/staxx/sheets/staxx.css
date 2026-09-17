@@ -2572,6 +2572,17 @@ div.title.staxx-has-titlebar {
   pointer-events: none;
 }
 
+/* Hidden while Unraid's own padlock is locked — the default on every page
+   load. visibility rather than display for the same reason as
+   .staxx-grip--off above: the name column beside it keeps its alignment
+   instead of rippling a notch when the grip disappears. visibility: hidden
+   also takes the grip out of the tab order, so Tab does not stop on
+   something that cannot currently do anything. */
+.staxx-scaffold.staxx-sort-locked .staxx-grip {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* The unit currently being dragged, hidden for the duration — the same thing
    the port row's drag does, and for a reason that took a while to see: the
    placeholder below stands in at exactly the dragged unit's height, so the

@@ -29108,10 +29108,54 @@
   // placeholder moves, so only that is still read live in dragover below.
   var draggingGripSiblings = [];
 
+  // Unraid's own top bar draws a padlock on the standalone StaXX page (its
+  // .page header carries Lock="true"; the Docker tab draws none) and calls
+  // window.LockButton() from a hard-coded onclick — see the definition below. Its own Docker Containers
+  // page starts every load locked, so this does too: the grips stay inert
+  // until the padlock is clicked open, exactly as stock Unraid behaves.
+  var sortLocked = true;
+
+  // The class lives on .staxx-scaffold, the page's outer wrapper, rather
+  // than on #staxx-rows — refreshRows() throws the rows host's innerHTML
+  // away and rebuilds it from the server on every refresh, but the scaffold
+  // element itself is never replaced, so a class set here survives every
+  // redraw with nothing needing to re-apply it.
+  function applySortLock() {
+    if (scaffold) scaffold.classList.toggle('staxx-sort-locked', sortLocked);
+
+    // A sidebar theme draws no such nav item, so every lookup here is
+    // null-guarded rather than assumed to exist.
+    var navLink = document.querySelector('div.nav-item.LockButton a');
+    if (!navLink) return;
+    var icon = navLink.querySelector('b');
+    var label = navLink.querySelector('span');
+    var title = sortLocked ? 'Unlock sortable items' : 'Lock sortable items';
+    navLink.title = title;
+    if (label) label.textContent = title;
+    if (icon) {
+      icon.classList.toggle('icon-u-lock', sortLocked);
+      icon.classList.toggle('icon-u-lock-open', !sortLocked);
+      icon.classList.toggle('green-text', sortLocked);
+      icon.classList.toggle('red-text', !sortLocked);
+    }
+  }
+  applySortLock();   // page loads locked — grips hidden, padlock reads "Unlock"
+
+  // Deliberately global: Unraid's own top bar draws the padlock from
+  // dynamix's Main.php and calls it by name from a hard-coded
+  // onclick="LockButton();return false;" — it does not know StaXX's IIFE
+  // exists, so this has to be a real global for the click to find. Its
+  // absence is exactly the "LockButton is not defined" error the feedback
+  // board reported on 2026-09-17.
+  window.LockButton = function () {
+    sortLocked = !sortLocked;
+    applySortLock();
+  };
+
   if (rowsHost) {
     rowsHost.addEventListener('pointerdown', function (event) {
       var grip = event.target.closest('.staxx-grip[data-row-grip]');
-      if (!grip || grip.classList.contains('staxx-grip--off')) return;
+      if (!grip || sortLocked || grip.classList.contains('staxx-grip--off')) return;
       var info = gripRowOf(grip);
       if (!info.row) return;
       var unit = gripUnit(info.row, info.kind);
@@ -29244,7 +29288,7 @@
     // event.preventDefault() throughout so the page does not scroll under it.
     rowsHost.addEventListener('keydown', function (event) {
       var grip = event.target.closest('.staxx-grip[data-row-grip]');
-      if (!grip || grip.classList.contains('staxx-grip--off')) return;
+      if (!grip || sortLocked || grip.classList.contains('staxx-grip--off')) return;
       var key = event.key;
       if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'Home' && key !== 'End') return;
       event.preventDefault();
