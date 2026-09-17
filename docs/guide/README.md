@@ -54,8 +54,8 @@ This guide is written in English only.
 - **[Import an existing container](bringing-in-a-container.md)** — a walkthrough of Import, from
   pressing the button to opening the new stack and taking it over.
 - **[Merging stacks into one](merging-stacks.md)** — joining two or more stacks that are really one
-  application into a single brand new stack: picking them, naming the new one, sorting out what
-  changed, and reading the confirmation before anything is written.
+  application into a single brand new stack, step by step through the six screens of the Merge tool:
+  picking, naming, the compose files, the settings and files, the suggestions, and the confirmation.
 - **[Removing a stack](removing-a-stack.md)** — taking a stack off the list, what actually happens
   to it, and how to get it back.
 - **[Export and import a stack](sharing-a-stack.md)** — how Export blanks your passwords and paths

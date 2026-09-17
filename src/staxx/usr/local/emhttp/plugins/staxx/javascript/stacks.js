@@ -30043,7 +30043,7 @@
     openMenu(trigger, { x: event.clientX, y: event.clientY });
   });
 
-  // PLAN_145 — Unraid's own external-link question (webGui's
+  // PLAN_164 (filed as PLAN_145 until 2026-09-17) — Unraid's own external-link question (webGui's
   // BodyInlineJS.php) is bound on `document` and shows an ordinary page
   // element, which a <dialog> opened with showModal() always paints over —
   // so clicking one of our own external links (the selfh.st icon lookup,

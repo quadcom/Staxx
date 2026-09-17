@@ -184,10 +184,28 @@ console.log('\n2. Links resolve');
     var body = read(path.join(GUIDE_DIR, name));
     if (body === null) return;
 
+    // A picture parked inside an HTML comment is not on the page. Found on the
+    // merge page 2026-09-17: four finished image lines wrapped in "picture still
+    // to be taken" comments passed this check for two days while the published
+    // page showed nothing. So a commented-out image reference is a PROBLEM in
+    // its own right, and comments are stripped before the live references are
+    // read.
+    var cre = /<!--[\s\S]*?-->/g, cm;
+    while ((cm = cre.exec(body)) !== null) {
+      var hidden = /!\[[^\]\n]*\]\(\s*([^)\s]+)/.exec(cm[0]);
+      if (hidden) {
+        broken++;
+        problem(name + ' hides a picture inside a comment: ' + hidden[1]
+          + (fs.existsSync(path.resolve(GUIDE_DIR, hidden[1].split('#')[0]))
+             ? ' — the file exists, so uncomment the line' : ''));
+      }
+    }
+    var live = body.replace(cre, '');
+
     // Inline links and image references alike; an optional "title" is allowed
     // after the target because markdown permits it.
     var re = /!?\[[^\]\n]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g, m;
-    while ((m = re.exec(body)) !== null) {
+    while ((m = re.exec(live)) !== null) {
       var target = m[1];
 
       // Somewhere else entirely, or a jump within this same page.
