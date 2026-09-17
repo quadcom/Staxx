@@ -12913,9 +12913,12 @@ dialog::backdrop {
 /* A changed line's text overrides the tokeniser's own syntax colours on
    purpose — the point is that it changed, not what kind of YAML it is.
    Two classes here (0,2,0) already outrank a bare .staxx-t--kind span
-   (0,1,0), so this needs no !important. */
+   (0,1,0), so this needs no !important. The answer badge at the end of the
+   line is left out: it would otherwise take the amber too, and a green
+   tick or a red ring painted yellow says nothing (Adrian, built walk
+   2026-09-16). */
 .staxx-merge-codeline--changed .staxx-merge-codetext,
-.staxx-merge-codeline--changed .staxx-merge-codetext * {
+.staxx-merge-codeline--changed .staxx-merge-codetext *:not(.staxx-merge-badge) {
   color: #ffc43d;
   font-weight: 600;
 }
