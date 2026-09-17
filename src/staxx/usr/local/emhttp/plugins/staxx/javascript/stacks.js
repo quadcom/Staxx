@@ -1800,6 +1800,17 @@
 
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i], html, kv;
+      // An empty line must get an empty div, not a span with nothing in it:
+      // a span has no line box when it holds no text, so the div collapses to
+      // zero height and every line below it drifts up out of step with the
+      // textarea and the gutter — the blank-lines-in-.env fault, 2026-09-17.
+      // paintInk() leaves a blank line's div empty for the same reason. A
+      // whitespace-only line needs no such case: white-space:pre keeps the
+      // escaped spaces inside its span, so it still renders with height.
+      if (line === '') {
+        inner.children[i].innerHTML = '';
+        continue;
+      }
       if (/^\s*#/.test(line)) {
         html = '<span class="staxx-t--comment">' + esc(line) + '</span>';
       } else if ((kv = /^(\s*[A-Za-z_][A-Za-z0-9_]*)(=)(.*)$/.exec(line))) {
