@@ -35002,14 +35002,21 @@
     if (!fromHandle || !toHandle) return;
 
     mergeState.demoPlaying = true;
-    var boardRect = els.board.getBoundingClientRect();
+    // Parked on the DIALOG, not the board: every health lookup that answers
+    // rebuilds the board from scratch (mergeRenderStep5()'s own
+    // left.innerHTML = ''), and the first replies land right around the
+    // two-second mark this starts at — so a hand and line living inside
+    // the board vanished the instant they appeared (Adrian, built walk
+    // 2026-09-16). The dialog is position:fixed, so its absolute children
+    // measure from its own box, and it is never rebuilt mid-step.
+    var boardRect = mergeModal.getBoundingClientRect();
     var hand = document.createElement('div');
     hand.className = 'staxx-merge-demohand';
     hand.innerHTML = '<svg viewBox="0 0 24 24" fill="#fff" stroke="#222" stroke-width="1"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V11m0-2a1.5 1.5 0 0 1 3 0v6a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-4.6-2.2L3.4 15.1a1.5 1.5 0 0 1 2.3-1.9L9 16"/></svg>';
     var line = document.createElement('div');
     line.className = 'staxx-merge-demoline';
-    els.board.appendChild(hand);
-    els.board.appendChild(line);
+    mergeModal.appendChild(hand);
+    mergeModal.appendChild(line);
 
     function centerOf(el) {
       var r = el.getBoundingClientRect();
