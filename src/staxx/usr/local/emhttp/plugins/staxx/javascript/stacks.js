@@ -33449,6 +33449,16 @@
       setTimeout(function () { mergedRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
       if (sourceRow) mergeAlignSourceToMerged(sourceRow, mergedRow);
     } else if (sourceRow) {
+      // A change with no merged line (a dropped stack-level x-unraid) lives
+      // only in its source pane — brought a third of the way down that pane
+      // first, as a merged row is, or the card anchors to a line scrolled
+      // out of view and ends up pinned to the top of the window pointing at
+      // nothing (Adrian, built walk 2026-09-16, the last two answers).
+      var srcScroller = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');
+      if (srcScroller) {
+        var sp = srcScroller.getBoundingClientRect(), sr = sourceRow.getBoundingClientRect();
+        srcScroller.scrollTop += (sr.top - sp.top) - sp.height / 3;
+      }
       sourceRow.classList.add('staxx-merge-codeline--flash');
       setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
     }
