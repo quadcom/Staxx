@@ -1792,7 +1792,7 @@
             changes.push({
               key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[pi],
               title: 'Path adjusted for the new stack’s folder',
-              reason: 'Left as written: ' + f.facts.oldPath + ' would have been re-pointed to ' + f.facts.newPath + '.',
+              reason: 'Left as written, so from the new stack’s folder ' + f.facts.oldPath + ' no longer reaches the file. Approving writes ' + f.facts.newPath + ' — the same file, where it already is.',
               struckComment: null
             });
             break;
@@ -1805,7 +1805,7 @@
           changes.push({
             key: f.key, stack: s.name, sourceLine: sourceLineFor(f), marker: result.text,
             title: 'Path adjusted for the new stack’s folder',
-            reason: 'Was ' + f.facts.oldPath + ', now ' + f.facts.newPath + '.',
+            reason: 'Was ' + f.facts.oldPath + ', now ' + f.facts.newPath + ' — the same file, where it already is; only the route to it from the new stack’s folder changed. Nothing is moved.',
             struckComment: result.struckComment || null
           });
         }
