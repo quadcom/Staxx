@@ -13194,6 +13194,11 @@ dialog::backdrop {
      all three measured the same (Adrian, merge step 2, 2026-09-16). */
   display: inline-flex;
   align-items: center;
+  gap: 0.4rem;   /* a little air between the chips (Adrian, same session) — the flex gap replaces the restart chip's own margin below */
+}
+
+.staxx-merge-card-title .staxx-merge-card-state .staxx-pendingchip {
+  margin-left: 0;
 }
 
 .staxx-merge-card-svcline {
