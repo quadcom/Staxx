@@ -208,6 +208,21 @@
     return null;
   }
 
+  // The same search rewriteEnvAddressTracked() below uses, without editing
+  // anything — a declined rewire needs to point its change record's marker
+  // at the exact line that stays, not at a line it just rewrote.
+  function findEnvAddressLine(doc, serviceKey, envVar, addr) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[serviceKey];
+    if (!p) return null;
+    for (var i = p.start; i < p.end; i++) {
+      var line = doc.lines[i];
+      if (line.indexOf(envVar) === -1 || line.indexOf(addr) === -1) continue;
+      return i;
+    }
+    return null;
+  }
+
   // Substring replace inside whichever line names both the env var and the
   // old address — safe because the examiner already matched that exact
   // "host:port" text on that exact variable, so there is nothing to
@@ -285,22 +300,32 @@
     return { host: '', container: main, proto: proto };
   }
 
-  // Returns { line, text } (the SAME shape rewritePathOccurrenceTracked() and
-  // friends use) so the port-clash change record below can be resolved by
-  // marker text like every other rewrite, rather than by a bare boolean that
-  // left this one kind of change with no line to point a mark at at all.
-  function rewritePortHost(doc, serviceKey, oldHostPort, newHostPort) {
+  // The bare lookup rewritePortHost() (below) uses — split out so a decline
+  // can point a change record's marker at the SAME line without rewriting
+  // it (a decline leaves the port exactly as the author wrote it).
+  function findPortLine(doc, serviceKey, hostPort) {
     var range = findPortsRange(doc, serviceKey);
     if (!range) return null;
     for (var i = range.start; i < range.end; i++) {
       var parsed = parsePortListLine(doc.lines[i]);
       if (!parsed) continue;
       var pb = parsePortBody(parsed.body);
-      if (pb.host !== String(oldHostPort)) continue;
-      doc.lines[i] = parsed.prefix + parsed.quote + newHostPort + ':' + pb.container + pb.proto + parsed.quote;
-      return { line: i, text: doc.lines[i] };
+      if (pb.host === String(hostPort)) return i;
     }
     return null;
+  }
+
+  // Returns { line, text } (the SAME shape rewritePathOccurrenceTracked() and
+  // friends use) so the port-clash change record below can be resolved by
+  // marker text like every other rewrite, rather than by a bare boolean that
+  // left this one kind of change with no line to point a mark at at all.
+  function rewritePortHost(doc, serviceKey, oldHostPort, newHostPort) {
+    var i = findPortLine(doc, serviceKey, oldHostPort);
+    if (i === null) return null;
+    var parsed = parsePortListLine(doc.lines[i]);
+    var pb = parsePortBody(parsed.body);
+    doc.lines[i] = parsed.prefix + parsed.quote + newHostPort + ':' + pb.container + pb.proto + parsed.quote;
+    return { line: i, text: doc.lines[i] };
   }
 
   // Drops the whole ports: entry — not a rewrite to a bare container-port
@@ -1595,8 +1620,45 @@
 
       exam.findings.forEach(function (f) {
         if (f.kind !== 'address-rewire' || f.stack !== s.name) return;
-        if (!decisionValue(decisions, f)) return;
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
+
+        if (!decisionValue(decisions, f)) {
+          // Declined — the line(s) stay exactly as the author wrote them;
+          // still marked, so the count and the ring stay honest and the
+          // decision can be reversed (CLAUDE.md rule 2).
+          if (f.facts.split) {
+            var declHostLine = findEnvAddressLine(doc, finalSvc, f.facts.hostVar, f.facts.fromHost);
+            if (declHostLine !== null) {
+              changes.push({
+                key: f.key, part: 'host', declined: true, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[declHostLine],
+                title: 'Now reaches ' + f.facts.toService + ' inside the stack',
+                reason: 'Left as written: still ' + f.facts.fromHost + '; approving would point it at ' + f.facts.toService + ' instead.',
+                struckComment: null
+              });
+            }
+            var declPortLine = findEnvAddressLine(doc, finalSvc, f.facts.portVar, f.facts.fromPort);
+            if (declPortLine !== null) {
+              changes.push({
+                key: f.key, part: 'port', declined: true, stack: s.name, sourceLine: sourceLineFor(f, 1), marker: doc.lines[declPortLine],
+                title: 'Now uses ' + f.facts.toService + '’s own port',
+                reason: 'Left as written: still ' + f.facts.fromPort + '; approving would switch it to ' + f.facts.toPort + '.',
+                struckComment: null
+              });
+            }
+          } else {
+            var declLine = findEnvAddressLine(doc, finalSvc, f.facts.envVar, f.facts.from);
+            if (declLine !== null) {
+              changes.push({
+                key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declLine],
+                title: 'Now reaches ' + f.facts.toService + ' inside the stack',
+                reason: 'Left as written: still ' + f.facts.from + '; approving would point it at ' + f.facts.toService + ' instead.',
+                struckComment: null
+              });
+            }
+          }
+          return;
+        }
+
         if (f.facts.split) {
           var rHost = rewriteEnvAddressTracked(doc, finalSvc, f.facts.hostVar, f.facts.fromHost, f.facts.toService);
           if (rHost) {
@@ -1635,49 +1697,40 @@
       // Port clash (PLAN_155 C10) — the finding's recommended choice IS the
       // free port examine() already picked, so an untouched decision moves
       // that service's port with no further click needed (CLAUDE.md rule 2:
-      // the merged file must never carry an unrecorded clash). "Keep <n>
-      // here" swaps which side moves — the OTHER stack's own line, found
-      // from this same finding's second `lines` entry (findPortClashes()
-      // records both sides for exactly this reason) — and "stop publishing"
-      // drops the mover's port instead of moving it. Every branch pushes a
+      // the merged file must never carry an unrecorded clash). Adrian's
+      // decision (2026-09-16): Approved/Decline like every other card — no
+      // "swap which side moves" any more, and no "stop publishing" either.
+      // Declining leaves BOTH services' ports exactly as written; the new
+      // stack then simply will not start until a person changes one of
+      // them, which is his call to make, not StaXX's. Every branch pushes a
       // change record; the earlier shape rewrote the line with no record at
       // all, so the merged pane carried a silent change (F19).
       exam.findings.forEach(function (f) {
-        if (f.kind !== 'port-clash') return;
+        if (f.kind !== 'port-clash' || f.stack !== s.name) return;
         var decision = decisionValue(decisions, f);
-        var swapped = decision === 'swap';
-        var targetStack = swapped ? f.facts.heldByStack : f.stack;
-        if (targetStack !== s.name) return;
-        var targetSvc = swapped ? f.facts.heldBy : f.facts.service;
-        var otherSvc = swapped ? f.facts.service : f.facts.heldBy;
-        var finalSvc = plan.serviceRenames[s.name + '/' + targetSvc] || targetSvc;
+        var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
 
-        if (!swapped && decision === 'stop-publishing') {
-          // Left as "ports: []" (a real, explicit line) rather than struck
-          // like port-unneeded's own last-port removal — a port-clash's
-          // "stop publishing" is one half of the SAME choice a person just
-          // made about a still-live clash, not a tidy-up nothing needs any
-          // more, so the merged file keeps saying it out loud rather than
-          // erasing the line outright.
-          var removed = removePortPublishTracked(doc, finalSvc, f.facts.port);
-          if (!removed) return;
+        if (decision === 'leave') {
+          var lineIdx = findPortLine(doc, finalSvc, f.facts.port);
+          if (lineIdx === null) return;
           changes.push({
-            key: f.key, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[removed.line],
-            title: 'No longer published',
-            reason: otherSvc + ' already publishes ' + f.facts.port + '; only one service can, so this one stops.',
-            struckComment: removed.struckComment || null
+            key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[lineIdx],
+            title: 'Two services publish port ' + f.facts.port,
+            reason: f.facts.heldBy + ' and ' + f.facts.service + ' both publish ' + f.facts.port +
+              '; left as written, so the new stack will not start until one of them changes.',
+            struckComment: null
           });
           return;
         }
 
-        var newPort = swapped ? f.facts.freePort : freePortFrom(decision);
+        var newPort = freePortFrom(decision);
         if (!newPort) return;
         var result = rewritePortHost(doc, finalSvc, f.facts.port, newPort);
         if (result) {
           changes.push({
-            key: f.key, stack: s.name, sourceLine: sourceLineFor(f, swapped ? 1 : 0), marker: result.text,
+            key: f.key, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: result.text,
             title: 'Moved off a clashing port',
-            reason: otherSvc + ' also publishes ' + f.facts.port + '; only one can, so this moved to ' + newPort + '.',
+            reason: f.facts.heldBy + ' also publishes ' + f.facts.port + '; only one can, so this moved to ' + newPort + '.',
             struckComment: null
           });
         }
@@ -1688,8 +1741,21 @@
       // own comment on port-unneeded's choice).
       exam.findings.forEach(function (f) {
         if (f.kind !== 'port-unneeded' || f.stack !== s.name) return;
-        if (!decisionValue(decisions, f)) return;
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
+
+        if (!decisionValue(decisions, f)) {
+          var declPortLine = findPortLine(doc, finalSvc, f.facts.port);
+          if (declPortLine === null) return;
+          changes.push({
+            key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declPortLine],
+            title: 'No longer published',
+            reason: 'Left as written: nothing outside the stack needs to reach ' + f.facts.service +
+              ' now, but approving is what would actually stop publishing it.',
+            struckComment: null
+          });
+          return;
+        }
+
         var result = removePortPublishTracked(doc, finalSvc, f.facts.port);
         if (result) {
           // The "ports:" key line itself (or, with the last entry gone,
@@ -1719,7 +1785,21 @@
       // at a different depth than this source did.
       exam.findings.forEach(function (f) {
         if (f.kind !== 'depth-path' || f.stack !== s.name) return;
-        if (decisionValue(decisions, f) === 'leave') return;
+
+        if (decisionValue(decisions, f) === 'leave') {
+          for (var pi = 0; pi < doc.lines.length; pi++) {
+            if (doc.lines[pi].indexOf(f.facts.oldPath) === -1) continue;
+            changes.push({
+              key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[pi],
+              title: 'Path adjusted for the new stack’s folder',
+              reason: 'Left as written: ' + f.facts.oldPath + ' would have been re-pointed to ' + f.facts.newPath + '.',
+              struckComment: null
+            });
+            break;
+          }
+          return;
+        }
+
         var result = rewritePathOccurrenceTracked(doc, f.facts.oldPath, f.facts.newPath);
         if (result) {
           changes.push({
@@ -2004,7 +2084,19 @@
           // "leave" just means keep whichever source's copy asks for it
           // first, same one-record-only guard either way.
           if (decisions['top-version'] === 'leave') {
-            if (!versionDropped) { versionDropped = true; topAdditions = topAdditions.concat(blocks.blocks[key]); }
+            if (versionDropped) return;
+            versionDropped = true;
+            topAdditions = topAdditions.concat(blocks.blocks[key]);
+            var verLines = blocks.blocks[key];
+            var verLineIdx = 0;
+            while (verLineIdx < verLines.length && lineKind(verLines[verLineIdx]).kind !== 'other') verLineIdx++;
+            changes.push({
+              key: 'top-version', declined: true, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], marker: verLines[verLineIdx],
+              title: 'The `version:` line is not carried',
+              reason: 'Left as written: kept here. Approving would drop it instead — compose ignores it and warns about it, ' +
+                'so a file StaXX writes fresh would not start with a warning.',
+              struckComment: null
+            });
             return;
           }
           // Compose ignores it and warns about it, so a file StaXX writes
@@ -2043,8 +2135,18 @@
             var xRenamedKey = key + '-' + leaf(sd.name);
             var xStart = blocks.starts[key], xEnd = xStart + blocks.blocks[key].length;
             renameTopKeyLineInDoc(doc, xStart, xEnd, xRenamedKey);
+            var xBody = doc.lines.slice(xStart, xEnd);
+            var xLineIdx = 0;
+            while (xLineIdx < xBody.length && lineKind(xBody[xLineIdx]).kind !== 'other') xLineIdx++;
             topAdditions.push('# From ' + leaf(sd.name));
-            topAdditions = topAdditions.concat(doc.lines.slice(xStart, xEnd));
+            topAdditions = topAdditions.concat(xBody);
+            changes.push({
+              key: xuKey, declined: true, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], marker: xBody[xLineIdx],
+              title: 'This stack’s own description is not carried',
+              reason: 'Left as written: kept here under its own renamed key "' + xRenamedKey + '". Approving would drop it instead — ' +
+                'a merged stack has one description, and ' + firstXUnraidLeaf + '’s is kept.',
+              struckComment: null
+            });
           } else {
             changes.push({
               key: xuKey, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: null,

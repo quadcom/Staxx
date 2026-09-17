@@ -799,11 +799,12 @@
   // `profiles:` key (PLAN_156 F16, applied here rather than left open, and
   // C10's own rule): a profiled service is one nobody starts by default, so
   // it yields regardless of which was picked first. `lines` carries BOTH
-  // sides' own line (mover first, held second) so a "swap" decision — see
-  // merge-write.js's own port-clash handling — still has a real line to
-  // mark on whichever side ends up moving; sourceLineFor(f, 1) is exactly
-  // the same two-line convention address-rewire's split rewrite already
-  // uses, just naming two different stacks instead of two lines in one.
+  // sides' own line (mover first, held second) — the held side's is kept
+  // on the finding even though merge-write.js's port-clash handling (since
+  // Adrian's 2026-09-16 decision, Approved/Decline only) never moves that
+  // side any more, the same two-line convention address-rewire's split
+  // rewrite already uses, just naming two different stacks instead of two
+  // lines in one.
   function findPortClashes(sources, docCache) {
     var out = [];
     var taken = {};
@@ -845,7 +846,12 @@
               // choice is recommended when nothing was clicked, and its
               // port-clash handling expects that fallback to already BE a
               // port to move to, not a label needing a further lookup.
-              choices: [{ id: freePort, recommended: true }, { id: 'stop-publishing', recommended: false }],
+              // Adrian's decision (2026-09-16): Approved/Decline like every
+              // other card, no "swap which side moves" and no "stop
+              // publishing" — declining leaves both ports as written, and
+              // the new stack simply will not start until a person changes
+              // one of them.
+              choices: [{ id: freePort, recommended: true }, { id: 'leave', recommended: false }],
               lines: lines
             });
           } else {

@@ -32696,11 +32696,11 @@
   // line's own amber mark. The buttons keep their dataset attributes
   // unchanged, so the wizard's one delegated click listener needs no
   // separate wiring for "a button that happens to live in a popover".
-  // A port clash's own card (PLAN_155 C10) — the wording and second button
-  // are specific to it ("Keep <n> here (move <a>'s instead)" rather than a
-  // plain "Leave it as it was"), so it is built here instead of the generic
-  // card below, which knows nothing about which side moves or the free port
-  // examine() picked.
+  // A port clash's own card (PLAN_155 C10, Adrian's decision 2026-09-16) —
+  // Approved/Decline like every other card, but the paragraph has to spell
+  // out both outcomes since Decline here means "the new stack will not
+  // start", not merely "left as written" — so it is built here instead of
+  // the generic card below, which knows nothing about that consequence.
   function mergePortClashCard(change, finding) {
     var card = document.createElement('div');
     card.className = 'staxx-merge-reasoncard';
@@ -32709,7 +32709,8 @@
     var p = document.createElement('p');
     p.textContent = finding.facts.heldBy + ' and ' + finding.facts.service + ' both publish ' + finding.facts.port +
       ' on this server; only one can. ' + finding.facts.service + '’s moves to ' + finding.facts.freePort +
-      ', the next free port StaXX found.';
+      ', the next free port StaXX found. Declined, both keep ' + finding.facts.port +
+      ' and the new stack will not start until one of them is changed.';
     var buttons = document.createElement('div');
     buttons.className = 'staxx-merge-reasoncard-buttons';
 
@@ -32719,18 +32720,14 @@
     approveBtn.textContent = 'Approved';
     approveBtn.dataset.mergeApprove = change.key;
 
-    var swapBtn = document.createElement('button');
-    swapBtn.type = 'button';
-    swapBtn.className = 'staxx-btn staxx-merge-leave' + (mergeState.decisions[change.key] === 'swap' ? ' staxx-merge-approve--on' : '');
-    // Short enough to sit in the card — the old "Keep 18080 here (move
-    // commander's instead)" ran past the card's edge (Adrian, built walk
-    // 2026-09-16). The paragraph above already says which port and who
-    // holds it, so the button only needs to name the other way round.
-    swapBtn.textContent = 'Move ' + finding.facts.heldBy + '’s instead';
-    swapBtn.dataset.mergePortSwap = change.key;
+    var leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
+    leaveBtn.className = 'staxx-btn staxx-merge-leave';
+    leaveBtn.textContent = 'Decline';
+    leaveBtn.dataset.mergeLeave = change.key;
 
     buttons.appendChild(approveBtn);
-    buttons.appendChild(swapBtn);
+    buttons.appendChild(leaveBtn);
     card.appendChild(h);
     card.appendChild(p);
     card.appendChild(buttons);
@@ -33265,8 +33262,7 @@
   /* ------------------------------------------ step 3 answer lock + tally -- */
 
   // Every painted change still without an answer — approved, or any
-  // decision at all (including 'leave', a port clash's 'swap', or a plain
-  // choice id), all count as answered. Drives both Next's own lock and the
+  // decision at all ('leave', or a plain choice id), all count as answered. Drives both Next's own lock and the
   // tally's own "<o> to answer" count, off the SAME key list the header
   // count reads (mergePaintedChangeKeys()), so the two can never disagree.
   function mergeOutstandingKeys() {
@@ -36025,22 +36021,6 @@
           // non-recommended choice above.
           mergeState.decisions[key] = 'leave';
         }
-        mergeHidePopoverNow();
-        mergeRebuild();
-        mergeRenderStep3();
-        return;
-      }
-
-      // A port clash's own second button (PLAN_155 C10) — "Keep <n> here"
-      // toggles which side moves rather than merely rejecting the change,
-      // so it is its own decision value ('swap'), not the finding's
-      // non-recommended choice the generic leaveBtn above reads.
-      var portSwapBtn = target.closest && target.closest('[data-merge-port-swap]');
-      if (portSwapBtn) {
-        var swapKey = portSwapBtn.dataset.mergePortSwap;
-        mergeState.autoWalk = true;
-        if (mergeState.decisions[swapKey] === 'swap') delete mergeState.decisions[swapKey];
-        else mergeState.decisions[swapKey] = 'swap';
         mergeHidePopoverNow();
         mergeRebuild();
         mergeRenderStep3();

@@ -202,6 +202,11 @@ console.log('\nB. Published port clashes');
   // to leave the clash unresolved (CLAUDE.md rule 2: never a silent one).
   ok('a free port is recommended, listed first, and the id IS the port number',
      clash[0].facts.freePort === 20000 && clash[0].choices[0].id === 20000 && clash[0].choices[0].recommended === true);
+  // Adrian's decision (2026-09-16): Approved/Decline like every other card —
+  // no "swap which side moves" and no "stop publishing" any more.
+  ok('the second choice is "leave", not "stop-publishing" or "swap"',
+     clash[0].choices.length === 2 && clash[0].choices[1].id === 'leave' &&
+     clash[0].choices.every(function (c) { return c.id !== 'stop-publishing' && c.id !== 'swap'; }));
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp' });
   ok('unanswered still moves the clashing port, to the recommended free one',
@@ -217,17 +222,14 @@ console.log('\nB. Published port clashes');
      /- "9091:3306"/.test(freed.text) && freed.text.indexOf('8091:3306') === -1);
   assertMergedIsValid('port-clash', freed.text, ['web', 'db']);
 
-  var stopped = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp', decisions: (function () { var d = {}; d[key] = 'stop-publishing'; return d; })() });
-  ok('"stop publishing" removes the entry rather than moving it',
-     stopped.text.indexOf('8091:3306') === -1 && stopped.text.indexOf('3306') === -1);
-  var stopChange = stopped.changes.filter(function (c) { return c.key === key; })[0];
-  ok('and it too carries a change record, on the real "ports: []" line left behind',
-     !!stopChange && stopChange.title === 'No longer published' && !stopChange.removed);
-
-  var swapped = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp', decisions: (function () { var d = {}; d[key] = 'swap'; return d; })() });
-  ok('"swap" moves the OTHER (held) service\'s port instead, leaving the mover\'s as written',
-     /- "20000:80"/.test(swapped.text) && /- "8091:3306"/.test(swapped.text));
-  assertMergedIsValid('port-clash-swap', swapped.text, ['web', 'db']);
+  var declined = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp', decisions: (function () { var d = {}; d[key] = 'leave'; return d; })() });
+  ok('Decline leaves BOTH services publishing 8091, as written',
+     /- "8091:80"/.test(declined.text) && /- "8091:3306"/.test(declined.text));
+  assertMergedIsValid('port-clash-declined', declined.text, ['web', 'db']);
+  var declineChanges = declined.changes.filter(function (c) { return c.key === key; });
+  ok('and it carries exactly one declined change record, titled by the clashing port',
+     declineChanges.length === 1 && declineChanges[0].declined === true &&
+     declineChanges[0].title === 'Two services publish port 8091');
 })();
 
 console.log('\nB2. A port clash where one side is behind profiles:');
@@ -524,8 +526,9 @@ console.log('\nH. One stack-level x-unraid (the first source\'s), services keep 
   var kept = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-xunraid|srcF': 'leave' } });
   ok('choosing "leave" keeps the second source\'s own description too, renamed to fit',
      kept.text.indexOf('Second app') >= 0 && /^x-unraid-srcF:/m.test(kept.text));
-  ok('no change record is produced for it, since nothing was left out',
-     !kept.changes.some(function (c) { return c.key === 'top-xunraid|srcF'; }));
+  var keptChange = kept.changes.filter(function (c) { return c.key === 'top-xunraid|srcF'; })[0];
+  ok('a declined change record is produced for it, on the renamed line that is left as written',
+     !!keptChange && keptChange.declined === true && typeof keptChange.line === 'number');
 })();
 
 console.log('\nH1. Icons are not a question — never a clash, one copy per referencing service');
@@ -641,8 +644,9 @@ console.log('\nH2. Every other top-level key travels too (C1, PLAN_156 F1, trap 
   // version: line after all.
   var leftVersion = MW.buildMergedText([a, b], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-version': 'leave' } });
   ok('choosing "leave" on the version: drop keeps it in the merged file', /^version: "3\.8"/m.test(leftVersion.text));
-  ok('...and no change record is produced for it, since nothing was changed',
-     !leftVersion.changes.some(function (c) { return c.key === 'top-version'; }));
+  var leftVersionChange = leftVersion.changes.filter(function (c) { return c.key === 'top-version'; })[0];
+  ok('...and a declined change record IS produced for it, on the kept line — never silent',
+     !!leftVersionChange && leftVersionChange.declined === true && typeof leftVersionChange.line === 'number');
 
   var c = { name: 'appC', text: 'oddball:\n  a: 1\nservices:\n  web:\n    image: nginx:latest\n' };
   var d = { name: 'appD', text: 'oddball:\n  a: 2\nservices:\n  db:\n    image: mariadb:11\n' };
@@ -699,6 +703,9 @@ console.log('\nI. Relative paths that move with the folder\'s own depth');
   var left = MW.buildMergedText([c, d], { date: '2026-09-15', name: 'demoapp', newDepth: 0, decisions: decisions });
   ok('"leave" keeps the path exactly as the author wrote it, even though it now points somewhere else',
      left.text.indexOf('../shared/certs') >= 0);
+  var leftChanges = found.map(function (f) { return left.changes.filter(function (c) { return c.key === f.key; })[0]; });
+  ok('every declined depth-path finding still carries its own change record, never silent',
+     leftChanges.every(function (c) { return !!c && c.declined === true && typeof c.line === 'number'; }));
 })();
 
 /* =========================================================================
@@ -1241,8 +1248,9 @@ console.log('\nO2. Finding `lines` populated for every rewriting kind, threading
   var r = M.examine([descOf(a), descOf(b)]);
   var clash = findingsOf(r, 'port-clash')[0];
   // Both sides' own line — the mover's (incoming/db, moving by default) and
-  // the one it clashes with (host/web, staying put) — so a "swap" decision
-  // (PLAN_155 C10) still has a real line on the OTHER stack to mark.
+  // the one it clashes with (host/web, staying put); only the mover's is
+  // used since Adrian's 2026-09-16 decision dropped the "swap which side
+  // moves" answer, but the held side's line is kept on the finding too.
   ok('port-clash names both the mover\'s and the held service\'s own line',
      clash.lines.length === 2 && clash.lines[0].stack === 'incoming' && clash.lines[1].stack === 'host');
 })();
@@ -1341,19 +1349,21 @@ console.log('\nP. Closing the last published port leaves valid, explicit YAML');
 })();
 
 (function () {
-  // The same fix applies to port-clash's own "stop publishing" answer, not
-  // just port-unneeded — both share removePortPublishTracked().
+  // Declining a port-clash (Adrian's decision, 2026-09-16) leaves BOTH
+  // ports exactly as written — no "stop publishing" any more, so nothing
+  // here goes through removePortPublishTracked() at all; port-unneeded's
+  // own tests above still cover that function's "ports: []" behaviour.
   var a = { name: 'appA', text: 'services:\n  web:\n    image: nginx:latest\n    ports:\n      - "8091:80"\n' };
   var b = { name: 'appB', text: 'services:\n  db:\n    image: mariadb:11\n    ports:\n      - "8091:3306"\n' };
   var descA = MW.descriptorFromText('appA', a.text, null, []);
   var descB = MW.descriptorFromText('appB', b.text, null, []);
   var clash = M.examine([descA, descB]).findings.filter(function (f) { return f.kind === 'port-clash'; })[0];
-  var decisions = {}; decisions[clash.key] = 'stop-publishing';
+  var decisions = {}; decisions[clash.key] = 'leave';
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-15', name: 'demoapp', decisions: decisions });
-  ok('"stop publishing" on a port-clash also leaves "ports: []", not a bare key',
-     /^    ports: \[\]$/m.test(w.text));
-  assertMergedIsValid('port-clash-stop-publishing', w.text, ['web', 'db']);
+  ok('declining a port-clash leaves both ports exactly as written',
+     /- "8091:80"/.test(w.text) && /- "8091:3306"/.test(w.text));
+  assertMergedIsValid('port-clash-declined-single', w.text, ['web', 'db']);
 })();
 
 /* =========================================================================
