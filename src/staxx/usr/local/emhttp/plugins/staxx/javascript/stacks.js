@@ -31530,6 +31530,9 @@
     mergePopoverEl.hidden = true;
     mergePopoverEl.addEventListener('mouseenter', function () { clearTimeout(mergePopoverHideTimer); mergePopoverVisited = true; });
     mergePopoverEl.addEventListener('mouseleave', function () { mergePopoverVisited = true; mergeSchedulePopoverHide(); });
+    // Scroll does not bubble, so it is caught on the way down instead —
+    // one listener for every pane the dialog will ever hold.
+    mergeModal.addEventListener('scroll', function () { mergePlacePopover(); }, true);
     mergeModal.appendChild(mergePopoverEl);
     return mergePopoverEl;
   }
@@ -31551,6 +31554,10 @@
     if (mergePopoverEl) mergePopoverEl.hidden = true;
   }
 
+  // The open card's own anchor, kept so the card can be placed again when
+  // the pane under it scrolls (mergePlacePopover() below).
+  var mergePopoverAnchor = null, mergePopoverOpts = null;
+
   function mergeShowPopover(anchor, contentEl, opts) {
     var pop = mergeEnsurePopover();
     if (!pop) return;
@@ -31559,10 +31566,36 @@
     pop.innerHTML = '';
     pop.appendChild(contentEl);
     pop.hidden = false;
-    // Measured against the dialog's own box, not the viewport — see this
-    // function group's header comment on why position:fixed lands there.
+    mergePopoverAnchor = anchor;
+    mergePopoverOpts = opts || null;
+    mergePlacePopover();
+  }
+
+  // Places the open card against its anchor. Called on open, and again on
+  // every scroll inside the dialog while the card is up: a pane still
+  // gliding through a smooth scroll (mergeShowSource()'s own jump to a
+  // source's services) carried the line away from a card measured
+  // mid-glide, and a pane the person scrolls by hand did the same — the
+  // pointer then aimed at the wrong line (Adrian, built walk 2026-09-16).
+  function mergePlacePopover() {
+    var pop = mergePopoverEl, anchor = mergePopoverAnchor, opts = mergePopoverOpts;
+    if (!pop || pop.hidden || !anchor || !anchor.isConnected) return;
+    // The card is position:fixed, and what a fixed box is measured from
+    // depends on whether any ancestor carries a transform or filter — the
+    // dialog did once, and does not now, so every card sat exactly the
+    // dialog's own top offset too high (the pointer aimed a line above,
+    // Adrian's walk 2026-09-16). Rather than assume either, the card is
+    // parked at 0,0 and its own rect read back: that IS the origin, whatever
+    // the containing block turns out to be. The dialog's box is still what
+    // the card is kept inside of.
+    pop.style.top = '0px';
+    pop.style.left = '0px';
+    var origin = pop.getBoundingClientRect();
     var mr = mergeModal.getBoundingClientRect();
     var ar = anchor.getBoundingClientRect();
+    var minTop = mr.top + 8, maxTop = mr.bottom - pop.offsetHeight - 8;
+    var minLeft = mr.left + 8, maxLeft = mr.right - pop.offsetWidth - 8;
+    var top, left;
     // A line mark's card sits off to the RIGHT, level with its line and
     // against the pane's far edge, so the line and its neighbours stay
     // readable while the card is up (the same walk, same complaint).
@@ -31570,27 +31603,25 @@
     if (anchorRow) {
       var textEl = anchorRow.querySelector('.staxx-merge-codetext');
       var tr = (textEl || anchorRow).getBoundingClientRect();
-      var rowLeft = Math.min(tr.right - mr.left + 12, mr.width - pop.offsetWidth - 8);
-      var popTop = Math.max(8, Math.min(ar.top - mr.top, mr.height - pop.offsetHeight - 8));
-      pop.style.top = popTop + 'px';
-      pop.style.left = Math.max(8, rowLeft) + 'px';
+      top = Math.max(minTop, Math.min(ar.top, maxTop));
+      left = Math.max(minLeft, Math.min(tr.right + 12, maxLeft));
       // The pointer on the card's left edge aims at the LINE's middle, not
       // the card's — the two differ whenever the clamp above moved the card.
       pop.classList.add('staxx-merge-pop--tip');
-      pop.style.setProperty('--tip', ((ar.top - mr.top) + ar.height / 2 - popTop) + 'px');
-      return;
+      pop.style.setProperty('--tip', (ar.top + ar.height / 2 - top) + 'px');
+    } else {
+      pop.classList.remove('staxx-merge-pop--tip');
+      // A step 4 file row (C17) opens its card overlapping its own lower
+      // half — top edge at the row's top + 55% of its own height — so the
+      // pointer steps straight off the row into the box instead of crossing
+      // the row below it (opening beside or fully beneath the row were both
+      // tried and rejected, the first as too cramped, the second because the
+      // next row took the popover over on a dense list).
+      top = (opts && opts.overRow) ? (ar.top + ar.height * 0.55) : (ar.bottom + 6);
+      left = Math.max(minLeft, Math.min(ar.left, maxLeft));
     }
-    pop.classList.remove('staxx-merge-pop--tip');
-    var left = Math.max(8, Math.min(ar.left - mr.left, mr.width - pop.offsetWidth - 8));
-    // A step 4 file row (C17) opens its card overlapping its own lower
-    // half — top edge at the row's top + 55% of its own height — so the
-    // pointer steps straight off the row into the box instead of crossing
-    // the row below it (opening beside or fully beneath the row were both
-    // tried and rejected, the first as too cramped, the second because the
-    // next row took the popover over on a dense list).
-    var top = (opts && opts.overRow) ? ((ar.top - mr.top) + ar.height * 0.55) : (ar.bottom - mr.top + 6);
-    pop.style.top = top + 'px';
-    pop.style.left = left + 'px';
+    pop.style.top = (top - origin.top) + 'px';
+    pop.style.left = (left - origin.left) + 'px';
   }
 
   // A CSS.escape() a bare string when the browser has one, otherwise the
@@ -31644,7 +31675,18 @@
     // stopping it here (rather than trusting that handler's own exemption of
     // ".staxx-merge-gmark") means opening is never racing a half-applied
     // close from the same gesture.
-    mark.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+    mark.addEventListener('click', function (e) {
+      e.stopPropagation();
+      // A click (not a hover) on a merged-pane mark also brings its source
+      // row level with it, the same as clicking the row — hover leaves the
+      // panes alone so a pass of the pointer never scrolls anything.
+      var mergedCodeEl = document.getElementById('staxx-merge-merged-code');
+      if (mergedCodeEl && mergedCodeEl.contains(mark)) {
+        var srcTwin = document.querySelector('#staxx-merge-srctrack [data-merge-change-key="' + mergeCssEsc(change.key) + '"]');
+        mergeAlignSourceToMerged(srcTwin, mark.closest('.staxx-merge-codeline'));
+      }
+      open();
+    });
     numEl.appendChild(mark);
   }
 
@@ -33296,6 +33338,27 @@
   // outstanding change after mergeState.walkLast (wrapping to the top),
   // shows its owning source, snaps the two panes together and flashes
   // both, and opens the row's own popover so the answer is one click away.
+  // The mirror of mergeAlignAndFlash(): the MERGED row stays where it is
+  // and the source pane scrolls to sit level with it — slid to that source
+  // first when another is showing. Used wherever the person's eye is on
+  // the merged pane (a click on one of its rows or marks, the walk) so the
+  // line they clicked never moves out from under them.
+  function mergeAlignSourceToMerged(sourceRow, mergedRow) {
+    if (!sourceRow || !mergedRow) return;
+    var ownerPane = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');
+    if (ownerPane) {
+      var ownerIdx = mergeSourceIdxForRel(ownerPane.dataset.mergeSourceStack);
+      if (ownerIdx >= 0 && ownerIdx !== mergeState.srcIdx) mergeShowSource(ownerIdx);
+    }
+    var mergedPane = document.getElementById('staxx-merge-merged-code');
+    var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-code');
+    if (!mergedPane || !scroller) return;
+    scroller.scrollTop += (sourceRow.getBoundingClientRect().top - mergedRow.getBoundingClientRect().top);
+    sourceRow.classList.add('staxx-merge-codeline--flash');
+    setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+    mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
+  }
+
   function mergeWalkToKey(key) {
     var change = mergeChangeForKey(key);
     if (change && change.stack) {
@@ -33315,17 +33378,7 @@
       mergedPane.scrollTop += (rowRect.top - paneRect.top) - paneRect.height / 3;
       mergedRow.classList.add('staxx-merge-codeline--flash');
       setTimeout(function () { mergedRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
-      if (sourceRow) {
-        var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-code');
-        if (scroller) {
-          var mergedRowRect = mergedRow.getBoundingClientRect();
-          var sourceRowRectBefore = sourceRow.getBoundingClientRect();
-          scroller.scrollTop += (sourceRowRectBefore.top - mergedRowRect.top);
-          sourceRow.classList.add('staxx-merge-codeline--flash');
-          setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
-          mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
-        }
-      }
+      if (sourceRow) mergeAlignSourceToMerged(sourceRow, mergedRow);
     } else if (sourceRow) {
       sourceRow.classList.add('staxx-merge-codeline--flash');
       setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
@@ -36068,8 +36121,9 @@
         var mergedRow = inMerged ? changedRow : document.querySelector('#staxx-merge-merged-code [data-merge-change-key="' + selector + '"]');
         var srcRow = inMerged ? document.querySelector('.staxx-merge-sourcepane [data-merge-change-key="' + selector + '"]') : changedRow;
         var mark = changedRow.querySelector('.staxx-merge-gmark');
-        if (inMerged) mergeAlignAndFlash(srcRow, mergedRow);   // slides to the source that raised it
-        if (mark) mark.click(); else mergeAlignAndFlash(srcRow, mergedRow);
+        if (mark) mark.click();   // a merged mark's own click lines the source up; a source mark's lines the merged pane up
+        else if (inMerged) mergeAlignSourceToMerged(srcRow, mergedRow);
+        else mergeAlignAndFlash(srcRow, mergedRow);
       }
     });
 
