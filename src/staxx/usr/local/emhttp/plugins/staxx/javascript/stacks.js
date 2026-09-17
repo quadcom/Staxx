@@ -31533,6 +31533,11 @@
     // Scroll does not bubble, so it is caught on the way down instead —
     // one listener for every pane the dialog will ever hold.
     mergeModal.addEventListener('scroll', function () { mergePlacePopover(); }, true);
+    // The source strip slides across on a 0.35s transform; a card opened by
+    // the walk mid-slide measured its line where it happened to be at that
+    // instant and covered line 1 once the pane came to rest (Adrian, built
+    // walk 2026-09-16). Placed again when any transition in the dialog ends.
+    mergeModal.addEventListener('transitionend', function () { mergePlacePopover(); });
     mergeModal.appendChild(mergePopoverEl);
     return mergePopoverEl;
   }
