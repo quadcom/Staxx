@@ -1507,6 +1507,24 @@ console.log('\nQ. Settings-join per-entry overrides');
 
   assertMergedIsValid('C3 override-applied text on its own', desc.text, ['web']);
 
+  // t155-admin's shape (Adrian's walk, 2026-09-16): the base has an
+  // environment: block and NO ports:, and the override lists ports BEFORE
+  // environment. The new ports: list lands at the foot of the service
+  // first, then the environment entry is inserted above it and pushes it
+  // down a line — the port's record has to follow, or its mark sits on
+  // the "ports:" key while the merged mark sits on the port line.
+  var baseAdmin = ['services:', '  web:', '    image: adminer:4', '    environment:', '      TZ: UTC', ''].join('\n');
+  var overrideAdmin = ['services:', '  web:', '    ports:', '      - "18081:8080"', '    environment:', '      ADMINER_DESIGN: pepa-linha', ''].join('\n');
+  var descAdmin = MW.descriptorFromText('t155-admin', baseAdmin, null, [], { overrideText: overrideAdmin });
+  var adminLines = descAdmin.text.split('\n');
+  var portRec = (descAdmin.overrideChanges || []).filter(function (c) { return /18081:8080/.test(c.marker); })[0];
+  ok('C3: a port appended before a later environment insert still points at the PORT line, not the ports: key',
+     !!portRec && adminLines[portRec.sourceLine] === portRec.marker && /18081:8080/.test(adminLines[portRec.sourceLine]));
+  ok('C3: ...and its key carries that same, final line number',
+     !!portRec && portRec.key === 'override|t155-admin|' + portRec.sourceLine);
+  ok('C3: every admin-shaped record names exactly the line it sits on',
+     (descAdmin.overrideChanges || []).every(function (c) { return adminLines[c.sourceLine] === c.marker; }));
+
   // A source with no override at all is untouched — overrideChanges is
   // simply empty, not absent, so callers never have to guard its shape.
   var plain = MW.descriptorFromText('demo-web', base, null, [], {});

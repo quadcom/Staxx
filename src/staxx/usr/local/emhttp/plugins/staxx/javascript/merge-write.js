@@ -1191,6 +1191,22 @@
       });
     });
 
+    // Every record's sourceLine was noted as its line went in, and a LATER
+    // insert higher up the same service (the override's environment: entry
+    // after its ports: entry, in the override's own key order) pushed it
+    // down without the note following — so the mark sat on "ports:" while
+    // the merged mark sat on the port line beneath (Adrian, built walk
+    // 2026-09-16). Resolved once here, against the finished text: each
+    // record's marker IS its line, searched forward from where it was
+    // noted (inserts only ever push a line down), then anywhere as a last
+    // resort. The key carries the line, so it is rebuilt with it.
+    changes.forEach(function (c) {
+      var at = -1;
+      for (var i = c.sourceLine; i < doc.lines.length; i++) { if (doc.lines[i] === c.marker) { at = i; break; } }
+      if (at < 0) at = doc.lines.indexOf(c.marker);
+      if (at >= 0 && at !== c.sourceLine) { c.sourceLine = at; c.key = 'override|' + stackRel + '|' + at; }
+    });
+
     return { text: doc.bom + doc.lines.join(doc.eol || '\n'), changes: changes };
   }
 
