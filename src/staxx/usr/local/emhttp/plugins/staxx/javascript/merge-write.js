@@ -208,6 +208,32 @@
     return null;
   }
 
+  // PLAN_155 F17 — a service's x-unraid.webui address named the port a
+  // port-clash finding just moved it off; left alone, the merged stack's
+  // "open web page" button would point at a port the container no longer
+  // publishes. Modelled on rewriteServiceIcon() just above: scoped to the
+  // one service's own line range, only the old port's own digits are
+  // replaced (not the whole value), and only when they are followed by a
+  // path, the end of the value, or a query string — so "8091" is never
+  // mistaken for the leading digits of "80910" or similar.
+  function rewriteServiceWebui(doc, serviceKey, oldPort, newPort) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[serviceKey];
+    if (!p) return null;
+    var re = new RegExp(':' + oldPort + '(?=[/?]|$)');
+    for (var i = p.start; i < p.end; i++) {
+      var m = /^\s*webui:\s*(.*)$/.exec(doc.lines[i]);
+      if (!m) continue;
+      var cm = /^([^#]*?)(\s*#.*)?$/.exec(m[1]);
+      var val = cm[1].replace(/^['"]|['"]$/g, '').trim();
+      if (!re.test(val)) continue;
+      var newVal = val.replace(re, ':' + newPort);
+      doc.lines[i] = rewriteScalarValue(doc.lines[i], newVal);
+      return { line: i, text: doc.lines[i] };
+    }
+    return null;
+  }
+
   // The same search rewriteEnvAddressTracked() below uses, without editing
   // anything — a declined rewire needs to point its change record's marker
   // at the exact line that stays, not at a line it just rewrote.
@@ -663,6 +689,49 @@
    * different places. Omitted, merge-examine.js falls back to `depth`.)
    * ===================================================================== */
 
+  // A bracket/brace-style value ("profiles: [\"tools\"]", "command: [a, b]")
+  // parses in compose-model.js to an opaque 'flow' node with no `.value` at
+  // all — toPlain() used to fall through to `undefined` for it, which is
+  // what let a dormant service's profiles: ["tools"] read as "no profiles",
+  // i.e. always running (Adrian's real merge, 2026-09-17: a live web port
+  // was moved instead of the actually-dormant service behind it). Lists reuse
+  // compose-model.js's own parseFlowList (one splitter, not two); a flow MAP
+  // has no such helper there, so it gets its own tiny comma/colon split here.
+  function parseFlow(raw) {
+    var idx = raw.indexOf(':');
+    var text = idx < 0 ? raw : raw.slice(idx + 1);
+    // Strip a trailing "# comment" that sits outside any quoted section.
+    var q = null, cut = -1;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (q) { if (c === q) q = null; continue; }
+      if (c === '"' || c === "'") { q = c; continue; }
+      if (c === '#') { cut = i; break; }
+    }
+    if (cut >= 0) text = text.slice(0, cut);
+    text = text.replace(/^\s+|\s+$/g, '');
+
+    if (text.charAt(0) === '[') {
+      var list = CM.parseFlowList((idx < 0 ? 'x: ' : raw.slice(0, idx + 1)) + text);
+      return list || [];
+    }
+    if (text.charAt(0) === '{' && text.charAt(text.length - 1) === '}') {
+      var inner = text.slice(1, -1);
+      var parts = inner.split(',');
+      var o = {};
+      parts.forEach(function (part) {
+        var t = part.replace(/^\s+|\s+$/g, '');
+        if (!t) return;
+        var ci = t.indexOf(':');
+        var k = (ci < 0 ? t : t.slice(0, ci)).replace(/^\s+|\s+$/g, '').replace(/^['"]|['"]$/g, '');
+        var v = (ci < 0 ? '' : t.slice(ci + 1)).replace(/^\s+|\s+$/g, '').replace(/^['"]|['"]$/g, '');
+        o[k] = v;
+      });
+      return o;
+    }
+    return text;
+  }
+
   function toPlain(node) {
     if (!node) return undefined;
     if (node.kind === 'scalar') return node.value;
@@ -672,6 +741,7 @@
       node.keys.forEach(function (k) { o[k] = toPlain(node.pairs[k].value); });
       return o;
     }
+    if (node.kind === 'opaque' && node.reason === 'flow') return parseFlow(node.raw);
     return undefined;
   }
 
@@ -1758,6 +1828,22 @@
             reason: f.facts.heldBy + ' also publishes ' + f.facts.port + '; only one can, so this moved to ' + newPort + '.',
             struckComment: null
           });
+
+          // F17 — the same service's own "open web page" address, if it
+          // named the port that just moved. Shares the finding's key (a
+          // second part of the one decision, like an address-rewire's
+          // host/port pair) so the merged heading's own count is unaffected
+          // — mergePaintedChangeKeys() (stacks.js) counts distinct KEYS, and
+          // this key is already counted by the port move above.
+          var webResult = rewriteServiceWebui(doc, finalSvc, f.facts.port, newPort);
+          if (webResult) {
+            changes.push({
+              key: f.key, part: 'webui', stack: s.name, sourceLine: webResult.line, marker: webResult.text,
+              title: 'Web address follows the moved port',
+              reason: 'It named port ' + f.facts.port + ', which this service no longer publishes; now ' + newPort + '.',
+              struckComment: null
+            });
+          }
         }
       });
 

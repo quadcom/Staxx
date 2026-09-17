@@ -232,6 +232,45 @@ console.log('\nB. Published port clashes');
      declineChanges[0].title === 'Two services publish port 8091');
 })();
 
+(function () {
+  // PLAN_155 F17 — the mover's own "open web page" address named the port
+  // that just moved; it must follow, or the button opens a port the
+  // service no longer publishes.
+  // Neither side is behind profiles:, so the SECOND source's service is the
+  // one that moves by default — the webui line goes on that one.
+  var a = {
+    name: 'host', envText: null, text: [
+      'services:', '  db:', '    image: mariadb:11', '    ports:', '      - "8091:3306"'
+    ].join('\n')
+  };
+  var b = {
+    name: 'incoming', envText: null, text: [
+      'services:', '  web:', '    image: nginx:latest', '    x-unraid:',
+      '      webui: "http://[IP]:8091/"', '    ports:', '      - "8091:80"'
+    ].join('\n')
+  };
+  var r = M.examine([descOf(a), descOf(b)]);
+  var clash = findingsOf(r, 'port-clash')[0];
+  var w = MW.buildMergedText([a, b], { date: '2026-09-17', name: 'demoapp' });
+  ok('the webui address follows the moved port',
+     w.text.indexOf('webui: "http://[IP]:20000/"') >= 0);
+  var webChange = w.changes.filter(function (c) { return c.key === clash.key && c.part === 'webui'; })[0];
+  ok('a change record with part "webui" carries the right title',
+     !!webChange && webChange.title === 'Web address follows the moved port');
+
+  // A mover WITHOUT a webui line produces no such record.
+  var b2 = {
+    name: 'incoming', envText: null, text: [
+      'services:', '  web:', '    image: nginx:latest', '    ports:', '      - "8091:80"'
+    ].join('\n')
+  };
+  var r2 = M.examine([descOf(a), descOf(b2)]);
+  var clash2 = findingsOf(r2, 'port-clash')[0];
+  var w2 = MW.buildMergedText([a, b2], { date: '2026-09-17', name: 'demoapp' });
+  ok('no webui record is produced when the mover has no webui line',
+     w2.changes.filter(function (c) { return c.key === clash2.key && c.part === 'webui'; }).length === 0);
+})();
+
 console.log('\nB2. A port clash where one side is behind profiles:');
 
 (function () {
@@ -255,6 +294,34 @@ console.log('\nB2. A port clash where one side is behind profiles:');
   ok('its own port line moves; the plain service\'s stays put',
      /- "20000:80"/.test(w.text) && /- "8091:3306"/.test(w.text));
   assertMergedIsValid('port-clash-profiled', w.text, ['web', 'db']);
+})();
+
+(function () {
+  // Same shape, but "profiles:" is written bracket-style on one line — the
+  // fault in Adrian's real merge (2026-09-17): toPlain() used to read a
+  // flow-style list as nothing at all, so this service looked like it
+  // always ran and the LIVE service moved off its port instead.
+  var a = { name: 'host', text: 'services:\n  web:\n    image: nginx:latest\n    profiles: ["optional"]\n    ports:\n      - "8091:80"\n', envText: null };
+  var b = { name: 'incoming', text: 'services:\n  db:\n    image: mariadb:11\n    ports:\n      - "8091:3306"\n', envText: null };
+  var r = M.examine([descOf(a), descOf(b)]);
+  var clash = findingsOf(r, 'port-clash')[0];
+  ok('a bracket-style profiles: still moves the profiled service, not the plain one',
+     clash.stack === 'host' && clash.facts.service === 'web' && clash.facts.heldBy === 'db');
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp' });
+  ok('its own port line moves; the plain service\'s stays put (bracket-style profiles:)',
+     /- "20000:80"/.test(w.text) && /- "8091:3306"/.test(w.text));
+  assertMergedIsValid('port-clash-profiled-flow', w.text, ['web', 'db']);
+})();
+
+(function () {
+  // A bracket-style command: must not break descriptor building — it is a
+  // sibling flow value to profiles:, read the same way, and services must
+  // still come through.
+  var a = { name: 'host', text: 'services:\n  web:\n    image: redis:7\n    command: ["redis-server", "/etc/redis.conf"]\n', envText: null };
+  var desc = MW.descriptorFromText(a.name, a.text, a.envText, []);
+  ok('a bracket-style command: does not break descriptor building',
+     !!desc.compose.services.web && desc.compose.services.web.image === 'redis:7');
 })();
 
 console.log('\nC. Shorthand (top-level declaration) clashes');
