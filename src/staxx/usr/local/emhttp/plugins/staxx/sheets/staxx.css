@@ -13703,6 +13703,32 @@ dialog::backdrop {
   font: inherit;
 }
 
+/* Replays the dependency-board demonstration on demand (C17 follow-up).
+   Muted link-like text beside the "Dependencies" heading rather than a
+   real button — every other control on this board earns a solid look, but
+   this one is a rarely-needed rerun of a one-off animation, not an action
+   with a consequence. Needs `.staxx-scaffold button.` specificity, same as
+   every other control here, or Unraid's own reset wins (see this sheet's
+   header). */
+.staxx-scaffold button.staxx-merge-showme {
+  font-size: 1.1rem;
+  font-weight: 400;
+  line-height: inherit;
+  color: var(--sm-muted);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  margin-left: 0.8rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.staxx-scaffold button.staxx-merge-showme:hover {
+  text-decoration: underline dotted;
+  text-decoration-thickness: 0.1rem;
+  text-underline-offset: 0.25rem;
+}
+
 /* ---- the foot ---- */
 
 .staxx-merge-foot-right {
@@ -14428,19 +14454,33 @@ dialog::backdrop {
   width: 2.6rem;
   height: 2.6rem;
   pointer-events: none;
-  transition: left 1.4s ease-in-out, top 1.4s ease-in-out, opacity 0.4s;
+  /* Left/top are set every animation frame by stacks.js now, not by a CSS
+     transition — that is what lets the hand and the curve it draws move in
+     step (a transition here fought the per-frame updates and read as two
+     motions racing each other). Opacity is still a plain fade. */
+  transition: opacity 0.4s;
   filter: drop-shadow(0 0.2rem 0.4rem rgba(0, 0, 0, 0.6));
 }
 
-.staxx-merge-demoline {
+/* The demo's own curve, drawn the same way mergeDrawDepLines() draws a real
+   one (mergeCurvePath, reshaped every frame under the hand) rather than a
+   straight rotated div — the straight line read as too linear next to the
+   S-curves either side of it (Adrian, 2026-09-17). Sits below the board's
+   popovers (z 20) and above the board itself. */
+.staxx-merge-demosvg {
+  transition: opacity 0.4s;
   position: absolute;
-  z-index: 4;
-  height: 0.2rem;
-  background: #ffc43d;
-  border-radius: 0.1rem;
-  transform-origin: left center;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 6;
   pointer-events: none;
-  opacity: 0.9;
+}
+
+.staxx-merge-demopath {
+  fill: none;
+  stroke-width: 0.15rem;
+  stroke-linecap: round;
 }
 
 /* ---- block 2: health checks — one card, one row per service. ---- */

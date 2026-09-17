@@ -34885,7 +34885,13 @@
     block.className = 'staxx-merge-suggest-block';
     var q = document.createElement('h4');
     q.className = 'staxx-merge-suggest-q';
-    q.textContent = 'Dependencies';
+    q.appendChild(document.createTextNode('Dependencies'));
+    var showMe = document.createElement('button');
+    showMe.type = 'button';
+    showMe.className = 'staxx-btn staxx-merge-showme';
+    showMe.setAttribute('data-merge-demo-play', '');
+    showMe.textContent = 'Show me';
+    q.appendChild(showMe);
     block.appendChild(q);
 
     // C17: the START-versus-READY paragraph that used to sit under the
@@ -34985,13 +34991,18 @@
   }
 
   // Fades a hand in on the second service's handle in the left column,
-  // glides it to the third in the right column while an amber line draws
-  // itself alongside, then fades both out — purely decorative (pointer-
-  // events: none throughout) and nothing here is written into mergeState
-  // beyond the cleanup handle a real drag can cancel it through.
-  function mergePlayDepDemo() {
+  // glides it to the third in the right column while a curved line — the
+  // same shape mergeCurvePath() draws for a real connection, reshaping
+  // under the hand exactly as it does under a real drag — grows alongside,
+  // then fades both out. Purely decorative (pointer-events: none
+  // throughout) and nothing here is written into mergeState beyond the
+  // cleanup handle a real drag can cancel it through. `force` skips the
+  // "board unchanged since it opened" check so a "Show me" click can
+  // replay it regardless of what has been drawn since (C17 follow-up,
+  // Adrian 2026-09-17: "make the animation behave like the actual lines").
+  function mergePlayDepDemo(force) {
     if (!mergeState || mergeState.step !== 5) return;
-    if ((mergeState.suggest.deps || []).length !== mergeState.demoDepsAtOpen) return;   // a line was drawn or removed meanwhile
+    if (!force && (mergeState.suggest.deps || []).length !== mergeState.demoDepsAtOpen) return;   // a line was drawn or removed meanwhile
     var els = mergeDepBoardEls();
     if (!els.board) return;
     var fromChips = els.board.querySelectorAll('[data-dep-chip="from"]');
@@ -35013,10 +35024,18 @@
     var hand = document.createElement('div');
     hand.className = 'staxx-merge-demohand';
     hand.innerHTML = '<svg viewBox="0 0 24 24" fill="#fff" stroke="#222" stroke-width="1"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V11m0-2a1.5 1.5 0 0 1 3 0v6a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-4.6-2.2L3.4 15.1a1.5 1.5 0 0 1 2.3-1.9L9 16"/></svg>';
-    var line = document.createElement('div');
-    line.className = 'staxx-merge-demoline';
+
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'staxx-merge-demosvg');
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', 'staxx-merge-demopath');
+    var fromService = fromChips[1].dataset.depSvc;
+    var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+    path.setAttribute('stroke', mergeSvcColor(services, fromService));
+    svg.appendChild(path);
+
+    mergeModal.appendChild(svg);
     mergeModal.appendChild(hand);
-    mergeModal.appendChild(line);
 
     function centerOf(el) {
       var r = el.getBoundingClientRect();
@@ -35024,31 +35043,49 @@
     }
     var p1 = centerOf(fromHandle), p2 = centerOf(toHandle);
     hand.style.left = p1.x + 'px'; hand.style.top = p1.y + 'px'; hand.style.opacity = '0';
-    line.style.left = p1.x + 'px'; line.style.top = p1.y + 'px'; line.style.width = '0px'; line.style.opacity = '0';
+    path.setAttribute('d', mergeCurvePath(p1, p1));
 
     function cleanup() {
       hand.remove();
-      line.remove();
+      svg.remove();
       if (mergeState) mergeState.demoPlaying = false;
     }
     mergeState.demoCleanup = cleanup;
 
+    // Same easing shape as a natural hand movement — accelerate away from
+    // the start, decelerate into the target — rather than the straight div
+    // line's constant-speed slide this replaced.
+    function easeInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+
+    function glide(onDone) {
+      var startTime = null;
+      var duration = 1400;
+      function frame(now) {
+        if (!mergeState || !mergeState.demoPlaying) return;
+        if (startTime === null) startTime = now;
+        var t = Math.min(1, (now - startTime) / duration);
+        var e = easeInOut(t);
+        var cur = { x: p1.x + (p2.x - p1.x) * e, y: p1.y + (p2.y - p1.y) * e };
+        hand.style.left = cur.x + 'px';
+        hand.style.top = cur.y + 'px';
+        path.setAttribute('d', mergeCurvePath(p1, cur));
+        if (t < 1) requestAnimationFrame(frame);
+        else onDone();
+      }
+      requestAnimationFrame(frame);
+    }
+
     requestAnimationFrame(function () { hand.style.opacity = '1'; });
     setTimeout(function () {
       if (!mergeState || !mergeState.demoPlaying) return;
-      var dx = p2.x - p1.x, dy = p2.y - p1.y;
-      var len = Math.sqrt(dx * dx + dy * dy), ang = Math.atan2(dy, dx) * 180 / Math.PI;
-      hand.style.left = p2.x + 'px';
-      hand.style.top = p2.y + 'px';
-      line.style.width = len + 'px';
-      line.style.transform = 'rotate(' + ang + 'deg)';
-      line.style.opacity = '0.9';
-      setTimeout(function () {
-        if (!mergeState || !mergeState.demoPlaying) return;
-        hand.style.opacity = '0';
-        line.style.opacity = '0';
-        setTimeout(cleanup, 400);
-      }, 1900);
+      glide(function () {
+        setTimeout(function () {
+          if (!mergeState || !mergeState.demoPlaying) return;
+          hand.style.opacity = '0';
+          svg.style.opacity = '0';   // fades with the hand rather than vanishing when cleanup() removes it
+          setTimeout(cleanup, 400);
+        }, 600);
+      });
     }, 500);
   }
 
@@ -36215,6 +36252,16 @@
       var tallyWalkBtn = target.closest && target.closest('[data-merge-tally-walk]');
       if (tallyWalkBtn) {
         mergeTallyWalkClick();
+        return;
+      }
+
+      var demoPlayBtn = target.closest && target.closest('[data-merge-demo-play]');
+      if (demoPlayBtn) {
+        if (mergeState.demoPlaying && mergeState.demoCleanup) {
+          mergeState.demoCleanup();
+          mergeState.demoCleanup = null;
+        }
+        mergePlayDepDemo(true);
         return;
       }
 
