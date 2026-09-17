@@ -32722,7 +32722,11 @@
     var swapBtn = document.createElement('button');
     swapBtn.type = 'button';
     swapBtn.className = 'staxx-btn staxx-merge-leave' + (mergeState.decisions[change.key] === 'swap' ? ' staxx-merge-approve--on' : '');
-    swapBtn.textContent = 'Keep ' + finding.facts.port + ' here (move ' + finding.facts.heldBy + '’s instead)';
+    // Short enough to sit in the card — the old "Keep 18080 here (move
+    // commander's instead)" ran past the card's edge (Adrian, built walk
+    // 2026-09-16). The paragraph above already says which port and who
+    // holds it, so the button only needs to name the other way round.
+    swapBtn.textContent = 'Move ' + finding.facts.heldBy + '’s instead';
     swapBtn.dataset.mergePortSwap = change.key;
 
     buttons.appendChild(approveBtn);

@@ -13561,6 +13561,7 @@ dialog::backdrop {
 
 .staxx-merge-reasoncard-buttons {
   display: flex;
+  flex-wrap: wrap;   /* a long second answer drops to its own line rather than past the card's edge */
   gap: 0.6rem;
 }
 
