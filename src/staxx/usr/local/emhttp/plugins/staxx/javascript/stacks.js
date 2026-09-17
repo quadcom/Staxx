@@ -33185,7 +33185,11 @@
   // the merged pane to line up on where that source's own services landed
   // — "one source at a time" (C17). i is clamped rather than wrapped: the
   // strip's own end arrows disable at the ends instead of cycling.
-  function mergeShowSource(i) {
+  // keepMerged: an aligner is about to set both panes' scroll itself, so the
+  // smooth jump to this source's services below must not run — it would
+  // glide the merged pane away from the row just lined up (Adrian, built
+  // walk 2026-09-16: the source "highlights but does not scroll to line up").
+  function mergeShowSource(i, keepMerged) {
     if (!mergeState) return;
     var n = mergeState.picked.length;
     if (!n) return;
@@ -33210,7 +33214,7 @@
 
     var rel = mergeState.picked[i] && mergeState.picked[i].name;
     var mergedCode = document.getElementById('staxx-merge-merged-code');
-    if (rel && mergedCode) {
+    if (rel && mergedCode && !keepMerged) {
       var lineIdx = mergeServicesMarkerLine(rel);
       if (lineIdx >= 0) {
         var target = mergedCode.querySelector('[data-merge-line="' + lineIdx + '"]');
@@ -33218,11 +33222,6 @@
       }
     }
   }
-
-  // A guard flag against the mirrored scroll echoing straight back — set
-  // for one animation frame every time either side of a linked pair moves
-  // the other, per item 5's own "requestAnimationFrame to release it".
-  var mergeScrollLinkGuard = false;
 
   // Wires the merged pane and every source pane's own scroller to mirror
   // each other once mergeState.scrollLink holds an offset (set by
@@ -33232,24 +33231,49 @@
   function mergeAttachScrollLink() {
     var mergedCode = document.getElementById('staxx-merge-merged-code');
     if (!mergedCode) return;
-    var sourceCodes = Array.prototype.slice.call(document.querySelectorAll('#staxx-merge-srctrack .staxx-merge-code'));
+    // The PANE is the source side's scroller since C17 (the sheet gives it
+    // overflow:auto and lets the code block inside grow to its full size so
+    // both axes scroll together); the code block itself never moves. Every
+    // scroll here and in the two aligners below has to address the pane —
+    // scrolling the code block did nothing at all, so a click on a merged
+    // line highlighted its source row but never brought it level (Adrian,
+    // built walk 2026-09-16).
+    var sourceCodes = Array.prototype.slice.call(document.querySelectorAll('#staxx-merge-srctrack .staxx-merge-sourcepane'));
 
+    // Room under every file so ANY line can be brought level with one in
+    // the other pane: a short source (t155-web's 58 lines against a
+    // 150-line merged file) hit its scroll limit long before its last
+    // change reached the merged row's height, so the click "highlighted
+    // but did not line up" (Adrian, built walk 2026-09-16). A pane's worth
+    // of padding, less two lines, means the last line can still reach the
+    // top of the pane. Set here, after both renders, off the live heights.
+    sourceCodes.forEach(function (pane) {
+      var code = pane.querySelector('.staxx-merge-code');
+      if (code) code.style.paddingBottom = Math.max(0, pane.clientHeight - 40) + 'px';
+    });
+    mergedCode.style.paddingBottom = Math.max(0, mergedCode.clientHeight - 40) + 'px';
+
+    // No guard flag against the echo: a mirrored move lands the other pane
+    // exactly where its own listener would put it, so the echo is a no-op
+    // and fires nothing — the tolerance below only swallows sub-pixel
+    // drift. The old flag was released by requestAnimationFrame, which a
+    // browser stops running for a tab that is not on screen, so one scroll
+    // while the tab was hidden left the flag stuck and the link dead for
+    // good (found driving the wizard from a background tab, 2026-09-16).
+    function mirror(el, target) {
+      if (Math.abs(target - el.scrollTop) > 1) el.scrollTop = target;
+    }
     mergedCode.addEventListener('scroll', function () {
-      if (mergeScrollLinkGuard || !mergeState || !mergeState.scrollLink) return;
+      if (!mergeState || !mergeState.scrollLink) return;
       var srcEl = sourceCodes[mergeState.srcIdx || 0];
-      if (!srcEl) return;
-      mergeScrollLinkGuard = true;
-      srcEl.scrollTop = mergedCode.scrollTop - mergeState.scrollLink.offset;
-      requestAnimationFrame(function () { mergeScrollLinkGuard = false; });
+      if (srcEl) mirror(srcEl, mergedCode.scrollTop - mergeState.scrollLink.offset);
     });
 
     sourceCodes.forEach(function (el, idx) {
       el.addEventListener('scroll', function () {
-        if (mergeScrollLinkGuard || !mergeState || !mergeState.scrollLink) return;
+        if (!mergeState || !mergeState.scrollLink) return;
         if (idx !== (mergeState.srcIdx || 0)) return;
-        mergeScrollLinkGuard = true;
-        mergedCode.scrollTop = el.scrollTop + mergeState.scrollLink.offset;
-        requestAnimationFrame(function () { mergeScrollLinkGuard = false; });
+        mirror(mergedCode, el.scrollTop + mergeState.scrollLink.offset);
       });
     });
   }
@@ -33266,7 +33290,7 @@
     var ownerPane = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');
     if (ownerPane) {
       var ownerIdx = mergeSourceIdxForRel(ownerPane.dataset.mergeSourceStack);
-      if (ownerIdx >= 0 && ownerIdx !== mergeState.srcIdx) mergeShowSource(ownerIdx);
+      if (ownerIdx >= 0 && ownerIdx !== mergeState.srcIdx) mergeShowSource(ownerIdx, true);
     }
     var mergedPane = document.getElementById('staxx-merge-merged-code');
     if (!mergedPane) return;
@@ -33282,7 +33306,7 @@
       setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
     });
 
-    var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-code');
+    var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');   // the pane scrolls, not the code block — see mergeAttachScrollLink()
     if (scroller) mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
   }
 
@@ -33348,10 +33372,10 @@
     var ownerPane = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');
     if (ownerPane) {
       var ownerIdx = mergeSourceIdxForRel(ownerPane.dataset.mergeSourceStack);
-      if (ownerIdx >= 0 && ownerIdx !== mergeState.srcIdx) mergeShowSource(ownerIdx);
+      if (ownerIdx >= 0 && ownerIdx !== mergeState.srcIdx) mergeShowSource(ownerIdx, true);
     }
     var mergedPane = document.getElementById('staxx-merge-merged-code');
-    var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-code');
+    var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');   // the pane scrolls, not the code block — see mergeAttachScrollLink()
     if (!mergedPane || !scroller) return;
     scroller.scrollTop += (sourceRow.getBoundingClientRect().top - mergedRow.getBoundingClientRect().top);
     sourceRow.classList.add('staxx-merge-codeline--flash');
@@ -33363,7 +33387,7 @@
     var change = mergeChangeForKey(key);
     if (change && change.stack) {
       var idx = mergeSourceIdxForRel(change.stack);
-      if (idx >= 0 && idx !== mergeState.srcIdx) mergeShowSource(idx);
+      if (idx >= 0 && idx !== mergeState.srcIdx) mergeShowSource(idx, true);
     }
     var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key;
     var mergedPane = document.getElementById('staxx-merge-merged-code');
