@@ -13195,6 +13195,12 @@ dialog::backdrop {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;   /* a little air between the chips (Adrian, same session) — the flex gap replaces the restart chip's own margin below */
+  /* The chips are the grid's own state cell copied across, in the grid's
+     left-to-right order (state, update, restart…). These cards are
+     right-aligned, so that order put the state pill at a different x on
+     every card. Reversed here, the state pill is always the rightmost chip
+     and the rest read leftwards from it (Adrian, 2026-09-16). */
+  flex-direction: row-reverse;
 }
 
 .staxx-merge-card-title .staxx-merge-card-state .staxx-pendingchip {
