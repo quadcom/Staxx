@@ -13188,6 +13188,12 @@ dialog::backdrop {
 .staxx-merge-card-title .staxx-merge-card-state {
   margin-left: auto;
   pointer-events: none;
+  /* Centred on each other, not on a shared text baseline: the state pill is
+     regular weight and the two beside it are bold, so baseline alignment set
+     the green one 0.8px lower and it read as a different height even once
+     all three measured the same (Adrian, merge step 2, 2026-09-16). */
+  display: inline-flex;
+  align-items: center;
 }
 
 .staxx-merge-card-svcline {
