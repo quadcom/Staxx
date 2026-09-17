@@ -16,6 +16,12 @@ before that were dates.
 
 ---
 
+## 00.04.01 — released 2026-09-17
+
+- In the stack editor, pressing Form no longer hides the Form, Split and Compose buttons on a wide window. The dialog narrows itself for the form view, and it used to treat that narrowing as if the whole window had shrunk, so on any window between about 1330 and 2000 pixels wide the only way back to Split was to close the editor. The buttons now hide only when the window itself is narrow.
+- Unraid's padlock in the top bar now works on the StaXX page. Clicking it used to throw a script error, and the drag handles for changing start order stayed live regardless. The page now starts locked, the way Unraid's own Docker page does, the handles are hidden until the padlock is opened, and the padlock's icon and wording follow along.
+- A blank line in an .env file, or any other settings file opened in the editor, keeps its height. It used to collapse to nothing in the coloured overlay, so every line after it sat one row out of step with the line numbers and with where a click landed.
+
 ## 00.04.00 — released 2026-09-14
 
 - The stack list no longer jumps about when an update finishes: the columns stay where they are instead of sliding sideways and back, the folder headings keep their height, and the "N to look at" markers stay put instead of disappearing until the next reload.
