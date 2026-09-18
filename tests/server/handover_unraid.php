@@ -39,6 +39,11 @@ putenv('STAXX_UNRAID_TEMPLATES_DIR=/tmp/staxx-tpl-test');
 putenv('STAXX_AUTOUPDATE_FILE=/tmp/staxx-cau-test.json');
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
+// staxx_intruder_compare() (PLAN_166 §1) calls into staxx_pending_diff() —
+// Stacks.php does not require Pending.php back, the same one-directional
+// relationship action.php already has to satisfy before dispatching, so this
+// suite has to bring it in too. Pending.php requires CrossLinks.php itself.
+require_once '/usr/local/emhttp/plugins/staxx/include/Pending.php';
 
 $fails = 0;
 function ok(string $what, bool $pass, string $note = ''): void {
@@ -98,7 +103,7 @@ register_shutdown_function(function () use ($tplDir, $cauFile, $heldDir, $root) 
   foreach (['my-zzd2app.xml', 'my-zzd2app2.xml'] as $f) {
     if (is_file($heldDir.'/'.$f)) @unlink($heldDir.'/'.$f);
   }
-  foreach (['zzd2roundtrip', 'zzd2norestart'] as $name) {
+  foreach (['zzd2roundtrip', 'zzd2norestart', 'zzd2known', 'zzd2unread'] as $name) {
     @exec('rm -rf '.escapeshellarg($root.'/'.$name));
   }
 });
@@ -287,6 +292,113 @@ ok('foreign() names a target held with no project (dockerman)',
    in_array('zzd2dockerman', staxx_handover_foreign($foreignRel, $foreignTargets, $foreignContainers), true));
 ok('foreign() names a target held by a different project',
    in_array('zzd2elsewhere', staxx_handover_foreign($foreignRel, $foreignTargets, $foreignContainers), true));
+
+/* -------------------------------------------- staxx_pending_diff / _empty -- */
+
+// Driven directly with staged live/file arrays, exactly as PLAN_166's own
+// proof section prefers: this needs no Docker at all, and keeps the suite
+// honest about testing the comparison itself rather than a container round
+// trip. staxx_intruder_compare() below calls this same function, so a case
+// proven here can never disagree with what that one reports.
+$baseLive = ['image' => 'alpine:3.20', 'env' => ['TZ' => 'UTC'],
+             'ports' => ['8080:80/tcp'], 'volumes' => ['/data:/data']];
+$baseFile = $baseLive;   // identical on every axis
+
+ok('an identical live/file pair diffs to nothing, and reads as the same',
+   staxx_pending_diff_empty(staxx_pending_diff($baseLive, $baseFile)));
+
+$imageFile = $baseFile; $imageFile['image'] = 'alpine:3.21';
+$imageDiff = staxx_pending_diff($baseLive, $imageFile);
+ok('an image change is named in the diff, and the pair is not the same',
+   $imageDiff['image'] === ['from' => 'alpine:3.20', 'to' => 'alpine:3.21']
+   && !staxx_pending_diff_empty($imageDiff), json_encode($imageDiff));
+
+$envFile = $baseFile; $envFile['env'] = ['TZ' => 'Europe/London'];
+$envDiff = staxx_pending_diff($baseLive, $envFile);
+ok('an environment value change is named in the diff, and the pair is not the same',
+   $envDiff['env'] === [['name' => 'TZ', 'from' => 'UTC', 'to' => 'Europe/London']]
+   && !staxx_pending_diff_empty($envDiff), json_encode($envDiff));
+
+$portFile = $baseFile; $portFile['ports'] = ['8081:80/tcp'];
+$portDiff = staxx_pending_diff($baseLive, $portFile);
+ok('a port change is named in the diff, and the pair is not the same',
+   $portDiff['ports'] === ['added' => ['8081:80/tcp'], 'removed' => ['8080:80/tcp']]
+   && !staxx_pending_diff_empty($portDiff), json_encode($portDiff));
+
+$volumeFile = $baseFile; $volumeFile['volumes'] = ['/data2:/data'];
+$volumeDiff = staxx_pending_diff($baseLive, $volumeFile);
+ok('a volume change is named in the diff, and the pair is not the same',
+   $volumeDiff['volumes'] === ['added' => ['/data2:/data'], 'removed' => ['/data:/data']]
+   && !staxx_pending_diff_empty($volumeDiff), json_encode($volumeDiff));
+
+/* ------------------------------------------------- staxx_intruder_compare -- */
+
+// A name no service in this stack's file claims at all — never asks Docker
+// anything, the same short-circuit staxx_handover_targets() itself takes.
+$knownRel = 'zzd2known';
+$knownDir = $root.'/'.$knownRel;
+@exec('rm -rf '.escapeshellarg($knownDir));
+mkdir($knownDir, 0755, true);
+file_put_contents($knownDir.'/compose.yaml',
+  "services:\n  a:\n    image: alpine:3.20\n    container_name: zzd2known-app\n");
+
+$cmpUnknown = staxx_intruder_compare($knownRel, 'zzd2known-nobody-claims');
+ok('a name no service in the file claims is not known',
+   ($cmpUnknown['known'] ?? true) === false, json_encode($cmpUnknown));
+
+@exec('rm -rf '.escapeshellarg($knownDir));
+
+// A real container measured against a service that describes something else
+// entirely: every port and volume it has is one the file does not ask for, so
+// the comparison must come back "not the same" with those named. The container
+// name is borrowed, read-only, from whatever is already on this box, the same
+// way tests/server/handover.php borrows one for its own "belongs to another
+// project" case — nothing is created, changed or removed.
+//
+// The `unreadable` branch itself is NOT staged here. Every route into it needs
+// Docker or compose to misbehave on demand (inspect refusing, `compose config`
+// failing, the file no longer resolving), and faking that means mutating the
+// box. What matters about it is the direction it fails in, and that is a plain
+// read of staxx_intruder_compare(): every one of those returns carries
+// same=false. A case that cannot make the condition it claims to test is worse
+// than no case at all — the first draft of this one asserted `unreadable` and
+// passed a `build:`-only service, which compose resolves perfectly well
+// (2026-09-18).
+$borrowed = '';
+foreach (staxx_docker_container_names() as $borrowedName => $info) { $borrowed = $borrowedName; break; }
+
+if ($borrowed === '') {
+  ok('SKIPPED — no container at all on this box to borrow a name from', true);
+} else {
+  $unreadRel = 'zzd2unread';
+  $unreadDir = $root.'/'.$unreadRel;
+  @exec('rm -rf '.escapeshellarg($unreadDir));
+  mkdir($unreadDir, 0755, true);
+  file_put_contents($unreadDir.'/compose.yaml',
+    "services:\n  ghost:\n    build: .\n    container_name: ".$borrowed."\n");
+
+  $cmpUnread = staxx_intruder_compare($unreadRel, $borrowed);
+  $unreadDiff = $cmpUnread['diff'] ?? [];
+  ok('a container that does not match the service claiming its name is not the same',
+     ($cmpUnread['known'] ?? false) === true
+     && ($cmpUnread['same'] ?? true) === false
+     && !staxx_pending_diff_empty($unreadDiff), json_encode($cmpUnread));
+  ok('...and it says when that container was built and when the file last changed',
+     ($cmpUnread['builtAt'] ?? 0) > 0 && ($cmpUnread['fileAt'] ?? 0) > 0,
+     'builtAt='.($cmpUnread['builtAt'] ?? 0).' fileAt='.($cmpUnread['fileAt'] ?? 0));
+
+  @exec('rm -rf '.escapeshellarg($unreadDir));
+}
+
+// NOTE — the plan also asks for a case proving the job script staxx_finish_
+// handover() builds BEGINS with the intruder's removal, read as text and
+// never run, the way tests/server/handover.php already does for staxx_
+// handover_script(). staxx_finish_handover() has no equivalent: it builds
+// its script and hands it straight to `exec('setsid sh -c … &')` in the
+// same breath, returning only a job id, with no seam that hands the text
+// back unexecuted. Proving the ordering without running a real docker
+// command needs that seam factored out first (mirroring staxx_handover_
+// script()) — left undone here rather than guessed at or run for real.
 
 /* -------------------------------------------------------------- cleanup --- */
 

@@ -4372,6 +4372,121 @@ function staxx_handover_foreign(string $rel, array $targets, ?array $containers 
 }
 
 /**
+ * PLAN_166 §1/§2 — is the container currently holding one of this stack's
+ * names (staxx_handover_foreign() found it foreign) actually running the
+ * stack's own configuration? Almost always this is an Unraid rebuild —
+ * Auto Update or Appdata Backup running `update_container` from a template
+ * a handover begun before PLAN_165 could not yet move out of reach — and
+ * asking whether it is *identical* is what lets staxx_finish_handover()
+ * clear it away and carry on rather than always sending the reader to
+ * Unraid's Docker page.
+ *
+ * Reuses staxx_pending_diff() (Pending.php) — the restart-pending panel's
+ * own field-by-field comparison — so this and that panel can never disagree
+ * about what "the same" means. Depends on Pending.php and CrossLinks.php
+ * being loaded, the same one-directional relationship those two files
+ * already have with this one (they require Stacks.php; it does not require
+ * them back) — every real caller reaches this only through action.php,
+ * which requires all three before dispatching.
+ *
+ * Fails closed throughout: a name no service claims is simply not this
+ * stack's business ('known' => false); anything that could not actually be
+ * read compares as different ('same' => false, 'unreadable' => true) —
+ * "I could not tell" must never be read as "they match".
+ *
+ * PLAN_166 §3a — three dates ride along, purely informational: when the
+ * container was built, when the stack's file last changed, and when the
+ * Unraid template it may have been rebuilt from was last edited (only when
+ * a handover under PLAN_165 §1 moved one aside for this target). None of
+ * them is compared or decides anything here — recency never picks a side —
+ * they are only ever shown, by the caller, next to what actually differs.
+ * Each is 0 when it cannot be read.
+ *
+ * @return array{known:bool, same:bool, diff:array, service:string,
+ *               unreadable:bool, builtAt:int, fileAt:int, templateAt:int}
+ */
+function staxx_intruder_compare(string $rel, string $containerName): array {
+  $dates = ['builtAt' => 0, 'fileAt' => 0, 'templateAt' => 0];
+  $miss  = ['known' => false, 'same' => false, 'diff' => [], 'service' => '', 'unreadable' => false] + $dates;
+  if (!staxx_valid_path($rel)) return $miss;
+
+  $dir  = staxx_stack_dir($rel);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') return $miss;
+
+  $service = null;
+  foreach (staxx_handover_targets($rel) as $t) {
+    if ($t['name'] === $containerName) { $service = $t['service']; break; }
+  }
+  if ($service === null) return $miss;   // nothing in this stack claims that name
+
+  // The file side and the template side are read up front — neither depends
+  // on Docker answering, so a container that has stopped answering still
+  // gets as much of the picture as can be had.
+  $dates['fileAt']     = staxx_intruder_file_at($rel, $file);
+  $dates['templateAt'] = staxx_intruder_template_at($dir, $containerName);
+
+  $unreadable = ['known' => true, 'same' => false, 'diff' => [], 'service' => $service, 'unreadable' => true] + $dates;
+
+  $id = staxx_docker_container_names()[$containerName]['id'] ?? '';
+  if ($id === '') return $unreadable;   // Docker no longer knows the name at all
+
+  $live = staxx_pending_inspect_container($id);
+  if ($live === null) return $unreadable;   // docker inspect did not answer
+  $dates['builtAt'] = $live['created'];
+  $unreadable['builtAt'] = $dates['builtAt'];
+
+  $yaml = staxx_crosslinks_config_yaml($file);
+  if ($yaml === '') return $unreadable;   // compose unavailable, or the file no longer resolves
+
+  $fileSvc = staxx_pending_parse_file($yaml, $dir)[$service] ?? null;
+  if ($fileSvc === null) return $unreadable;
+
+  $diff = staxx_pending_diff($live, $fileSvc);
+
+  return [
+    'known'      => true,
+    'same'       => staxx_pending_diff_empty($diff),
+    'diff'       => $diff,
+    'service'    => $service,
+    'unreadable' => false,
+  ] + $dates;
+}
+
+/**
+ * PLAN_166 §3a — when the stack's file last changed: the newest 'at' this
+ * stack's version record carries, or the compose file's own mtime when
+ * there is no record (never captured, or the file is unreadable). 0 when
+ * neither is available.
+ */
+function staxx_intruder_file_at(string $rel, string $file): int {
+  $versions = staxx_record_read($rel)['versions'] ?? [];
+  $ats = array_column($versions, 'at');
+  if ($ats) return (int)max($ats);
+  $mtime = @filemtime($file);
+  return $mtime !== false ? (int)$mtime : 0;
+}
+
+/**
+ * PLAN_166 §3a — when Unraid's own template was last edited, for a target
+ * whose handover moved one aside under PLAN_165 §1 ('held' in the note's
+ * 'unraid' record). 0 when there is no active handover, no such target, no
+ * template was moved, or the held file is no longer there.
+ */
+function staxx_intruder_template_at(string $dir, string $containerName): int {
+  $state = staxx_handover_read($dir);
+  if ($state === null) return 0;
+  foreach ($state['targets'] as $t) {
+    if ($t['original'] !== $containerName) continue;
+    $held = $t['unraid']['held'] ?? '';
+    if ($held === '') return 0;
+    $mtime = @filemtime($held);
+    return $mtime !== false ? (int)$mtime : 0;
+  }
+  return 0;
+}
+
+/**
  * Every container Docker knows about, by name — including ones with no
  * compose label at all. staxx_container_index() deliberately drops those,
  * which is exactly what a template's own container has, so this reads the
@@ -4380,7 +4495,12 @@ function staxx_handover_foreign(string $rel, array $targets, ?array $containers 
  * (Import.php has a near-identical one; a later pass can dedupe rather than
  * this file reaching into that one.)
  *
- * @return array<string, array{running:bool, project:string}>
+ * `id` (PLAN_166) rides along free — it is already a column of the one
+ * `docker ps` call this is built from — so a caller needing the container's
+ * id for a fresh `docker inspect` (staxx_intruder_compare()) never has to
+ * shell out a second time just to look one up by name.
+ *
+ * @return array<string, array{id:string, running:bool, project:string}>
  */
 function staxx_docker_container_names(): array {
   static $byName = null;
@@ -4389,7 +4509,7 @@ function staxx_docker_container_names(): array {
   $byName = [];
   foreach (staxx_docker_ps_raw() as $r) {
     if ($r['name'] === '') continue;
-    $byName[$r['name']] = ['running' => $r['state'] === 'running', 'project' => $r['project']];
+    $byName[$r['name']] = ['id' => $r['id'], 'running' => $r['state'] === 'running', 'project' => $r['project']];
   }
   return $byName;
 }
@@ -4854,8 +4974,17 @@ function staxx_start_handover(string $rel, string &$error): string {
  * Finish a handover once a human has said whether it worked. Also a job id,
  * same machinery as every other run — refuses outright if there is nothing
  * to finish.
+ *
+ * PLAN_166 §2 replaces PLAN_165 §3's outright refusal on a rebuilt name.
+ * Something outside StaXX rebuilding one of these names while the question
+ * sat open is now compared against the file (staxx_intruder_compare())
+ * rather than always sent to Unraid's Docker page: an identical rebuild is
+ * removed as the first step of whichever job the answer already runs, and
+ * the answer carries on; a different or unreadable one still refuses,
+ * unless $force says to use this stack's version anyway (the reader chose
+ * that after seeing what differs, in the handover-check reply).
  */
-function staxx_finish_handover(string $rel, bool $worked, string &$error): string {
+function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $force = false): string {
   $error = '';
 
   if (!staxx_valid_path($rel) || !staxx_handover_active($rel)) {
@@ -4870,22 +4999,43 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     return '';
   }
 
-  // PLAN_165 §3 — checked before either answer is acted on. If something
-  // outside StaXX has rebuilt one of these names since the handover began,
-  // neither branch below is safe: "It works" would clear away a set-aside
-  // that no longer matches what is running, and "It does not" would rename
-  // that set-aside straight into a collision with whatever is holding the
-  // name now.
+  // Which of this stack's names are currently held by something that is not
+  // its own — almost always an Unraid rebuild. $force skips the comparison
+  // and clears every one of them away; otherwise each is checked, and any
+  // that differs (or could not be read) refuses both answers rather than
+  // acting on a guess.
+  $foreignRemove = [];
   $foreign = staxx_handover_foreign($rel, $state['targets']);
   if ($foreign) {
-    $error = 'Something outside StaXX has rebuilt '.staxx_watch_join_names($foreign)
-           . ' since this handover began, so neither answer is safe to act on. Remove '
-           . 'that rebuilt container from Unraid\'s Docker page, then answer again.';
-    return '';
+    if ($force) {
+      $foreignRemove = $foreign;
+    } else {
+      $blockers = [];
+      foreach ($foreign as $fname) {
+        $cmp = staxx_intruder_compare($rel, $fname);
+        if (($cmp['known'] ?? false) && ($cmp['same'] ?? false)) {
+          $foreignRemove[] = $fname;
+        } else {
+          $blockers[] = $fname;
+        }
+      }
+      if ($blockers) {
+        $verb  = count($blockers) === 1 ? 'does not' : 'do not';
+        $error = staxx_watch_join_names($blockers).' '.$verb.' match this stack\'s file. '
+               . 'Answer again and choose whether to use this stack\'s version.';
+        return '';
+      }
+    }
   }
 
   $docker    = escapeshellarg(staxx_docker_bin());
   $stateFile = escapeshellarg($dir.'/'.STAXX_HANDOVER_FILE);
+
+  // The intruder's removal is the first thing either job script does — it
+  // is what was blocking the name, so it has to be out of the way before
+  // anything below even tries to touch that name.
+  $foreignSteps = array_map(fn($n) => $docker.' rm -f '.escapeshellarg($n).' 2>&1', $foreignRemove);
+  $foreignShown = array_map(fn($n) => 'docker rm -f '.$n, $foreignRemove);
 
   if ($worked) {
     // PLAN_165 §1 already moved the template and dropped the Auto Update
@@ -4900,10 +5050,33 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
       ? 'The old container has been cleared away. Its Unraid template is kept in StaXX\'s own folder.'
       : 'The old container has been cleared away.';
 
-    $steps = [];
+    $steps = $foreignSteps;
     foreach ($state['targets'] as $t) {
       $steps[] = $docker.' rm -f '.escapeshellarg($t['setaside']).' 2>&1';
     }
+    $shownParts = $foreignShown;
+    foreach ($state['targets'] as $t) {
+      $shownParts[] = 'docker rm -f '.$t['setaside'];
+    }
+
+    // PLAN_166 §2 — an intruder rebuilt from a template took the stack's own
+    // container down with it when Docker made room for it under the same
+    // name, so once it is cleared away the stack itself is not running any
+    // more either. Bringing it back up is the last step here — only when an
+    // intruder was actually removed; without one, nothing displaced the
+    // stack and this step would be a needless extra restart.
+    if ($foreignRemove) {
+      $upCmd  = staxx_compose_cmd();
+      $upFile = staxx_find_compose_file($dir);
+      if ($upCmd !== '' && $upFile !== '') {
+        $upFiles = staxx_compose_files($upFile);
+        $steps[] = 'cd '.escapeshellarg($dir).' 2>&1';
+        $steps[] = $upCmd.' '.staxx_compose_file_args($upFiles).' up -d --remove-orphans 2>&1';
+        $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $upFiles));
+        $shownParts[] = 'compose '.$shownFiles.' up -d --remove-orphans';
+      }
+    }
+
     // Chained with && and the exit code caught straight away, not one echo
     // per line joined by newlines — that older shape always ran every step
     // regardless of whether an earlier one failed, and "$?" at the end was
@@ -4915,7 +5088,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
             . 'echo "'.$clearedMsg.'"; fi; '
             . 'echo "'.STAXX_JOB_END.' $ec"';
 
-    $shown = implode(' && ', array_map(fn($t) => 'docker rm -f '.$t['setaside'], $state['targets']));
+    $shown = implode(' && ', $shownParts);
   } else {
     // PLAN_165 §3 — put back what §1 took, synchronously and before the job
     // script is even built: the template and the Auto Update entry are both
@@ -4949,7 +5122,10 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     $file       = staxx_find_compose_file($dir);
     $files      = staxx_compose_files($file);
 
-    $steps = [];
+    // PLAN_166 §2 — an identical (or forced) intruder is cleared away first
+    // here too: the rename below puts the set-aside copy back under the
+    // original name, which is exactly the name the intruder is holding.
+    $steps = $foreignSteps;
     if ($composeCmd !== '' && $file !== '') {
       $steps[] = 'cd '.escapeshellarg($dir).' 2>&1';
       $steps[] = $composeCmd.' '.staxx_compose_file_args($files).' down 2>&1';
@@ -4975,9 +5151,10 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
             . 'The handover note has been left in place; try again from the stack menu."; fi; '
             . 'echo "'.STAXX_JOB_END.' $ec"';
 
-    $shown = 'compose down && '.implode(' && ', array_map(
+    $shownParts = array_merge($foreignShown, ['compose down'], array_map(
       fn($t) => 'docker rename '.$t['setaside'].' '.$t['original'], $state['targets']
     ));
+    $shown = implode(' && ', $shownParts);
   }
 
   if (!staxx_private_dir(STAXX_JOB_DIR)) {
