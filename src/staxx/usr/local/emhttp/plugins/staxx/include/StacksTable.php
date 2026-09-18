@@ -272,6 +272,12 @@ function staxx_clash_pill_html(array $clash, string $project): string {
     _('Shares the name "%1$s" with %2$s. Docker can only run one project under that name — rename one of these stacks, or delete the one that is not in use.'),
     htmlspecialchars($project), $others
   );
+  // The wording quotes the project name, and this whole string is spliced
+  // into a title="…" attribute below, so a literal double quote ended the
+  // attribute at the first one and the tooltip read only `Shares the name`
+  // (found 2026-09-17). _() leaves double quotes alone, so they are turned
+  // into entities here, and only here — the rest is already HTML.
+  $title = str_replace('"', '&quot;', $title);
   // Not escaped again — _() returns HTML; see staxx_state_pill() above.
   return ' <span class="staxx-pill staxx-pill--warn" title="'.$title.'">'._('name clash').'</span>';
 }

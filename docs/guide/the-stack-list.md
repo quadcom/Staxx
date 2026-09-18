@@ -5,7 +5,7 @@
 This is the screen you land on. It lists every stack, one row each. This page walks it top to
 bottom, part by part.
 
-![The whole StaXX page: the title bar with its three chips top right, the Find a stack box and the row of buttons beneath it, a progress line for a finished job, then the column headings and a list of folder and stack rows](../images/guide/the-stack-list-whole-screen.png)
+![The whole StaXX page: the title bar with its three chips top right, the Find a stack box and the row of buttons beneath it, then the column headings and a list of folder and stack rows](../images/guide/the-stack-list-whole-screen.png)
 
 ## The buttons along the top
 

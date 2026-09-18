@@ -18859,6 +18859,16 @@
               ? ' — failed (exit ' + part.exit + ')'
               : ' — done';
           }
+          // Cleared here, on the rows this entry knows NOW, before the
+          // caller's own done() clears the rows it captured when the job
+          // started. Those can be different: a rows refresh mid-job rebuilds
+          // every row element and restoreBusy() re-points entry.rows at the
+          // new ones, but the closure still holds the detached originals —
+          // so its clearBusy() cleared nothing on screen and the new row kept
+          // its "Updating…" pill until the abandon timer (found 2026-09-17,
+          // a hand-pressed pull on a stopped stack). clearBusy() is safe to
+          // run twice.
+          clearBusy(entry.rows);
           if (entry.done) entry.done({ text: entry.text, exit: part.exit, done: true });
           // PLAN_71 stage 5: every job — start, stop, restart, an update,
           // anything — can move the running side of the comparison, so this
@@ -20388,7 +20398,13 @@
 
   function paintUpdateQueue(queue) {
     if (!queueBar) return;
-    if (!queue || !queue.items || !queue.items.length) {
+    // Shown only while something is running or waiting. A finished queue
+    // used to keep painting its final tally with a Stop button that had
+    // nothing left to stop, until the queue was cleared — Adrian's card of
+    // 2026-09-17, "Unknown status or notification bar". What the queue did
+    // is on the rows' own pills by then; applyQueue() already refreshes them
+    // on the transition to finished.
+    if (!queueIsLive(queue)) {
       queueBar.hidden = true;
       queueBar.innerHTML = '';
       return;
