@@ -18,6 +18,7 @@ before that were dates.
 
 ## Unreleased
 
+- Roll back is offered again. A row's menu decides whether to show **Roll back…** from where StaXX now keeps its image history, so an update recorded since that move is once more something you can undo from the menu. A stack with a single service, which has no container row of its own, now gets the item on the stack's own menu.
 - The user guide now reads as a manual. Every page was rewritten to teach a feature step by step, without narrating how the screen reacts or why a thing was built as it was, and gained close-ups of the controls it points at.
 - Clicking a service's icon now opens the editor in the same split view as clicking the stack's own icon, scrolled to that service, instead of the form on its own.
 - A stack's untouched containers no longer read as "not created yet" after one of its services is updated. If the store had been moved, or the stack filed into a folder, the containers still carried the old location and were dropped from the row the moment a recreated sibling carried the new one. They were running all along; the row now says so.

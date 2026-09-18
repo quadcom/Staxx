@@ -2805,6 +2805,11 @@ function staxx_updates_aggregate(array $pills): array {
     // A row speaking for several services cannot name one image; a row speaking
     // for exactly one can and does, which is what the menu's image-keyed items need.
     'image'  => $total === 1 ? (string)($pills[0]['image'] ?? '') : '',
+    // Whether Roll back has anything to offer, on the same one-service rule as
+    // 'image' above: a row speaking for exactly one service carries that
+    // service's own answer, since that is the pill the row menu reads. Left
+    // out, a one-service stack never showed Roll back at all (found 2026-09-17).
+    'back'   => $total === 1 ? !empty($pills[0]['back']) : false,
     // Only meaningful when the row's own state is the withdrawn tag and it
     // speaks for exactly one such service — folding several together cannot
     // offer one replacement tag for all of them.
@@ -2897,11 +2902,18 @@ function staxx_updates_apply_service_state(array &$pill, string $stack, string $
   $pill['due']  = $pill['due']  ?? 0;
   $pill['hold'] = $pill['hold'] ?? false;
   $pill['why']  = $pill['why']  ?? '';
-  // Whether roll back has anything to offer at all. A plain state read, so it
-  // is cheap enough for every row — and without it the row menu has to offer
-  // roll back on every service and let the refusal explain itself, which is a
-  // menu item that usually does nothing.
-  $pill['back'] = !empty(staxx_update_state()['history'][$stack.'::'.$service]);
+  // Whether roll back has anything to offer at all. Read through
+  // staxx_update_history(), which merges the stack's own record with the old
+  // central file: image history moved into each stack's record (ImageHistory.php),
+  // so a read of the central file alone missed every roll-back point recorded
+  // since and the menu never offered Roll back (found 2026-09-17). Cheap enough
+  // for every row, and without it the row menu would have to offer roll back on
+  // every service and let the refusal explain itself. The function lives in
+  // UpdateRun.php, which loads this file rather than the other way round, hence
+  // the guard; every caller that renders rows has already loaded it.
+  $pill['back'] = function_exists('staxx_update_history')
+    ? !empty(staxx_update_history($stack, $service))
+    : !empty(staxx_update_state()['history'][$stack.'::'.$service]);
 
   // PLAN_61 — carried on every pill regardless of headline state: a service
   // has exactly one advisory state, so 'update' (and everything else) wins

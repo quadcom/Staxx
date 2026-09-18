@@ -27673,6 +27673,20 @@
         });
       }
 
+      // A one-service stack has no container row, so the Roll back item the
+      // container menu offers (buildContainerMenu) was unreachable for it —
+      // a stopped one-service stack could never roll back from the list at
+      // all (found 2026-09-17). The rollup pill carries 'back' only when it
+      // speaks for exactly one service (staxx_updates_aggregate), so the
+      // service named here is read, never guessed, the same way Fix the tag
+      // above reads it.
+      var backService = (updateEntry && updateEntry.back) ? stackSoleService(rowFor(name)) : '';
+      if (backService) {
+        menuItem('Roll back…', 'undo', function () {
+          openVersionsFor(name, backService, label);
+        }, { disabled: !CAN_RUN });
+      }
+
       // PLAN_44 A4: opens on Manage's All tab. Falls back to Configure on its
       // own (editStack() -> openEditor() only switches tabs when manage.js
       // has loaded) — reading a file needs neither Docker nor compose, so

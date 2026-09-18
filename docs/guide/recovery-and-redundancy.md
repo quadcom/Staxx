@@ -71,7 +71,7 @@ Never saved or opened here at all? You get the blank starting file instead — s
 A row on the [stack list](the-stack-list.md) offering an update it can undo carries **Roll back…**
 on its menu, which opens **Versions** with the right service already picked.
 
-<!-- SHOT: recovery-and-redundancy-rollback-menu | close-up | a stack row's menu open, showing the "Roll back…" item -->
+![A stack row's own menu open, with Roll back… outlined between Skip this version and Logs](../images/guide/recovery-and-redundancy-rollback-menu.png)
 
 ### A build's row
 
