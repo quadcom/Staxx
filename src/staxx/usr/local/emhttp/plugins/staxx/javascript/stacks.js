@@ -28607,11 +28607,6 @@
         if (!applyBtn.disabled) applyBulkPanel();
         return;
       }
-      var leaveChip = event.target.closest('[data-bulk-leave]');
-      if (leaveChip) {
-        bulkNotifyState[leaveChip.dataset.bulkLeave] = 'leave';
-        repaintBulkPanel();
-      }
     });
 
     // The mode radios and notify switches inside the panel — a 'change'
@@ -28622,7 +28617,7 @@
       if (modeInput) { bulkModeValue = modeInput.value; repaintBulkPanel(); return; }
       var notifyInput = event.target.closest('[data-updnotify]');
       if (notifyInput) {
-        bulkNotifyState[notifyInput.dataset.updnotify] = notifyInput.checked ? 'on' : 'off';
+        bulkNotifyState[notifyInput.dataset.updnotify] = notifyInput.checked;
         repaintBulkPanel();
       }
     });
@@ -28755,7 +28750,15 @@
 
   var bulkPanelKind  = null;   // null | 'mode' | 'notify'
   var bulkModeValue  = '';     // '' | 'default' | 'manual' | 'auto'
-  var bulkNotifyState = { found: 'leave', installed: 'leave', failed: 'leave' };
+  // The three switches start from the server's own answers, exactly as a
+  // service with no answer of its own draws them in the editor; Apply then
+  // writes all three to every service, so what is on screen is what lands.
+  var bulkNotifyState = {};
+  function bulkNotifyReset() {
+    var srv = UPDATE_SETTINGS.notify || {};
+    bulkNotifyState = {};
+    NOTIFY_ROW_EVENTS.forEach(function (ev) { bulkNotifyState[ev[0]] = !!srv[ev[0]]; });
+  }
 
   // The scope line both contents open with — the count is read fresh every
   // time this is called rather than cached, since the panel can survive a
@@ -28779,41 +28782,43 @@
   // one setPart() writes for a bare 'auto', so there is nothing hidden that
   // the note does not already say.
   function bulkPanelUpdatesHtml(count) {
+    // Same value vocabulary as the editor's own When row: 'auto-immediate' is
+    // one value to the writer but draws as Automatic on the top row plus
+    // Immediate on the sub-row, and choosing Automatic starts on Delayed, as
+    // updatePolicyRowHtml() does.
+    var topValue = bulkModeValue === 'auto-immediate' ? 'auto' : bulkModeValue;
     var options = [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
     var optsHtml = options.map(function (o) {
-      return updTickOptionHtml('staxx-bulkpolicy-mode', 0, 'mode', o[0], o[1], bulkModeValue);
+      return updTickOptionHtml('staxx-bulkpolicy-mode', 0, 'mode', o[0], o[1], topValue);
     }).join('');
+    var subHtml = topValue !== 'auto' ? '' :
+      '<div class="staxx-upd-reveal">' +
+        '<div class="staxx-upd-sub">' +
+          updTickOptionHtml('staxx-bulkpolicy-mode-sub', 0, 'mode', 'auto-immediate', 'Immediate', bulkModeValue) +
+          updTickOptionHtml('staxx-bulkpolicy-mode-sub', 0, 'mode', 'auto', 'Delayed', bulkModeValue) +
+        '</div>' +
+      '</div>';
     var note = bulkModeValue
-      ? updateModeNoteHtml({ policy: { choice: bulkModeValue, auto: 'auto', delay: null, scope: '' } })
+      ? updateModeNoteHtml({ policy: { choice: topValue, auto: bulkModeValue === 'auto-immediate' ? 'immediate' : 'auto',
+                                       delay: null, scope: '' } })
       : '';
 
     return bulkScopeLineHtml(count) +
       '<div class="staxx-upd-row">' +
         '<span class="staxx-upd-label">' + esc('When') + '</span>' +
         '<div class="staxx-upd-options"><div class="staxx-tickrow" role="radiogroup" aria-label="When">' +
-          optsHtml + '</div></div>' +
+          optsHtml + '</div>' + subHtml + '</div>' +
         (note ? '<p class="staxx-upd-note">' + note + '</p>' : '') +
       '</div>' +
       bulkPanelFootHtml(bulkModeValue !== '', count);
   }
 
-  // One notify switch plus the "Leave" chip in front of it — the tri-state
-  // this panel alone needs (a single stack's own switch only ever has two
-  // states, on or off). Leave pressed dims the switch beside it.
-  function bulkNotifyItemHtml(ev) {
-    var state = bulkNotifyState[ev[0]];
-    var leaving = state === 'leave';
-    var switchHtml = updFlagOptionHtml('staxx-bulknotify', 0, ev[0], ev[1], state === 'on');
-    return '<div class="staxx-bulknotify-item' + (leaving ? ' staxx-bulknotify-item--leave' : '') + '">' +
-      '<button type="button" class="staxx-bulkleave" data-bulk-leave="' + esc(ev[0]) + '" aria-pressed="' +
-        (leaving ? 'true' : 'false') + '">' + esc('Leave') + '</button>' +
-      switchHtml +
-    '</div>';
-  }
-
   function bulkPanelNotifyHtml(count) {
-    var itemsHtml = NOTIFY_ROW_EVENTS.map(bulkNotifyItemHtml).join('');
-    var canApply = NOTIFY_ROW_EVENTS.some(function (ev) { return bulkNotifyState[ev[0]] !== 'leave'; });
+    // The editor's own three switches, drawn the same way (updFlagOptionHtml).
+    var itemsHtml = NOTIFY_ROW_EVENTS.map(function (ev) {
+      return updFlagOptionHtml('staxx-bulknotify', 0, ev[0], ev[1], bulkNotifyState[ev[0]]);
+    }).join('');
+    var canApply = true;
 
     return bulkScopeLineHtml(count) +
       '<div class="staxx-upd-row">' +
@@ -28857,6 +28862,11 @@
     var body = selectBar && selectBar.querySelector('.staxx-bulkpanel-inner');
     if (!body) return;
     body.innerHTML = html !== undefined ? html : bulkPanelHtml(bulkPanelKind, selectedNamesInOrder().length);
+    // The Immediate/Delayed reveal eases in a frame after it lands, for the
+    // same reason updRevealIn() does in the editor: added in the same frame
+    // as the markup there is no "from" state and nothing transitions.
+    var reveal = body.querySelector('.staxx-upd-reveal');
+    if (reveal) requestAnimationFrame(function () { reveal.classList.add('staxx-upd-reveal--in'); });
   }
 
   // Opens a fresh panel, or swaps a showing one's contents in place when the
@@ -28866,7 +28876,7 @@
     if (!selectBar || selectBar.hidden) return;
     bulkPanelKind = kind;
     if (kind === 'mode') bulkModeValue = '';
-    else bulkNotifyState = { found: 'leave', installed: 'leave', failed: 'leave' };
+    else bulkNotifyReset();
 
     if (selectBar.querySelector('.staxx-bulkpanel')) { repaintBulkPanel(); return; }
     mountBulkPanel(true);
@@ -28911,10 +28921,7 @@
       if (!value) return;   // Apply is disabled for this case; guards a stray call
     } else {
       value = {};
-      NOTIFY_ROW_EVENTS.forEach(function (ev) {
-        if (bulkNotifyState[ev[0]] !== 'leave') value[ev[0]] = bulkNotifyState[ev[0]] === 'on';
-      });
-      if (!Object.keys(value).length) return;
+      NOTIFY_ROW_EVENTS.forEach(function (ev) { value[ev[0]] = !!bulkNotifyState[ev[0]]; });
     }
 
     repaintBulkPanel('<p class="staxx-bulkpanel-progress">' + esc('0 of ' + total + ' written') + '</p>');

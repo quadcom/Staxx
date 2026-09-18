@@ -258,10 +258,10 @@ A row of buttons slides open under **Select** once something is chosen: **Start*
 **Restart**, **Check for updates**, **Update**, **Updates…** and **Notifications…**.
 
 **Updates…** and **Notifications…** open a small window under that row with the same controls the
-editor has. Choose **Default**, **Manual** or **Automatic** for when updates install, or switch any of
-the three notifications on or off, leaving the rest as they are, then press **Apply**. The choice is
-written to every service in every chosen stack, and the window reports how many stacks changed and
-names any that refused.
+editor has. Choose **Default**, **Manual** or **Automatic** for when updates install, with
+**Immediate** or **Delayed** under Automatic; or set the three notification switches, which start
+from the server's own answers, then press **Apply**. The choice is written to every service in every
+chosen stack, and the window reports how many stacks changed and names any that refused.
 
 Press a button and each chosen stack runs on its own row, exactly as it does anywhere else on the
 page. One stack failing does not stop the rest, and the bar keeps a running tally as they finish,

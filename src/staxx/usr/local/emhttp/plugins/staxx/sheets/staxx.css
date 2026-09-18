@@ -951,7 +951,7 @@ div.title.staxx-has-titlebar {
 .staxx-bulkpanel-scope {
   margin: 0 0 0.4rem;
   font-size: 1.1rem;
-  color: var(--sm-muted);
+  color: var(--sm-fg);   /* the page's own text colour — this line is an instruction, not a footnote */
 }
 
 .staxx-bulkpanel-foot {
@@ -966,36 +966,6 @@ div.title.staxx-has-titlebar {
   padding: 0.6rem 0 0.6rem 1rem;
   font-size: 1.2rem;
   color: var(--sm-fg);
-}
-
-/* The Leave chip in front of each Notifications switch — the tri-state this
-   panel alone needs, since a single stack's own switch only ever has two
-   states. Pressed (the default) dims the switch beside it, so the eye reads
-   which of the two is the live answer. */
-.staxx-bulknotify-item {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.staxx-scaffold button.staxx-bulkleave {
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.4;
-  padding: 0.2rem 0.7rem;
-  border: 0.1rem solid var(--sm-line);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--sm-muted);
-}
-
-.staxx-scaffold button.staxx-bulkleave[aria-pressed="true"] {
-  border-color: var(--sm-accent);
-  color: var(--sm-accent);
-}
-
-.staxx-bulknotify-item--leave .staxx-flagopt {
-  opacity: 0.45;
 }
 
 /* ---- App icons (square tiles — these open the menu) --------------------- */
