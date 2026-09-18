@@ -27,9 +27,13 @@ is opened.
 
 ## The test that decides pass or fail
 
-Adrian's rule, 2026-09-17: **if the address that worked before the merge does not work after it, the
-merge failed.** Not "did it write a file". `check-page.sh` is that rule in a script — it also proves
-the merged services now talk to each other by service name rather than through the box's address.
+Adrian's rule, 2026-09-17, sharpened 2026-09-18: **every address that answered before the merge must
+answer after it.** Not "did it write a file", and not just the front door — each merged stack
+published its own ports, and every one of them has to keep working once they are one stack. A single
+address gone quiet fails the walk. `check-page.sh` is that rule in a script: the page on `18080`, TLS
+on `18443`, Adminer on `18081`, and the database and cache proved through the page itself — which also
+shows the merged services now talk to each other by service name rather than through the box's
+address.
 
 ## Running it
 
@@ -59,6 +63,12 @@ bash teardown.sh                         # removes the four, the merged stack, v
 
 `check-page.sh` prints the page it fetched, then one line per check. Anything other than all
 `pass` lines is a failure to chase, and the page's own text usually says which half broke.
+
+**Known gap, 2026-09-18.** The script checks the site's own addresses, not the ports the four sources
+each published — so a walk reads green even though the database's published port is gone after the
+merge. Under the pass rule above that is a failure, not a detail. The script grows the full inventory
+when `PLAN_170` is built, which is also where the merge stops unpublishing a port it only knows is
+surplus to the stacks inside the merge.
 
 ## What each script refuses to do
 
