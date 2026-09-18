@@ -2,8 +2,8 @@
 
 <!-- index: 50 | grouping stacks on the list: making a folder, moving a stack in or out, running everything inside one at once, renaming, and deleting. -->
 
-A folder groups stacks under one heading, so you can collapse it when you are not looking at it.
-See [the folder row and its menu](the-stack-list.md#folders) for what it looks like on the list.
+A folder groups stacks under one heading, and you can collapse it to hide the stacks inside. See
+[the folder row and its menu](the-stack-list.md#folders) for what it looks like on the list.
 
 Folders are one level deep. You cannot put a folder inside a folder.
 
@@ -11,19 +11,18 @@ Folders are one level deep. You cannot put a folder inside a folder.
 
 ![The New folder button replaced by a naming box with the placeholder "Media", sitting in the row of buttons](../images/guide/folders-new.png)
 
-1. Press **New folder** above the list, or **New folder…** on a stack's own menu — that also files
-   the stack straight into it.
+1. Press **New folder** above the list, or **New folder…** on a stack's own menu to file that stack
+   straight into it.
 2. Type a name.
 
-A folder is [a real directory](where-things-live.md) in your data store, so the name has to work as
-one:
+A folder is [a real directory](where-things-live.md) in your data store. The name must:
 
-| Refused when… | Because… |
-|---|---|
-| The name is empty | There is nothing to call it. |
-| The name is longer than 63 characters | A folder is stored the same way a stack is. |
-| The name uses anything but letters, numbers, dots, dashes and underscores, or does not start with a letter or number | Spaces, slashes and other punctuation are not safe directory names. |
-| Something is already called that at the top level | A folder and a stack share one list of names ("Media" and "media" count as the same name). |
+| The name must… |
+|---|
+| Not be empty |
+| Be 63 characters or fewer |
+| Use only letters, numbers, dots, dashes and underscores, and start with a letter or number |
+| Not already be used by a folder or a stack at the top level |
 
 ## Moving a stack into a folder
 
@@ -42,8 +41,8 @@ This moves the stack's files. It does not stop the stack, and does not touch its
 1. Open the stack's own menu.
 2. Choose **Remove from folder**.
 
-The stack goes back to the top level. A move either way is refused when something else already has
-that name at the destination — rename it first.
+The stack goes back to the top level. If something already there uses its name, rename the stack
+first.
 
 ## Renaming a folder
 
@@ -53,7 +52,7 @@ that name at the destination — rename it first.
 2. Choose **Rename folder**.
 3. Type the new name.
 
-The same name rules above apply. Every stack inside moves with it. Nothing about how they run
+The same naming rules above apply. Every stack inside moves with it, and nothing about how they run
 changes.
 
 ## Folder icons
@@ -71,14 +70,14 @@ Rest your mouse on a group to open it into a grid showing every app separately:
 
 ![The same group opened out into a grid of ten app logos, four across and three down, each in its own square](../images/guide/folders-group-open.png)
 
-Hovering a picture names the stack and service it belongs to. Clicking it opens the folder, if it
-was collapsed, and jumps to that stack's row.
+Hovering a picture names the stack and service it belongs to. Click it to open the folder, if it
+was collapsed, and jump to that stack's row.
 
 A stack StaXX cannot read is drawn as a red warning triangle instead of a picture:
 
 ![A red warning triangle with a red outline sitting between two dimmed app logos](../images/guide/folders-broken-stack.png)
 
-Clicking it goes to the editor, where the problem can be fixed.
+Click it to go to the editor, where you can fix the problem.
 
 ## Running everything in a folder
 
@@ -93,8 +92,8 @@ Open the folder's own menu:
 | Check this folder | Checks every image in the folder for updates. |
 | Update this folder | Installs every update waiting in the folder. See [updating everything at once](updates.md). |
 
-Each stack still runs its own outcome. One failing to start does not stop the others, and each row
-shows its own result.
+Each stack runs its own outcome, and its row shows its own result. One stack failing to start does
+not stop the others.
 
 ## Deleting a folder
 
@@ -102,24 +101,19 @@ shows its own result.
 
 1. Open the folder's own menu.
 2. Choose **Delete folder**.
-3. Your browser asks to confirm. Unlike the rest of StaXX, this one is the browser's own dialog, so it looks different from every other question StaXX asks. It says the stacks inside are moved back to the top level, not deleted, and that nothing moves at all unless every one of them can.
+3. Confirm in your browser's own dialog, which looks different from StaXX's other windows. It states
+   that the stacks inside move back to the top level rather than being deleted, and that nothing
+   moves unless every one of them can.
 
-**This never deletes what is inside it.** Every stack is moved back to the top level first. Only
-once every one of them has moved does the empty folder itself go.
+Deleting a folder does not delete what is inside it: every stack moves back to the top level first,
+and only once all of them have moved does the empty folder itself go.
 
-Nothing moves unless all of them can:
+Before a folder can be deleted:
 
-| Refused when… | Because… |
-|---|---|
-| Moving a stack back to the top level would land on a name already used there | Two things cannot share one spot. StaXX names which stack clashes, so you can rename it and try again. |
-| The folder holds something that is not a stack | StaXX only knows how to move stacks — anything else has to be dealt with by hand first. |
-
-## What this never does
-
-- It never deletes a stack, or touches its containers, when you delete the folder holding it.
-- It never stops a stack, or changes its settings, when you move it into or out of a folder.
-- It never disturbs the containers inside a folder when you rename it.
-- It never lets you nest one folder inside another.
+| Requirement |
+|---|
+| No stack inside it may share a name with something already at the top level. StaXX names which stack clashes, so you can rename it and try again. |
+| Move or remove anything inside the folder that is not a stack first. |
 
 ## Terms used here
 

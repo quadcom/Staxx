@@ -2,9 +2,8 @@
 
 <!-- index: 67 | taking a stack off the list, what actually happens to it, and how to get it back. -->
 
-Removing a stack takes it off the list without deleting anything. Its containers stop, and the
-whole folder is zipped up and kept safely out of the way. The container's own data — anything it
-wrote to appdata — is never touched.
+Removing a stack takes it off the list. Its containers stop, and the whole folder is zipped up and
+kept in the archive folder. Open it from the stack's own menu.
 
 ## The short version
 
@@ -13,88 +12,60 @@ wrote to appdata — is never touched.
 3. Read what the dialog says, then press **Remove and archive**.
 4. StaXX stops the containers, zips the folder, and tells you where the zip landed.
 
-## Remove stack
+## Step 1 · Remove stack
 
 ![A stack's row menu, laid out in two columns, with Remove stack at the bottom of the left column outlined](../images/guide/removing-a-stack-menu-item.png)
 
 Open the stack's own menu and choose **Remove stack**, near the bottom, on its own below a
 separator.
 
-## The confirmation dialog
+## Step 2 · The confirmation dialog
 
 ![The Remove dialog: containers are stopped and removed, nothing is deleted because the folder is zipped into the archives folder, appdata is untouched, and a list of what else goes into the zip, with Cancel and Remove and archive buttons](../images/guide/removing-a-stack-confirm.png)
 
-The dialog is titled **Remove "\<name>"?** and says, in order:
+1. Read what the dialog titled **Remove "\<name>"?** lists.
+2. Press **Remove and archive**.
+
+The dialog lists, in order:
 
 - Its containers are stopped and removed.
-- Nothing is deleted — the whole folder is zipped up and kept in the archive folder, named after
-  the stack and the time it was archived.
-- The container's own data in appdata is not part of the stack folder, so it is untouched and
-  stays exactly where it is.
-- What else is going into the zip, besides the compose file itself. If the folder holds nothing
-  more than that, the dialog says so plainly instead.
-- Every folder and named volume the stack's file uses, read from the file as the dialog opens —
-  folders shown by their path on your server, named volumes by name with *(a volume Docker
-  manages)* after them, or **none** when the file names no volumes at all. Above the list, a line
-  saying plainly that none of these are touched — they stay on the server exactly as they are. When
-  a named volume is listed, a line underneath adds that a volume Docker manages is only ever removed
-  by Docker's own clean-up, never by StaXX.
-
-Press **Remove and archive** to go ahead.
+- The whole folder is zipped up and kept in the archive folder, named after the stack and the time
+  it was archived. Nothing is deleted.
+- Appdata is not touched.
+- Anything else going into the zip, besides the compose file itself — or, if the folder holds
+  nothing more, a line saying so.
+- Every folder and named volume the compose file uses: folders by their path on your server, named
+  volumes by name marked *(a volume Docker manages)*, or **none**. None of these are moved or
+  changed. A named volume is removed only by Docker's own clean-up, never by StaXX.
 
 ## What happens
 
-Stopping the containers can take a little while — StaXX waits for it before it starts zipping, so
-the button can sit busy for longer than most actions on this page. Once it is done:
+Removing a stack can take a little while. Once it is done:
 
-- Every container the stack's compose file made is stopped and removed.
-- The whole folder — compose file and everything beside it — is packed into one zip file, named
-  after the stack and when it was removed, and written into the archive folder under your data
-  store.
-- The folder is then gone from the stacks list, because there is nothing left there to show.
-- Appdata is never touched. Whatever the container wrote while it ran stays exactly where it was.
+- Every container the compose file made is stopped and removed.
+- The whole folder — compose file and everything beside it — is packed into one zip, named after
+  the stack and when it was removed, and written into the archive folder under your data store.
+- The folder no longer appears on the stacks list.
+- Appdata is not touched. Whatever the container wrote while it ran stays exactly where it was.
 
-If the stack shares its running name with another stack, StaXX leaves those containers alone
-rather than risk stopping the wrong ones, and says so in the result — only the folder is archived
-in that case.
-
-## The result
+When another stack shares this one's running name, only the folder is archived and that stack's
+containers are left running.
 
 ![The Removed dialog naming the zip the folder is now kept as, and saying that unzipping it back into the stacks folder puts the stack back](../images/guide/removing-a-stack-result.png)
 
-Once it is done, the dialog changes to say the stack was removed, names the archive it was kept as,
-and reminds you that unzipping it back into the stacks folder puts the stack back. Press **Done**
-to close it.
+The dialog then names the archive the stack was kept as. Press **Done** to close it.
 
 ## The archive list on Settings
 
 ![The Archived stacks box on the Storage tab: a scrolling list of zip files named after each stack and the time it was archived, with date and size on the right](../images/guide/removing-a-stack-archive-list.png)
 
-Every stack you have ever removed is listed on the Settings page, under **Archived stacks** — its
-file name, when it was archived, and its size. This is a read-only view: it just shows you what is
-there, it does not offer to do anything with it from that page.
+Open Settings and check **Archived stacks** to see every stack you have removed: its file name,
+when it was archived, and its size.
 
 ## Getting a stack back
 
-There is no restore button. Unzip the archive file back into the stacks folder yourself, and the
-stack reappears on the list exactly as it was — same compose file, same folder, same containers
-waiting to be started again.
-
-## What this never does
-
-- It never deletes anything. The folder is packed away, not thrown out.
-- It never touches appdata. A container's own data is not part of the stack folder, so removing
-  the stack cannot reach it.
-- It never removes the folder outright — what is left on disk is the zip, sitting in the archive
-  folder, not a gap where the stack used to be.
-- It never stops or changes another stack, even one that happens to share a running name with the
-  one you removed.
-
-## Not built yet
-
-- A restore button. Getting a stack back is a manual unzip, on purpose, for now.
-- Emptying the archive folder automatically. Removed stacks build up there until you clear them
-  out yourself.
+Unzip the archive file into the stacks folder. The stack reappears on the list exactly as it was —
+same compose file, same folder, same containers, ready to be started again.
 
 ## Terms used here
 

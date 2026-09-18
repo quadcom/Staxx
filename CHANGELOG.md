@@ -18,6 +18,7 @@ before that were dates.
 
 ## Unreleased
 
+- The user guide now reads as a manual. Every page was rewritten to teach a feature step by step, without narrating how the screen reacts or why a thing was built as it was, and gained close-ups of the controls it points at.
 - Clicking a service's icon now opens the editor in the same split view as clicking the stack's own icon, scrolled to that service, instead of the form on its own.
 - A stack's untouched containers no longer read as "not created yet" after one of its services is updated. If the store had been moved, or the stack filed into a folder, the containers still carried the old location and were dropped from the row the moment a recreated sibling carried the new one. They were running all along; the row now says so.
 - The Select tool's actions are no longer hidden at the foot of the list. Choose a stack or two and a row of buttons — Start, Stop, Restart, Check for updates, Update — slides open directly beneath the Select button, outlined so the two read as one piece. It appears only once something is chosen, and slides away again when nothing is.

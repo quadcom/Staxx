@@ -105,7 +105,7 @@ The kinds of change you can meet:
 The tally at the foot of the window reads **N decisions · N approved · N declined · N to answer**.
 Press **to answer** to go to the next change still waiting.
 
-<!-- SHOT: merging-stacks-tally | close-up | the tally line at the foot of the step 3 window, with the "to answer" button visible -->
+![The tally at the foot of the compose files step, reading 2 decisions, 0 approved, 0 declined, and the 2 to answer button, outlined](../images/guide/merging-stacks-tally.png)
 
 ## Step 4 · Settings and files
 

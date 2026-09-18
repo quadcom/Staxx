@@ -2,7 +2,7 @@
 
 <!-- index: 6 | a walk round the window that opens when you open a stack: the three ways to see the same file, the tabs, the form's sections, and the buttons along the bottom. -->
 
-This is the window that opens when you click [a stack's picture](the-stack-list.md) on the list, or press **Add stack**. This page walks it part by part.
+Open it by clicking [a stack's picture](the-stack-list.md) on the list, or by pressing **Add stack**.
 
 ![The whole editor window in Split view: the header with the stack name and tools, the four tabs, the form on the left showing the Container and Ports sections, the compose file on the right, and the buttons along the bottom](../images/guide/the-stack-editor-whole.png)
 
@@ -14,7 +14,7 @@ This is the window that opens when you click [a stack's picture](the-stack-list.
 |---|---|
 | Title | The stack's name, or **New stack** while making one. |
 | Stack name box | The folder that holds this stack's file. Renaming it moves the folder. The folder it sits in, if any, is shown in grey beside it. |
-| Sanitise | Hides every value marked sensitive, so a screenshot does not leak them. See [Sanitise mode](hiding-your-values.md). |
+| Sanitise | Hides every value marked sensitive. See [Sanitise mode](hiding-your-values.md). |
 | Password | Opens the password generator, and a hashing tool beside it. See [password generator and hashing tool](passwords-and-hashes.md). |
 | Fill in details | Looks up each container's icon, links, description and more from the image, its catalogue entry and its own page. |
 | Outline | Jumps to a block or service inside the compose file. |
@@ -34,9 +34,11 @@ Three buttons switch how you see the same file.
 
 ![The bar between the form and the compose file in Split view, outlined, with a small grip mark in its middle](../images/guide/the-stack-editor-divider.png)
 
-In Split, drag the bar between the two panes to give one side more room. The position is remembered in your browser, so the editor opens where you left it. Double-click the bar to put it back in the middle.
+In Split, drag the bar between the two panes to give one side more room, or double-click it to put
+it back in the middle. Its position is remembered in your browser: the editor reopens where you
+left it.
 
-Split is the normal view on a wide window. On a narrower one — a tablet held upright, or a phone — there is no room for two panes side by side, so the three buttons are not shown at all. A switch at the top of the Configure tab, **Show the compose file**, swaps the form for the raw file and back instead. Opening a file that is not the compose file itself (a `.env` file, say) always shows it beside the form, never in place of it, so Form on its own is not offered while one is open.
+A file other than the compose file itself, such as a `.env` file, opens beside the form.
 
 ## The four tabs
 
@@ -49,13 +51,14 @@ Split is the normal view on a wide window. On a narrower one — a tablet held u
 | History | Earlier saved versions of this file. See [recovery and redundancy](recovery-and-redundancy.md). |
 | Versions | Which build of each image has actually run, and a way to put an older one back. See [recovery and redundancy](recovery-and-redundancy.md). |
 
-History is switched off while Sanitise is on. An old version holds the real values, not the hidden ones, so showing it would defeat Sanitise. Versions stays on — an image name is not a value you wrote, so Sanitise has nothing to hide there.
+Turn Sanitise off to open History. Versions stays available with Sanitise on.
 
 ## The form, section by section
 
 ![The Stack section opened, showing its four groups — Networks, Volumes, Secrets and Configs — each with an add button on the right](../images/guide/the-stack-editor-stack-section.png)
 
-The form opens with a **Stack** section — settings that belong to the whole file, not to one service — then one section per service.
+The form opens with a **Stack** section — settings that belong to the whole file, not to one
+service — then one section per service.
 
 | Group | For |
 |---|---|
@@ -66,11 +69,12 @@ The form opens with a **Stack** section — settings that belong to the whole fi
 
 ![A service's section: its name with a pencil to rename it, its description, then the Container group with Image, Container name, Restart policy and Web page port, a Sections button, and the Ports group heading below](../images/guide/the-stack-editor-service-section.png)
 
-Each service then gets its own set of groups. Most are hidden until you switch them on with that service's **Sections** button — a picker lists all of them, with a tick beside each one already showing.
+Each service then gets its own set of groups. Press a service's **Sections** button to choose which
+of them to show; a tick marks each one already showing.
 
 | Group | For |
 |---|---|
-| Container | The image, the name and how it restarts. Always shown — this is the one group every service must have. |
+| Container | The image, the name and how it restarts. Always shown — every service must have it. |
 | Networks | Which networks this service joins. |
 | Ports | Which ports it publishes. On by default. |
 | Volumes | Folders and files it shares with the server. On by default. |
@@ -79,7 +83,7 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 | Labels | Docker labels. On by default. |
 | Health check | How Docker decides the container is working. |
 | Resource limits | CPU and memory limits. |
-| Build | Building the image here instead of pulling it. Switches on by itself when the file already has one. |
+| Build | Building the image here instead of pulling it. |
 | Depends on | Which other services must start first. |
 | Secrets | Secrets this service can read. |
 | Configs | Configs this service can read. |
@@ -109,12 +113,12 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 
 ![The foot of the editor: an offer bar about details that were found, a bar about folders that do not exist yet, then Tidy this file, a greyed-out Undo, Save and Save and start](../images/guide/the-stack-editor-footer.png)
 
-| Button | What it does | Unavailable when |
+| Button | What it does | Needs |
 |---|---|---|
-| Tidy this file | Tidies the layout of the compose file without changing what it means. See [editing a stack](editing-a-stack.md). | Sanitise is on, or a non-compose file is open. |
-| Undo | Puts back the last change this button covers — adding or removing an entry. | Sanitise is on, a non-compose file is open, or there is nothing to undo. |
-| Save | Writes the file. | Sanitise is on. |
-| Save and start | Writes the file, then starts the stack. | Sanitise is on, a required field is still blank, a `REPLACE-ME` placeholder remains, or the server has no working Compose or Docker. |
+| Tidy this file | Tidies the layout of the compose file without changing what it means. See [editing a stack](editing-a-stack.md). | Sanitise off, and the compose file open. |
+| Undo | Puts back the last change this button covers — adding or removing an entry. | Sanitise off, the compose file open, and a change to undo. |
+| Save | Writes the file. | Sanitise off. |
+| Save and start | Writes the file, then starts the stack. | Sanitise off, every required field filled in, no `REPLACE-ME` placeholder left, and a working Compose and Docker on the server. |
 
 ## On a phone or a narrow window
 
@@ -125,9 +129,8 @@ Below desktop width the editor rearranges itself rather than shrinking:
 | Part | What changes |
 |---|---|
 | Header | Two lines: the title and the stack name, then the tools. On a phone, **Close** sits in the top-right corner. |
-| Views | The Form, Split and Compose buttons are gone. The **Show the compose file** switch at the top of the Configure tab swaps the form for the raw file and back. |
-| Notes | Advice — the details-found offer and the "author's published example also sets…" lines — folds into one line at the foot reading *N notes*. Tap it to read them, and the cross to fold them away again. Nothing is dismissed by folding. Warnings that need an answer, such as a folder that does not exist yet, stay in full. |
-| The window | On a tablet held upright, or a phone, the editor fills the screen. |
+| Views | Use the **Show the compose file** switch at the top of the Configure tab to swap the form for the raw file and back. |
+| Notes | Advice — the details-found offer and the "author's published example also sets…" lines — folds into one line at the foot reading *N notes*. Tap it to read them, and the cross to fold them away again. Warnings that need an answer, such as a folder that does not exist yet, stay in full. |
 
 ## Messages you may see
 
@@ -135,22 +138,15 @@ Below desktop width the editor rearranges itself rather than shrinking:
 |---|---|---|
 | Sanitise banner | "Sanitised for screenshots. Values marked sensitive are hidden and nothing can be changed. Turn Sanitise off to make edits." | Sanitise is on. See [Sanitise mode](hiding-your-values.md). |
 | Conversion banner | "This install came in from Unraid's Apps page. StaXX has converted it to a stack below — save it to install the app." | This stack just arrived converted from an Unraid install, a reinstall, or an existing container being brought in. |
-| Required-field bar | Names the blank field, e.g. "…And 2 other rows need attention." | A required field is still empty. Click the bar to jump to it. |
-| Missing-file bar | '"filename" is named in this compose file but is not in this stack. Create it, or add it with the + button above.' | The file refers to a file that is not in this stack's folder. |
-| Make-paths bar | '"path" is named in this compose file but does not exist on the server yet. Create it.' | A folder the file wants does not exist yet on the server. Click it to create the folder. |
-| Folder-in-use caution | '"path" already has files in it. Starting this stack would point it at whatever is already there — check that is what you mean before starting it.' | You are making a new stack, and a folder it names already holds something. |
-| Network not found | 'This server has no network called "eth0.2". The nearest is "br0.2".' under a network marked as already existing, with a **Use br0.2** button beside it. | The file points at a network your server no longer has — most often because Unraid renamed it when bridging was switched on. The button renames it, in the declaration and in every service that uses it, as one undoable edit. Nothing changes until you press it. |
+| Required-field bar | Names the blank field, e.g. "…And 2 other rows need attention." | Fill in the named field. Click the bar to jump to it. |
+| Missing-file bar | '"filename" is named in this compose file but is not in this stack. Create it, or add it with the + button above.' | Create the named file, or add it with the **+** button above. |
+| Make-paths bar | '"path" is named in this compose file but does not exist on the server yet. Create it.' | Click the bar to create the named folder on the server. |
+| Folder-in-use caution | '"path" already has files in it. Starting this stack would point it at whatever is already there — check that is what you mean before starting it.' | Check the named folder before starting a new stack that points at it. |
+| Network not found | 'This server has no network called "eth0.2". The nearest is "br0.2".' under a network marked as already existing, with a **Use br0.2** button beside it. | Press the button to rename the network, in its declaration and in every service that uses it, as one undoable edit — or point the service at a different network yourself. |
 
 A network that another stack created shows up in the network dropdown too, marked "created by the
-&lt;name&gt; stack", and can be picked like any other. If that other stack is later removed, this
-stack starts showing "Network not found" for it until you point it at a different network.
-
-## What this never does
-
-- It never starts the stack just because you pressed Save — only Save and start does that.
-- It never lets you edit while Sanitise is on. Turn it off first.
-- It never creates a missing file or folder on its own. Every bar for one is a button, not an automatic fix.
-- It never looks up a stack's details without you asking, beyond the offer bar — nothing is written until you accept it.
+&lt;name&gt; stack", and can be picked like any other. If that other stack is later removed, choose a
+different network for this one.
 
 ## Terms used here
 
