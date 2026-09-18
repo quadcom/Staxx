@@ -68,6 +68,17 @@ It is not: 3.13 is installed, with `pyyaml` and `jsonschema` both available, and
 of that folder — in progress, not started yet, or waiting on a decision. A finished plan moves down
 into `plans/completed-plans/`. Nothing plan-shaped is left loose in the project root.
 
+**A plan stands on its own. The conversation it was written in is not part of it.** Context gets
+cleared often, and everything that is only in the chat window is gone when it is. So before a plan is
+called finished — written, updated, or closed — read it back and ask: could somebody build this,
+argue with it, or understand why it was dropped, having seen nothing but this file? Everything the
+work depends on goes in: the decision and who made it, the words Adrian used where they carry the
+reasoning, the numbers and exact strings, what was measured and when, where in the code it lives, what
+was already tried and failed, what the plan is waiting on, and which other plans it touches and which
+way round they have to be built. A finding, a ruling or a correction that arrives mid-conversation is
+written into the plan **in the same pass**, not remembered for later. Never answer a question only in
+chat when the answer changes a plan — the chat is the draft, the plan is the record.
+
 **A plan file is never deleted. There is no exception to this and no case where deleting one is the
 tidy answer.** A plan has exactly three ends: it is built, and moves to `plans/completed-plans/`; it
 is abandoned, and its status line says so and why, and it moves to `plans/completed-plans/` as the
