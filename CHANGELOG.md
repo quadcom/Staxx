@@ -18,6 +18,9 @@ before that were dates.
 
 ## Unreleased
 
+- A chip the stack list has nothing to say with no longer sits in the top bar as an empty coloured circle. The chip counting Unraid templates still on flash was the one that showed it: with none left to move it stayed on screen with no number in it and a tooltip telling you to go and move them.
+- The stack's menu no longer runs off the edge of the window. The explanation under "Take over and start" was held to one line, which stretched the menu wide enough to push the folder list beside it off the screen; it now wraps.
+- The editor's footer no longer shows what looked like an empty notice with a close cross and nothing in it. That cross is the "Not now" beside the bar offering to look up a stack's details, and it now sits on the bar's own line where it belongs. That bar also stopped ending in "create it", which belongs to the bars that create a missing file or folder.
 - Fixed in 00.04.03: If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's file asks for. If they match it clears it away and carries on with your answer; if they do not, it shows you what differs, when that container was built and when the file last changed, and offers to use the stack's version, instead of sending you to Unraid's Docker page.
 
 - If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's own file asks for. If they match, it clears it away and carries on with your answer. If they do not, it shows you what differs and offers to use the stack's version, instead of sending you to Unraid's Docker page.

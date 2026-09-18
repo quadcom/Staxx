@@ -956,9 +956,16 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
            PHP. Hidden by default; nothing shows in it above desktop width. -->
       <div class="staxx-notestrip" id="staxx-notestrip" hidden></div>
 
-      <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
-      <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
-              title="<?= _('Not now') ?>" hidden>&times;</button>
+      <!-- The bar and its "Not now" cross share one row: as plain siblings in
+           this block-flow footer the cross landed on a line of its own, which
+           read as an empty notice band with a close button and nothing in it
+           (2026-09-18). The row is empty markup whenever both are hidden, so
+           it costs no height then. -->
+      <div class="staxx-noterow">
+        <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
+        <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
+                title="<?= _('Not now') ?>" hidden>&times;</button>
+      </div>
 
       <!-- Same shape and job as #staxx-missing above, but for a volume's
            HOST side rather than a file inside the stack: clicking it asks the

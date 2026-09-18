@@ -3140,7 +3140,13 @@ div.title.staxx-has-titlebar {
   min-width: 0;
 }
 
+/* Capped because the menu is sized `width: max-content` (see the split rule
+   further down): without a limit a one-line explanation sets the first
+   column's width, pushing the whole menu past its own max-width and
+   clipping the folder column beside it off the edge of the window
+   (2026-09-18). 26rem keeps both columns inside the 64rem cap. */
 .staxx-menu-hint {
+  max-width: 26rem;
   color: var(--sm-muted);
   font-size: 1.1rem;
 }
@@ -3555,6 +3561,18 @@ div.title.staxx-has-titlebar {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The `hidden` attribute is backed only by the browser's own
+   `[hidden] { display: none }`, which every chip rule here outranks by
+   setting `display` itself — so hiding a chip from script left it laid out.
+   The Unraid-templates chip in the top bar spent 00.04.03 on screen as an
+   empty blue circle with a stale tooltip for exactly this reason
+   (2026-09-18). One rule for all three chip families rather than three. */
+.staxx-updatepill[hidden],
+.staxx-pill[hidden],
+.staxx-pendingchip[hidden] {
+  display: none;
 }
 
 /* PLAN_161 — one rule per meaning, each setting --chip and drawing its own
@@ -10294,16 +10312,41 @@ div.title.staxx-has-titlebar {
 }
 
 /* PLAN_84 phase 5 — "Not now" beside the offer bar's own "Review" (the bar
-   itself, #staxx-scaffold-note). A separate small control rather than
-   reshaping that bar into a two-part row: every other .staxx-missing bar in
-   this footer is one plain click target, and this is the only state that
-   ever needs a second one. */
+   itself, #staxx-scaffold-note). It stays a separate small control rather
+   than becoming part of that bar: every other .staxx-missing bar in this
+   footer is one plain click target, and this is the only state that ever
+   needs a second one. The two share one flex row because as plain siblings
+   in the block-flow footer the cross dropped onto a line of its own, which
+   read as an empty notice band with a close button and nothing in it
+   (2026-09-18). The row costs no height while both are hidden. */
+.staxx-scaffold .staxx-noterow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* The bar gives up its own full width to make room for the cross, and both
+   carry the same bottom margin so align-items centres the cross against the
+   bar rather than against the gap beneath it. */
+.staxx-scaffold .staxx-noterow > .staxx-missing {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* The shared "→ create it" suffix is wrong on this one: its sentence already
+   ends in the question it is asking — "review them?", "Add placeholders for
+   them?" — and what the click opens is a chooser, not a file. It is the only
+   .staxx-missing inside the row, so the row is what selects it. */
+.staxx-scaffold .staxx-noterow > .staxx-missing::after {
+  content: '';
+}
+
 /* .staxx-scaffold prefix (0,2,0): despite the name this is one class, and a
    single class ties the marker's own button reset (trap 3, header) on
    colour and font-size, decided only by source order otherwise. */
 .staxx-scaffold .staxx-scaffold-dismiss {
   display: block;
-  margin: -0.8rem 0 1.2rem auto;
+  margin: 0 0 1.2rem;
   padding: 0.2rem 0.6rem;
   border: 0;
   border-radius: 0;
