@@ -396,7 +396,15 @@ jobs:
           git config user.name "staxx-release-bot"
           git config user.email "actions@github.com"
           git fetch origin "${CHANNEL_BRANCH}"
-          git checkout -B "${CHANNEL_BRANCH}" "origin/${CHANNEL_BRANCH}"
+          # -f, because staxx.plg in the working tree is the stamped one this
+          # build just wrote, and a plain checkout refuses to overwrite it the
+          # moment the branch has moved past the tagged commit — which is
+          # exactly what happens when a release lands after another one's
+          # stamp (00.04.03, 2026-09-18: the whole publish failed at this line
+          # and no release was cut). The stamped file is already safe in /tmp
+          # and is copied back immediately below, so there is nothing here
+          # worth keeping.
+          git checkout -f -B "${CHANNEL_BRANCH}" "origin/${CHANNEL_BRANCH}"
           cp /tmp/staxx.plg.stamped staxx.plg
           git add staxx.plg
           if git diff --cached --quiet; then
