@@ -16,6 +16,10 @@ before that were dates.
 
 ---
 
+## 00.04.02 — released 2026-09-18
+
+- Taking over an Unraid container now also moves its template out of Unraid's template folder and off the Auto Update Applications list for as long as StaXX owns it, so neither that plugin nor Appdata Backup can rebuild the old container behind the stack's back. Answer "It does not" and both go back exactly as they were. If something outside StaXX rebuilds the container while the question is open, both answers now refuse and say what to remove first. If you took stacks over before this version, the stack list asks once on first load whether to move the templates still on flash, and Settings lists them and moves them in one press at any time.
+
 ## 00.04.01 — released 2026-09-17
 
 - In the stack editor, pressing Form no longer hides the Form, Split and Compose buttons on a wide window. The dialog narrows itself for the form view, and it used to treat that narrowing as if the whole window had shrunk, so on any window between about 1330 and 2000 pixels wide the only way back to Split was to close the editor. The buttons now hide only when the window itself is narrow.
