@@ -293,3 +293,29 @@ Two consequences that cannot be fixed from here, only known about:
 - A **development user is never offered the stable release**, because `00.02.00` sorts below
   `00.02.00_dev20260831`. Switching to stable means pasting main's address, which installs it
   outright. That is the right shape for a channel switch, and it is deliberate.
+
+## The sort gate, belt and braces
+
+Belt and braces on top of that: `publish.yml` also refuses to publish a version that does not sort
+above the newest release already out on that channel, under `LC_ALL=C` — a locale-aware comparison
+can reorder punctuation, and this has to be the byte comparison `strcmp` actually performs. The
+padding should make that gate unreachable; it is there for the day something else is got wrong.
+
+## What only a real manifest install proves
+
+*Moved here from `CLAUDE.md` on 2026-09-17; it was written there on 2026-09-04.*
+
+**What the deploy route cannot prove**, and so is worth an occasional real install: the manifest's
+own install and removal scripts. `dev-install.sh` mirrors the parts that matter day to day — seeding
+the config, running `apply_settings`, writing the registration marker — but the legacy
+`stack.manager` → `staxx` settings migration, the older-package cleanup, and the whole removal path
+only ever run through a genuine plugin install. The migration is the one that touches somebody's
+existing settings, so it is the one worth actually exercising rather than reasoning about.
+
+**Measured 2026-09-04, both paths clean on Adrian's box** — but one trap: `dev-install.sh` writes an
+empty *file* at `/var/log/plugins/staxx.plg` as its registration marker, where Unraid keeps a
+*symlink* to the real manifest. `plugin remove` reads that entry with `readlink`, gets nothing, and
+reports "removed" having run none of the removal script. So on a dev-deployed box a manifest
+install-and-remove test must first replace the marker with `ln -s /boot/config/plugins/staxx.plg`;
+a real user's box never has the marker. Removal also signs Docker out of Hub; `apply_settings`
+signs it back in on the next install, which is the intended shape.
