@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "2a6304298737e710dff57735f7bb520c">
-<!ENTITY packageSHA256        "f35d53f57f37049f6a62e321914e2f833af72493d66011941f6fd5a4401523d6">
+<!ENTITY packageMD5           "c1299025519aaaa75b0281211b6701bc">
+<!ENTITY packageSHA256        "13f17be482d84e993d60dc0846ac0cd1dc2218ddba91f7599be6026c0db1724d">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
