@@ -100,7 +100,7 @@ The kinds of change you can meet:
 | Renamed to keep it distinct | Two stacks used the same name for a service, a network, a volume or a reusable block. One was renamed. |
 | From the override file | A stack had a second compose file laid over the first. Its lines are folded in and marked. |
 | The `version:` line is not carried | An old, ignored line is dropped. |
-| This stack's own description is not carried | Two stacks each carried a stack-level description. The first is kept; the other is offered here. |
+| This stack's own description is not carried | Two stacks each gave the stack its own description, category or link with different values. The first is kept. Decline and the other value is kept in the merge summary rather than the file. A detail only one stack carried comes across without asking. |
 
 The tally at the foot of the window reads **N decisions · N approved · N declined · N to answer**.
 Press **to answer** to go to the next change still waiting.

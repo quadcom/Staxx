@@ -342,5 +342,36 @@ function validateAgainstSchema(text) {
      restoredPartner.parts.value.value === 'old-value');
 })();
 
+/* ---- PLAN_160 A: a wizard-written record silences the editor's own ask -- */
+(function () {
+  var yaml = [
+    'services:',
+    '  app:',
+    '    environment:',
+    '      REDIS_HOSTS: cache:6379',
+    '  cache:',
+    '    image: redis:7-alpine'
+  ].join('\n');
+  var doc = Y.parse(yaml);
+  var conns = Y.detectLinks(Y.buildForm(doc)).filter(function (c) { return c.kind === 'reference'; });
+  ok('detectLinks finds the pair before any record exists', conns.length === 1, conns.length);
+
+  // Same shape merge-write.js's own wiring pass writes once it rewires an
+  // address: a confirmed "reference" between the pointing field and the
+  // bare target service.
+  var res = Y.setLinkState(doc, conns[0].kind, conns[0].certainty, conns[0].between, 'confirmed');
+  ok('the writer accepts it', res.ok, res.error);
+
+  // Reproduces applyLinkAdvice()'s own "visible" filter (stacks.js) — the
+  // pure part testable here, since stacks.js has no module.exports (see
+  // this file's own header): a confirmed connection drops out of the
+  // question list entirely, not just off the field's own mark.
+  var visible = Y.detectLinks(Y.buildForm(doc)).filter(function (c) {
+    var state = c.certainty === 'declared' ? null : Y.linkState(doc, c.kind, c.between);
+    return state !== 'confirmed';
+  });
+  ok('once recorded, the editor has nothing left to ask about this pair', visible.length === 0, visible.length);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

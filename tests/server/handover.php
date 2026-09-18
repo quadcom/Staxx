@@ -1,7 +1,9 @@
 <?php
 /* The handover: staxx_handover_targets(), the set-aside name, the state
- * file's round trip, the script text, and every refusal in
- * staxx_start_handover()/staxx_finish_handover().
+ * file's round trip (restart policy included, PLAN_159 §2), the script text
+ * (including the restart-policy reset and restore), staxx_handover_running_
+ * again() and the archive-refusal sentence built on top of it, and every
+ * refusal in staxx_start_handover()/staxx_finish_handover().
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
@@ -69,7 +71,7 @@ file_put_contents($lockedDir.'/'.STAXX_REVIEW_FILE, "imported\n");
 mkdir($activeDir, 0755, true);
 file_put_contents($activeDir.'/compose.yaml', $compose);
 staxx_handover_write($activeDir, [
-  ['original' => 'zzd1-old', 'setaside' => 'zzd1-old-before-staxx', 'wasRunning' => true],
+  ['original' => 'zzd1-old', 'setaside' => 'zzd1-old-before-staxx', 'wasRunning' => true, 'restart' => 'always'],
 ], '2026-08-18T00:00:00+00:00');
 
 mkdir($noFileDir, 0755, true);
@@ -127,8 +129,8 @@ ok('an unrelated name is not a set-aside copy',
 /* ------------------------------------------------ the state file's round trip -- */
 
 $targets = [
-  ['original' => 'my.app-1',      'setaside' => 'my.app-1-before-staxx',   'wasRunning' => true],
-  ['original' => 'second-thing',  'setaside' => 'second-thing-before-staxx-2', 'wasRunning' => false],
+  ['original' => 'my.app-1',      'setaside' => 'my.app-1-before-staxx',   'wasRunning' => true, 'restart' => 'always'],
+  ['original' => 'second-thing',  'setaside' => 'second-thing-before-staxx-2', 'wasRunning' => false, 'restart' => 'no'],
 ];
 $roundtripDir = $root.'/zzd1roundtrip';
 @exec('rm -rf '.escapeshellarg($roundtripDir));
@@ -138,16 +140,31 @@ ok('writes the handover note', staxx_handover_write($roundtripDir, $targets, '20
 ok('is then found present', staxx_handover_file($roundtripDir) === STAXX_HANDOVER_FILE);
 
 $readBack = staxx_handover_read($roundtripDir);
-ok('reads back the same targets, in order', ($readBack['targets'] ?? null) === $targets, json_encode($readBack));
+ok('reads back the same targets, in order, restart policy included',
+   ($readBack['targets'] ?? null) === $targets, json_encode($readBack));
 ok('reads back the same timestamp', ($readBack['when'] ?? '') === '2026-08-18T12:00:00+00:00');
 
 @exec('rm -rf '.escapeshellarg($roundtripDir));
 
+// A file written before PLAN_159 §2 carries no Restart-N line at all — the
+// reader must default that to 'no' rather than choking on the missing key.
+$noRestartDir = $root.'/zzd1norestart';
+@exec('rm -rf '.escapeshellarg($noRestartDir));
+mkdir($noRestartDir, 0755, true);
+file_put_contents($noRestartDir.'/'.STAXX_HANDOVER_FILE,
+  "# Handover in progress\n\nOriginal-1: old-app\nSetAside-1: old-app-before-staxx\n"
+  . "WasRunning-1: yes\nWhen: 2026-08-18T12:00:00+00:00\n"
+);
+$noRestartBack = staxx_handover_read($noRestartDir);
+ok('a file with no Restart-N line reads that target\'s policy as no',
+   ($noRestartBack['targets'][0]['restart'] ?? null) === 'no', json_encode($noRestartBack));
+@exec('rm -rf '.escapeshellarg($noRestartDir));
+
 /* --------------------------------------------------- the script's text --- */
 
 $hostile = [
-  ['original' => 'plain-one', 'setaside' => 'plain-one-before-staxx', 'wasRunning' => true],
-  ['original' => "evil'name", 'setaside' => "evil'name-before-staxx", 'wasRunning' => false],
+  ['original' => 'plain-one', 'setaside' => 'plain-one-before-staxx', 'wasRunning' => true, 'restart' => 'always'],
+  ['original' => "evil'name", 'setaside' => "evil'name-before-staxx", 'wasRunning' => false, 'restart' => "evil'policy"],
 ];
 $script = staxx_handover_script(
   'docker compose', ['compose.yaml'], '/tmp/zzd1script',
@@ -171,6 +188,17 @@ ok('every target is stopped before any is renamed',
 ok('the compose step comes after every rename',
    $posCompose !== false && $posRename < $posCompose);
 
+// PLAN_159 §2 — a set-aside can never be brought back by Docker: every
+// rename in the main body is followed by a policy reset, and a failure
+// there must not fail the handover.
+$posUpdateNo = strpos($script, 'update --restart=no '.escapeshellarg('plain-one-before-staxx'));
+ok('every rename is followed by --restart=no on the set-aside',
+   $posUpdateNo !== false && $posRename < $posUpdateNo, $script);
+ok('the --restart=no step never fails the handover',
+   strpos($script, 'update --restart=no '.escapeshellarg('plain-one-before-staxx').' 2>&1 || true') !== false);
+ok('the reset also covers a target with a hostile set-aside name, still quoted through escapeshellarg',
+   strpos($script, 'update --restart=no '.escapeshellarg("evil'name-before-staxx")) !== false, $script);
+
 // undo() has to clear this stack's own containers away before it hands the
 // original its name back: a start that failed partway can still have created
 // some of them, and they hold the ports and the fixed address the original
@@ -183,6 +211,16 @@ ok('undo() brings this stack down before putting any name back',
 ok('undo() starts back only what had been running',
    strpos($undoPart, "start 'plain-one'") !== false &&
    strpos($undoPart, "start 'evil'\\''name'") === false, $undoPart);
+
+// PLAN_159 §2 — undo() must put the ORIGINAL container's own recorded
+// policy back before it is started, not after, or a restart racing the
+// daemon could still catch it under the set-aside's 'no'.
+$posUndoRestore = strpos($undoPart, 'update --restart='.escapeshellarg('always').' '.escapeshellarg('plain-one'));
+$posUndoStart   = strpos($undoPart, "start 'plain-one'");
+ok('undo() restores the recorded policy before starting the target that was running',
+   $posUndoRestore !== false && $posUndoStart !== false && $posUndoRestore < $posUndoStart, $undoPart);
+ok('undo() never restores or starts a target that was not running',
+   strpos($undoPart, 'update --restart='.escapeshellarg("evil'policy")) === false, $undoPart);
 
 // Every MAIN step carries its own 2>&1 — undo() deliberately uses
 // 2>/dev/null instead, since its output is not read, so counting is done on
@@ -197,6 +235,44 @@ $missing2and1 = array_filter($mainSteps, function ($line) {
 });
 ok('every command step in the main body carries its own 2>&1',
    $missing2and1 === [], implode(' | ', $missing2and1));
+
+/* --------------------------------- staxx_handover_running_again / _pending_notice -- */
+
+// A stack with a handover waiting, whose set-aside is running again — the
+// case PLAN_159 §2 exists for. staxx_docker_ps_raw()'s own shape, injected
+// so this never has to touch a real container.
+$noticeDir = $root.'/zzd1notice';
+@exec('rm -rf '.escapeshellarg($noticeDir));
+mkdir($noticeDir, 0755, true);
+staxx_handover_write($noticeDir, [
+  ['original' => 'zzd1n-old', 'setaside' => 'zzd1n-old-before-staxx', 'wasRunning' => true, 'restart' => 'no'],
+], '2026-09-17T00:00:00+00:00');
+
+$running = [['name' => 'zzd1n-old-before-staxx', 'state' => 'running']];
+$stopped = [['name' => 'zzd1n-old-before-staxx', 'state' => 'exited']];
+
+ok('a stopped set-aside is reported running-again as none',
+   staxx_handover_running_again($noticeDir, $stopped) === []);
+ok('a set-aside running again is named',
+   staxx_handover_running_again($noticeDir, $running) === ['zzd1n-old-before-staxx']);
+
+// staxx_handover_pending_notice() is a thin wrapper — checked once for the
+// sentence it builds around whatever the function above hands it.
+$noticeBase    = staxx_handover_pending_notice($noticeDir, $stopped);
+$noticeRunning = staxx_handover_pending_notice($noticeDir, $running);
+
+ok('the base notice names answering that first before removing anything',
+   stripos($noticeBase, 'Answer that first') !== false, $noticeBase);
+ok('a stopped set-aside gets no extra sentence',
+   strpos($noticeBase, 'is running again beside the new stack') === false, $noticeBase);
+ok('a set-aside running again gets the extra sentence, naming it',
+   strpos($noticeRunning, 'The old container "zzd1n-old-before-staxx" is running again beside the new stack') !== false,
+   $noticeRunning);
+ok('the extra sentence still carries the base sentence ahead of it',
+   strpos($noticeRunning, 'Answer that first') !== false
+   && strpos($noticeRunning, 'Answer that first') < strpos($noticeRunning, 'is running again'), $noticeRunning);
+
+@exec('rm -rf '.escapeshellarg($noticeDir));
 
 /* ------------------------------------------------------- staxx_start_handover -- */
 

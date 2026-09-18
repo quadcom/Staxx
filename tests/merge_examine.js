@@ -582,20 +582,49 @@ console.log('\nH. One stack-level x-unraid (the first source\'s), services keep 
   ok('the second source\'s own stack-level description does not survive anywhere in the merge',
      w.text.indexOf('Second app') === -1);
 
-  var dropped = w.changes.filter(function (c) { return c.title === 'This stack’s own description is not carried'; })[0];
+  var dropped = w.changes.filter(function (c) { return c.title === 'This stack’s own "description" is not carried'; })[0];
   ok('...and its own change record says so, rather than silently dropping it',
-     !!dropped && dropped.stack === 'srcF' && dropped.reason === 'A merged stack has one description, and srcE’s is kept. This one is left out; Decline keeps it under its own renamed key.');
+     !!dropped && dropped.key === 'top-xunraid|srcF|description' && dropped.stack === 'srcF' &&
+     dropped.reason === 'A merged stack has one "description", and srcE’s is kept. This one is left out.');
   ok('dropping the second stack\'s own description CAN be left as it was', dropped.cannotLeave === undefined);
 
-  // "leave" here means keeping it after all — renamed the same way any
-  // other clashing top-level "x-" key already is, since two "x-unraid:"
-  // keys cannot coexist.
-  var kept = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-xunraid|srcF': 'leave' } });
-  ok('choosing "leave" keeps the second source\'s own description too, renamed to fit',
-     kept.text.indexOf('Second app') >= 0 && /^x-unraid-srcF:/m.test(kept.text));
-  var keptChange = kept.changes.filter(function (c) { return c.key === 'top-xunraid|srcF'; })[0];
-  ok('a declined change record is produced for it, on the renamed line that is left as written',
-     !!keptChange && keptChange.declined === true && typeof keptChange.line === 'number');
+  // PLAN_160 B: "leave" no longer writes a renamed "x-unraid-<leaf>" key
+  // into the file — the file keeps the base's value either way, and the
+  // declined text travels only on the change record, for the merge's own
+  // summary (Adrian, 2026-09-17: no dead spare key).
+  var kept = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-xunraid|srcF|description': 'leave' } });
+  ok('choosing "leave" still keeps only the first source\'s description in the file',
+     kept.text.indexOf('Second app') === -1 && kept.text.indexOf('x-unraid-srcF') === -1);
+  var keptChange = kept.changes.filter(function (c) { return c.key === 'top-xunraid|srcF|description'; })[0];
+  ok('a declined change record is produced, with nothing in the file to point at',
+     !!keptChange && keptChange.declined === true && keptChange.line === null);
+  ok('...and the declined text itself lives on the record, for the merge summary',
+     keptChange.declinedValue.indexOf('Second app') >= 0);
+})();
+
+console.log('\nH2. Disjoint x-unraid fields are all carried, field by field (PLAN_160 B)');
+
+(function () {
+  var f2 = {
+    name: 'srcF2', text: 'x-unraid:\n  description: "F app"\n' +
+      'services:\n  web:\n    image: alpine\n'
+  };
+  var g2 = {
+    name: 'srcG2', text: 'x-unraid:\n  category: "MediaApp:"\n  links:\n    - kind: reference\n      state: confirmed\n' +
+      '      between:\n        - service: web\n        - service: other\n' +
+      'services:\n  other:\n    image: alpine\n'
+  };
+
+  var w2 = MW.buildMergedText([f2, g2], { date: '2026-09-17', name: 'demoapp' });
+  ok('exactly one top-level x-unraid: key', (w2.text.match(/^x-unraid:/gm) || []).length === 1);
+  ok('the base source\'s own field is kept', w2.text.indexOf('F app') >= 0);
+  ok('the later source\'s two fields it lacked are both added', w2.text.indexOf('MediaApp:') >= 0 && /links:/.test(w2.text));
+  ok('each added field carries its own "# From srcG2" (plus one for its "other" service)',
+     (w2.text.match(/# From srcG2/g) || []).length === 3);
+  ok('no renamed spare key is ever written', w2.text.indexOf('x-unraid-srcG2') === -1);
+  ok('an added field gets its own change record, not an answerable one',
+     w2.changes.some(function (c) { return c.key === 'top-xunraid|srcG2|category' && !c.declined && typeof c.line === 'number'; }) &&
+     w2.changes.some(function (c) { return c.key === 'top-xunraid|srcG2|links' && !c.declined && typeof c.line === 'number'; }));
 })();
 
 console.log('\nH1. Icons are not a question — never a clash, one copy per referencing service');

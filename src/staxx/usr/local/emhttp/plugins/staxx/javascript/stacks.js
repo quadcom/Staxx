@@ -4532,13 +4532,21 @@
   // whole attempt away rather than saving a half-applied "all six".
   //
   // Resolves to the array of service names actually written, or null on any
-  // refusal (already reported via failed()) — the caller re-ticks from that
-  // list rather than from `services`, so a skipped service never reads as
-  // having been set.
-  function writeUpdatePolicyForServices(name, services, policyField, value) {
+  // refusal (already reported via failed(), or via `onRefuse` when the
+  // caller passed one) — the caller re-ticks from that list rather than
+  // from `services`, so a skipped service never reads as having been set.
+  //
+  // `onRefuse`, if given, takes the refusal instead of the ordinary failed()
+  // dialog — one message at a time, same (title, message) shape — so a
+  // caller writing several stacks in a row (PLAN_162's bulk panel) can
+  // collect each one's own sentence rather than a dialog popping up per
+  // stack. Every existing caller passes nothing and gets the dialog exactly
+  // as before.
+  function writeUpdatePolicyForServices(name, services, policyField, value, onRefuse) {
+    var report = onRefuse || failed;
     return call('read', { name: name }).then(function (readRes) {
       if (!readRes || !readRes.ok) {
-        failed('Could not change this setting', (readRes && readRes.error) || 'Could not read the stack.');
+        report('Could not change this setting', (readRes && readRes.error) || 'Could not read the stack.');
         return null;
       }
 
@@ -4546,13 +4554,23 @@
       var diskForm = YAML.buildForm(diskDoc, netDrivers(), envNameList());
       diskForm.doc = diskDoc;
 
+      // null means every service the file declares for this field (PLAN_162's
+      // bulk panel, which never knows a stack's own services until this read
+      // has answered).
+      if (services === null) {
+        services = [];
+        diskForm.fields.forEach(function (f) {
+          if (f.policy && f.policy.field === policyField && services.indexOf(f.service) === -1) services.push(f.service);
+        });
+      }
+
       var applied = [];
       for (var i = 0; i < services.length; i++) {
         var svc = services[i];
         var diskField = policyFieldFor(diskForm.fields, svc, policyField);
         if (!diskField || diskField.policy.unreadable) continue;
         if (!YAML.setPart(diskDoc, diskForm, diskField.id, 'value', value)) {
-          failed('Could not change this setting',
+          report('Could not change this setting',
                  'That cannot be written as it stands for "' + svc + '" — edit it in the Compose view.');
           return null;
         }
@@ -4560,7 +4578,7 @@
       }
 
       if (!applied.length) {
-        failed('Could not change this setting',
+        report('Could not change this setting',
                'None of these containers could be changed here — edit the compose file directly.');
         return null;
       }
@@ -4569,7 +4587,7 @@
       return call('save', { name: name, body: withEol(diskText, composeEol), 'new': '0',
                              fingerprint: readRes.fingerprint }).then(function (saveRes) {
         if (!saveRes || !saveRes.ok) {
-          failed('Could not change this setting', (saveRes && saveRes.error ? saveRes.error : 'Save failed.') +
+          report('Could not change this setting', (saveRes && saveRes.error ? saveRes.error : 'Save failed.') +
                  strayWarning(saveRes || {}));
           return null;
         }
@@ -10716,11 +10734,34 @@
   function repaintMark() {
     yamlMarks.textContent = '';
     // The band is a range of compose-file lines, which mean nothing painted
-    // over a companion file's text. missingHostPaths() itself returns empty
-    // for a companion file, so this still hides the "create folders" note
-    // rather than leaving it showing over a file with no volumes at all.
-    if (fileOpen !== null) { updateMissingPaths(); updateInUsePaths(); return; }
+    // over most companion files' text — except .env, which gets its own band
+    // below: one per line the active field's value actually refers to, not a
+    // compose line range. missingHostPaths() itself returns empty for a
+    // companion file, so this still hides the "create folders" note rather
+    // than leaving it showing over a file with no volumes at all.
+    if (fileOpen !== null && fileOpen !== '.env') { updateMissingPaths(); updateInUsePaths(); return; }
     if (!LINE_H) measure();
+
+    if (fileOpen === '.env') {
+      // Search hits, bad-path underlines, clash and link marks are all
+      // compose-file facts and have nowhere sensible to sit on a .env line,
+      // so this tab draws only the reference band and stops.
+      if (activeField && MODEL) {
+        var ef = YAML.fieldById(MODEL, activeField);
+        envRefsOf(ef).forEach(function (name) {
+          var line = envLines[name];
+          if (line === undefined) return;   // this field's value does not name a variable .env defines
+          var eband = document.createElement('div');
+          eband.className = 'staxx-mark';
+          eband.style.top    = (PAD_T + line * LINE_H - yamlPane.scrollTop) + 'px';
+          eband.style.height = LINE_H + 'px';
+          yamlMarks.appendChild(eband);
+        });
+      }
+      updateMissingPaths();
+      updateInUsePaths();
+      return;
+    }
 
     if (activeField && MODEL) {
       var f = YAML.fieldById(MODEL, activeField);
@@ -11311,7 +11352,15 @@
     }
     if (reveal && MODEL) {
       var f = YAML.fieldById(MODEL, id);
-      if (f && f.range) revealLine(f.range.start);
+      if (fileOpen === '.env') {
+        // f.range means the compose file here — reveal the earliest .env
+        // line this field's value actually refers to instead.
+        var refLines = envRefsOf(f).map(function (n) { return envLines[n]; })
+          .filter(function (l) { return l !== undefined; });
+        if (refLines.length) revealLine(Math.min.apply(Math, refLines));
+      } else if (f && f.range) {
+        revealLine(f.range.start);
+      }
     }
     repaintMark();
     syncGutter();
@@ -15775,6 +15824,7 @@
    * later is worse than warnings arriving a moment late.
    */
   var envVars = null;   // null = not fetched yet; otherwise name -> true
+  var envLines = {};    // name -> zero-based line of its first definition in .env (PLAN_163 part 1)
 
   function envKeys() {
     return envVars;
@@ -15804,22 +15854,59 @@
       var c = FILES[i];
       if (c.name === '.env' && !c.dir && !c.link && c.text) { f = c; break; }
     }
-    if (!f) { envVars = {}; relint(); dollarRecheck(); return; }
+    if (!f) { envVars = {}; envLines = {}; relint(); dollarRecheck(); return; }
 
     var was = openedName;
     return call('file-read', { name: openedName, file: '.env' }).then(function (res) {
       if (openedName !== was) return;   // the editor moved on to a different stack
-      var names = {}, m;
+      var names = {}, atLine = {}, m;
       if (res && res.ok && !res.binary && typeof res.text === 'string') {
         var lines = res.text.split('\n');
         for (var j = 0; j < lines.length; j++) {
-          if ((m = ENV_KEY_RE.exec(lines[j]))) names[m[1]] = true;
+          if ((m = ENV_KEY_RE.exec(lines[j]))) {
+            names[m[1]] = true;
+            // First definition wins — the same rule compose itself follows
+            // when a name is set twice in one .env file.
+            if (!(m[1] in atLine)) atLine[m[1]] = j;
+          }
         }
       }
       envVars = names;
+      envLines = atLine;
       relint();
       dollarRecheck();
+      if (fileOpen === '.env') repaintMark();   // the band depends on envLines, not on anything relint()/reparse() repaints
     });
+  }
+
+  // The variable names a field's own value text refers to — "${NAME}",
+  // "${NAME:-x}", "${NAME-x}" and bare "$NAME" all count, matching exactly
+  // what compose-model.js's VAR_RE (behind varRefs(), PLAN_106's dollar
+  // warning) treats as a reference, so the .env band and that warning never
+  // disagree about what counts as one. Copied as a plain regex rather than
+  // called through varRefs() itself, since that scans a whole file for
+  // blank/comment lines and line numbers this does not need — a field's
+  // value is already isolated text.
+  var ENV_REF_RE = /\$(?:\$|\{([A-Za-z0-9_]*)(?:(?::-|-|:\?|\?)[^}]*)?\}|([A-Za-z0-9_]*))/g;
+
+  function envRefsOf(field) {
+    var names = [], seen = {};
+    if (!field || !field.parts) return names;
+    Object.keys(field.parts).forEach(function (k) {
+      var p = field.parts[k];
+      var text = p && p.value != null ? String(p.value) : '';
+      if (!text) return;
+      ENV_REF_RE.lastIndex = 0;
+      var m;
+      while ((m = ENV_REF_RE.exec(text))) {
+        if (m[0] === '$$') continue;   // an escaped dollar, not a reference
+        var name = m[1] !== undefined ? m[1] : m[2];
+        if (!name || seen[name]) continue;
+        seen[name] = true;
+        names.push(name);
+      }
+    });
+    return names;
   }
 
   // parts already reads as English ("${A}", "A and B", "A, B and C") —
@@ -23288,8 +23375,21 @@
       // true/false; Cancel, Escape and a backdrop click all still resolve
       // false and do nothing, exactly as they do everywhere else this
       // dialog is used.
+      // PLAN_159 §2 — a hand start from the Docker page, or an appdata-backup
+      // "start what I stopped" that ran across the rename, can bring a
+      // set-aside container back without StaXX ever being asked. This is
+      // the moment someone is actually about to answer, so it is warned
+      // here rather than only on the archive refusal.
+      var runningAgainHtml = (res.runningAgain || []).map(function (setasideName) {
+        return '<p class="staxx-hint staxx-hint--warn">' + esc(
+          'The old container "' + setasideName + '" is running again beside the new stack; ' +
+          'switch it off from the Docker page before answering, or the two will fight over the same ports.'
+        ) + '</p>';
+      }).join('');
+
       var bodyHtml =
         '<p>This replaced ' + replaced + '.</p>' +
+        runningAgainHtml +
         '<p>Check that the app works, then answer: "It works" clears the old container away ' +
         'for good; "It does not work" puts everything back exactly as it was, running again, ' +
         'within seconds.</p>' +
@@ -28323,6 +28423,7 @@
     if (on) {
       paintSelectMarks();
     } else {
+      closeBulkPanel();   // PLAN_162 — leaving Select mode takes any open panel with it
       if (rowsHost) {
         Array.prototype.forEach.call(
           rowsHost.querySelectorAll('.staxx-selectmark'), function (m) { m.remove(); }
@@ -28367,8 +28468,17 @@
           '<button type="button" class="staxx-btn" data-bulk="restart"' + disabled + '>' + esc('Restart') + '</button>' +
           '<button type="button" class="staxx-btn" data-bulk="check"' + disabled + '>' + esc('Check for updates') + '</button>' +
           '<button type="button" class="staxx-btn" data-bulk="update"' + disabled + '>' + esc('Update') + '</button>' +
+          '<button type="button" class="staxx-btn" data-bulk="updates-settings"' + disabled + '>' + esc('Updates…') + '</button>' +
+          '<button type="button" class="staxx-btn" data-bulk="notify-settings"' + disabled + '>' + esc('Notifications…') + '</button>' +
         '</div>' +
       '</div>';
+
+    // A bulk panel (PLAN_162) does not survive this rebuild — the whole bar
+    // was just thrown away and redrawn — so it is restored here, already
+    // open and holding whatever the module-level state still says, rather
+    // than lost every time a stack is added to or dropped from the choice
+    // while the panel is up.
+    if (bulkPanelKind) mountBulkPanel(false);
 
     // The open class has to land a frame later than the element becoming
     // visible: added in the same frame there is no starting value to animate
@@ -28395,6 +28505,7 @@
   function closeSelectBar() {
     if (!selectBar || selectBar.hidden) return;   // already shut; leave it be
 
+    closeBulkPanel();   // PLAN_162 — the bar closing takes any open panel with it
     selectBar.classList.remove('staxx-selectbar--open');
     var token = ++selectBarCloseToken;
     var done  = false;
@@ -28476,10 +28587,44 @@
   if (selectBar) {
     selectBar.addEventListener('click', function (event) {
       var btn = event.target.closest('[data-bulk]');
-      if (!btn || btn.disabled) return;
-      var names = selectedNamesInOrder();
-      if (!names.length) return;
-      runBulkVerb(names, btn.dataset.bulk);
+      if (btn && !btn.disabled) {
+        var names = selectedNamesInOrder();
+        if (!names.length) return;
+        // PLAN_162 — the two "…" verbs open the bulk panel instead of
+        // running a job; everything else keeps going through runBulkVerb().
+        if (btn.dataset.bulk === 'updates-settings') { openBulkPanel('mode'); return; }
+        if (btn.dataset.bulk === 'notify-settings')  { openBulkPanel('notify'); return; }
+        runBulkVerb(names, btn.dataset.bulk);
+        return;
+      }
+
+      // The bulk panel's own controls — Cancel, Apply, and a notify
+      // switch's "Leave" chip (the tick/flag inputs themselves fire on
+      // 'change', handled below).
+      if (event.target.closest('[data-bulk-cancel]')) { closeBulkPanel(); return; }
+      if (event.target.closest('[data-bulk-apply]')) {
+        var applyBtn = event.target.closest('[data-bulk-apply]');
+        if (!applyBtn.disabled) applyBulkPanel();
+        return;
+      }
+      var leaveChip = event.target.closest('[data-bulk-leave]');
+      if (leaveChip) {
+        bulkNotifyState[leaveChip.dataset.bulkLeave] = 'leave';
+        repaintBulkPanel();
+      }
+    });
+
+    // The mode radios and notify switches inside the panel — a 'change'
+    // rather than 'click' since a radio/checkbox's own value is only
+    // current once the browser has applied the click to it.
+    selectBar.addEventListener('change', function (event) {
+      var modeInput = event.target.closest('[data-updpolicy="mode"]');
+      if (modeInput) { bulkModeValue = modeInput.value; repaintBulkPanel(); return; }
+      var notifyInput = event.target.closest('[data-updnotify]');
+      if (notifyInput) {
+        bulkNotifyState[notifyInput.dataset.updnotify] = notifyInput.checked ? 'on' : 'off';
+        repaintBulkPanel();
+      }
     });
   }
 
@@ -28594,6 +28739,214 @@
     if (verb === 'check')  { runBulkCheck(names);  return; }
     if (verb === 'update') { runBulkUpdate(names); return; }
     runBulkTogether(names, verb);
+  }
+
+  /* =====================================================================
+   * PLAN_162 — the bulk Updates…/Notifications… panel. One panel, two
+   * contents, opened from the two extra buttons paintSelectBar() draws.
+   * Every value starts unpressed/"leave", since the chosen stacks may
+   * already disagree — nothing here reads what is on disk, it only writes
+   * what is picked. The controls reuse the editor's own tick/flag markup
+   * (updTickOptionHtml, updFlagOptionHtml) and note text (updateModeNoteHtml,
+   * updateNotifyNoteHtml) so nobody learns a second vocabulary; the write
+   * goes through writeUpdatePolicyForServices() exactly as the row menu's
+   * own Updates/Notifications rows already do.
+   * ===================================================================== */
+
+  var bulkPanelKind  = null;   // null | 'mode' | 'notify'
+  var bulkModeValue  = '';     // '' | 'default' | 'manual' | 'auto'
+  var bulkNotifyState = { found: 'leave', installed: 'leave', failed: 'leave' };
+
+  // The scope line both contents open with — the count is read fresh every
+  // time this is called rather than cached, since the panel can survive a
+  // selection change (see mountBulkPanel()'s call from paintSelectBar()).
+  function bulkScopeLineHtml(count) {
+    return '<p class="staxx-bulkpanel-scope">' + esc('Applies to every service in the ' + count +
+      (count === 1 ? ' chosen stack.' : ' chosen stacks.')) + '</p>';
+  }
+
+  function bulkPanelFootHtml(canApply, count) {
+    return '<div class="staxx-bulkpanel-foot">' +
+      '<button type="button" class="staxx-btn" data-bulk-cancel>' + esc('Cancel') + '</button>' +
+      '<button type="button" class="staxx-btn" data-bulk-apply' + (canApply ? '' : ' disabled') + '>' +
+        esc('Apply to ' + count + (count === 1 ? ' stack' : ' stacks')) + '</button>' +
+    '</div>';
+  }
+
+  // The When row, offered with no current value — every choice starts
+  // unpressed. Only the top-level choice is offered (no Immediate/Delayed
+  // sub-choice): Automatic here always means the delayed shape, the same
+  // one setPart() writes for a bare 'auto', so there is nothing hidden that
+  // the note does not already say.
+  function bulkPanelUpdatesHtml(count) {
+    var options = [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
+    var optsHtml = options.map(function (o) {
+      return updTickOptionHtml('staxx-bulkpolicy-mode', 0, 'mode', o[0], o[1], bulkModeValue);
+    }).join('');
+    var note = bulkModeValue
+      ? updateModeNoteHtml({ policy: { choice: bulkModeValue, auto: 'auto', delay: null, scope: '' } })
+      : '';
+
+    return bulkScopeLineHtml(count) +
+      '<div class="staxx-upd-row">' +
+        '<span class="staxx-upd-label">' + esc('When') + '</span>' +
+        '<div class="staxx-upd-options"><div class="staxx-tickrow" role="radiogroup" aria-label="When">' +
+          optsHtml + '</div></div>' +
+        (note ? '<p class="staxx-upd-note">' + note + '</p>' : '') +
+      '</div>' +
+      bulkPanelFootHtml(bulkModeValue !== '', count);
+  }
+
+  // One notify switch plus the "Leave" chip in front of it — the tri-state
+  // this panel alone needs (a single stack's own switch only ever has two
+  // states, on or off). Leave pressed dims the switch beside it.
+  function bulkNotifyItemHtml(ev) {
+    var state = bulkNotifyState[ev[0]];
+    var leaving = state === 'leave';
+    var switchHtml = updFlagOptionHtml('staxx-bulknotify', 0, ev[0], ev[1], state === 'on');
+    return '<div class="staxx-bulknotify-item' + (leaving ? ' staxx-bulknotify-item--leave' : '') + '">' +
+      '<button type="button" class="staxx-bulkleave" data-bulk-leave="' + esc(ev[0]) + '" aria-pressed="' +
+        (leaving ? 'true' : 'false') + '">' + esc('Leave') + '</button>' +
+      switchHtml +
+    '</div>';
+  }
+
+  function bulkPanelNotifyHtml(count) {
+    var itemsHtml = NOTIFY_ROW_EVENTS.map(bulkNotifyItemHtml).join('');
+    var canApply = NOTIFY_ROW_EVENTS.some(function (ev) { return bulkNotifyState[ev[0]] !== 'leave'; });
+
+    return bulkScopeLineHtml(count) +
+      '<div class="staxx-upd-row">' +
+        '<div class="staxx-upd-options"><div class="staxx-tickrow" role="group" aria-label="Notifications">' +
+          itemsHtml + '</div></div>' +
+      '</div>' +
+      bulkPanelFootHtml(canApply, count);
+  }
+
+  function bulkPanelHtml(kind, count) {
+    return kind === 'mode' ? bulkPanelUpdatesHtml(count) : bulkPanelNotifyHtml(count);
+  }
+
+  // Builds (or rebuilds) the panel node right after .staxx-selectbar-wrap,
+  // inside the same flex row — its own CSS gives it flex-basis:100% so it
+  // always wraps onto its own line under the button group, "directly under"
+  // that row as the plan asks, without a second animated container of the
+  // bar's own. `animate` is false when this is only restoring a panel that
+  // survived a bar repaint (see paintSelectBar()) — the bar itself is not
+  // opening again, so nothing here should slide in a second time.
+  function mountBulkPanel(animate) {
+    if (!selectBar) return;
+    var wrap = selectBar.querySelector('.staxx-selectbar-wrap');
+    if (!wrap) return;
+    var panel = document.createElement('div');
+    panel.className = 'staxx-bulkpanel';
+    panel.innerHTML = '<div class="staxx-bulkpanel-inner">' +
+      bulkPanelHtml(bulkPanelKind, selectedNamesInOrder().length) + '</div>';
+    wrap.insertAdjacentElement('afterend', panel);
+    if (animate) {
+      requestAnimationFrame(function () { panel.classList.add('staxx-bulkpanel--open'); });
+    } else {
+      panel.classList.add('staxx-bulkpanel--open');
+    }
+  }
+
+  // Redraws the panel's own content in place, from the current bulk state —
+  // called after every tick, switch or Leave chip, and while Apply is
+  // running to update its progress line.
+  function repaintBulkPanel(html) {
+    var body = selectBar && selectBar.querySelector('.staxx-bulkpanel-inner');
+    if (!body) return;
+    body.innerHTML = html !== undefined ? html : bulkPanelHtml(bulkPanelKind, selectedNamesInOrder().length);
+  }
+
+  // Opens a fresh panel, or swaps a showing one's contents in place when the
+  // other kind is clicked while it is open — no close-then-reopen slide for
+  // that case, since the box itself is not going anywhere.
+  function openBulkPanel(kind) {
+    if (!selectBar || selectBar.hidden) return;
+    bulkPanelKind = kind;
+    if (kind === 'mode') bulkModeValue = '';
+    else bulkNotifyState = { found: 'leave', installed: 'leave', failed: 'leave' };
+
+    if (selectBar.querySelector('.staxx-bulkpanel')) { repaintBulkPanel(); return; }
+    mountBulkPanel(true);
+  }
+
+  // Slides the panel shut, then removes it — the same shape closeSelectBar()
+  // above uses for the bar itself, just without that function's close-token
+  // dance: only one bulk panel is ever open at a time, so there is nothing
+  // here a second open could race.
+  function closeBulkPanel() {
+    if (!bulkPanelKind) return;   // already shut; leave it be
+    bulkPanelKind = null;
+    var panel = selectBar && selectBar.querySelector('.staxx-bulkpanel');
+    if (!panel) return;
+    panel.classList.remove('staxx-bulkpanel--open');
+    var done = false;
+    function finish(event) {
+      if (event && event.target !== panel) return;
+      if (done) return;
+      done = true;
+      panel.removeEventListener('transitionend', finish);
+      panel.remove();
+    }
+    panel.addEventListener('transitionend', finish);
+    setTimeout(finish, 300);
+  }
+
+  // Applies the panel's current answer to every chosen stack, one at a time
+  // (the same one-at-a-time shape runBulkUpdate() above uses), then
+  // refreshes the rows once rather than per stack. The reason shown for a
+  // refusal is the save's own sentence, captured via writeUpdatePolicyForServices'
+  // own `onRefuse` parameter rather than a dialog popping up per stack.
+  function applyBulkPanel() {
+    var names = selectedNamesInOrder();
+    var total = names.length;
+    if (!total) return;
+
+    var field = bulkPanelKind === 'mode' ? 'mode' : 'notify';
+    var value;
+    if (bulkPanelKind === 'mode') {
+      value = bulkModeValue;
+      if (!value) return;   // Apply is disabled for this case; guards a stray call
+    } else {
+      value = {};
+      NOTIFY_ROW_EVENTS.forEach(function (ev) {
+        if (bulkNotifyState[ev[0]] !== 'leave') value[ev[0]] = bulkNotifyState[ev[0]] === 'on';
+      });
+      if (!Object.keys(value).length) return;
+    }
+
+    repaintBulkPanel('<p class="staxx-bulkpanel-progress">' + esc('0 of ' + total + ' written') + '</p>');
+
+    var doneCount = 0, changed = 0, refusals = [];
+
+    function next(i) {
+      if (i >= total) {
+        var text = refusals.length
+          ? 'Done — ' + changed + ' changed, ' + refusals.length + ' refused: ' +
+            refusals.map(function (r) { return r.name + ' (' + r.reason + ')'; }).join(', ') + '.'
+          : 'Done — ' + changed + (changed === 1 ? ' stack changed.' : ' stacks changed.');
+        repaintBulkPanel('<p class="staxx-bulkpanel-progress">' + esc(text) + '</p>');
+        refreshUpdates();
+        return;
+      }
+
+      var name = names[i];
+      var reason = '';
+
+      writeUpdatePolicyForServices(name, null, field, value, function (title, message) {
+        reason = message || 'Could not change this setting.';
+      }).then(function (applied) {
+        doneCount++;
+        if (applied) changed++;
+        else refusals.push({ name: stackLabel(name), reason: reason });
+        var line = selectBar && selectBar.querySelector('.staxx-bulkpanel-progress');
+        if (line) line.textContent = doneCount + ' of ' + total + ' written';
+        next(i + 1);
+      });
+    }
+    next(0);
   }
 
   /* --------------------------------------------------------- finding a stack -
@@ -28737,6 +29090,10 @@
   // find box unless a field already has focus, so typing "/" as a real
   // character (a path, a URL) is never hijacked.
   document.addEventListener('keydown', function (event) {
+    // PLAN_162 — Escape closes the bulk panel first, on its own, and only
+    // leaves Select mode on a second press; otherwise dismissing a stray
+    // panel would also throw away the whole selection.
+    if (event.key === 'Escape' && bulkPanelKind) { closeBulkPanel(); return; }
     if (event.key === 'Escape' && selectMode) { setSelectMode(false); return; }
     if (event.key !== '/') return;
     var tag = (event.target && event.target.tagName) || '';
@@ -36476,6 +36833,11 @@
       files: JSON.stringify(built.files || []),
       retired: JSON.stringify(retired),
       retiredOverride: JSON.stringify(retiredOverride),
+      // PLAN_160 B: a stack-level x-unraid value the person declined is kept
+      // in the merge summary rather than under a spare key in the file, so
+      // it has to travel with this request or it is lost.
+      declined: JSON.stringify((built.changes || []).filter(function (c) { return c.declinedValue !== undefined; })
+        .map(function (c) { return { stack: c.stack, field: c.key, value: c.declinedValue }; })),
       // Both switches, third interactive session: retirement on disk
       // happens either way, but the server's own stop step only runs when
       // stop is set, and start only queues the ordinary up job afterwards.

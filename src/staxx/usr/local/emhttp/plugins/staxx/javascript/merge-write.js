@@ -1510,6 +1510,16 @@
     var plan = exam.plan;
     var changes = [];
 
+    // PLAN_160 A: every address actually rewired below, by FINAL service
+    // names — {fromService, envVar, toService} — turned into a confirmed
+    // x-unraid.links entry once the whole merged text exists, so the
+    // editor's own crosslinks detector never re-asks a question this wizard
+    // already answered. Collected here rather than written as each rewire
+    // happens because the target service may belong to a DIFFERENT source
+    // than the one being edited at that point, so it does not exist yet in
+    // any single doc — only in the finished, spliced-together text.
+    var wiredLinks = [];
+
     // PLAN_155 C3: each source's own override-application records, built
     // once when its descriptor was first read — descs above is a SECOND,
     // fresh parse that never re-applies the override (extra.overrideText
@@ -1713,6 +1723,14 @@
         if (joinChange) changes.push(joinChange);
       }
 
+      // PLAN_160 A: the pair's own final names — computed the same way
+      // joinForRewire's bFinalSvc is, but kept independent of it so a
+      // record is still queued even where the two ends already share a
+      // network and joinSharedNetwork() finds nothing to do.
+      function finalToServiceName(f) {
+        return plan.serviceRenames[f.facts.toStack + '/' + f.facts.toService] || f.facts.toService;
+      }
+
       exam.findings.forEach(function (f) {
         if (f.kind !== 'address-rewire' || f.stack !== s.name) return;
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
@@ -1775,6 +1793,8 @@
             });
           }
           if (rHost || rPort) joinForRewire(f, finalSvc, sourceLineFor(f, 0));
+          if (rHost) wiredLinks.push({ fromService: finalSvc, envVar: f.facts.hostVar, toService: finalToServiceName(f) });
+          if (rPort) wiredLinks.push({ fromService: finalSvc, envVar: f.facts.portVar, toService: finalToServiceName(f) });
         } else {
           var result = rewriteEnvAddressTracked(doc, finalSvc, f.facts.envVar, f.facts.from, f.facts.toService + ':' + f.facts.toPort);
           if (result) {
@@ -1785,6 +1805,7 @@
               struckComment: result.struckComment
             });
             joinForRewire(f, finalSvc, sourceLineFor(f));
+            wiredLinks.push({ fromService: finalSvc, envVar: f.facts.envVar, toService: finalToServiceName(f) });
           }
         }
       });
@@ -2078,8 +2099,11 @@
     // is carried with no anchor at all and every alias to it left pointing
     // at nothing — Rule 2 broken outright, and silently. `version:` and
     // `name:` are dropped outright; a stack's own `x-unraid:` (icon,
-    // description) is a per-STACK thing, so only the first source's is
-    // kept; every other key is carried whole, and a clash between two
+    // description, category, links, ...) is a per-STACK thing built FIELD
+    // BY FIELD (PLAN_160 B): the first source's own copy is the base, and
+    // every later source fills in whichever of its own keys the base
+    // lacks — nothing a source wrote is dropped just for arriving second.
+    // Every other top-level key is carried whole, and a clash between two
     // sources is settled the same way a declared network/volume clash
     // already is (identical text once, an x- key renamed, anything else
     // refused rather than silently guessed at).
@@ -2089,6 +2113,8 @@
     var anchorOwners = {};     // anchor name -> leaf of the source that first defined it
     var versionDropped = false;
     var firstXUnraidLeaf = null;
+    var xuFieldText = {};      // x-unraid sub-key -> the text already carried for it
+    var xuInsertPos = null;    // index in topAdditions where a later source's own field is spliced in
 
     function scanAnchorNames(text) {
       var names = [], re = /&([A-Za-z_][\w.-]*)/g, m;
@@ -2231,41 +2257,82 @@
         if (key === 'name') return;   // the new stack's project name is its folder, dropped silently
 
         if (key === 'x-unraid') {
-          var xuKey = 'top-xunraid|' + sd.name;
-          // A stack has one description, not one per source — the first
-          // source's is kept, every later one is said to be left behind
-          // rather than silently dropped (CLAUDE.md rule 2). "Leave it as
-          // it was" for one of the later ones means keeping it after all —
-          // the same rename-and-keep a clashing top-level "x-" key already
-          // gets further down, since two "x-unraid:" keys cannot coexist.
+          // PLAN_160 B: field by field, not first-wins. The first source's
+          // whole block is the base, carried exactly as before; every later
+          // source is read key by key (description, category, links, ...)
+          // and only a key the base LACKS gets added, marked with its own
+          // "# From <leaf>" — a key both sides carry identically needs no
+          // record, and one they carry differently is the same answerable
+          // change as before. Decline no longer writes a renamed
+          // "x-unraid-<leaf>" key into the file — dead weight the compose
+          // spec ignores and StaXX never reads — the file keeps the base's
+          // value either way, and the declined text travels only on the
+          // change record itself, for the merge's own summary.
+          var xuPair = doc.root.pairs['x-unraid'];
+          var xuMap = xuPair && xuPair.value && xuPair.value.kind === 'map' ? xuPair.value : null;
+          var subBlocks = xuMap ? computeBlocks(doc, xuMap) : null;
+          var origXuPair = sd.origDoc.root && sd.origDoc.root.kind === 'map' ? sd.origDoc.root.pairs['x-unraid'] : null;
+          var origXuMap = origXuPair && origXuPair.value && origXuPair.value.kind === 'map' ? origXuPair.value : null;
+          var origSubBlocks = origXuMap ? computeBlocks(sd.origDoc, origXuMap) : null;
+
           if (firstXUnraidLeaf === null) {
             firstXUnraidLeaf = leaf(sd.name);
             topAdditions.push('# From ' + firstXUnraidLeaf);
             topAdditions = topAdditions.concat(blocks.blocks[key]);
-          } else if (decisions[xuKey] === 'leave') {
-            var xRenamedKey = key + '-' + leaf(sd.name);
-            var xStart = blocks.starts[key], xEnd = xStart + blocks.blocks[key].length;
-            renameTopKeyLineInDoc(doc, xStart, xEnd, xRenamedKey);
-            var xBody = doc.lines.slice(xStart, xEnd);
-            var xLineIdx = 0;
-            while (xLineIdx < xBody.length && lineKind(xBody[xLineIdx]).kind !== 'other') xLineIdx++;
-            topAdditions.push('# From ' + leaf(sd.name));
-            topAdditions = topAdditions.concat(xBody);
-            changes.push({
-              key: xuKey, declined: true, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], marker: xBody[xLineIdx],
-              title: 'This stack’s own description is not carried',
-              reason: 'Left as written: kept here under its own renamed key "' + xRenamedKey + '". Approving would drop it instead — ' +
-                'a merged stack has one description, and ' + firstXUnraidLeaf + '’s is kept.',
-              struckComment: null
-            });
-          } else {
-            changes.push({
-              key: xuKey, topLevel: true, stack: sd.name, sourceLine: origBlocks.starts[key], line: null,
-              title: 'This stack’s own description is not carried',
-              reason: 'A merged stack has one description, and ' + firstXUnraidLeaf + '’s is kept. This one is left out; Decline keeps it under its own renamed key.',
-              struckComment: null
-            });
+            xuInsertPos = topAdditions.length;
+            if (subBlocks) {
+              subBlocks.order.forEach(function (sk) { xuFieldText[sk] = subBlocks.blocks[sk].join('\n'); });
+            }
+            return;
           }
+
+          if (!subBlocks) return;   // this source's own x-unraid carried nothing structured
+
+          subBlocks.order.forEach(function (sk) {
+            var skLines = subBlocks.blocks[sk];
+            var skText = skLines.join('\n');
+            var fieldKey = 'top-xunraid|' + sd.name + '|' + sk;
+            var fieldSourceLine = (origSubBlocks && origSubBlocks.starts[sk] !== undefined)
+              ? origSubBlocks.starts[sk] : origBlocks.starts[key];
+
+            if (xuFieldText.hasOwnProperty(sk)) {
+              if (xuFieldText[sk] === skText) return;   // identical — nothing new to say
+
+              if (decisions[fieldKey] === 'leave') {
+                changes.push({
+                  key: fieldKey, declined: true, topLevel: true, stack: sd.name, sourceLine: fieldSourceLine, line: null,
+                  title: 'This stack’s own "' + sk + '" is not carried',
+                  reason: 'Left as written: kept in the merge summary, not the file. A merged stack has one "' + sk +
+                    '", and ' + firstXUnraidLeaf + '’s is kept.',
+                  declinedValue: skText, struckComment: null
+                });
+              } else {
+                changes.push({
+                  key: fieldKey, topLevel: true, stack: sd.name, sourceLine: fieldSourceLine, line: null,
+                  title: 'This stack’s own "' + sk + '" is not carried',
+                  reason: 'A merged stack has one "' + sk + '", and ' + firstXUnraidLeaf + '’s is kept. This one is left out.',
+                  struckComment: null
+                });
+              }
+              return;
+            }
+
+            // The base lacked this key outright — it is added, not fought
+            // over, so it is spliced straight into the shared block rather
+            // than answered as a decision.
+            xuFieldText[sk] = skText;
+            var skLineIdx = 0;
+            while (skLineIdx < skLines.length && lineKind(skLines[skLineIdx]).kind !== 'other') skLineIdx++;
+            var addLines = ['  # From ' + leaf(sd.name)].concat(skLines);
+            topAdditions.splice.apply(topAdditions, [xuInsertPos, 0].concat(addLines));
+            xuInsertPos += addLines.length;
+            changes.push({
+              key: fieldKey, topLevel: true, stack: sd.name, sourceLine: fieldSourceLine, marker: skLines[skLineIdx],
+              title: 'Carried from ' + leaf(sd.name),
+              reason: 'The base stack had no "' + sk + '" of its own; this is ' + leaf(sd.name) + '’s.',
+              struckComment: null
+            });
+          });
           return;
         }
 
@@ -2487,6 +2554,43 @@
         if (other !== c && other.file !== 'env' && typeof other.line === 'number' && other.line > c.line) other.line--;
       });
     });
+
+    // PLAN_160 A: the confirmed link record for every address actually
+    // rewired above, written now that finalLines holds every service (real
+    // depends_on included) — the one point where compose-model's own
+    // detectLinks() can tell a genuinely new pair from one a source already
+    // declared. Same writer the editor's own crosslinks panel uses
+    // (setLinkState), so the two can never disagree; a pair it refuses (an
+    // existing depends_on already names it) is skipped silently, since the
+    // editor would never ask about that pair either. setLinkState only ever
+    // INSERTS lines (a fresh x-unraid.links entry, or the whole block where
+    // none existed), so the shift below is exact: every change already
+    // resolved to a line at or after the insertion point moves down by
+    // however many lines were added.
+    if (wiredLinks.length) {
+      var linkDoc = CM.parse(finalLines.join('\n') + '\n');
+      var declaredByPair = {};
+      CM.detectLinks(CM.buildForm(linkDoc)).forEach(function (c) {
+        if (c.kind !== 'reference') return;
+        declaredByPair[c.between[0].service + '|' + (c.between[0].environment || '') + '|' + c.between[1].service] = c.certainty;
+      });
+      var seenWired = {};
+      wiredLinks.forEach(function (w) {
+        var lkey = w.fromService + '|' + w.envVar + '|' + w.toService;
+        if (seenWired[lkey]) return;
+        seenWired[lkey] = true;
+        var between = [{ service: w.fromService, environment: w.envVar }, { service: w.toService }];
+        CM.setLinkState(linkDoc, 'reference', declaredByPair[lkey] || 'inferred', between, 'confirmed');
+      });
+      var newLines = linkDoc.lines;
+      if (newLines.length !== finalLines.length) {
+        var insertStart = 0;
+        while (insertStart < finalLines.length && finalLines[insertStart] === newLines[insertStart]) insertStart++;
+        var insertedCount = newLines.length - finalLines.length;
+        changes.forEach(function (c) { if (typeof c.line === 'number' && c.line >= insertStart) c.line += insertedCount; });
+        finalLines = newLines;
+      }
+    }
 
     // Trim any trailing run of blank lines down to none — the file already
     // ends its last section with its own separating blank above.

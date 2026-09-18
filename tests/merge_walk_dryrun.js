@@ -474,6 +474,49 @@ function checkNetworksShared(label, doc, exam) {
   });
 }
 
+// PLAN_160 A — every address-rewire finding actually applied must leave
+// exactly one x-unraid.links "reference" record behind, naming the FINAL
+// service names (after every rename), so the editor never re-asks a
+// question this wizard already answered. Schema conformance is checked the
+// same way tests/links_record.js checks it — shelling out to python with
+// pyyaml and jsonschema — rather than re-typing the schema's own rules here.
+function validateAgainstSchema(text) {
+  var script = [
+    'import sys, json, yaml',
+    'from jsonschema import Draft202012Validator',
+    'schema = json.load(open(' + JSON.stringify(path.join(__dirname, '..', 'schema', 'x-unraid.schema.json')) + '))',
+    'doc = yaml.safe_load(sys.stdin.read())',
+    'v = Draft202012Validator(schema)',
+    'errors = [str(e.message) + " at /" + "/".join(map(str, e.path)) for e in v.iter_errors(doc)]',
+    'print(json.dumps({"ok": not errors, "errors": errors}))'
+  ].join('\n');
+  var res = require('child_process').spawnSync('python', ['-c', script], { input: text, encoding: 'utf8' });
+  if (res.status !== 0) return { ok: false, errors: [res.stderr || 'python failed'] };
+  try { return JSON.parse(res.stdout); } catch (e) { return { ok: false, errors: [res.stdout] }; }
+}
+
+function checkLinkRecords(label, doc, exam, text) {
+  var records = CM.readLinks(doc).filter(function (r) { return r.kind === 'reference'; });
+  exam.findings.forEach(function (f) {
+    if (f.kind !== 'address-rewire') return;
+    var fromSvc = exam.plan.serviceRenames[f.stack + '/' + f.facts.service] || f.facts.service;
+    var toSvc = exam.plan.serviceRenames[f.facts.toStack + '/' + f.facts.toService] || f.facts.toService;
+    var vars = f.facts.split ? [f.facts.hostVar, f.facts.portVar] : [f.facts.envVar];
+    vars.forEach(function (envVar) {
+      var matches = records.filter(function (r) {
+        return r.between[0].service === fromSvc && r.between[0].environment === envVar && r.between[1].service === toSvc;
+      });
+      if (matches.length !== 1) {
+        fail('160A', 'order ' + label + ': expected exactly one confirmed link record for ' +
+          fromSvc + '.' + envVar + ' -> ' + toSvc + ', found ' + matches.length);
+      }
+    });
+  });
+
+  var v = validateAgainstSchema(text);
+  if (!v.ok) fail('160A', 'order ' + label + ': the merged file\'s link records do not validate against the schema — ' + JSON.stringify(v.errors));
+}
+
 if (CHECK) {
   [{ label: 'A', r: resultA }, { label: 'B', r: resultB }].forEach(function (o) {
     section('--check (order ' + o.label + ')');
@@ -481,6 +524,7 @@ if (CHECK) {
     var doc = CM.parse(text);
 
     checkNetworksShared(o.label, doc, o.r.exam);
+    checkLinkRecords(o.label, doc, o.r.exam, text);
 
     ['t155-web_data', 't155-db_data', 't155-cache_data'].forEach(function (n) {
       if (text.indexOf('name: ' + n) === -1) fail(1, 'order ' + o.label + ': volume "' + n + '" has no name: line');

@@ -254,8 +254,14 @@ shows its switch on but dimmed.
 
 ![The list in selection mode: the DEV-TESTING folder header with its switch on but dimmed, two stacks beneath it switched on and a third off, and the bar at the foot saying 2 stacks chosen, in the order shown, with Start, Stop, Restart, Check for updates and Update](../images/guide/the-stack-list-selection-mode.png)
 
-A bar appears at the foot of the list saying how many stacks are chosen, in the order shown, with
-five buttons: **Start**, **Stop**, **Restart**, **Check for updates** and **Update**.
+A row of buttons slides open under **Select** once something is chosen: **Start**, **Stop**,
+**Restart**, **Check for updates**, **Update**, **Updates…** and **Notifications…**.
+
+**Updates…** and **Notifications…** open a small window under that row with the same controls the
+editor has. Choose **Default**, **Manual** or **Automatic** for when updates install, or switch any of
+the three notifications on or off, leaving the rest as they are, then press **Apply**. The choice is
+written to every service in every chosen stack, and the window reports how many stacks changed and
+names any that refused.
 
 Press a button and each chosen stack runs on its own row, exactly as it does anywhere else on the
 page. One stack failing does not stop the rest, and the bar keeps a running tally as they finish,

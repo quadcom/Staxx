@@ -638,6 +638,9 @@ switch ($action) {
       'fingerprints' => $fingerprints, 'body' => $mergedBody, 'env' => $mergedEnv,
       'files' => $mergeFiles, 'retired' => $retired, 'retiredOverride' => $retiredOverride,
       'stop' => $stop, 'start' => $start,
+      // PLAN_160 B: stack-level x-unraid values declined on step 3 live here
+      // and nowhere else — the file keeps the first source's value only.
+      'declined' => json_decode((string)($_POST['declined'] ?? '[]'), true) ?: [],
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     @chmod('/tmp/staxx/merge-last.json', 0600);
 
@@ -1185,6 +1188,19 @@ switch ($action) {
     $canRun = staxx_health_trial($container, $test, $why);
     staxx_reply(['ok' => true, 'canRun' => $canRun, 'why' => $why]);
 
+  /* ---- PLAN_163 part 2 — a published health check the browser's own
+   * acceptPublishedCheck() turned away, counted rather than logged. Not
+   * stack-scoped: health-offer.js calls this once per refusal, wherever the
+   * decision happened, so no $name is read here. Fire-and-forget on the
+   * browser's side — the reply is never awaited — so this always answers
+   * 'ok' rather than risk a console error over what is only a tally.
+   */
+  case 'health-turned-away':
+    staxx_health_turned_away_record('browser', (string)($_POST['why'] ?? 'shape-not-recognised'),
+      substr((string)($_POST['test'] ?? ''), 0, STAXX_HEALTH_TURNED_AWAY_EXAMPLE_MAX),
+      (string)($_POST['image'] ?? ''));
+    staxx_reply(['ok' => true]);
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *
@@ -1221,13 +1237,18 @@ switch ($action) {
   case 'handover-check':
     $rebuild = staxx_project_containers($name);
     $targets = staxx_handover_targets($name);
+    $active  = staxx_handover_active($name);
     staxx_reply([
       'ok'      => true,
       'mode'    => $rebuild ? 'rebuild' : ($targets ? 'handover' : 'none'),
       'targets' => $targets,
       'rebuild' => $rebuild,
       'project' => staxx_project_name(staxx_path_leaf($name)),
-      'active'  => staxx_handover_active($name),
+      'active'  => $active,
+      // PLAN_159 §2 — named so the "does it work?" dialog can warn if the
+      // old container has been started again behind StaXX's back, the same
+      // check staxx_archive_stack()'s own refusal uses.
+      'runningAgain' => $active ? staxx_handover_running_again(staxx_stack_dir($name)) : [],
     ]);
 
   // ---- begin a handover: set the old container aside, start this one ----

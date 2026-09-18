@@ -3553,6 +3553,15 @@ function staxx_selftest(): array {
     : ($updatesPaused ? 'paused' : 'running normally')
       . ' — last checked ' . ($checkedTs > 0 ? date('Y-m-d H:i:s', $checkedTs) : 'never');
 
+  // PLAN_163 part 2 — same guard as the update-state line above: this file
+  // is loadable on its own (see the troubleshooting one-liner at the top of
+  // stacks.js) and Detail.php is then not necessarily loaded.
+  $turnedAway = function_exists('staxx_health_turned_away_summary') ? staxx_health_turned_away_summary() : null;
+  $turnedAwayDetail = $turnedAway === null
+    ? 'none recorded'
+    : 'Published health checks turned away since '.$turnedAway['first'].': '
+      . $turnedAway['sightings'].' sightings, '.$turnedAway['shapes'].' shapes.';
+
   // Deliberately absent from every entry below: the server's own name or
   // address, and anything about the Docker Hub token beyond whether one is
   // signed in. This report is built to be pasted somewhere public.
@@ -3608,6 +3617,7 @@ function staxx_selftest(): array {
                                (function_exists('exec') && !in_array('exec', $disabled, true)) ? 'good' : 'bad'),
     'job folder'          => $entry(STAXX_JOB_DIR),
     'compose files in a backup' => $entry($backupReport),
+    'published health checks turned away' => $entry($turnedAwayDetail),
   ];
 }
 
@@ -4068,10 +4078,7 @@ function staxx_archive_stack(
   // that container is stranded with nothing left to say what it was called or
   // how to put it back — so the answer has to come first.
   if (staxx_handover_file($dir) !== '') {
-    $error = 'This stack has just taken over from another container, and that '
-           . 'container is set aside waiting for you to say whether the new one '
-           . 'works. Answer that first — nothing can be removed until it is '
-           . 'either cleared away or put back.';
+    $error = staxx_handover_pending_notice($dir);
     return false;
   }
 
@@ -4535,6 +4542,22 @@ function staxx_handover_is_setaside(string $name): bool {
   return (bool)preg_match('/-before-staxx(-\d+)?$/', $name);
 }
 
+/**
+ * The restart policy Docker holds for $original right now, read fresh at
+ * handover time so either undo path can put it back exactly rather than
+ * guessing. An empty or failed read records 'no' — what Docker itself treats
+ * a missing policy as — since a hand-made container carrying 'always' is
+ * the one case this exists to close: left alone, it would restart itself the
+ * next time the daemon starts, straight into a port clash with the stack
+ * that took its name over (PLAN_159 §2).
+ */
+function staxx_handover_restart_policy(string $original): string {
+  $docker = escapeshellarg(staxx_docker_bin());
+  $format = escapeshellarg('{{.HostConfig.RestartPolicy.Name}}');
+  $policy = trim(staxx_sh($docker.' inspect --format '.$format.' '.escapeshellarg($original), 10));
+  return $policy !== '' ? $policy : 'no';
+}
+
 /** The handover state file actually present in $dir, by its real name, or ''. */
 function staxx_handover_file(string $dir): string {
   // Same per-directory memoisation and the same reasoning as
@@ -4562,10 +4585,14 @@ function staxx_handover_active(string $rel): bool {
  * Write the handover state file: prose for whoever opens it, then a short
  * list of Key-N: value lines a tiny reader parses back — the same trick the
  * review note uses. One target's original name, the name it was set aside
- * under, and whether it had been running form a numbered triplet, so more
- * than one clashing service is represented as plainly as one.
+ * under, whether it had been running and its restart policy form a numbered
+ * group, so more than one clashing service is represented as plainly as one.
  *
- * @param array<int,array{original:string,setaside:string,wasRunning:bool}> $targets
+ * 'restart' defaults to 'no' when a caller omits it — every real caller
+ * supplies it, but the fixtures in tests/server/handover.php predate this
+ * field and this keeps them writing a valid file rather than a PHP notice.
+ *
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool,restart?:string}> $targets
  */
 function staxx_handover_write(string $dir, array $targets, string $when): bool {
   $names = implode(' and ', array_map(fn($t) => '"'.$t['original'].'"', $targets));
@@ -4585,6 +4612,7 @@ function staxx_handover_write(string $dir, array $targets, string $when): bool {
     $body .= "Original-$n: {$t['original']}\n";
     $body .= "SetAside-$n: {$t['setaside']}\n";
     $body .= 'WasRunning-'.$n.': '.($t['wasRunning'] ? 'yes' : 'no')."\n";
+    $body .= 'Restart-'.$n.': '.($t['restart'] ?? 'no')."\n";
   }
   $body .= "When: $when\n";
 
@@ -4596,7 +4624,7 @@ function staxx_handover_write(string $dir, array $targets, string $when): bool {
  * none. One regex over the lines is enough: every field line is a bare word
  * immediately followed by ":", which none of the prose above it ever is.
  *
- * @return array{targets:array<int,array{original:string,setaside:string,wasRunning:bool}>, when:string}|null
+ * @return array{targets:array<int,array{original:string,setaside:string,wasRunning:bool,restart:string}>, when:string}|null
  */
 function staxx_handover_read(string $dir): ?array {
   $name = staxx_handover_file($dir);
@@ -4619,10 +4647,68 @@ function staxx_handover_read(string $dir): ?array {
       'original'   => $original,
       'setaside'   => $fields['SetAside'][$idx] ?? '',
       'wasRunning' => ($fields['WasRunning'][$idx] ?? '') === 'yes',
+      // Absent on a file written before PLAN_159 §2 — 'no' is what Docker
+      // itself treats a missing policy as, so an old file reads exactly as
+      // it always behaved rather than as a policy it never actually had.
+      'restart'    => $fields['Restart'][$idx] ?? 'no',
     ];
   }
 
   return ['targets' => $targets, 'when' => $fields['When'][0] ?? ''];
+}
+
+/**
+ * Which of a pending handover's set-aside containers are running again right
+ * now — a hand start from the Docker page, or an appdata-backup "start what
+ * I stopped" that ran across the rename, can both do that without StaXX ever
+ * being asked (PLAN_159 §2). Shared by the archive refusal below and the
+ * "does it work?" dialog's own check (action.php's handover-check), so the
+ * two can never disagree about what is actually running. $psRows is
+ * staxx_docker_ps_raw()'s own shape, injectable so this can be tested with
+ * no Docker in the room.
+ *
+ * @param array<int,array{name:string,state:string}>|null $psRows
+ * @return string[] the set-aside names (not the originals) found running
+ */
+function staxx_handover_running_again(string $dir, ?array $psRows = null): array {
+  $state = staxx_handover_read($dir);
+  if ($state === null) return [];
+
+  if ($psRows === null) $psRows = staxx_docker_ps_raw();
+
+  $running = [];
+  foreach ($state['targets'] as $t) {
+    foreach ($psRows as $row) {
+      if (($row['name'] ?? '') === $t['setaside'] && ($row['state'] ?? '') === 'running') {
+        $running[] = $t['setaside'];
+        break;
+      }
+    }
+  }
+  return $running;
+}
+
+/**
+ * The sentence shown while a handover is waiting for its answer, extended
+ * (PLAN_159 §2) with one sentence per set-aside staxx_handover_running_again()
+ * finds running. $psRows is passed straight through to it, injectable for
+ * the same reason.
+ *
+ * @param array<int,array{name:string,state:string}>|null $psRows
+ */
+function staxx_handover_pending_notice(string $dir, ?array $psRows = null): string {
+  $base = 'This stack has just taken over from another container, and that '
+        . 'container is set aside waiting for you to say whether the new one '
+        . 'works. Answer that first — nothing can be removed until it is '
+        . 'either cleared away or put back.';
+
+  foreach (staxx_handover_running_again($dir, $psRows) as $name) {
+    $base .= ' The old container "'.$name.'" is running again beside the new '
+           . 'stack; switch it off from the Docker page before answering, or the two '
+           . 'will fight over the same ports.';
+  }
+
+  return $base;
 }
 
 /**
@@ -4636,7 +4722,7 @@ function staxx_handover_read(string $dir): ?array {
  *
  * @param string[] $files main compose file, plus its override if it has one —
  *                         see staxx_compose_files()
- * @param array<int,array{original:string,setaside:string,wasRunning:bool}> $targets
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool,restart:string}> $targets
  */
 function staxx_handover_script(
   string $composeCmd, array $files, string $dir, array $targets,
@@ -4658,10 +4744,16 @@ function staxx_handover_script(
   $undo[] = '  cd '.escapeshellarg($dir).' 2>/dev/null && '
           . $composeCmd.' '.$fileArgs.' down 2>/dev/null || true';
   foreach ($targets as $t) {
-    $orig  = escapeshellarg($t['original']);
-    $aside = escapeshellarg($t['setaside']);
+    $orig    = escapeshellarg($t['original']);
+    $aside   = escapeshellarg($t['setaside']);
+    $restart = escapeshellarg($t['restart']);
     $undo[] = '  '.$docker.' rename '.$aside.' '.$orig.' 2>/dev/null || true';
     if ($t['wasRunning']) {
+      // Before the start, not after — the container must come up under its
+      // own recorded policy rather than the 'no' this handover set on the
+      // set-aside a moment ago, or a restart racing the daemon could still
+      // catch it the wrong way round.
+      $undo[] = '  '.$docker.' update --restart='.$restart.' '.$orig.' 2>/dev/null || true';
       $undo[] = '  '.$docker.' start '.$orig.' 2>/dev/null || true';
     }
   }
@@ -4700,6 +4792,12 @@ function staxx_handover_script(
     $aside = escapeshellarg($t['setaside']);
     $steps[] = $docker.' rename '.$orig.' '.$aside.' 2>&1 || fail '
              . escapeshellarg('Could not set '.$t['original'].' aside.');
+    // A set-aside must never come back on its own. The rename already
+    // succeeded and the stack is about to come up, so a failure here must
+    // not fail the whole handover — it only means the set-aside keeps
+    // whatever policy it already had (harmless for the common template
+    // case, which is already 'no').
+    $steps[] = $docker.' update --restart=no '.$aside.' 2>&1 || true';
   }
   $steps[] = 'cd '.escapeshellarg($dir).' 2>&1 || fail '
            . escapeshellarg('Could not reach the stack folder.');
@@ -4784,6 +4882,9 @@ function staxx_start_handover(string $rel, string &$error): string {
       'original'   => $t['name'],
       'setaside'   => staxx_handover_setaside_name($t['name'], array_keys($containers)),
       'wasRunning' => $t['running'],
+      // Recorded now, while $t['name'] is still the original container, so
+      // either undo path can put it back exactly rather than assuming 'no'.
+      'restart'    => staxx_handover_restart_policy($t['name']),
     ];
   }
 
@@ -4897,6 +4998,11 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     foreach ($state['targets'] as $t) {
       $steps[] = $docker.' rename '.escapeshellarg($t['setaside']).' '.escapeshellarg($t['original']).' 2>&1';
       if ($t['wasRunning']) {
+        // Put its own recorded policy back before it is asked to start, not
+        // after — same ordering as staxx_handover_script()'s undo(), and
+        // for the same reason: it must come up under its own policy, not
+        // the 'no' the handover set on the set-aside a moment ago.
+        $steps[] = $docker.' update --restart='.escapeshellarg($t['restart']).' '.escapeshellarg($t['original']).' 2>&1';
         $steps[] = $docker.' start '.escapeshellarg($t['original']).' 2>&1';
       }
     }

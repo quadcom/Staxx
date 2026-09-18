@@ -38,7 +38,9 @@ In Split, drag the bar between the two panes to give one side more room, or doub
 it back in the middle. Its position is remembered in your browser: the editor reopens where you
 left it.
 
-A file other than the compose file itself, such as a `.env` file, opens beside the form.
+A file other than the compose file itself, such as a `.env` file, opens beside the form. With the
+`.env` tab open, click a setting whose value uses one of its variables and the line that defines
+that variable lights up, the same way the compose file's lines do.
 
 ## The four tabs
 

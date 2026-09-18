@@ -907,6 +907,97 @@ div.title.staxx-has-titlebar {
   border-bottom-right-radius: 0;
 }
 
+/* PLAN_162 — the small window Updates…/Notifications… open under the bar's
+   own button row. A sibling of .staxx-selectbar-wrap inside the same flex
+   row (.staxx-selectbar-inner); flex-basis:100% is what pushes it onto its
+   own line below the buttons rather than beside them. It slides open with
+   its own copy of the bar's own grid-rows trick, nested rather than shared,
+   since the two open at different times — the bar's own slide is already
+   finished by the time this ever appears. Border and radius are lifted
+   from .staxx-selectbar-wrap so the two read as one attached shape, but
+   this is a new class rather than that one reused: every corner here is
+   round, since the box hangs from the wrap above rather than from a button,
+   and has no join to keep square. */
+.staxx-bulkpanel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  flex-basis: 100%;
+  margin-top: 0.6rem;
+  transition: grid-template-rows 260ms cubic-bezier(.22, .61, .36, 1),
+              opacity 200ms cubic-bezier(.22, .61, .36, 1);
+}
+
+.staxx-bulkpanel--open { grid-template-rows: 1fr; opacity: 1; }
+
+/* Same reasoning as .staxx-selectbar-inner: overflow:hidden clips the
+   content while the row is short of full height, and min-height:0 is what
+   lets the grid row actually collapse. */
+.staxx-bulkpanel-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staxx-bulkpanel { transition: none; }
+}
+
+.staxx-scaffold .staxx-bulkpanel-inner {
+  padding: 0.8rem 1rem 0.2rem;
+  border: 0.1rem solid var(--sm-accent);
+  border-radius: 0.8rem;
+}
+
+.staxx-bulkpanel-scope {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+  color: var(--sm-muted);
+}
+
+.staxx-bulkpanel-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.8rem 0 0.8rem 1rem;
+}
+
+.staxx-bulkpanel-progress {
+  margin: 0;
+  padding: 0.6rem 0 0.6rem 1rem;
+  font-size: 1.2rem;
+  color: var(--sm-fg);
+}
+
+/* The Leave chip in front of each Notifications switch — the tri-state this
+   panel alone needs, since a single stack's own switch only ever has two
+   states. Pressed (the default) dims the switch beside it, so the eye reads
+   which of the two is the live answer. */
+.staxx-bulknotify-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.staxx-scaffold button.staxx-bulkleave {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 0.2rem 0.7rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sm-muted);
+}
+
+.staxx-scaffold button.staxx-bulkleave[aria-pressed="true"] {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+.staxx-bulknotify-item--leave .staxx-flagopt {
+  opacity: 0.45;
+}
+
 /* ---- App icons (square tiles — these open the menu) --------------------- */
 
 /* Square, the shape Unraid uses for container icons on its own Docker page.

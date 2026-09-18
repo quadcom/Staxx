@@ -70,6 +70,32 @@
     return { offer: null, source: null, claim: null, reason: reason };
   }
 
+  /* ---- PLAN_163 part 2 — counting, not logging, a published check turned
+   * away unread. This runs in Node too (tests/health_offer.js requires this
+   * file directly, with no window and no server to answer), so the real
+   * network call is behind a `typeof window` guard and reads its endpoint
+   * and CSRF token straight off the page's own scaffold element rather than
+   * depending on anything stacks.js keeps private to itself. Fire-and-
+   * forget — nothing here is on the path of deciding what to offer, so a
+   * slow or failed report must never delay or break that decision. A test
+   * double replaces this function outright to assert what it was called
+   * with, rather than reading network traffic.
+   */
+  function reportTurnedAway(image, why, test) {
+    if (typeof window === 'undefined' || !window.fetch || !document) return;
+    var scaffold = document.querySelector('.staxx-scaffold');
+    if (!scaffold) return;
+    var raw = (Array.isArray(test) ? test.join(' ') : String(test || '')).slice(0, 300);
+    var body = new URLSearchParams();
+    body.append('csrf_token', scaffold.dataset.csrf || '');
+    body.append('action', 'health-turned-away');
+    body.append('image', image || '');
+    body.append('why', why || '');
+    body.append('test', raw);
+    window.fetch(scaffold.dataset.endpoint, { method: 'POST', body: body, credentials: 'same-origin' })
+      .catch(function () {});   // fire-and-forget — nothing here waits on, or acts on, the answer
+  }
+
   function webPingOffer(port, tools) {
     var test, claim;
     if (tools && tools.curl) {
@@ -136,7 +162,10 @@
         };
       }
       // Refused by the narrow door — carry on as though there had been no
-      // published check, never offer the refused shape some other way.
+      // published check, never offer the refused shape some other way. What
+      // it looked like is still worth counting, though — see
+      // reportTurnedAway() above.
+      API.reportTurnedAway(facts.image, accepted.why, facts.published.test);
     }
 
     if (facts.webPort > 0) {
@@ -246,7 +275,11 @@
 
   var API = {
     chooseHealthCheck: chooseHealthCheck,
-    acceptPublishedCheck: acceptPublishedCheck
+    acceptPublishedCheck: acceptPublishedCheck,
+    // Exposed so tests/health_offer.js can override it with a recording
+    // double — see reportTurnedAway()'s own header for why this indirection
+    // exists at all.
+    reportTurnedAway: reportTurnedAway
   };
 
   if (typeof window !== 'undefined') window.StaxxHealthOffer = API;
