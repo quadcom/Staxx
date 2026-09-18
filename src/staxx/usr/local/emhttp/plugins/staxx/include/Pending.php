@@ -219,6 +219,12 @@ function staxx_pending_parse_file(string $yaml): array {
  * "host:container" shape staxx_pending_parse_file() builds for the file
  * side.
  *
+ * `created` (PLAN_166 §3a) is `.Created` reduced to a unix time — read off
+ * the same call rather than a second `docker inspect` just to ask when the
+ * container was built. `.Created` carries nanoseconds
+ * ("2026-09-18T06:27:03.123456789Z"), which strtotime() cannot parse, so
+ * only the whole-second prefix is kept before parsing it.
+ *
  * Never fatal: a container that vanished mid-request, or a docker that
  * stops answering, both come back as null — one more service the panel
  * simply has nothing to say about, not an error the person sees.
@@ -262,12 +268,74 @@ function staxx_pending_inspect_container(string $id): ?array {
     $volumes[] = staxx_pending_mount_key($source, $dest);
   }
 
+  $createdRaw = (string)($data['Created'] ?? '');
+  $created = 0;
+  if (strlen($createdRaw) >= 19) {
+    $ts = strtotime(substr($createdRaw, 0, 19).'Z');
+    if ($ts !== false) $created = $ts;
+  }
+
   return [
     'image'   => (string)($data['Config']['Image'] ?? ''),
     'env'     => $env,
     'ports'   => $ports,
     'volumes' => $volumes,
+    'created' => $created,
   ];
+}
+
+/**
+ * The per-service comparison itself, lifted out of staxx_pending_detail()
+ * (PLAN_166 §1) so a second caller — staxx_intruder_compare() in Stacks.php,
+ * comparing a rebuilt container against the file for the handover-finish
+ * "is the intruder identical?" question — reads the exact same rules for
+ * "the same" as the restart-pending panel, rather than a second copy that
+ * could quietly drift from it. Pure: no I/O, just the field-by-field
+ * comparison already documented on staxx_pending_detail() above.
+ *
+ * @param array{image:string, env:array<string,string>, ports:string[], volumes:string[]} $live
+ * @param array{image:?string, env:array<string,string>, ports:string[], volumes:string[]} $fileSvc
+ * @return array{image:?array{from:string,to:string}, env:array,
+ *               ports:array{added:string[],removed:string[]},
+ *               volumes:array{added:string[],removed:string[]}}
+ */
+function staxx_pending_diff(array $live, array $fileSvc): array {
+  $image = null;
+  if ($fileSvc['image'] !== null && $fileSvc['image'] !== '' && $live['image'] !== ''
+      && $fileSvc['image'] !== $live['image']) {
+    $image = ['from' => $live['image'], 'to' => $fileSvc['image']];
+  }
+
+  $env = [];
+  foreach ($fileSvc['env'] as $varName => $fileVal) {
+    if (!array_key_exists($varName, $live['env'])) {
+      $env[] = ['name' => $varName, 'from' => null, 'to' => $fileVal];
+    } elseif ($live['env'][$varName] !== $fileVal) {
+      $env[] = ['name' => $varName, 'from' => $live['env'][$varName], 'to' => $fileVal];
+    }
+  }
+
+  $ports = [
+    'added'   => array_values(array_diff($fileSvc['ports'], $live['ports'])),
+    'removed' => array_values(array_diff($live['ports'], $fileSvc['ports'])),
+  ];
+  $volumes = [
+    'added'   => array_values(array_diff($fileSvc['volumes'], $live['volumes'])),
+    'removed' => array_values(array_diff($live['volumes'], $fileSvc['volumes'])),
+  ];
+
+  return ['image' => $image, 'env' => $env, 'ports' => $ports, 'volumes' => $volumes];
+}
+
+/**
+ * True when a staxx_pending_diff() result reports nothing at all. One place
+ * decides what "the same" means, so staxx_pending_detail() and
+ * staxx_intruder_compare() can never disagree about it (PLAN_166 §1).
+ */
+function staxx_pending_diff_empty(array $diff): bool {
+  return $diff['image'] === null && $diff['env'] === []
+    && $diff['ports']['added'] === [] && $diff['ports']['removed'] === []
+    && $diff['volumes']['added'] === [] && $diff['volumes']['removed'] === [];
 }
 
 /**
@@ -335,41 +403,9 @@ function staxx_pending_detail(string $name): array {
 
     $fileSvc = $fileServices[$svc];
 
-    $image = null;
-    if ($fileSvc['image'] !== null && $fileSvc['image'] !== '' && $live['image'] !== ''
-        && $fileSvc['image'] !== $live['image']) {
-      $image = ['from' => $live['image'], 'to' => $fileSvc['image']];
-    }
-
-    $env = [];
-    foreach ($fileSvc['env'] as $varName => $fileVal) {
-      if (!array_key_exists($varName, $live['env'])) {
-        $env[] = ['name' => $varName, 'from' => null, 'to' => $fileVal];
-      } elseif ($live['env'][$varName] !== $fileVal) {
-        $env[] = ['name' => $varName, 'from' => $live['env'][$varName], 'to' => $fileVal];
-      }
-    }
-
-    $ports = [
-      'added'   => array_values(array_diff($fileSvc['ports'], $live['ports'])),
-      'removed' => array_values(array_diff($live['ports'], $fileSvc['ports'])),
-    ];
-    $volumes = [
-      'added'   => array_values(array_diff($fileSvc['volumes'], $live['volumes'])),
-      'removed' => array_values(array_diff($live['volumes'], $fileSvc['volumes'])),
-    ];
-
-    $hasSomething = $image !== null || $env !== []
-      || $ports['added'] !== [] || $ports['removed'] !== []
-      || $volumes['added'] !== [] || $volumes['removed'] !== [];
-
-    if ($hasSomething) {
-      $services[$svc] = [
-        'image'   => $image,
-        'env'     => $env,
-        'ports'   => $ports,
-        'volumes' => $volumes,
-      ];
+    $diff = staxx_pending_diff($live, $fileSvc);
+    if (!staxx_pending_diff_empty($diff)) {
+      $services[$svc] = $diff;
     }
   }
 

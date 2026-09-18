@@ -1093,19 +1093,38 @@ switch ($action) {
   case 'handover-check':
     $rebuild = staxx_project_containers($name);
     $targets = staxx_handover_targets($name);
+    $active  = staxx_handover_active($name);
+    // PLAN_166 §3/§3a — read once, shared by 'foreign' below and by
+    // staxx_handover_foreign() itself, rather than re-reading the note twice.
+    $handoverTargets = $active ? (staxx_handover_read(staxx_stack_dir($name))['targets'] ?? []) : [];
     staxx_reply([
       'ok'      => true,
       'mode'    => $rebuild ? 'rebuild' : ($targets ? 'handover' : 'none'),
       'targets' => $targets,
       'rebuild' => $rebuild,
       'project' => staxx_project_name(staxx_path_leaf($name)),
-      'active'  => staxx_handover_active($name),
-      // PLAN_165 §4 — named before either answer is given, so the dialog can
-      // say up front that something outside StaXX has rebuilt the container
-      // while this handover's question sat open. staxx_finish_handover()
-      // refuses both answers on exactly this same check.
-      'foreign' => staxx_handover_active($name)
-        ? staxx_handover_foreign($name, staxx_handover_read(staxx_stack_dir($name))['targets'] ?? [])
+      'active'  => $active,
+      // PLAN_166 §3/§3a — named before either answer is given, per foreign
+      // name: whether it compares identical to the file, the differences
+      // (staxx_pending_diff() shape) when it does not, whether it could not
+      // be read at all, and the three dates the dialog shows but never acts
+      // on. staxx_finish_handover() decides on exactly the same comparison.
+      'foreign' => $active
+        ? array_map(
+            function ($fname) use ($name) {
+              $cmp = staxx_intruder_compare($name, $fname);
+              return [
+                'name'       => $fname,
+                'same'       => (bool)($cmp['same'] ?? false),
+                'unreadable' => (bool)($cmp['unreadable'] ?? false),
+                'diff'       => $cmp['diff'] ?? [],
+                'builtAt'    => (int)($cmp['builtAt'] ?? 0),
+                'fileAt'     => (int)($cmp['fileAt'] ?? 0),
+                'templateAt' => (int)($cmp['templateAt'] ?? 0),
+              ];
+            },
+            staxx_handover_foreign($name, $handoverTargets)
+          )
         : [],
     ]);
 
@@ -1126,11 +1145,14 @@ switch ($action) {
    * Read the same defensive way every other boolean here is read: anything
    * other than exactly '1' is treated as "no". That is the safe direction —
    * it is the branch that puts the old container back rather than the one
-   * that deletes it.
+   * that deletes it. `force` (PLAN_166 §3) is the reader choosing "use this
+   * stack's version" after seeing a foreign container that does not match
+   * the file; without it a different or unreadable one still refuses.
    */
   case 'handover-finish':
     $worked = ($_POST['worked'] ?? '') === '1';
-    $job    = staxx_finish_handover($name, $worked, $error);
+    $force  = ($_POST['force'] ?? '') === '1';
+    $job    = staxx_finish_handover($name, $worked, $error, $force);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
 

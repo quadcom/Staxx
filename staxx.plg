@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.04.02">
+<!ENTITY version              "00.04.03">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -37,6 +37,8 @@
 >
 
 <CHANGES>
+###00.04.03
+- If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's own file asks for. If they match, it clears it away and carries on with your answer. If they do not, it shows you what differs and offers to use the stack's version, instead of sending you to Unraid's Docker page.
 ###00.04.02
 - Taking over an Unraid container now also moves its template out of Unraid's template folder and off the Auto Update Applications list for as long as StaXX owns it, so neither that plugin nor Appdata Backup can rebuild the old container behind the stack's back. Answer "It does not" and both go back exactly as they were. If something outside StaXX rebuilds the container while the question is open, both answers now refuse and say what to remove first. If you took stacks over before this version, the stack list asks once on first load whether to move the templates still on flash, and Settings lists them and moves them in one press at any time.
 ###00.04.01

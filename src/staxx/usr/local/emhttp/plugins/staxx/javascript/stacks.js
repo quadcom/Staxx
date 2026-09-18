@@ -22183,18 +22183,125 @@
       // true/false; Cancel, Escape and a backdrop click all still resolve
       // false and do nothing, exactly as they do everywhere else this
       // dialog is used.
-      // PLAN_165 §4 — the target's name is currently held by something
-      // outside StaXX (checked again, server-side, in staxx_finish_handover()
-      // itself — this is only the explanation, not the guard). The buttons
-      // stay enabled; pressing either still reaches the server's own refusal.
-      var foreignNames = (res.foreign || []).map(function (n) { return '"' + n + '"'; });
-      var foreignHtml = foreignNames.length ? (
-        '<p class="staxx-hint staxx-hint--warn">' + esc(
-          joinEnglish(foreignNames) + ' has been rebuilt by something outside StaXX since ' +
-          'this handover began. Neither answer can be acted on until that container is ' +
-          'removed from Unraid’s Docker page.'
-        ) + '</p>'
-      ) : '';
+      // PLAN_166 §2/§3 — the target's name is currently held by something
+      // outside StaXX (almost always an Unraid rebuild). staxx_intruder_
+      // compare(), reached through handover-check's own 'foreign' field,
+      // says whether that rebuild actually matches this stack's file. An
+      // identical rebuild is no obstacle at all — the job clears it away as
+      // its first step, so the usual two buttons are left untouched below
+      // and only a friendly note is added. One that differs (or could not be
+      // read) is a decision only the reader can make, so it replaces the
+      // usual buttons instead of quietly refusing both of them.
+      var foreign     = res.foreign || [];
+      var differing    = foreign.filter(function (f) { return !f.same; });
+      var anyDifferent = differing.length > 0;
+
+      var foreignHtml = '';
+      if (foreign.length && !anyDifferent) {
+        var sameNames = foreign.map(function (f) { return '"' + f.name + '"'; });
+        foreignHtml = '<p class="staxx-hint staxx-hint--warn">' + esc(
+          joinEnglish(sameNames) + ' has been rebuilt outside StaXX since this handover ' +
+          'began. It matches this stack’s own settings exactly, so either answer will clear ' +
+          'it away first and carry on.'
+        ) + '</p>';
+      }
+
+      // The four kinds of difference are rendered by pendingServiceLines()
+      // (PLAN_71 stage 5's restart-pending panel) rather than a second
+      // description of the same facts — see that function for the wording.
+      if (anyDifferent) {
+        var diffHtml = differing.map(function (f) {
+          var datesText = [
+            f.builtAt ? 'That container was built ' + timeAgoWords(f.builtAt) + ' ago.' : '',
+            f.fileAt  ? 'This stack’s file was last changed ' + timeAgoWords(f.fileAt) + ' ago.' : ''
+          ].filter(function (s) { return s; }).join(' ');
+          // Recency is shown, never compared to pick a side — PLAN_166 §3a.
+          if (f.templateAt && f.fileAt && f.templateAt < f.fileAt) {
+            datesText += (datesText ? ' ' : '') +
+              'It was rebuilt from Unraid’s own recipe card, last edited ' +
+              timeAgoWords(f.templateAt) + ' ago — so it does not know about anything ' +
+              'changed in this stack since.';
+          }
+          var list = f.unreadable
+            ? '<p>StaXX could not read that container to compare it.</p>'
+            : '<ul class="staxx-diffl">' + pendingServiceLines(f.diff || {}).map(function (line) {
+                return '<li>' + esc(line) + '</li>';
+              }).join('') + '</ul>';
+          return '<p class="staxx-hint staxx-hint--warn">' + esc(
+                   '"' + f.name + '" has been rebuilt outside StaXX since this handover began, ' +
+                   'and it does not match this stack’s file:'
+                 ) + '</p>' +
+                 (datesText ? '<p>' + esc(datesText) + '</p>' : '') +
+                 list;
+        }).join('');
+
+        var diffBodyHtml =
+          '<p>This replaced ' + replaced + '.</p>' +
+          diffHtml +
+          '<p>' + esc(
+            'Either answer will remove that container first and use this stack’s version. ' +
+            'Leave everything alone and nothing changes — the question stays open.'
+          ) + '</p>';
+
+        // Both answers stay on offer here, exactly as they are in the
+        // ordinary question above. focusWorks is only ever which button to
+        // focus — two of the three ways into this dialog (the badge, and the
+        // offer after a start) pass true without anybody having chosen
+        // anything — so carrying it through as the answer would have
+        // cleared somebody's old container away on a press that only meant
+        // "yes, use the stack's version of this container".
+        function diffStep() {
+          var p = askConfirm({
+            title: 'Does "' + label + '" work?',
+            bodyHtml: diffBodyHtml +
+              '<div class="staxx-buttons"><button type="button" class="staxx-btn staxx-btn--primary" ' +
+              'id="staxx-handover-works">It works</button></div>',
+            goLabel: 'It does not work',
+            cancelLabel: 'Leave everything alone'
+          });
+
+          var worksBtn = confirmBody.querySelector('#staxx-handover-works');
+          if (worksBtn) {
+            worksBtn.addEventListener('click', function () {
+              if (confirmBusy) return;
+              settleConfirm('works');
+            });
+            if (focusWorks) worksBtn.focus({ preventScroll: true });
+          }
+
+          p.then(function (answer) {
+            // Only these two are answers. Anything else - the cancel button,
+            // Escape, a click outside - is "leave everything alone", which
+            // has no side effect at all and leaves the question open.
+            if (answer !== 'works' && answer !== true) return;
+            var works = answer === 'works';
+
+            confirmSetBusy(true);
+            confirmMsg.textContent = '';
+
+            call('handover-finish', { name: name, worked: works ? '1' : '0', force: '1' })
+              .then(function (r) {
+                if (!r.ok) {
+                  confirmSetBusy(false);
+                  // askConfirm() clears this itself the moment diffStep()
+                  // reopens it, so the message is set after that call.
+                  diffStep();
+                  confirmMsg.textContent = r.error || 'Could not answer for "' + label + '".';
+                  return;
+                }
+                closeConfirm();
+
+                openLogDialog((works ? 'Clearing away the old container'
+                                     : 'Putting everything back') + ' — ' + label, 'Working…');
+
+                track(r.job, { show: true, done: function () { refreshRows(); } });
+              });
+          });
+        }
+
+        diffStep();
+        return;
+      }
 
       var bodyHtml =
         '<p>This replaced ' + replaced + '.</p>' +
