@@ -3286,12 +3286,17 @@ div.title.staxx-has-titlebar {
   white-space: nowrap;
 }
 
+/* PLAN_161 — --chip is the colour the card-width media query reads back to
+   paint the same chip as a bare glyph; #3fb950 is the picked running green
+   as a literal, same reasoning as the update pill's own meaning colours. */
 .staxx-pill--up {
-  background: var(--sm-good);
+  --chip: #3fb950;
+  background: var(--chip);
   color: #fff;
 }
 
 .staxx-pill--down {
+  --chip: #8b949e;
   color: var(--sm-fg);
 }
 
@@ -3357,7 +3362,10 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid transparent;
   border-radius: 1rem;
   font: inherit;
-  background-color: var(--sm-good);
+  /* var(--chip), not --sm-good: the running green is PLAN_161's palette hex,
+     set by .staxx-pill--up on this same element, and this restatement must
+     not paint the offer button a different green from the span beside it. */
+  background-color: var(--chip);
   color: #fff;
 }
 
@@ -3491,6 +3499,44 @@ div.title.staxx-has-titlebar {
    line-height, box-sizing and border match .staxx-pill for the same reason
    as there: a <button> and a <span> version of this pill sit in the same
    row and must draw the same height (card 01a08d10). */
+/* PLAN_161 — the mark every chip carries: a plain span with the icon font
+   and its code point, not the `fa fa-name` classes, because those pull in
+   Unraid's own sizing and decoration on top of whatever this file sets
+   (measured 2026-09-17). `data-mark`, never `data-icon` — Unraid's sheet
+   decorates every [data-icon] element with a Docker whale. The diamond
+   (new build / rebuild ready) is drawn rather than a glyph — it is the one
+   shape in the picked set, deliberately, so nothing in the font is asked
+   for a mark it does not have. */
+.staxx-chipmark {
+  display: inline-block;
+  font-family: FontAwesome;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
+}
+.staxx-chipmark[data-mark="play"]::before { content: "\f04b"; }
+.staxx-chipmark[data-mark="stop"]::before { content: "\f04d"; }
+.staxx-chipmark[data-mark="cloud"]::before { content: "\f0ed"; }
+.staxx-chipmark[data-mark="clock"]::before { content: "\f017"; }
+.staxx-chipmark[data-mark="warn"]::before { content: "\f071"; }
+.staxx-chipmark[data-mark="question"]::before { content: "\f059"; }
+.staxx-chipmark[data-mark="refresh"]::before { content: "\f021"; }
+.staxx-chipmark[data-mark="diamond"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+/* The count/version/countdown beside the mark — never present for a
+   glyph-only chip, so the gap it adds is conditional on there being
+   something to gap from. */
+.staxx-chiptext:not(:empty) {
+  margin-left: 0.35em;
+}
+
 .staxx-updatepill {
   display: inline-block;
   padding: 0.25rem 0.8rem;
@@ -3511,18 +3557,45 @@ div.title.staxx-has-titlebar {
   text-overflow: ellipsis;
 }
 
-/* The one state worth drawing the eye to — filled with the same accent
-   colour every other "look at this" marker on a row already uses (the
-   review badge, the boot mark, the drift mark), so it reads as one visual
-   language rather than inventing a second. */
-/* A locally built image whose base has moved on is the same kind of fact as
-   an update waiting — something to act on — so it shares that fill rather
-   than sitting in the quiet group below with the plain "built here" state
-   it replaces. */
-.staxx-updatepill--update,
-.staxx-updatepill--rebuild {
-  background: var(--sm-accent);
-  color: #000;
+/* PLAN_161 — one rule per meaning, each setting --chip and drawing its own
+   background and text colour straight off it. The colours are hex literals
+   from the picked-in-the-live-session table, deliberately not theme tokens
+   — the whole point of colour-coding is that "update ready" is always the
+   same orange, in either theme. --chip is read again below by the card-width
+   media query, which repaints the same chip as a bare glyph in this colour. */
+.staxx-updatepill--update {
+  --chip: #f0a020;
+  background: var(--chip);
+  --chip-fg: #000;
+  color: var(--chip-fg);
+}
+
+.staxx-updatepill--newbuild {
+  --chip: #2dd4bf;
+  background: var(--chip);
+  --chip-fg: #000;
+  color: var(--chip-fg);
+}
+
+.staxx-updatepill--waiting {
+  --chip: #58a6ff;
+  background: var(--chip);
+  --chip-fg: #fff;
+  color: var(--chip-fg);
+}
+
+.staxx-updatepill--failing {
+  --chip: #f85149;
+  background: var(--chip);
+  --chip-fg: #fff;
+  color: var(--chip-fg);
+}
+
+.staxx-updatepill--notfound {
+  --chip: #a371f7;
+  background: var(--chip);
+  --chip-fg: #fff;
+  color: var(--chip-fg);
 }
 
 /* staxx_update_pill_html() draws only these two states as a real <button> —
@@ -3540,18 +3613,23 @@ div.title.staxx-has-titlebar {
    the trap: this selector outranks the plain .staxx-updatepill above, so
    inheriting the font takes the pill's own 1.1rem/600 with it and the button
    renders a size larger and a weight lighter than the text pill beside it. */
+/* PLAN_161 — only `update` is ever a real button (staxx_update_pill_html()
+   draws just that one state pressable), and it now takes its background
+   straight from --chip, set by the meaning rule above on this same
+   element — so this restatement no longer needs one rule per class the way
+   the old built/rebuild/error/tagmissing split did. */
 .staxx-scaffold button.staxx-updatepill {
   border: 0.1rem solid transparent;
+  border-radius: 1rem;
   cursor: pointer;
   font-family: inherit;
   font-size: 1.1rem;
   font-weight: 600;
-}
-
-.staxx-scaffold button.staxx-updatepill.staxx-updatepill--update {
-  border-radius: 1rem;
-  background-color: var(--sm-accent);
-  color: #000;
+  background-color: var(--chip);
+  /* Unraid's `.unapi button { color: inherit }` outranks the single-class
+     colour above, so a button chip inherited the row's light text and drew a
+     grey mark on teal. Both colours are read back off the meaning class. */
+  color: var(--chip-fg);
 }
 
 .staxx-scaffold button.staxx-updatepill:hover {
@@ -3563,77 +3641,23 @@ div.title.staxx-has-titlebar {
   outline-offset: 0.1rem;
 }
 
-/* Built here, could not be checked, the image itself has gone missing, or a
-   tag has been withdrawn — four different facts, but none of them is an
-   alarm (a withdrawn tag is not a broken container), so all four get the
-   same quiet treatment: the translucent fill .staxx-pill itself uses for a
-   plain stopped state, in the normal text colour — the muted grey read as disabled against the grey fill. */
-.staxx-updatepill--built,
-.staxx-updatepill--missing,
-.staxx-updatepill--error,
-.staxx-updatepill--tagmissing {
-  background: var(--sm-fill-2);
-  color: var(--sm-fg);
-  font-weight: 400;
-}
-
 /* PLAN_90 Stage 3b — an error pill with a full sentence behind it (a
    repeated failure, a repository gone, or a check StaXX cannot run here).
-   Still the quiet fill above, not the full alarm colour .staxx-pill--bad
-   uses — this is the mildest step that still reads as "wrong": a thin
-   danger-coloured border and matching text, so it stands out from a plain
-   error pill without shouting. */
+   A thin danger-coloured border and matching text on top of the meaning's
+   own fill, so it stands out from a plain failing chip without shouting. */
 .staxx-updatepill--noted {
   border: 0.1rem solid var(--sm-danger);
   color: var(--sm-danger);
 }
 
-/* The clock chip inside an "update" pill (PLAN_45 phase 4-8) — a counting-
-   down figure, or the server's own sentence for why nothing is going to
-   happen right now, painted by the page's one shared clock rather than a
-   timer of its own. Dimmer than the pill's own text so the version numbers
-   stay the thing the eye lands on first. */
-.staxx-updatepill-clock {
-  margin-left: 0.5rem;
-  padding-left: 0.5rem;
-  border-left: 0.1rem solid rgba(0, 0, 0, 0.3);
-  font-weight: 400;
-  opacity: 0.85;
-}
-
-/* Everything but "update" keeps the plain translucent fill above, so its
-   own clock chip needs a border that shows up against that instead of the
-   accent fill's dark one. */
-.staxx-updatepill--built .staxx-updatepill-clock,
-.staxx-updatepill--missing .staxx-updatepill-clock,
-.staxx-updatepill--error .staxx-updatepill-clock,
-.staxx-updatepill--tagmissing .staxx-updatepill-clock {
-  border-left-color: var(--sm-line);
-}
-
-/* PLAN_121 item 7: every "update" pill now reads the same plain "update
-   ready", whether or not a from/to pair is actually known — a real pair
-   could run to twice the width of every other pill in the column. This
-   small tag icon is the one visible sign that this particular pill has both
-   versions in hand; the sentence naming them is still the pill's title. */
-.staxx-updatepill__tag {
-  font-size: 0.85em;
-  opacity: 0.8;
-  margin-left: 0.15em;
-}
-
 /* The "restart pending" chip (PLAN_71 stage 5) — sits right after the
    update pill in the same status area (staxx_pending_chip_html() draws it
-   there; paintPendingChip() in stacks.js matches the order). Deliberately
-   grey-blue rather than the update pill's amber, or the accent colour
-   .staxx-driftmark/.staxx-imgmismatch use: a stack whose file has moved on
-   since it started is a normal mid-edit state, not a fault and not the
-   "look at this" language those two already carry, and "visually distinct,
-   never merged" (PLAN_71) means it must not read as another update pill
-   either. No token in this file gives a blue, so it is a literal here,
-   chosen to sit correctly on both light and dark themes the same way
-   --sm-muted/--sm-fill-2 already do. */
+   there; paintPendingChip() in stacks.js matches the order). PLAN_161 moved
+   it onto the same amber the picked colour table gives "restart to apply" —
+   --chip is read again by the card-width media query below, the same way
+   the update pill's and the state pill's own --chip are. */
 .staxx-pendingchip {
+  --chip: #e3b341;
   display: inline-block;
   margin-left: 0.4rem;
   padding: 0.25rem 0.8rem;
@@ -3648,8 +3672,8 @@ div.title.staxx-has-titlebar {
   font-size: 1.1rem;
   font-weight: 600;
   white-space: nowrap;
-  background: rgba(90, 140, 180, 0.22);
-  color: rgb(120, 165, 205);
+  background: var(--chip);
+  color: #000;
 }
 
 /* Always a real <button> (see staxx_pending_chip_html()) so it is pressable
@@ -3668,8 +3692,8 @@ div.title.staxx-has-titlebar {
      the ends off — the same trap the update pill's own --update rule had to
      work around. */
   border-radius: 1rem;
-  background: rgba(90, 140, 180, 0.22);
-  color: rgb(120, 165, 205);
+  background: var(--chip);
+  color: #000;
 }
 
 .staxx-scaffold button.staxx-pendingchip:hover {
@@ -3677,7 +3701,7 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-scaffold button.staxx-pendingchip:focus-visible {
-  outline: 0.15rem solid rgb(120, 165, 205);
+  outline: 0.15rem solid #e3b341;
   outline-offset: 0.1rem;
 }
 
@@ -4115,6 +4139,35 @@ div.title.staxx-has-titlebar {
   .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"]):has(> .staxx-modal-body[data-view="form"]),
   .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"]):has(> .staxx-modal-body[data-view="yaml"]) {
     width: 96vw;
+  }
+}
+
+/* PLAN_161 — at the card breakpoint and below (1330px of window width, the
+   same line the table itself leaves the desktop layout at — see the band
+   above) a chip stops being a coloured pill and becomes the 14px mark alone
+   in its own colour, with whatever text it carries sitting beside it in the
+   row's own text colour rather than chip-coloured text on a chip-coloured
+   fill. Chosen live from 10/12/14 shown on his page, 2026-09-17.
+   .staxx-pill--busy and .staxx-pill--fail are excluded: both are already
+   plain outlined/filled controls with their own meaning (a running job, a
+   sticky failure) that this plan never touched. */
+@media (max-width: 1330px) {
+  .staxx-scaffold .staxx-stacks .staxx-pill:not(.staxx-pill--busy):not(.staxx-pill--fail),
+  .staxx-scaffold .staxx-stacks .staxx-updatepill,
+  .staxx-scaffold .staxx-stacks .staxx-pendingchip {
+    background: transparent;
+    background-color: transparent;
+    border-color: transparent;
+    padding: 0;
+    color: var(--sm-fg);
+    font-weight: 600;
+  }
+
+  .staxx-scaffold .staxx-stacks .staxx-pill:not(.staxx-pill--busy):not(.staxx-pill--fail) .staxx-chipmark,
+  .staxx-scaffold .staxx-stacks .staxx-updatepill .staxx-chipmark,
+  .staxx-scaffold .staxx-stacks .staxx-pendingchip .staxx-chipmark {
+    color: var(--chip);
+    font-size: 14px;
   }
 }
 

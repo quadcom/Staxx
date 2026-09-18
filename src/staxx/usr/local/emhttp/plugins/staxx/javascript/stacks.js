@@ -19480,20 +19480,18 @@
   //   data-update-state   current / update / built / missing / error / tagmissing / unknown
   //   data-update-image   the image reference this pill is about
   //   data-update-source  a "what changed" link, or '' when there is none
-  var UPDATE_PILL_CLASS = {
-    update:     'staxx-updatepill--update',
-    // A locally built image whose base moved on — worth acting on, so it
-    // shares the update colour rather than built's quiet one.
-    rebuild:    'staxx-updatepill--rebuild',
-    built:      'staxx-updatepill--built',
-    missing:    'staxx-updatepill--missing',
-    error:      'staxx-updatepill--error',
-    // A withdrawn tag is factual, not alarming, so it gets the same quiet
-    // treatment as built/missing rather than error's louder colour — see
-    // staxx_update_pill_html() in StacksTable.php, which this must match.
-    tagmissing: 'staxx-updatepill--tagmissing'
-    // current and unknown get no colour of their own — nothing here is
-    // worth a badge, which is the whole point of leaving them plain.
+  //
+  // PLAN_161 — colour and mark now carry the meaning instead of a sentence;
+  // this table is one meaning short of `data-update-state`'s vocabulary
+  // because several states share a meaning (rebuild reads as newbuild, a
+  // moved/withdrawn tag reads as notfound) — see paintUpdatePill() below for
+  // the mapping. `built`/`current`/`unknown` have no row: nothing to say.
+  var CHIP_LOOK = {
+    update:   { cls: 'staxx-updatepill--update',   mark: 'cloud'    },
+    newbuild: { cls: 'staxx-updatepill--newbuild', mark: 'diamond'  },
+    waiting:  { cls: 'staxx-updatepill--waiting',  mark: 'clock'    },
+    failing:  { cls: 'staxx-updatepill--failing',  mark: 'warn'     },
+    notfound: { cls: 'staxx-updatepill--notfound', mark: 'question' }
   };
 
   // `source` is a stranger's text, off a registry label — opened only when
@@ -19544,6 +19542,29 @@
     };
   }
 
+  // PLAN_161 — which of the five coloured meanings (CHIP_LOOK) a raw
+  // `data-update-state` reads as. 'built'/'current'/'unknown' and anything
+  // not listed here get no chip: '' tells paintUpdatePill() to remove it.
+  // An 'update' entry with a hold reason or a live countdown reads as
+  // waiting rather than update — the chip cannot say "ready to press" and
+  // "not going to happen yet" at once — and a build-only image reads as
+  // newbuild even while still in the 'update' state, matched off the label
+  // Updates.php already composed rather than a second server-side flag.
+  function chipMeaningFor(state, entry) {
+    switch (state) {
+      case 'built': case 'current': case 'unknown': return '';
+      case 'update':
+        if (entry.why || entry.due > 0) return 'waiting';
+        if ((entry.label || '').indexOf('new build') !== -1) return 'newbuild';
+        return 'update';
+      case 'rebuild':    return 'newbuild';
+      case 'error':      return 'failing';
+      case 'missing': case 'tagmissing': case 'moved': return 'notfound';
+      case 'watch':      return 'waiting';
+      default:           return '';
+    }
+  }
+
   // Repaints one row's pill from the plain facts the `updates` action hands
   // back — state/label/count/image/source/tip is data, not markup, so this
   // builds the element itself rather than dropping in ready-made HTML the
@@ -19565,8 +19586,9 @@
     if (row && (row.dataset.busy || row.dataset.failed)) return;
     var host = updatePillHost(row);
     if (!host) return;
-    var state = entry ? (entry.state || '') : '';
-    var show  = !!(entry && state && state !== 'current' && state !== 'unknown');
+    var state   = entry ? (entry.state || '') : '';
+    var meaning = entry ? chipMeaningFor(state, entry) : '';
+    var show    = !!meaning;
 
     var pill = host.querySelector('.staxx-updatepill');
     if (!show) {
@@ -19597,7 +19619,8 @@
     // staxx_update_pill_html().
     var note = (row && !row.dataset.folderRow) ? (entry.note || '') : '';
 
-    var cls = UPDATE_PILL_CLASS[state] || '';
+    var look = CHIP_LOOK[meaning] || {};
+    var cls  = look.cls || '';
     if (note) cls += (cls ? ' ' : '') + 'staxx-updatepill--noted';
     pill.className = 'staxx-updatepill' + (cls ? ' ' + cls : '');
     setData(pill, 'updateState', state);
@@ -19635,32 +19658,47 @@
       delete pill.dataset.updateChildren;
     }
 
-    var text = entry.label || state;
-    // Card 01a08d12 — the label already carries a number for a "new build of
-    // 22.04"-style pill, so appending "(N)" on top read as two counts. Only
-    // added when the label itself has none.
-    if (entry.count > 1 && !/\d/.test(text)) text += ' (' + entry.count + ')';
-    // Rebuilding the label wipes out any clock chip appended below, which is
-    // fine: paintPillClock() puts one straight back when there is still
-    // something to say. Skipped when the label has not changed so a clock
-    // ticking away between polls is not torn down and rebuilt every time.
-    if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
-    // PLAN_121 item 7: the small tag icon that marks a pill as knowing both
-    // versions, even though the label itself no longer says so — mirrors
-    // staxx_update_pill_html()'s $tagIcon in StacksTable.php. Checked and
-    // fixed up independently of the label text above: 'versioned' can flip
-    // on a poll that leaves the label reading "update ready" either way, and
-    // the two must never drift out of step with what the title claims.
-    var wantIcon = state === 'update' && !!entry.versioned;
-    var icon = pill.querySelector('.staxx-updatepill__tag');
-    if (wantIcon && !icon) {
-      icon = document.createElement('i');
-      icon.className = 'fa fa-tag staxx-updatepill__tag';
-      icon.setAttribute('aria-hidden', 'true');
-      pill.appendChild(icon);
-    } else if (!wantIcon && icon) {
-      icon.parentNode.removeChild(icon);
+    // PLAN_161 — colour and mark carry the meaning now; the chip's own text
+    // is only ever a count or a version, never a word. A waiting chip with
+    // a live countdown is left blank here — paintPillClock() fills it in,
+    // and must not be fought with a value written on every poll.
+    var text = '';
+    if (meaning === 'waiting' && entry.due > 0) {
+      text = '';
+    } else if (entry.count > 1) {
+      text = String(entry.count);
+    } else if ((meaning === 'update' || meaning === 'newbuild') && entry.version) {
+      text = entry.version;
     }
+    // The words the chip used to print in full, kept for screen readers and
+    // the title-less hover: the old label plus the old "(N)" suffix rule,
+    // unchanged — only where it lands has moved, from the chip's own text
+    // to its accessible name.
+    var ariaText = entry.label || state;
+    if (entry.count > 1 && !/\d/.test(ariaText)) ariaText += ' (' + entry.count + ')';
+    if (pill.getAttribute('aria-label') !== ariaText) pill.setAttribute('aria-label', ariaText);
+    setData(pill, 'updateCount', entry.count || 0);
+
+    // The mark and text live in their own children so a ticking clock (see
+    // paintPillClock()) can rewrite just the text span without disturbing
+    // the mark, and so neither is torn down and rebuilt on every poll.
+    var mark = pill.querySelector('.staxx-chipmark');
+    if (!mark) {
+      mark = document.createElement('span');
+      mark.className = 'staxx-chipmark';
+      mark.setAttribute('aria-hidden', 'true');
+      pill.appendChild(mark);
+    }
+    var markName = look.mark || '';
+    if (mark.dataset.mark !== markName) mark.dataset.mark = markName;
+
+    var txt = pill.querySelector('.staxx-chiptext');
+    if (!txt) {
+      txt = document.createElement('span');
+      txt.className = 'staxx-chiptext';
+      pill.appendChild(txt);
+    }
+    if (txt.staxxTxt !== text) { txt.textContent = text; txt.staxxTxt = text; }
     // The note is appended to the tip rather than replacing it, mirroring
     // staxx_update_pill_html() — a stale tooltip after a recovery is worse
     // than none, so this is rebuilt every time rather than only when new.
@@ -19691,33 +19729,23 @@
   }
 
   // The one clock for the whole page (PLAN_45 phase 4-8, decision 9): reads
-  // due/hold/why straight off whichever pills are on screen right now rather
-  // than keeping a timer per row — there can be ninety of them. `why`, when
-  // the server has one, always wins over a ticking number: "waiting for
-  // 03:00" is more use to look at than a clock that is not going to fire.
+  // due straight off whichever pills are on screen right now rather than
+  // keeping a timer per row — there can be ninety of them. PLAN_161 — `why`
+  // no longer prints here at all (its sentence is a card row now, see
+  // updCardFacts()); `why` still wins over the clock in the sense that a
+  // pill carrying one is a waiting chip, not an update chip — see
+  // chipMeaningFor() — but this function only ever writes a countdown, on
+  // a chip already painted that colour by paintUpdatePill().
   function paintPillClock(pill) {
     if (!pill) return;
-    var why  = pill.dataset.updateWhy || '';
-    var due  = parseInt(pill.dataset.updateDue || '0', 10) || 0;
-    var text = '';
-    if (why) {
-      text = why;
-    } else if (due > 0) {
-      var left = due - Math.floor(Date.now() / 1000);
-      text = left > 0 ? clockWords(left) : 'due now';
-    }
-
-    var chip = pill.querySelector('.staxx-updatepill-clock');
-    if (!text) {
-      if (chip) chip.parentNode.removeChild(chip);
-      return;
-    }
-    if (!chip) {
-      chip = document.createElement('span');
-      chip.className = 'staxx-updatepill-clock';
-      pill.appendChild(chip);
-    }
-    if (chip.textContent !== text) chip.textContent = text;
+    if (!pill.classList.contains(CHIP_LOOK.waiting.cls)) return;
+    var due = parseInt(pill.dataset.updateDue || '0', 10) || 0;
+    if (due <= 0) return;   // a waiting chip with no countdown (why alone) leaves its text as painted
+    var left = due - Math.floor(Date.now() / 1000);
+    var text = left > 0 ? clockWords(left) : 'due now';
+    var txt = pill.querySelector('.staxx-chiptext');
+    if (!txt) return;
+    if (txt.staxxTxt !== text) { txt.textContent = text; txt.staxxTxt = text; }
   }
 
   var pageClockTimer = null;
@@ -19732,7 +19760,13 @@
   }
 
   function startPageClock() {
-    if (!pageClockTimer) pageClockTimer = setInterval(tickPageClocks, 30000);
+    if (pageClockTimer) return;
+    // A server-rendered waiting chip's countdown starts life with empty
+    // text (staxx_update_pill_html() knows the due time but not "now"), so
+    // this ticks once immediately rather than leaving it blank for the
+    // first 30 seconds a page is open.
+    tickPageClocks();
+    pageClockTimer = setInterval(tickPageClocks, 30000);
   }
 
   /* --------------------------------------------------------- PLAN_127 --
@@ -19863,6 +19897,11 @@
       ['Available',  pill.dataset.updateAvailable,  true],
       ['Last asked', pill.dataset.updateAsked,       false],
       ['Next check', pill.dataset.updateNext,        false],
+      // PLAN_161 — the hold/why sentence that used to print on the clock
+      // chip itself now lands here; kept apart from the 'Why' row below,
+      // which is the cadence reason (a different fact: why the schedule is
+      // what it is, not why nothing is happening right now).
+      ['Waiting',    pill.dataset.updateWhy,         false],
       ['Checked',    pill.dataset.updateInterval,    false],
       ['Why',        pill.dataset.updateCadenceWhy,  false]
     ];

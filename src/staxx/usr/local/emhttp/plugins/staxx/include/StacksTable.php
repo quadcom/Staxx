@@ -205,9 +205,17 @@ function staxx_state_pill(array $s, bool $canRun, string $service = ''): string 
   if (!$canRun) {
     return '<span class="staxx-sub">'._('unknown').'</span>';
   }
+  // PLAN_161 — the chip's text is now only the count Docker's own status line
+  // carries ("running(3)", or "running(2), exited(1)" for a mixed stack: the
+  // first number is always the running one), never the status words
+  // themselves. The words move to the title, where every hover card already
+  // reads from; the mark and colour say "running" on their own.
   if (!empty($s['running'])) {
     $health = $s['health'] ?? 'none';
     $status = htmlspecialchars((string)$s['status']);
+    preg_match('/running\((\d+)\)/', (string)$s['status'], $m);
+    $chip = '<span class="staxx-chipmark" data-mark="play" aria-hidden="true"></span>'
+          . '<span class="staxx-chiptext">'.(($m[1] ?? '') !== '' ? $m[1] : '').'</span>';
     if ($health === 'unhealthy') {
       // _() is Unraid's own translator and it returns HTML, not plain text:
       // it turns an apostrophe into an entity on the way past. Escaping its
@@ -218,11 +226,12 @@ function staxx_state_pill(array $s, bool $canRun, string $service = ''): string 
       $title = $names !== ''
         ? sprintf(_('The container is running, but the image\'s own check says the app inside is not working: %s.'), $names)
         : _('The container is running, but the image\'s own check says the app inside is not working.');
-      return '<span class="staxx-pill staxx-pill--bad" title="'.$title.'">'.$status.'</span>';
+      $title = $status."\n".$title;
+      return '<span class="staxx-pill staxx-pill--bad" title="'.$title.'">'.$chip.'</span>';
     }
     if ($health === 'starting') {
-      $title = _('The container is running. Its own check has not finished deciding yet.');
-      return '<span class="staxx-pill staxx-pill--warn" title="'.$title.'">'.$status.'</span>';
+      $title = $status."\n"._('The container is running. Its own check has not finished deciding yet.');
+      return '<span class="staxx-pill staxx-pill--warn" title="'.$title.'">'.$chip.'</span>';
     }
     // A stack shows one pill for however many containers it holds, so the
     // green case has to say which of the two claims it is making just as the
@@ -236,21 +245,31 @@ function staxx_state_pill(array $s, bool $canRun, string $service = ''): string 
       // click handler (matched on staxx-pill--offer) already covers this
       // one too, with no handler of its own to keep in step.
       if ($service !== '') {
-        $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working. Click to see if StaXX can work out a check for it.');
+        $title = $status."\n"._('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working. Click to see if StaXX can work out a check for it.');
         return '<button type="button" class="staxx-pill staxx-pill--up staxx-pill--offer" title="'.$title.'"'
              . ' data-stack="'.htmlspecialchars($s['name']).'" data-service="'.htmlspecialchars($service).'">'
-             . $status.'</button>';
+             . $chip.'</button>';
       }
       $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working.');
     }
     else if ($checked === $ran) $title = _('Everything here checks itself, and every check says it is working.');
     else                        $title = sprintf(_('%1$d of the %2$d containers here check themselves and say they are working. Nothing has checked the rest.'), $checked, $ran);
-    return '<span class="staxx-pill staxx-pill--up" title="'.$title.'">'.$status.'</span>';
+    $title = $status."\n".$title;
+    return '<span class="staxx-pill staxx-pill--up" title="'.$title.'">'.$chip.'</span>';
   }
+  // Stopped, or a Docker status word this file has no chip logic for: same
+  // quiet grey chip either way, the word moved from the chip's face into its
+  // title (PLAN_161 — colour and a mark carry the meaning, not the text).
   if ((string)$s['status'] !== '') {
-    return '<span class="staxx-pill">'.htmlspecialchars((string)$s['status']).'</span>';
+    $title = htmlspecialchars((string)$s['status']);
+    return '<span class="staxx-pill staxx-pill--down" title="'.$title.'">'
+         . '<span class="staxx-chipmark" data-mark="stop" aria-hidden="true"></span>'
+         . '<span class="staxx-chiptext"></span></span>';
   }
-  return '<span class="staxx-pill staxx-pill--down">'._('stopped').'</span>';
+  $title = _('stopped');
+  return '<span class="staxx-pill staxx-pill--down" title="'.$title.'">'
+       . '<span class="staxx-chipmark" data-mark="stop" aria-hidden="true"></span>'
+       . '<span class="staxx-chiptext"></span></span>';
 }
 
 /**
@@ -320,7 +339,10 @@ function staxx_stack_sub(int $count, int $running): string {
  */
 function staxx_container_pill(array $c, string $stack = ''): string {
   if (!$c['exists']) {
-    return '<span class="staxx-pill staxx-pill--down">'._('not created').'</span>';
+    $title = _('not created');
+    return '<span class="staxx-pill staxx-pill--down" title="'.$title.'">'
+         . '<span class="staxx-chipmark" data-mark="stop" aria-hidden="true"></span>'
+         . '<span class="staxx-chiptext"></span></span>';
   }
 
   $status = htmlspecialchars($c['status'] !== '' ? $c['status'] : $c['state']);
@@ -339,7 +361,13 @@ function staxx_container_pill(array $c, string $stack = ''): string {
       ];
       $class = $health === 'unhealthy' ? ' staxx-pill--bad' : ($health === 'starting' ? ' staxx-pill--warn' : ' staxx-pill--up');
       // Not escaped again — see staxx_state_pill() above on what _() returns.
-      $title = $titles[$health] ?? $titles['none'];
+      // PLAN_161 — the chip itself now says only "running" (the play mark);
+      // Docker's own status line moves into the title, ahead of the
+      // explanation that used to be the whole tooltip, so nothing said
+      // before is lost.
+      $title = $status."\n".($titles[$health] ?? $titles['none']);
+      $chip = '<span class="staxx-chipmark" data-mark="play" aria-hidden="true"></span>'
+            . '<span class="staxx-chiptext"></span>';
       // Only the 'none' case is ever a click target — an image that checks
       // itself, or one already reporting, has nothing to offer. A real
       // <button>, not a styled span, following the same specificity fight
@@ -349,17 +377,22 @@ function staxx_container_pill(array $c, string $stack = ''): string {
       if ($health === 'none' && $stack !== '' && $service !== '') {
         return '<button type="button" class="staxx-pill staxx-pill--up staxx-pill--offer" title="'.$title.'"'
              . ' data-stack="'.htmlspecialchars($stack).'" data-service="'.htmlspecialchars($service).'">'
-             . $status.'</button>';
+             . $chip.'</button>';
       }
-      return '<span class="staxx-pill'.$class.'" title="'.$title.'">'.$status.'</span>';
+      return '<span class="staxx-pill'.$class.'" title="'.$title.'">'.$chip.'</span>';
     case 'restarting':
     case 'removing':
     case 'paused':
-      return '<span class="staxx-pill staxx-pill--warn">'.$status.'</span>';
+      // PLAN_161 — a transient state with no mark of its own in the picked
+      // palette; the word itself stays the chip's text (wrapped for the
+      // shared chiptext styling), just no glyph.
+      return '<span class="staxx-pill staxx-pill--warn"><span class="staxx-chiptext">'.$status.'</span></span>';
     case 'dead':
-      return '<span class="staxx-pill staxx-pill--bad">'.$status.'</span>';
+      return '<span class="staxx-pill staxx-pill--bad"><span class="staxx-chiptext">'.$status.'</span></span>';
     default:                                   // exited, created
-      return '<span class="staxx-pill staxx-pill--down">'.$status.'</span>';
+      return '<span class="staxx-pill staxx-pill--down" title="'.$status.'">'
+           . '<span class="staxx-chipmark" data-mark="stop" aria-hidden="true"></span>'
+           . '<span class="staxx-chiptext"></span></span>';
   }
 }
 
@@ -390,34 +423,74 @@ function staxx_container_pill(array $c, string $stack = ''): string {
 function staxx_update_pill_html(array $u, bool $pressable = true): string {
   $state = (string)($u['state'] ?? 'unknown');
 
-  // Only the states with something worth flagging get a modifier class; an
-  // unrecognised value (a future state this file has not been taught about
-  // yet) falls through to showing nothing rather than guessing at a colour.
-  $cls = [
-    'update'     => 'staxx-updatepill--update',
-    // A locally built image whose base has moved on. Worth acting on, like
-    // an update, so it shares that colour rather than built's quiet one.
-    'rebuild'    => 'staxx-updatepill--rebuild',
-    'built'      => 'staxx-updatepill--built',
-    'missing'    => 'staxx-updatepill--missing',
-    'error'      => 'staxx-updatepill--error',
-    // A withdrawn tag is factual, not alarming — nothing is broken right
-    // now — so it gets the same quiet treatment as built/missing rather
-    // than error's louder colour.
-    'tagmissing' => 'staxx-updatepill--tagmissing',
-    // A registry move is the same kind of fact, not an alarm — see
-    // PLAN_61 — so it reuses tagmissing's quiet styling rather than a class
-    // of its own; the two can be split apart later if they ever need to
-    // look different.
-    'moved'      => 'staxx-updatepill--tagmissing',
-    // PLAN_62 Stage 3 — the author's published example says something this
-    // file does not. Also a fact, not an alarm (it is a suggestion, never
-    // proven correct), so it shares the same quiet styling too.
-    'watch'      => 'staxx-updatepill--tagmissing',
-  ][$state] ?? '';
-  if ($cls === '') return '';
+  // PLAN_161 — meaning, not raw state, decides the class, the mark and the
+  // text now. `built`/`current`/`unknown` have nothing worth flagging and
+  // draw no chip at all — `built` joined that quiet set here, since a
+  // locally-built image with no news to report is exactly "nothing to say".
+  // A state this file has not been taught about (a future addition) falls
+  // through to the same "show nothing" default rather than guessing.
+  $label = (string)($u['label'] ?? '');
+  $due   = (int)($u['due'] ?? 0);
+  $why   = (string)($u['why'] ?? '');
 
-  $label  = htmlspecialchars((string)($u['label'] ?? ''));
+  if (in_array($state, ['built', 'current', 'unknown'], true)) return '';
+
+  if ($state === 'update') {
+    $meaning = ($why !== '' || $due > 0)
+      ? 'waiting'
+      : (stripos($label, 'new build') !== false ? 'newbuild' : 'update');
+  } elseif ($state === 'rebuild') {
+    $meaning = 'newbuild';
+  } elseif ($state === 'error') {
+    $meaning = 'failing';
+  } elseif (in_array($state, ['missing', 'tagmissing', 'moved'], true)) {
+    $meaning = 'notfound';
+  } elseif ($state === 'watch') {
+    $meaning = 'waiting';
+  } else {
+    return '';
+  }
+
+  $cls = [
+    'update'   => 'staxx-updatepill--update',
+    'newbuild' => 'staxx-updatepill--newbuild',
+    'waiting'  => 'staxx-updatepill--waiting',
+    'failing'  => 'staxx-updatepill--failing',
+    'notfound' => 'staxx-updatepill--notfound',
+  ][$meaning];
+  $mark = [
+    'update'   => 'cloud',
+    'newbuild' => 'diamond',
+    'waiting'  => 'clock',
+    'failing'  => 'warn',
+    'notfound' => 'question',
+  ][$meaning];
+
+  $count   = (int)($u['count'] ?? 0);
+  $version = (string)($u['version'] ?? '');
+  // The chip's own text: a count where there is more than one thing to
+  // report, a version where the meaning is an update or a new build and one
+  // is known, and otherwise nothing — the mark alone says what kind of chip
+  // this is (PLAN_161). A waiting chip with a countdown due leaves its text
+  // to the browser, which paints the ticking figure in on top of this.
+  if ($meaning === 'waiting' && $due > 0) {
+    $chipText = '';
+  } elseif ($count > 1) {
+    $chipText = (string)$count;
+  } elseif (($meaning === 'update' || $meaning === 'newbuild') && $version !== '') {
+    $chipText = $version;
+  } else {
+    $chipText = '';
+  }
+  $chipText = htmlspecialchars($chipText);
+
+  // aria-label carries the sentence the chip used to print on its face —
+  // the label, plus the same " (N)" suffix stacks.js's own paintUpdatePill()
+  // adds when there is a count but the label itself names no number.
+  $ariaLabel = (string)($u['label'] ?? '');
+  if ($count > 1 && !preg_match('/\d/', $ariaLabel)) $ariaLabel .= ' ('.$count.')';
+  $ariaAttr = $ariaLabel !== '' ? ' aria-label="'.htmlspecialchars($ariaLabel).'"' : '';
+
   $image  = htmlspecialchars((string)($u['image'] ?? ''));
   // Same ^https?:// gate every href in this file uses (see
   // staxx_row_actions_html() below) — stacks.js opens this value with
@@ -460,14 +533,6 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // without inventing a new state — the state is still 'error'.
   $cls .= $note !== '' ? ' staxx-updatepill--noted' : '';
 
-  // PLAN_121 item 7: the label itself no longer says which version, so a
-  // small tag icon is the one visible sign that this pill actually knows
-  // both — the sentence naming them is still the title, above. Never shown
-  // on the folder roll-up, which sums several images and never claimed a
-  // version either.
-  $tagIcon = !empty($u['versioned'])
-    ? '<i class="fa fa-tag staxx-updatepill__tag" aria-hidden="true"></i>' : '';
-
   // PLAN_127 — the hover card's own facts, one data attribute each so the
   // browser can lay them out as a table instead of parsing them back out of
   // the sentence in $title above. `data-update-cadence-why` is named apart
@@ -497,8 +562,13 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     $cardAttrs .= ' data-update-children="'.htmlspecialchars(json_encode($children)).'"';
   }
 
+  $chip = '<span class="staxx-chipmark" data-mark="'.$mark.'" aria-hidden="true"></span>'
+        . '<span class="staxx-chiptext">'.$chipText.'</span>';
+
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
+       . $ariaAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'
+       . ' data-update-count="'.$count.'"'
        . ' data-update-image="'.$image.'"'
        . ' data-update-source="'.$source.'"'
        . ' data-update-due="'.(int)($u['due'] ?? 0).'"'
@@ -508,7 +578,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
        . $cardAttrs
        . $noteAttr
-       . $titleAttr.'>'.$label.$tagIcon.'</'.$tag.'>';
+       . $titleAttr.'>'.$chip.'</'.$tag.'>';
 }
 
 /**
@@ -1401,7 +1471,8 @@ function staxx_pending_chip_html(array $p): string {
        . ' data-leftover="'.htmlspecialchars(implode(',', $p['leftover'] ?? [])).'"'
        . ' aria-label="'.htmlspecialchars($title).'"'
        . ' title="'.htmlspecialchars($title).'">'
-       . '↻ '._('Restart to apply').'</button>';
+       . '<span class="staxx-chipmark" data-mark="refresh" aria-hidden="true"></span>'
+       . '<span class="staxx-chiptext"></span></button>';
 }
 
 /**
@@ -1420,7 +1491,9 @@ function staxx_pending_service_chip_html(string $kind): string {
   if ($title === '') return '';
 
   return '<span class="staxx-pendingchip staxx-pendingchip--service" title="'.htmlspecialchars($title).'"'
-       . ' aria-label="'.htmlspecialchars($title).'">↻</span>';
+       . ' aria-label="'.htmlspecialchars($title).'">'
+       . '<span class="staxx-chipmark" data-mark="refresh" aria-hidden="true"></span>'
+       . '<span class="staxx-chiptext"></span></span>';
 }
 
 /**
