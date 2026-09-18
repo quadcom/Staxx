@@ -104,7 +104,7 @@ Hashing is done by a small container on your server called **StaXXCrypt**. If it
 the Hash section shows a note and a **Build it…** button in place of the **Format** dropdown. The
 password half of the panel works either way.
 
-<!-- SHOT: passwords-and-hashes-build-it | close-up | the note and the Build it button shown in the Hash section when StaXXCrypt has not been built yet -->
+![The Hash section of the password tool before the hashing container exists: the Format picker, the Hash button, and the outlined note explaining that StaXXCrypt is built on your server, with its Build it link](../images/guide/passwords-and-hashes-build-it.png)
 
 A hash takes a second or two to come back, and the panel shows a message while you wait. StaXXCrypt's
 own state, and buttons to build, recreate or rebuild it, are on the [settings panel](settings.md).
