@@ -1,18 +1,6 @@
 # Changelog
 
-What changed, newest first. Versions match the plugin manifest.
-
-**The top section is `Unreleased`.** Work lands there as it is done, and a development build
-publishes that section as its own release notes — so a change with no bullet in it is a change
-nobody outside this repository is told about. Cutting a stable release renames that heading to the
-version and its date; the build refuses to publish while it still says `Unreleased`.
-
-**Numbering changed at `00.01.00`.** Every component is now two digits, and the count restarted from
-`00.01.00` on the way to `01.00.00` — the first release meant for general use. The padding is not
-decoration: Unraid compares plugin versions as plain text, so `1.10.0` would sort *below* `1.5.0` and
-updates would silently stop being offered. Fixed-width numbers make text order and number order the
-same thing. Everything above `1.1.0` in this file used the old unpadded numbering, and the versions
-before that were dates.
+What changed in StaXX, newest first.
 
 ---
 
