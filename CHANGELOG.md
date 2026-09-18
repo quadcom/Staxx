@@ -101,7 +101,7 @@ What changed in StaXX, newest first.
   small screenshot of each option sits in a row, the chosen one outlined; clicking a picture picks
   that option. It starts with where StaXX appears in the menu.
 
-- **The Settings panel was reworked with Adrian's feedback.** Each setting now sits in its own
+- **The Settings panel was reworked.** Each setting now sits in its own
   titled box, with the explanation above the control rather than below it; the Docker menu setting
   gained its own pair of pictures; several settings were reworded for clarity and brevity; Where
   stacks may live moved onto the Storage tab; and the Docker menu setting locks itself off, greyed
@@ -310,8 +310,7 @@ take it.
   a declined switch that changed nothing now says so rather than implying it did something.
 - **For the record:** numbered releases install the ordinary Unraid way again. 1.2.0 shipped with a
   manifest naming a package that was never uploaded, so installing by plugin address failed. That is
-  fixed, and the build now refuses to publish a release whose version, manifest and changelog do not
-  all agree.
+  fixed.
 
 ---
 
@@ -425,9 +424,6 @@ finally works for registries other than Docker Hub — including one you run you
 
 ## 2026.08.26 — released 2026-08-26
 
-- Added the groundwork for filling in a stack's icon, description and links automatically: a new
-  internal step that writes those fields into a compose file as commented-out placeholders with a
-  short hint beside each, ready to uncomment and fill in.
 - Every new stack — from Community Applications, an imported template, Docker Hub, a local image,
   or the blank starting point — now gets these fields written in automatically before you ever see
   it. Pasting a whole compose file into a new stack does the same the moment it lands. An existing
@@ -488,10 +484,8 @@ covers the state of the whole plugin rather than a list of differences.
 ### Where it stands
 
 In daily use on the author's own server, and far enough along to judge on its merits. What it is
-not yet is packaged: installing means copying the plugin files onto a server yourself, there is no
-one-click install, and it is not listed in Community Applications. The installer manifest still has
-deliberate blanks where the author name, repository and checksums go, so a premature publish fails
-loudly instead of quietly shipping something broken.
+not yet is packaged: there is no one-click install, and it is not listed in Community
+Applications.
 
 ### The stack model
 
@@ -561,5 +555,4 @@ loudly instead of quietly shipping something broken.
 
 ## Before this
 
-The work landed as a long series of small pieces, each recorded with its reasoning in
-`plans/completed-plans/`. That folder is the real history for anything earlier than this entry.
+Everything before this was unreleased work, and is not listed.
