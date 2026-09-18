@@ -18253,7 +18253,9 @@
       var td = row.querySelector('[data-cell="state"]');
       if (td) {
         td.innerHTML = '<button type="button" class="staxx-pill staxx-pill--fail" ' +
-          'title="Click to see what happened">' + esc(label) + '</button>';
+          'title="' + esc(label + '. Click to see what happened.') + '">' +
+          '<span class="staxx-chipmark" data-mark="warn" aria-hidden="true"></span>' +
+          '<span class="staxx-chiptext"></span></button>';
         // See setBusy: paintState skips a cell whose HTML matches what it
         // wrote last, so this record has to go or the next poll — once the
         // busy/failed suppression is lifted by a click — paints nothing.
@@ -18276,17 +18278,21 @@
   // PLAN_151 — same shape as paintFailure()/markFailed() just above, for a
   // job this page lost track of rather than one the server reported as
   // failing. Reuses the fail pill's own class and specificity trick (see the
-  // .staxx-scaffold .staxx-pill rules in staxx.css) rather than inventing a
-  // second kind of marker for a person to learn — the difference that
-  // matters is the wording, not the shape.
+  // .staxx-scaffold .staxx-pill rules in staxx.css), so the colour still says
+  // something went wrong. The mark is what separates the two now that neither
+  // carries words: a warning triangle for a job that reported its own
+  // failure, a question for one whose outcome this page never learnt
+  // (PLAN_167 — colour is how much it wants from you, the mark is what it is
+  // about, so the same red can carry both).
   function paintAbandoned(rows) {
     rows.forEach(function (row) {
       row.dataset.failed = '1';
       var td = row.querySelector('[data-cell="state"]');
       if (td) {
         td.innerHTML = '<button type="button" class="staxx-pill staxx-pill--fail" ' +
-          'title="This page lost track of the job — click to see its log">' +
-          'Lost touch — click to check</button>';
+          'title="This page lost track of the job. Click to see its log.">' +
+          '<span class="staxx-chipmark" data-mark="question" aria-hidden="true"></span>' +
+          '<span class="staxx-chiptext"></span></button>';
         // Same reason as setBusy()/paintFailure(): the record has to go or a
         // later state matching what was last painted here would be skipped.
         td.staxxTxt = '';
@@ -18362,7 +18368,9 @@
   // .staxx-scaffold .staxx-pill--busy in staxx.css for why it needs the same
   // specificity trick the fail pill already carries.
   function busyPillHtml(label) {
-    return '<button type="button" class="staxx-pill staxx-pill--busy">' + label + '</button>';
+    return '<button type="button" class="staxx-pill staxx-pill--busy">' +
+      '<span class="staxx-chipmark" data-mark="refresh" aria-hidden="true"></span>' +
+      '<span class="staxx-chiptext">' + label + '</span></button>';
   }
 
   function paintBusyLabel(row, label) {
@@ -20120,22 +20128,20 @@
   // PLAN_165 §5 — a persistent sibling to updatesLine's own pills, repainted
   // from every `state` refresh rather than from paintUpdatesLine() just above:
   // that function wipes updatesLine's own children on every repaint, which
-  // would discard this the moment an update check finished. Unlike a row's
-  // update pill (CHIP_LOOK, below), this one keeps its words as text — there
-  // is only ever one of it on the page, so there is no crowded row to keep it
-  // terse for.
+  // would discard this the moment an update check finished. PLAN_167 §4 — the
+  // top bar is a summary line with room to speak, so it stays a plain worded
+  // pill and never wears the row palette (CHIP_LOOK, below): there is only
+  // ever one of it on the page, so there is no crowded row to keep it terse
+  // for, and no chip mark whose meaning it could clash with.
   var unraidTplLine = document.getElementById('staxx-unraidtpl-line');
   if (!unraidTplLine) {
     unraidTplLine = document.createElement('a');
     unraidTplLine.id = 'staxx-unraidtpl-line';
-    unraidTplLine.className = 'staxx-updatepill staxx-updatepill--waiting';
+    unraidTplLine.className = 'staxx-pill staxx-pill--warn';
     unraidTplLine.href = '/Settings/staxx.settings#staxx-unraid-templates';
     unraidTplLine.title = 'Templates left in Unraid’s folder can rebuild the old ' +
       'container behind a taken-over stack. Open Settings to move them.';
     unraidTplLine.hidden = true;
-    unraidTplLine.innerHTML =
-      '<span class="staxx-chipmark" data-mark="clock" aria-hidden="true"></span>' +
-      '<span class="staxx-chiptext"></span>';
     if (updatesLine && updatesLine.parentNode) {
       updatesLine.parentNode.insertBefore(unraidTplLine, updatesLine.nextSibling);
     }
@@ -20149,8 +20155,7 @@
     if (!n) { unraidTplLine.hidden = true; return; }
     unraidTplLine.hidden = false;
     var text = n + (n === 1 ? ' Unraid template to move' : ' Unraid templates to move');
-    var txt = unraidTplLine.querySelector('.staxx-chiptext');
-    if (txt && txt.textContent !== text) txt.textContent = text;
+    if (unraidTplLine.textContent !== text) unraidTplLine.textContent = text;
   }
 
   // PLAN_165 §6 — asked once, the first time the stack list loads with at-risk

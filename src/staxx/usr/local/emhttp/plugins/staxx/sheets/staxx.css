@@ -533,6 +533,20 @@
   padding: 0.2rem 0.8rem;
 }
 
+/* The templates chip is the one chip in this bar that is a link, so Unraid's
+   own anchor styling reaches it where it never reached the spans beside it
+   (PLAN_167). Unraid's `a:link` rule carries its own blue and is a
+   pseudo-class, which outranks .staxx-pill--warn's single class — without
+   restating the black text here the link would draw its own blue text on
+   top of the amber fill instead of the black every other --warn chip uses. */
+.staxx-titlebar a.staxx-pill {
+  text-decoration: none;
+}
+
+.staxx-titlebar a.staxx-pill--warn {
+  color: #000;
+}
+
 /* The findings chip is a real <button> (see stacks.js), so it needs the same
    specificity fight against Unraid's `.unapi button` reset that
    .staxx-scaffold .staxx-pill--busy already wins inside the table — but this
@@ -546,7 +560,7 @@
 .staxx-titlebar .staxx-pill--busy {
   cursor: pointer;
   border-radius: 1rem;
-  border: 0.1rem dashed var(--sm-accent);
+  border: 0.1rem dashed #f0a020;
   font: inherit;
   font-size: 1.05rem;
   text-transform: none;
@@ -557,7 +571,7 @@
   background: transparent;
   background-image: none;
   box-shadow: none;
-  color: var(--sm-accent);
+  color: #f0a020;
 }
 
 .staxx-titlebar .staxx-pill--busy:hover,
@@ -3306,14 +3320,19 @@ div.title.staxx-has-titlebar {
   color: var(--sm-fg);
 }
 
-/* Paused, restarting, removing — in motion, or in a state you did not ask for. */
+/* Paused, restarting, removing — in motion, or in a state you did not ask for.
+   --chip is set here rather than left to the theme token: the card-width
+   media query below repaints every chip as a bare glyph in var(--chip), and
+   without it here this pill lost its colour below that breakpoint. */
 .staxx-pill--warn {
-  background: var(--sm-accent);
+  --chip: #f0a020;
+  background: var(--chip);
   color: #000;
 }
 
 .staxx-pill--bad {
-  background: var(--sm-danger);
+  --chip: #f85149;
+  background: var(--chip);
   color: #fff;
 }
 
@@ -3322,10 +3341,11 @@ div.title.staxx-has-titlebar {
    the same 0.1rem every pill already carries, so this is the one pill that
    used to draw taller than the rest. */
 .staxx-pill--busy {
+  --chip: #f0a020;
   border-style: dashed;
-  border-color: var(--sm-accent);
+  border-color: var(--chip);
   background: transparent;
-  color: var(--sm-accent);
+  color: var(--chip);
 }
 
 /* The sticky failure marker (PLAN_44 Part B4): coloured like --bad, since a
@@ -3343,11 +3363,12 @@ div.title.staxx-has-titlebar {
    background shorthand, so it is plain which declaration is being
    contested. */
 .staxx-scaffold .staxx-pill--fail {
+  --chip: #f85149;
   cursor: pointer;
   border: 0.1rem solid transparent;
   border-radius: 1rem;
   font: inherit;
-  background-color: var(--sm-danger);
+  background-color: #f85149;
   color: #fff;
 }
 
@@ -3393,7 +3414,7 @@ div.title.staxx-has-titlebar {
   border-radius: 1rem;
   font: inherit;
   background-color: transparent;
-  color: var(--sm-accent);
+  color: #f0a020;
 }
 
 .staxx-scaffold .staxx-pill--busy:hover,
@@ -3575,12 +3596,17 @@ div.title.staxx-has-titlebar {
   display: none;
 }
 
-/* PLAN_161 — one rule per meaning, each setting --chip and drawing its own
-   background and text colour straight off it. The colours are hex literals
-   from the picked-in-the-live-session table, deliberately not theme tokens
-   — the whole point of colour-coding is that "update ready" is always the
-   same orange, in either theme. --chip is read again below by the card-width
-   media query, which repaints the same chip as a bare glyph in this colour. */
+/* PLAN_167 — one meaning per colour, one meaning per mark. Colour answers
+   "how much does this want from me", the mark answers "what is it about" —
+   the two are chosen independently, so a new chip composes a pair rather
+   than inventing one. Five colours only: green (working, nothing wanted),
+   grey (at rest, nothing wanted), blue (worth knowing, nothing to do now),
+   amber (wants you, nothing is broken), red (broken). Each rule below sets
+   --chip and draws its own background and text colour straight off it. The
+   colours are hex literals, deliberately not theme tokens — the whole point
+   of colour-coding is that a meaning is always the same colour, in either
+   theme. --chip is read again below by the card-width media query, which
+   repaints the same chip as a bare glyph in this colour. */
 .staxx-updatepill--update {
   --chip: #f0a020;
   background: var(--chip);
@@ -3589,7 +3615,7 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-updatepill--newbuild {
-  --chip: #2dd4bf;
+  --chip: #f0a020;
   background: var(--chip);
   --chip-fg: #000;
   color: var(--chip-fg);
@@ -3609,8 +3635,10 @@ div.title.staxx-has-titlebar {
   color: var(--chip-fg);
 }
 
+/* Same blue as --waiting above, and the same white text — the two are now
+   the identical colour and have to read identically. */
 .staxx-updatepill--notfound {
-  --chip: #a371f7;
+  --chip: #58a6ff;
   background: var(--chip);
   --chip-fg: #fff;
   color: var(--chip-fg);
@@ -3675,7 +3703,7 @@ div.title.staxx-has-titlebar {
    --chip is read again by the card-width media query below, the same way
    the update pill's and the state pill's own --chip are. */
 .staxx-pendingchip {
-  --chip: #e3b341;
+  --chip: #f0a020;
   display: inline-block;
   margin-left: 0.4rem;
   padding: 0.25rem 0.8rem;
@@ -3719,7 +3747,7 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-scaffold button.staxx-pendingchip:focus-visible {
-  outline: 0.15rem solid #e3b341;
+  outline: 0.15rem solid #f0a020;
   outline-offset: 0.1rem;
 }
 

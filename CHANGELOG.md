@@ -18,6 +18,7 @@ before that were dates.
 
 ## Unreleased
 
+- Every chip on the stack list now speaks one language: its colour says how much it wants from you — green working, grey at rest, blue worth knowing, amber wants you, red broken — and its mark says what it is about. Teal, purple and yellow have gone, so four near-identical warm colours no longer mean four different things. The two chips that still carried words, a job running and a job that failed, now carry marks like everything beside them, and the chips summarising the whole list along the top keep plain words instead of borrowing the row look.
 - A chip the stack list has nothing to say with no longer sits in the top bar as an empty coloured circle. The chip counting Unraid templates still on flash was the one that showed it: with none left to move it stayed on screen with no number in it and a tooltip telling you to go and move them.
 - The stack's menu no longer runs off the edge of the window. The explanation under "Take over and start" was held to one line, which stretched the menu wide enough to push the folder list beside it off the screen; it now wraps.
 - The editor's footer no longer shows what looked like an empty notice with a close cross and nothing in it. That cross is the "Not now" beside the bar offering to look up a stack's details, and it now sits on the bar's own line where it belongs. That bar also stopped ending in "create it", which belongs to the bars that create a missing file or folder.

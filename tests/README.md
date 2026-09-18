@@ -21,6 +21,7 @@ node tests/stash_guard.js           # a set-aside may only hold the block it cla
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/tidy.js                  # the service-scope layout pass — key spans, refusals, idempotence
 node tests/js_undeclared.js         # names assigned but declared nowhere
+node tests/chip_vocabulary.js       # the PHP and JS chip lookups agree, the palette stays five colours, every mark used has a glyph
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
 node tests/registry_note.js         # the registry-behaviour note generator's own cases
 node tests/links_detect.js          # spotting that two services need to know about each other
