@@ -19507,7 +19507,12 @@
     newbuild: { cls: 'staxx-updatepill--newbuild', mark: 'diamond'  },
     waiting:  { cls: 'staxx-updatepill--waiting',  mark: 'clock'    },
     failing:  { cls: 'staxx-updatepill--failing',  mark: 'warn'     },
-    notfound: { cls: 'staxx-updatepill--notfound', mark: 'question' }
+    notfound: { cls: 'staxx-updatepill--notfound', mark: 'question' },
+    // PLAN_167 — same blue as 'waiting' (§3: "worth knowing, nothing to do
+    // now"), a different mark: this one is the author's example finding
+    // something worth a look, not a countdown, and the two must not draw
+    // identically.
+    watch:    { cls: 'staxx-updatepill--waiting',  mark: 'page'     }
   };
 
   // `source` is a stranger's text, off a registry label — opened only when
@@ -19576,7 +19581,7 @@
       case 'rebuild':    return 'newbuild';
       case 'error':      return 'failing';
       case 'missing': case 'tagmissing': case 'moved': return 'notfound';
-      case 'watch':      return 'waiting';
+      case 'watch':      return 'watch';
       default:           return '';
     }
   }
@@ -19681,6 +19686,12 @@
     var text = '';
     if (meaning === 'waiting' && entry.due > 0) {
       text = '';
+    } else if (meaning === 'watch') {
+      // Adrian's ruling, 2026-09-18: shows its count as text, always — it is
+      // not a countdown, so nothing overwrites this later. Checked ahead of
+      // the plain entry.count>1 branch below so that generic rule cannot
+      // swallow it.
+      text = String(entry.watch || 0);
     } else if (entry.count > 1) {
       text = String(entry.count);
     } else if ((meaning === 'update' || meaning === 'newbuild') && entry.version) {
@@ -19694,6 +19705,11 @@
     if (entry.count > 1 && !/\d/.test(ariaText)) ariaText += ' (' + entry.count + ')';
     if (pill.getAttribute('aria-label') !== ariaText) pill.setAttribute('aria-label', ariaText);
     setData(pill, 'updateCount', entry.count || 0);
+    // Mirrors staxx_update_pill_html()'s data-update-watch: only a 'watch'
+    // pill carries this, so it is deleted rather than written empty on every
+    // other meaning.
+    if (meaning === 'watch') setData(pill, 'updateWatch', entry.watch || 0);
+    else delete pill.dataset.updateWatch;
 
     // The mark and text live in their own children so a ticking clock (see
     // paintPillClock()) can rewrite just the text span without disturbing
@@ -19754,7 +19770,11 @@
   // a chip already painted that colour by paintUpdatePill().
   function paintPillClock(pill) {
     if (!pill) return;
-    if (!pill.classList.contains(CHIP_LOOK.waiting.cls)) return;
+    // PLAN_167 gave the 'watch' chip the same blue class as 'waiting', so
+    // the class alone no longer says "this is a countdown" — test the raw
+    // state instead (only 'update' with a hold/countdown reads as waiting;
+    // 'watch' is never one, whatever due happens to hold).
+    if (pill.dataset.updateState !== 'update' || !pill.classList.contains(CHIP_LOOK.waiting.cls)) return;
     var due = parseInt(pill.dataset.updateDue || '0', 10) || 0;
     if (due <= 0) return;   // a waiting chip with no countdown (why alone) leaves its text as painted
     var left = due - Math.floor(Date.now() / 1000);
@@ -20129,15 +20149,20 @@
   // from every `state` refresh rather than from paintUpdatesLine() just above:
   // that function wipes updatesLine's own children on every repaint, which
   // would discard this the moment an update check finished. PLAN_167 §4 — the
-  // top bar is a summary line with room to speak, so it stays a plain worded
-  // pill and never wears the row palette (CHIP_LOOK, below): there is only
-  // ever one of it on the page, so there is no crowded row to keep it terse
-  // for, and no chip mark whose meaning it could clash with.
+  // top bar is a summary line with room to speak, so its chips keep their
+  // words and their own colours rather than the row palette (CHIP_LOOK,
+  // below); a mark is worn where one fits, and this chip's is the warning
+  // triangle.
   var unraidTplLine = document.getElementById('staxx-unraidtpl-line');
   if (!unraidTplLine) {
     unraidTplLine = document.createElement('a');
     unraidTplLine.id = 'staxx-unraidtpl-line';
-    unraidTplLine.className = 'staxx-pill staxx-pill--warn';
+    // Red and the warning triangle, not the amber the other chips in this bar
+    // wear: a template left in Unraid's folder can rebuild the old container
+    // and push the stack's own out days later, with nothing said at the time.
+    // The triangle is the one mark in the set that carries severity rather than
+    // a subject, which is what this needs (PLAN_167 §4, Adrian 2026-09-18).
+    unraidTplLine.className = 'staxx-pill staxx-pill--bad staxx-titlebar-aside';
     unraidTplLine.href = '/Settings/staxx.settings#staxx-unraid-templates';
     unraidTplLine.title = 'Templates left in Unraid’s folder can rebuild the old ' +
       'container behind a taken-over stack. Open Settings to move them.';
@@ -20155,7 +20180,13 @@
     if (!n) { unraidTplLine.hidden = true; return; }
     unraidTplLine.hidden = false;
     var text = n + (n === 1 ? ' Unraid template to move' : ' Unraid templates to move');
-    if (unraidTplLine.textContent !== text) unraidTplLine.textContent = text;
+    var txt = unraidTplLine.querySelector('.staxx-chiptext');
+    if (!txt) {
+      unraidTplLine.innerHTML = '<span class="staxx-chipmark" data-mark="warn" aria-hidden="true"></span>' +
+        '<span class="staxx-chiptext"></span>';
+      txt = unraidTplLine.querySelector('.staxx-chiptext');
+    }
+    if (txt.textContent !== text) txt.textContent = text;
   }
 
   // PLAN_165 §6 — asked once, the first time the stack list loads with at-risk
@@ -20289,7 +20320,12 @@
       var n = summary.updates;
       var updates = document.createElement('span');
       updates.className = 'staxx-pill staxx-pill--warn';
-      updates.textContent = n + (n === 1 ? ' update waiting' : ' updates waiting');
+      // The same mark a row wears for an update ready to fetch (PLAN_167 §4):
+      // this bar keeps its words and its own colour, but one subject carries
+      // one mark wherever it appears.
+      updates.innerHTML = '<span class="staxx-chipmark" data-mark="cloud" aria-hidden="true"></span>' +
+        '<span class="staxx-chiptext">' +
+        esc(n + (n === 1 ? ' update waiting' : ' updates waiting')) + '</span>';
       updatesLine.appendChild(updates);
     }
 
@@ -20305,7 +20341,12 @@
         var findingsBtn = document.createElement('button');
         findingsBtn.type = 'button';
         findingsBtn.className = 'staxx-pill staxx-pill--busy';
-        findingsBtn.textContent = w + (w === 1 ? ' author-example finding' : ' author-example findings');
+        // The document mark the rows wear for the same subject — an author's
+        // own published example (PLAN_167 §4). The dashed outline it already
+        // has stays: the bar's colours are its own.
+        findingsBtn.innerHTML = '<span class="staxx-chipmark" data-mark="page" aria-hidden="true"></span>' +
+          '<span class="staxx-chiptext">' +
+          esc(w + (w === 1 ? ' author-example finding' : ' author-example findings')) + '</span>';
         findingsBtn.addEventListener('click', openWatchReport);
         updatesLine.appendChild(findingsBtn);
       }

@@ -533,18 +533,25 @@
   padding: 0.2rem 0.8rem;
 }
 
-/* The templates chip is the one chip in this bar that is a link, so Unraid's
-   own anchor styling reaches it where it never reached the spans beside it
-   (PLAN_167). Unraid's `a:link` rule carries its own blue and is a
-   pseudo-class, which outranks .staxx-pill--warn's single class — without
-   restating the black text here the link would draw its own blue text on
-   top of the amber fill instead of the black every other --warn chip uses. */
-.staxx-titlebar a.staxx-pill {
+/* The templates chip stands OUTSIDE .staxx-titlebar, in the page title beside
+   it: that bar's contents are wiped and rebuilt on every update check, which
+   would take this chip with them (see stacks.js). So it cannot inherit the
+   bar's own gap or chip sizing and is given both here. It is also the only
+   chip that is a link, and Unraid's own anchor rules carry a blue, wide
+   letter-spacing and a size of their own — which is why each of those is
+   restated. Two classes, because Unraid's `a:link` is a pseudo-class and
+   would outrank a single one. */
+.staxx-pill.staxx-titlebar-aside {
+  margin-left: 0.6rem;
   text-decoration: none;
+  letter-spacing: normal;
+  font-size: 1.05rem;
+  line-height: inherit;
+  padding: 0.2rem 0.8rem;
 }
 
-.staxx-titlebar a.staxx-pill--warn {
-  color: #000;
+.staxx-pill--bad.staxx-titlebar-aside {
+  color: #fff;
 }
 
 /* The findings chip is a real <button> (see stacks.js), so it needs the same
@@ -3548,6 +3555,7 @@ div.title.staxx-has-titlebar {
 .staxx-chipmark[data-mark="warn"]::before { content: "\f071"; }
 .staxx-chipmark[data-mark="question"]::before { content: "\f059"; }
 .staxx-chipmark[data-mark="refresh"]::before { content: "\f021"; }
+.staxx-chipmark[data-mark="page"]::before { content: "\f0f6"; }
 .staxx-chipmark[data-mark="diamond"]::before {
   content: "";
   display: inline-block;

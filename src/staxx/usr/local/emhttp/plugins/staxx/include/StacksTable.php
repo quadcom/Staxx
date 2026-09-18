@@ -446,7 +446,11 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   } elseif (in_array($state, ['missing', 'tagmissing', 'moved'], true)) {
     $meaning = 'notfound';
   } elseif ($state === 'watch') {
-    $meaning = 'waiting';
+    // PLAN_167 — its own meaning, not folded into 'waiting': the two share a
+    // colour (both "worth knowing, nothing to do now") but not a mark, and
+    // sharing the meaning made them share the mark too, so a countdown chip
+    // and a findings chip drew identically.
+    $meaning = 'watch';
   } else {
     return '';
   }
@@ -457,6 +461,9 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     'waiting'  => 'staxx-updatepill--waiting',
     'failing'  => 'staxx-updatepill--failing',
     'notfound' => 'staxx-updatepill--notfound',
+    // Same blue as 'waiting' on purpose (§3's "worth knowing, nothing to do
+    // now") — only the mark tells the two apart.
+    'watch'    => 'staxx-updatepill--waiting',
   ][$meaning];
   $mark = [
     'update'   => 'cloud',
@@ -464,6 +471,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     'waiting'  => 'clock',
     'failing'  => 'warn',
     'notfound' => 'question',
+    'watch'    => 'page',
   ][$meaning];
 
   $count   = (int)($u['count'] ?? 0);
@@ -475,6 +483,12 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // to the browser, which paints the ticking figure in on top of this.
   if ($meaning === 'waiting' && $due > 0) {
     $chipText = '';
+  } elseif ($meaning === 'watch') {
+    // Adrian's ruling, 2026-09-18: this chip shows its count as text — it is
+    // not a countdown, so there is nothing for the browser to paint over it.
+    // Checked ahead of the plain $count>1 branch below so that generic rule
+    // never gets a chance to swallow this one.
+    $chipText = (string)($u['watch'] ?? 0);
   } elseif ($count > 1) {
     $chipText = (string)$count;
   } elseif (($meaning === 'update' || $meaning === 'newbuild') && $version !== '') {
@@ -562,6 +576,10 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     $cardAttrs .= ' data-update-children="'.htmlspecialchars(json_encode($children)).'"';
   }
 
+  // Same "omitted rather than written empty" convention as $noteAttr/$titleAttr
+  // above, so the browser can tell "no findings" from "not this kind of chip".
+  $watchAttr = isset($u['watch']) ? ' data-update-watch="'.(int)$u['watch'].'"' : '';
+
   $chip = '<span class="staxx-chipmark" data-mark="'.$mark.'" aria-hidden="true"></span>'
         . '<span class="staxx-chiptext">'.$chipText.'</span>';
 
@@ -578,6 +596,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
        . $cardAttrs
        . $noteAttr
+       . $watchAttr
        . $titleAttr.'>'.$chip.'</'.$tag.'>';
 }
 
@@ -626,6 +645,10 @@ function staxx_watch_apply_pill(array $u, int $count): array {
   if (!in_array($u['state'] ?? 'unknown', ['unknown', 'current'], true)) return $u;
   $u['state'] = 'watch';
   $u['label'] = $count.' to look at';
+  // PLAN_167 — the number the chip's face needs, kept apart from 'count'
+  // above: that key already means "how many stacks a folder roll-up speaks
+  // for" and feeds a different branch below.
+  $u['watch'] = $count;
   $u['tip']   = $count === 1
     ? 'The author\'s published example does one thing differently here that this file does not. '
     . 'Open the stack to see it.'

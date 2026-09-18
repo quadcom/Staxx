@@ -18,6 +18,7 @@ before that were dates.
 
 ## Unreleased
 
+- The chips summarising the whole list along the top now carry the same mark as the rows they speak for — a cloud for updates ready to fetch, a document for the author's own published examples — while keeping their words and their own colours. The chip warning that Unraid templates are still on flash wears red and a warning triangle, because one left there can rebuild the old container and push a stack's own out days later.
 - Every chip on the stack list now speaks one language: its colour says how much it wants from you — green working, grey at rest, blue worth knowing, amber wants you, red broken — and its mark says what it is about. Teal, purple and yellow have gone, so four near-identical warm colours no longer mean four different things. The two chips that still carried words, a job running and a job that failed, now carry marks like everything beside them, and the chips summarising the whole list along the top keep plain words instead of borrowing the row look.
 - A chip the stack list has nothing to say with no longer sits in the top bar as an empty coloured circle. The chip counting Unraid templates still on flash was the one that showed it: with none left to move it stayed on screen with no number in it and a tooltip telling you to go and move them.
 - The stack's menu no longer runs off the edge of the window. The explanation under "Take over and start" was held to one line, which stretched the menu wide enough to push the folder list beside it off the screen; it now wraps.
