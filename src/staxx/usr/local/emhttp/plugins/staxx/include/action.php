@@ -1330,7 +1330,7 @@ switch ($action) {
       // stacks() already reads), so this rides the frequent refresh rather
       // than the expensive one; the header pill and the first-load window
       // both read it from here rather than asking on their own.
-      'unraidTemplates'      => count(staxx_unraid_templates_at_risk()),
+      'unraidTemplates'      => staxx_unraid_templates_movable_count(),
       'unraidTemplatesAsked' => staxx_unraid_templates_asked(),
     ] + staxx_state_snapshot());
 

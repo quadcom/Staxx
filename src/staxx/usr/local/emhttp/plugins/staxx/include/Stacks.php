@@ -5477,9 +5477,12 @@ function staxx_unraid_templates_at_risk(?array $containers = null): array {
  * that template is still genuinely Unraid's own, and taking the stack over
  * is what moves it, not this. Returns the names actually moved.
  */
-function staxx_unraid_templates_reclaim(array $names, string &$error): array {
+function staxx_unraid_templates_reclaim(array $names, string &$error, ?array $containers = null): array {
   $error = '';
-  $rows  = array_filter(staxx_unraid_templates_at_risk(), function ($r) use ($names) {
+  // The container list is injectable for the same reason at_risk()'s is: what
+  // counts as still-Unraid's has to be decided from one reading of Docker, and
+  // a suite has to be able to hand in a shape no real box would hold.
+  $rows  = array_filter(staxx_unraid_templates_at_risk($containers), function ($r) use ($names) {
     if ($r['state'] === 'unraid') return false;
     return $names === [] || in_array($r['name'], $names, true);
   });
@@ -5500,6 +5503,21 @@ function staxx_unraid_templates_reclaim(array $names, string &$error): array {
     $moved[] = $r['name'];
   }
   return $moved;
+}
+
+/**
+ * PLAN_165 §5 — how many templates a press of "Move them into StaXX" would
+ * actually move. Deliberately not every at-risk row: a 'unraid' row's
+ * container is still genuinely Unraid's, reclaim refuses to touch it, and
+ * counting it would leave a pill that can never be cleared and a window
+ * claiming more stacks than it moves.
+ */
+function staxx_unraid_templates_movable_count(?array $containers = null): int {
+  $n = 0;
+  foreach (staxx_unraid_templates_at_risk($containers) as $row) {
+    if (($row['state'] ?? '') !== 'unraid') $n++;
+  }
+  return $n;
 }
 
 /**

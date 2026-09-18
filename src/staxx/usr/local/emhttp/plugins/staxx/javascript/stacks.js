@@ -19330,17 +19330,13 @@
   // PLAN_165 §6 — set the moment the first `state` reply is handled, whatever
   // it contains, so a second reply landing while the first-load window is
   // still open (or was answered "Not now") never reopens it in this tab.
-  var unraidTemplatesAskedShown = false;
 
   function applyState(res) {
     manageUpdateContainers(res);
-    paintUnraidTemplatesPill(res.unraidTemplates || 0);
-    if (!unraidTemplatesAskedShown) {
-      unraidTemplatesAskedShown = true;
-      if ((res.unraidTemplates || 0) > 0 && res.unraidTemplatesAsked === false) {
-        openUnraidTemplatesFirstLoad(res.unraidTemplates);
-      }
-    }
+    // Only ever a correction: the count is on the scaffold at render time (see
+    // the startup block at the end of this file), and this keeps it current
+    // after a run without waiting for a reload.
+    if (typeof res.unraidTemplates === 'number') paintUnraidTemplatesPill(res.unraidTemplates);
     var stacks = res.stacks || {};
     Object.keys(stacks).forEach(function (name) {
       var s = stacks[name];
@@ -20157,12 +20153,12 @@
     if (txt && txt.textContent !== text) txt.textContent = text;
   }
 
-  // PLAN_165 §6 — asked once, the first time the stack list loads with
-  // at-risk templates still on the box. `unraidTemplatesAskedShown` guards
-  // the *browser tab*, not the server: the marker file (asked once per
-  // store, via the endpoint call below) is what stops it coming back on a
-  // later page load, this only stops a second `state` poll in the same tab
-  // reopening it while the first answer is still being acted on.
+  // PLAN_165 §6 — asked once, the first time the stack list loads with at-risk
+  // templates still on the box. Called from the startup block at the end of
+  // this file, off the count the server rendered onto the scaffold. What stops
+  // it coming back is the marker file the endpoint call below writes: once per
+  // store, never once per browser, so answering it on one machine answers it
+  // for everyone.
   function openUnraidTemplatesFirstLoad(n) {
     var bodyHtml =
       '<p>' + esc(
@@ -37057,4 +37053,22 @@
       badge ? badge.textContent.trim() : null);
   });
 
+  /* PLAN_165 §5/§6 — the pill and the one-time window, both read off the
+   * scaffold rather than off a refresh: refreshState() only runs after
+   * something has been started or stopped, so an ordinary page load never
+   * makes one and neither would ever appear (measured 2026-09-18).
+   *
+   * Last in the file, and that position is the whole point. This is one long
+   * IIFE, so a dialog opened from higher up sets confirmResolve before the
+   * `var confirmResolve = null` further down has run — which then wipes it,
+   * and the dialog's buttons answer into nothing while it sits there looking
+   * perfectly normal. Anything that opens a dialog at startup belongs here.
+   */
+  (function () {
+    var n = parseInt(scaffold.dataset.unraidTemplates || '0', 10) || 0;
+    paintUnraidTemplatesPill(n);
+    if (n > 0 && scaffold.dataset.unraidTemplatesAsked !== '1') {
+      openUnraidTemplatesFirstLoad(n);
+    }
+  })();
 })();

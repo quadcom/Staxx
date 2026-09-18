@@ -235,6 +235,15 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
      data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
      data-server-timezone="<?= htmlspecialchars($serverTimeZone) ?>"
+     <?php /* PLAN_165 §5/§6 — rendered here rather than waited for on a
+        refresh, for exactly the reason the clash facts below are: refreshState()
+        only ever runs after something has been started or stopped, so a fresh
+        page load never makes one and the pill and the first-load window would
+        never appear at all (measured 2026-09-18). Both values cost ~8ms here,
+        because the scan reuses the stack list and container names this render
+        has already read. */ ?>
+     data-unraid-templates="<?= staxx_unraid_templates_movable_count() ?>"
+     data-unraid-templates-asked="<?= staxx_unraid_templates_asked() ? '1' : '0' ?>"
      <?php /* PLAN_65/73 — the ports, paths and host listeners already in use,
         handed over once at render so the editor's clash check has facts on the
         very first open. Before this the facts arrived only with a 'rows'
