@@ -18,6 +18,8 @@ before that were dates.
 
 ## Unreleased
 
+- Fixed in 00.04.03: If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's file asks for. If they match it clears it away and carries on with your answer; if they do not, it shows you what differs, when that container was built and when the file last changed, and offers to use the stack's version, instead of sending you to Unraid's Docker page.
+
 - If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's own file asks for. If they match, it clears it away and carries on with your answer. If they do not, it shows you what differs and offers to use the stack's version, instead of sending you to Unraid's Docker page.
 - Fixed in 00.04.02: Taking over an Unraid container now also moves its template out of Unraid's template folder and off the Auto Update Applications list, because both that plugin and Appdata Backup rebuild containers from the templates on flash and were pushing the stack's own container out days later. Answering "It does not" puts both back. If you took stacks over before this version, the stack list asks once on first load whether to move the templates still on flash, and Settings lists and moves them at any time.
 
