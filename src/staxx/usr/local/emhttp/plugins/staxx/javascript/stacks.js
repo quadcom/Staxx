@@ -32917,6 +32917,19 @@
       chip.textContent = n + ' ' + label;
       host.appendChild(chip);
     });
+    mergeRenderPickedTally();
+  }
+
+  // The tally rides in the head beside the step chips, and only while step 1
+  // is on screen — every later step names the picked stacks itself.
+  function mergeRenderPickedTally() {
+    var el = document.getElementById('staxx-merge-picked');
+    if (!el) return;
+    var n = mergeState.picked.length;
+    el.hidden = mergeState.step !== 1;
+    el.textContent = n === 0 ? 'Nothing picked yet'
+      : n === 1 ? '1 picked — pick at least one more'
+      : n + ' picked';
   }
 
   // Reads the main grid's own rows, so the folder order and the order within
@@ -32997,7 +33010,7 @@
         var nameEl = document.createElement('span');
         nameEl.className = 'staxx-merge-tile-name';
         nameEl.textContent = e.label;
-        nameEl.title = e.label;   // the long-name truncation loose end — see PLAN_155
+        nameEl.title = e.label;   // a name past two lines is clamped, so keep the whole of it here
         tile.appendChild(nameEl);
         if (e.reason) {
           var reasonEl = document.createElement('span');
@@ -33010,12 +33023,7 @@
       host.appendChild(wrap);
     });
 
-    var count = document.createElement('p');
-    count.className = 'staxx-merge-picker-count';
-    count.textContent = mergeState.picked.length === 0 ? 'Nothing picked yet.'
-      : mergeState.picked.length === 1 ? '1 picked — pick at least one more.'
-      : mergeState.picked.length + ' picked.';
-    host.appendChild(count);
+    mergeRenderPickedTally();
   }
 
   /* ------------------------------------------------------- step 2 pane -- */

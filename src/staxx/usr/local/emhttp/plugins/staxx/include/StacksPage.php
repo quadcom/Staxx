@@ -1036,8 +1036,12 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
   <dialog class="staxx-modal staxx-merge-modal" id="staxx-merge-modal" aria-labelledby="staxx-merge-title">
 
     <div class="staxx-modal-head staxx-merge-head">
-      <h3 class="staxx-modal-title" id="staxx-merge-title"><?= _('Merge stacks') ?></h3>
+      <h3 class="staxx-modal-title" id="staxx-merge-title"><?= _('Merge Stacks') ?></h3>
       <div class="staxx-merge-steps" id="staxx-merge-steps" role="list" aria-label="<?= _('Merge steps') ?>"></div>
+      <!-- The picked tally used to sit under the last row of tiles, where a long
+           stack list hid it below the fold; it lives in the head instead so it is
+           in view the whole time you are picking (Adrian, 2026-09-18). -->
+      <p class="staxx-merge-picked" id="staxx-merge-picked" aria-live="polite" hidden></p>
     </div>
 
     <div class="staxx-merge-panes" id="staxx-merge-panes">

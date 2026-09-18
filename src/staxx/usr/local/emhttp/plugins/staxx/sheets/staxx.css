@@ -12931,6 +12931,16 @@ dialog::backdrop {
   color: var(--sm-muted);
 }
 
+/* Right-aligned in the head and level with the step chips, at the title's
+   own size so it reads as part of the bar rather than a footnote (Adrian,
+   2026-09-18). */
+.staxx-merge-picked {
+  margin: 0 0 0 auto;
+  font-size: 1.6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .staxx-merge-step {
   padding: 0.2rem 0.7rem;
   border-radius: 999px;
@@ -13286,13 +13296,24 @@ dialog::backdrop {
   display: flex;
 }
 
+/* A long stack name wraps onto a second line rather than being cut short
+   with an ellipsis (Adrian, PLAN_155, 2026-09-18): the tile is a fixed
+   19rem and the row stretches every tile to the tallest, so a wrapped name
+   costs nothing but height. Clamped at two lines so one absurd name cannot
+   drive the whole row; `anywhere` because a stack name has no spaces to
+   break at. */
 .staxx-merge-tile-name {
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
   flex: 1 1 auto;
   min-width: 0;
   font-size: 1.2rem;
+  line-height: 1.3;
 }
 
 .staxx-merge-tile-reason {
