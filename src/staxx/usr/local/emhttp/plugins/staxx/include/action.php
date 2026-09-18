@@ -1100,6 +1100,13 @@ switch ($action) {
       'rebuild' => $rebuild,
       'project' => staxx_project_name(staxx_path_leaf($name)),
       'active'  => staxx_handover_active($name),
+      // PLAN_165 §4 — named before either answer is given, so the dialog can
+      // say up front that something outside StaXX has rebuilt the container
+      // while this handover's question sat open. staxx_finish_handover()
+      // refuses both answers on exactly this same check.
+      'foreign' => staxx_handover_active($name)
+        ? staxx_handover_foreign($name, staxx_handover_read(staxx_stack_dir($name))['targets'] ?? [])
+        : [],
     ]);
 
   // ---- begin a handover: set the old container aside, start this one ----
@@ -1127,6 +1134,28 @@ switch ($action) {
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
 
+  /* ---- PLAN_165 §5 — the sweep for stacks taken over before this plan ----
+   *
+   * Read-only list, and the reclaim that moves a chosen subset (or every
+   * safe row when none is named) into StaXX's own store. Neither shells out
+   * — both cost a directory scan and the compose metadata staxx_list_
+   * stacks() already reads for the table itself.
+   */
+  case 'unraid-templates':
+    staxx_reply(['ok' => true, 'templates' => staxx_unraid_templates_at_risk()]);
+
+  case 'unraid-templates-reclaim':
+    $namesRaw = $_POST['names'] ?? [];
+    $names    = is_array($namesRaw)
+      ? array_values(array_filter(array_map('strval', $namesRaw), fn($n) => $n !== ''))
+      : [];
+    $moved = staxx_unraid_templates_reclaim($names, $error);
+    staxx_reply(['ok' => true, 'moved' => $moved, 'error' => $error !== '' ? $error : null]);
+
+  // ---- PLAN_165 §6 — the first-load window says it has been shown ----
+  case 'unraid-templates-asked':
+    staxx_reply(['ok' => staxx_unraid_templates_mark_asked()]);
+
   // ---- the stack table, re-rendered as data ----
   case 'list':
     staxx_reply(['ok' => true, 'stacks' => staxx_list_stacks()]);
@@ -1146,7 +1175,15 @@ switch ($action) {
    * and is not used for anything a start or a stop can do.
    */
   case 'state':
-    staxx_reply(['ok' => true] + staxx_state_snapshot());
+    staxx_reply([
+      'ok' => true,
+      // PLAN_165 §5/§6 — cheap (a directory scan plus what staxx_list_
+      // stacks() already reads), so this rides the frequent refresh rather
+      // than the expensive one; the header pill and the first-load window
+      // both read it from here rather than asking on their own.
+      'unraidTemplates'      => staxx_unraid_templates_movable_count(),
+      'unraidTemplatesAsked' => staxx_unraid_templates_asked(),
+    ] + staxx_state_snapshot());
 
   case 'rows':
     $stacks = staxx_list_stacks();

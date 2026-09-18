@@ -129,8 +129,15 @@ $healthOfferFile = STAXX_ROOT.'/javascript/health-offer.js';
 // a missing file costs a 404 in the console, not a broken page.
 $manageJsFile  = STAXX_ROOT.'/javascript/manage.js';
 $manageCssFile = STAXX_ROOT.'/sheets/manage.css';
+// PLAN_165 §5/§6 — the Unraid-templates settings section and the first-load
+// window. Kept out of stacks.js on purpose: it only ever reads the page's
+// own data-csrf/data-endpoint scaffold and injects itself into the settings
+// dialog once that dialog's own markup appears, so a bad edit here costs
+// only this one section, not the whole page's behaviour.
+$unraidTemplatesFile = STAXX_ROOT.'/javascript/unraid-templates.js';
 $cssFile = STAXX_ROOT.'/sheets/staxx.css';
 $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsFile) : '0');
+$unraidTemplatesTag = $assets.'/javascript/unraid-templates.js?v='.(is_file($unraidTemplatesFile) ? filemtime($unraidTemplatesFile) : '0');
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
 $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
@@ -200,6 +207,15 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
      data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
      data-server-timezone="<?= htmlspecialchars($serverTimeZone) ?>"
+     <?php /* PLAN_165 §5/§6 — rendered here rather than waited for on a
+        refresh, for exactly the reason the clash facts below are: refreshState()
+        only ever runs after something has been started or stopped, so a fresh
+        page load never makes one and the pill and the first-load window would
+        never appear at all (measured 2026-09-18). Both values cost ~8ms here,
+        because the scan reuses the stack list and container names this render
+        has already read. */ ?>
+     data-unraid-templates="<?= staxx_unraid_templates_movable_count() ?>"
+     data-unraid-templates-asked="<?= staxx_unraid_templates_asked() ? '1' : '0' ?>"
      <?php /* PLAN_65/73 — the ports, paths and host listeners already in use,
         handed over once at render so the editor's clash check has facts on the
         very first open. Before this the facts arrived only with a 'rows'
@@ -1654,3 +1670,10 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 <script src="<?= $assets ?>/javascript/first-run.js?v=<?= filemtime($firstRunJsFile) ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>
+<!-- PLAN_165 §5/§6 — see the comment on $unraidTemplatesFile above. Loaded
+     after stacks.js only by convention (nothing here reads a stacks.js
+     global); conditional for the same reason the Manage tab's own script
+     is, above. -->
+<? if (is_file($unraidTemplatesFile)): ?>
+<script src="<?= $unraidTemplatesTag ?>"></script>
+<? endif; ?>

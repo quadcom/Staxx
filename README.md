@@ -2,7 +2,7 @@
 
 <h3 align="center">Docker on Unraid, built on compose files</h3>
 
-> Version **[00.04.01](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
+> Version **[00.04.02](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
 
 ## Why this exists
 
