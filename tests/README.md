@@ -91,6 +91,7 @@ Four rules run through the whole set:
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
 | `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
 | `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
+| `handover_unraid` | The Unraid-template half of a handover: finding a template by name, holding and releasing it and its Auto Update entry, the `Unraid-N` note line's round trip, and which targets a foreign rebuild leaves unsafe to answer | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
 | `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
 | `imagehistory` | Per-stack image history, and the keep-list image cleanup builds from it | `STORE_ROOT` |
@@ -120,6 +121,7 @@ Four rules run through the whole set:
 | `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |
 | `takeover` | The route an imported Compose Manager project takes instead of a handover. Every case is a refusal, on purpose | `STORE_ROOT` |
 | `unpin` | Releasing a pin, and what an automatic pass may act on afterwards | `STORE_ROOT` |
+| `unraid_templates` | The sweep for stacks taken over before this plan: classifying every Unraid template still naming a StaXX stack's container (`ours`/`absent`/`unraid`), and reclaiming only the first two | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `update_mode_convert` | The one-pass rewrite of old `update.mode` spellings (`off`, `notify`) to `manual`, run once at install, and its undo | `STORE_ROOT` at `/tmp` |
 | `updateeconomy` | Reference parsing, the `Accept` list, the whole cadence table, and the failed-image notice's wording | `STORE_ROOT` (row-notice cases) |
 | `updaterun` | The doing side of updates — the clock, the queue, rollback, cleanup, the build-base reader | `STORE_ROOT` |

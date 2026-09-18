@@ -19327,8 +19327,20 @@
     manageMaybeSnapshot();
   }
 
+  // PLAN_165 §6 — set the moment the first `state` reply is handled, whatever
+  // it contains, so a second reply landing while the first-load window is
+  // still open (or was answered "Not now") never reopens it in this tab.
+  var unraidTemplatesAskedShown = false;
+
   function applyState(res) {
     manageUpdateContainers(res);
+    paintUnraidTemplatesPill(res.unraidTemplates || 0);
+    if (!unraidTemplatesAskedShown) {
+      unraidTemplatesAskedShown = true;
+      if ((res.unraidTemplates || 0) > 0 && res.unraidTemplatesAsked === false) {
+        openUnraidTemplatesFirstLoad(res.unraidTemplates);
+      }
+    }
     var stacks = res.stacks || {};
     Object.keys(stacks).forEach(function (name) {
       var s = stacks[name];
@@ -20107,6 +20119,89 @@
         }
       }
     }
+  }
+
+  // PLAN_165 §5 — a persistent sibling to updatesLine's own pills, repainted
+  // from every `state` refresh rather than from paintUpdatesLine() just above:
+  // that function wipes updatesLine's own children on every repaint, which
+  // would discard this the moment an update check finished. Unlike a row's
+  // update pill (CHIP_LOOK, below), this one keeps its words as text — there
+  // is only ever one of it on the page, so there is no crowded row to keep it
+  // terse for.
+  var unraidTplLine = document.getElementById('staxx-unraidtpl-line');
+  if (!unraidTplLine) {
+    unraidTplLine = document.createElement('a');
+    unraidTplLine.id = 'staxx-unraidtpl-line';
+    unraidTplLine.className = 'staxx-updatepill staxx-updatepill--waiting';
+    unraidTplLine.href = '/Settings/staxx.settings#staxx-unraid-templates';
+    unraidTplLine.title = 'Templates left in Unraid’s folder can rebuild the old ' +
+      'container behind a taken-over stack. Open Settings to move them.';
+    unraidTplLine.hidden = true;
+    unraidTplLine.innerHTML =
+      '<span class="staxx-chipmark" data-mark="clock" aria-hidden="true"></span>' +
+      '<span class="staxx-chiptext"></span>';
+    if (updatesLine && updatesLine.parentNode) {
+      updatesLine.parentNode.insertBefore(unraidTplLine, updatesLine.nextSibling);
+    }
+  }
+
+  // Read off the `state` refresh's own unraidTemplates count — see
+  // applyState() — never fetched on its own, the same reasoning
+  // updatesLine's comment gives for not polling on a timer.
+  function paintUnraidTemplatesPill(n) {
+    if (!unraidTplLine) return;
+    if (!n) { unraidTplLine.hidden = true; return; }
+    unraidTplLine.hidden = false;
+    var text = n + (n === 1 ? ' Unraid template to move' : ' Unraid templates to move');
+    var txt = unraidTplLine.querySelector('.staxx-chiptext');
+    if (txt && txt.textContent !== text) txt.textContent = text;
+  }
+
+  // PLAN_165 §6 — asked once, the first time the stack list loads with
+  // at-risk templates still on the box. `unraidTemplatesAskedShown` guards
+  // the *browser tab*, not the server: the marker file (asked once per
+  // store, via the endpoint call below) is what stops it coming back on a
+  // later page load, this only stops a second `state` poll in the same tab
+  // reopening it while the first answer is still being acted on.
+  function openUnraidTemplatesFirstLoad(n) {
+    var bodyHtml =
+      '<p>' + esc(
+        n + ' of your stacks were taken over from Unraid containers, and their Unraid templates ' +
+        'are still in Unraid’s template folder. Unraid’s Auto Update Applications and ' +
+        'Appdata Backup plugins can rebuild the old container from those templates and push the ' +
+        'stack’s own container out — you would see the stack go back to "stopped" with ' +
+        '"Take over and start" offered again.'
+      ) + '</p>' +
+      '<p>' + esc(
+        'Moving the templates into StaXX’s store stops that. They are kept, not deleted, ' +
+        'and Settings lists them at any time.'
+      ) + '</p>';
+
+    askConfirm({
+      title: 'Unraid templates found',
+      bodyHtml: bodyHtml,
+      goLabel: 'Move them into StaXX',
+      cancelLabel: 'Not now'
+    }).then(function (answer) {
+      // Every way out of the window marks it asked, so it never reopens on
+      // this store — whether the answer was to move the templates, to leave
+      // them, or to just close the dialog.
+      call('unraid-templates-asked', {});
+
+      if (answer !== true) { closeConfirm(); return; }
+
+      confirmSetBusy(true);
+      call('unraid-templates-reclaim', {}, 30000).then(function (r) {
+        confirmSetBusy(false);
+        var moved = (r.moved || []).length;
+        var text = r.ok
+          ? moved + (moved === 1 ? ' template moved into StaXX’s store.' : ' templates moved into StaXX’s store.')
+          : (r.error || 'Could not move the templates.');
+        // Same dialog, one Close button — showInfo() leaves it open rather
+        // than reopening it, since askConfirm() above already has.
+        showInfo('Unraid templates found', '<p>' + esc(text) + '</p>', { okLabel: 'Close' });
+      });
+    });
   }
 
   var updatesChecking = false;
@@ -23426,12 +23521,26 @@
         ) + '</p>';
       }).join('');
 
+      // PLAN_165 §4 — the target's name is currently held by something
+      // outside StaXX (checked again, server-side, in staxx_finish_handover()
+      // itself — this is only the explanation, not the guard). The buttons
+      // stay enabled; pressing either still reaches the server's own refusal.
+      var foreignNames = (res.foreign || []).map(function (n) { return '"' + n + '"'; });
+      var foreignHtml = foreignNames.length ? (
+        '<p class="staxx-hint staxx-hint--warn">' + esc(
+          joinEnglish(foreignNames) + ' has been rebuilt by something outside StaXX since ' +
+          'this handover began. Neither answer can be acted on until that container is ' +
+          'removed from Unraid’s Docker page.'
+        ) + '</p>'
+      ) : '';
+
       var bodyHtml =
         '<p>This replaced ' + replaced + '.</p>' +
         runningAgainHtml +
         '<p>Check that the app works, then answer: "It works" clears the old container away ' +
         'for good; "It does not work" puts everything back exactly as it was, running again, ' +
         'within seconds.</p>' +
+        foreignHtml +
         '<div class="staxx-buttons"><button type="button" class="staxx-btn staxx-btn--primary" ' +
         'id="staxx-handover-works">It works</button></div>';
 

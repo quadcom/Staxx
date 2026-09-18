@@ -4421,6 +4421,258 @@ function staxx_retired_into(string $rel): string {
 // confirmed.
 define('STAXX_HANDOVER_FILE', 'HANDOVER.md');
 
+/* PLAN_165 — a taken-over container stays taken over.
+ *
+ * Both Unraid's own Auto Update Applications and Appdata Backup rebuild a
+ * container by name from a template still sitting in templates-user/, with
+ * no idea that StaXX's own container has taken that name over. A handover
+ * has to take the template out of their reach, not just switch the old
+ * container off, or the very next 05:00 update job puts it straight back.
+ * See the plan for what was measured on Adrian's box.
+ *
+ * Both paths below are overridable by env the same way STAXX_AUTOSTART_FILE
+ * is (see Autostart.php) — a test box has no /boot and no ca.update.
+ * applications plugin, so tests/server/ points these at plain files under
+ * /tmp instead.
+ */
+$staxx_unraid_templates_env = getenv('STAXX_UNRAID_TEMPLATES_DIR');
+define('STAXX_UNRAID_TEMPLATES_DIR', ($staxx_unraid_templates_env !== false && $staxx_unraid_templates_env !== '')
+  ? $staxx_unraid_templates_env
+  : '/boot/config/plugins/dockerMan/templates-user');
+
+$staxx_autoupdate_env = getenv('STAXX_AUTOUPDATE_FILE');
+define('STAXX_AUTOUPDATE_FILE', ($staxx_autoupdate_env !== false && $staxx_autoupdate_env !== '')
+  ? $staxx_autoupdate_env
+  : '/boot/config/plugins/ca.update.applications/DockerUpdateSettings.json');
+
+/** Where a held template lives once a handover or the §5 sweep has moved it
+ * out of Unraid's reach — beside icons/ and updates.json, not a constant
+ * because it depends on the store root, which is only known at runtime. */
+function staxx_held_templates_dir(): string {
+  return staxx_config_root().'/unraid-templates';
+}
+
+/**
+ * The Unraid template(s) in STAXX_UNRAID_TEMPLATES_DIR whose <Name> equals
+ * $containerName exactly (case-sensitive) — the same match Unraid's own
+ * DockerTemplates::getUserTemplate() makes, which is what both Auto Update
+ * and Appdata Backup's update_container go through to rebuild a container.
+ * 'path' is only ever set when there is exactly one match; moving one of two
+ * templates that both claim a name would be guessing which app it belongs
+ * to, so the caller is left to decide what "at risk" means when count > 1.
+ *
+ * @return array{path:string, count:int}
+ */
+function staxx_unraid_template_for(string $containerName): array {
+  $dir = STAXX_UNRAID_TEMPLATES_DIR;
+  if (!is_dir($dir)) return ['path' => '', 'count' => 0];
+
+  $matches = [];
+  foreach ((array)@scandir($dir) as $file) {
+    // Matches staxx_import_templates()'s own filter — the folder also holds
+    // a .bak of whatever was last overwritten, which parses just as happily
+    // as a real template.
+    if (!preg_match('/\.xml$/i', $file)) continue;
+    $path = $dir.'/'.$file;
+    if (!is_file($path)) continue;
+
+    $xml = @simplexml_load_file($path);
+    if ($xml === false) continue;
+    if (trim((string)($xml->Name ?? '')) === $containerName) $matches[] = $path;
+  }
+
+  return ['path' => count($matches) === 1 ? $matches[0] : '', 'count' => count($matches)];
+}
+
+/**
+ * STAXX_AUTOUPDATE_FILE decoded, or null if it exists but will not parse as
+ * JSON — the "leave it untouched" case both staxx_autoupdate_entry_remove()
+ * and the §5 sweep have to tell apart from "nothing to remove". A missing
+ * file is not an error: nothing is on Auto Update's list at all, which reads
+ * identically to an empty one.
+ */
+function staxx_autoupdate_read(): ?array {
+  if (!is_file(STAXX_AUTOUPDATE_FILE)) return ['containers' => []];
+  $raw = @file_get_contents(STAXX_AUTOUPDATE_FILE);
+  if ($raw === false || trim($raw) === '') return ['containers' => []];
+  $data = json_decode($raw, true);
+  if (!is_array($data)) return null;
+  if (!isset($data['containers']) || !is_array($data['containers'])) $data['containers'] = [];
+  return $data;
+}
+
+/** Write $data back to STAXX_AUTOUPDATE_FILE, atomically — same write-to-
+ * temp-then-rename shape staxx_autostart_store() already uses. */
+function staxx_autoupdate_write(array $data): bool {
+  $dir = dirname(STAXX_AUTOUPDATE_FILE);
+  if (!is_dir($dir)) return false;
+  $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+  if ($json === false) return false;
+
+  $tmp = $dir.'/.'.basename(STAXX_AUTOUPDATE_FILE).'.'.getmypid().'.tmp';
+  if (@file_put_contents($tmp, $json) === false) return false;
+  if (!@rename($tmp, STAXX_AUTOUPDATE_FILE)) { @unlink($tmp); return false; }
+  return true;
+}
+
+/**
+ * Remove containers[$name] from Auto Update Applications' own settings file,
+ * so the next 05:00 job never considers rebuilding it. Returns the removed
+ * object (kept verbatim so a later restore is exact), or null when there was
+ * nothing to remove — either the file is absent, the key is absent (neither
+ * an error: the plugin may not be installed, or this container was never on
+ * the list), or the file exists but will not parse, which is left untouched
+ * on purpose rather than risking a rewrite of something StaXX cannot read.
+ * $unreadable, when passed, is set true only in that last case, so a caller
+ * can tell "nothing to do" apart from "could not check" without a second
+ * read of the file.
+ */
+function staxx_autoupdate_entry_remove(string $name, ?bool &$unreadable = null): ?array {
+  $unreadable = false;
+  $data = staxx_autoupdate_read();
+  if ($data === null) { $unreadable = true; return null; }
+  if (!isset($data['containers'][$name])) return null;
+
+  $entry = $data['containers'][$name];
+  unset($data['containers'][$name]);
+  staxx_autoupdate_write($data);
+  return is_array($entry) ? $entry : null;
+}
+
+/** Put $entry back under containers[$name] — the exact undo of the function
+ * above, for "It does not" and nothing else. */
+function staxx_autoupdate_entry_restore(string $name, array $entry): bool {
+  $data = staxx_autoupdate_read();
+  if ($data === null) return false;
+  $data['containers'][$name] = $entry;
+  return staxx_autoupdate_write($data);
+}
+
+/**
+ * PLAN_165 §1: for each handover target, move its Unraid template out of
+ * Unraid's reach and drop it off the Auto Update Applications list. $targets
+ * only ever reads 'original' — the same shape staxx_start_handover() already
+ * builds its $setasides array in, so nothing is remapped at the call site.
+ *
+ * Returns the per-target 'unraid' record staxx_handover_write() writes one
+ * line of each, in the same order as $targets — or false the moment a
+ * template move itself fails. That is a hard abort: the caller checks this
+ * before writing anything else, so a failed move never leaves the handover
+ * half-started. $notes collects the two human sentences from the plan's
+ * "The messages" section, for staxx_handover_write() to fold into the note's
+ * prose; nothing here writes to that file directly.
+ *
+ * @param array<int,array{original:string}> $targets
+ * @param string[] $notes
+ * @return array<int,array{template:string,held:string,autoupdate:?array}>|false
+ */
+function staxx_handover_unraid_hold(array $targets, array &$notes) {
+  $records = [];
+  foreach ($targets as $t) {
+    $name = $t['original'];
+    $found = staxx_unraid_template_for($name);
+
+    $template = '';
+    $held     = '';
+
+    if ($found['count'] > 1) {
+      $notes[] = 'Two Unraid templates both claim the name "'.$name.'", so neither was '
+               . "moved; Unraid's own tools may still rebuild the old container. Check "
+               . 'them under Docker → Add Container.';
+    } elseif ($found['count'] === 1) {
+      $dir = staxx_held_templates_dir();
+      if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return false;
+
+      $dest = $dir.'/'.basename($found['path']);
+      if (!@rename($found['path'], $dest)) return false;
+
+      $template = $found['path'];
+      $held     = $dest;
+    }
+
+    $unreadable = false;
+    $autoupdate = staxx_autoupdate_entry_remove($name, $unreadable);
+    if ($unreadable) {
+      $notes[] = 'The Auto Update Applications settings file could not be read, so '
+               . '"'.$name.'" may still be on its update list.';
+    }
+
+    $records[] = ['template' => $template, 'held' => $held, 'autoupdate' => $autoupdate];
+  }
+  return $records;
+}
+
+/**
+ * PLAN_165 §3's "It does not" put-back for one target's 'unraid' record:
+ * move its template back to where Unraid expects it, and put its Auto
+ * Update entry back exactly as it was. Neither failing here fails the
+ * handover — the worst either does is leave the held copy in place, which
+ * is exactly where it already was doing no harm, and say so.
+ *
+ * @param array{template:string,held:string,autoupdate:?array} $unraid
+ * @return string[] sentences for the review note
+ */
+function staxx_handover_unraid_release(array $unraid): array {
+  $sentences = [];
+
+  $template = (string)($unraid['template'] ?? '');
+  $held     = (string)($unraid['held'] ?? '');
+  if ($template !== '' && $held !== '' && is_file($held)) {
+    if (is_file($template)) {
+      // Something else has appeared at the old path in the meantime — never
+      // overwrite it; the held copy is still safe where it is.
+      $sentences[] = 'Its Unraid template is still in StaXX\'s own folder, because '
+                   . 'another file has appeared at its old location since.';
+    } elseif (@rename($held, $template)) {
+      $sentences[] = 'Its Unraid template is back where it was.';
+    } else {
+      $sentences[] = 'Its Unraid template could not be moved back, and is still in '
+                   . 'StaXX\'s own folder.';
+    }
+  }
+
+  $autoupdate = $unraid['autoupdate'] ?? null;
+  if (is_array($autoupdate)) {
+    $name = (string)($autoupdate['name'] ?? '');
+    if ($name !== '' && staxx_autoupdate_entry_restore($name, $autoupdate)) {
+      $sentences[] = 'It is back on Auto Update Applications\' list.';
+    }
+  }
+
+  return $sentences;
+}
+
+/**
+ * PLAN_165 §3/§4: which of $targets' names are currently held by a
+ * container that is not this stack's own — missing entirely, or belonging
+ * to no project, or to a different one. Shared by staxx_finish_handover()'s
+ * refusal (something rebuilt the container while the question was open) and
+ * the handover-check reply's own warning shown before an answer is even
+ * given, so the two can never disagree about what counts as "foreign".
+ *
+ * $targets accepts whichever shape a caller already has in hand: a plain
+ * name, a staxx_handover_targets() row ('name'), or a stored handover
+ * target ('original').
+ *
+ * @param array<int, string|array{name?:string, original?:string}> $targets
+ * @param array<string,array{running:bool,project:string}>|null $containers
+ * @return string[]
+ */
+function staxx_handover_foreign(string $rel, array $targets, ?array $containers = null): array {
+  if (!staxx_valid_path($rel)) return [];
+  $project = staxx_project_name(staxx_path_leaf($rel));
+  if ($containers === null) $containers = staxx_docker_container_names();
+
+  $foreign = [];
+  foreach ($targets as $t) {
+    $name = is_array($t) ? (string)($t['name'] ?? $t['original'] ?? '') : (string)$t;
+    if ($name === '') continue;
+    $held = $containers[$name] ?? null;
+    if ($held === null || ($held['project'] ?? '') !== $project) $foreign[] = $name;
+  }
+  return $foreign;
+}
+
 /**
  * Every container Docker knows about, by name — including ones with no
  * compose label at all. staxx_container_index() deliberately drops those,
@@ -4592,15 +4844,35 @@ function staxx_handover_active(string $rel): bool {
  * supplies it, but the fixtures in tests/server/handover.php predate this
  * field and this keeps them writing a valid file rather than a PHP notice.
  *
- * @param array<int,array{original:string,setaside:string,wasRunning:bool,restart?:string}> $targets
+ * 'unraid', when present on a target, is PLAN_165 §2's record of what §1
+ * moved out of Unraid's reach — written as one JSON object on its own
+ * "Unraid-N:" line, mirrored by staxx_handover_read() below. $notes carries
+ * the two human sentences staxx_handover_unraid_hold() may have collected
+ * (two templates sharing a name; an unreadable Auto Update file); a note
+ * written before this plan simply has none of either and reads exactly as
+ * it always did.
+ *
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool,restart?:string,unraid?:array}> $targets
+ * @param string[] $notes
  */
-function staxx_handover_write(string $dir, array $targets, string $when): bool {
+function staxx_handover_write(string $dir, array $targets, string $when, array $notes = []): bool {
   $names = implode(' and ', array_map(fn($t) => '"'.$t['original'].'"', $targets));
+
+  $anyMoved = false;
+  foreach ($targets as $t) {
+    if (!empty($t['unraid']['template'])) { $anyMoved = true; break; }
+  }
 
   $body = "# Handover in progress\n\n"
         . "This stack is now running in place of $names. The old container has "
         . "been switched off and set aside under a new name — nothing has been "
-        . "deleted.\n\n"
+        . "deleted.";
+  if ($anyMoved) {
+    $body .= " Its Unraid template has been moved into StaXX's own folder so "
+           . "nothing on this server can rebuild the old container while you decide.";
+  }
+  foreach ($notes as $note) $body .= ' '.$note;
+  $body .= "\n\n"
         . "Check that the app works, then answer the question on the stack's "
         . "row:\n\n"
         . "- **It works** — the old container is cleared away for good.\n"
@@ -4613,6 +4885,9 @@ function staxx_handover_write(string $dir, array $targets, string $when): bool {
     $body .= "SetAside-$n: {$t['setaside']}\n";
     $body .= 'WasRunning-'.$n.': '.($t['wasRunning'] ? 'yes' : 'no')."\n";
     $body .= 'Restart-'.$n.': '.($t['restart'] ?? 'no')."\n";
+    if (isset($t['unraid'])) {
+      $body .= 'Unraid-'.$n.': '.json_encode($t['unraid'], JSON_UNESCAPED_SLASHES)."\n";
+    }
   }
   $body .= "When: $when\n";
 
@@ -4643,6 +4918,21 @@ function staxx_handover_read(string $dir): ?array {
 
   $targets = [];
   foreach ($originals as $idx => $original) {
+    // Absent on a file written before PLAN_165 §2 — read as null, meaning
+    // "nothing to put back", which is true for it: nothing was moved.
+    $unraid    = null;
+    $unraidRaw = $fields['Unraid'][$idx] ?? null;
+    if ($unraidRaw !== null) {
+      $decoded = json_decode($unraidRaw, true);
+      if (is_array($decoded)) {
+        $unraid = [
+          'template'   => (string)($decoded['template'] ?? ''),
+          'held'       => (string)($decoded['held'] ?? ''),
+          'autoupdate' => is_array($decoded['autoupdate'] ?? null) ? $decoded['autoupdate'] : null,
+        ];
+      }
+    }
+
     $targets[] = [
       'original'   => $original,
       'setaside'   => $fields['SetAside'][$idx] ?? '',
@@ -4651,6 +4941,7 @@ function staxx_handover_read(string $dir): ?array {
       // itself treats a missing policy as, so an old file reads exactly as
       // it always behaved rather than as a policy it never actually had.
       'restart'    => $fields['Restart'][$idx] ?? 'no',
+      'unraid'     => $unraid,
     ];
   }
 
@@ -4888,9 +5179,22 @@ function staxx_start_handover(string $rel, string &$error): string {
     ];
   }
 
+  // PLAN_165 §1 — move each target's Unraid template out of Unraid's reach
+  // and off Auto Update's list before anything else is written. A failed
+  // move aborts outright: nothing has been renamed or started yet, so
+  // nothing needs undoing.
+  $unraidNotes = [];
+  $unraidRecords = staxx_handover_unraid_hold($setasides, $unraidNotes);
+  if ($unraidRecords === false) {
+    $error = 'Could not set the Unraid template aside, so nothing was started.';
+    return '';
+  }
+  foreach ($setasides as $i => &$setaside) $setaside['unraid'] = $unraidRecords[$i];
+  unset($setaside);
+
   // Nothing has been written up to this point — every refusal above had to
   // come first, not just happen to.
-  if (!staxx_handover_write($dir, $setasides, gmdate('c'))) {
+  if (!staxx_handover_write($dir, $setasides, gmdate('c'), $unraidNotes)) {
     $error = 'Could not write the handover note, so nothing was started.';
     return '';
   }
@@ -4950,10 +5254,36 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     return '';
   }
 
+  // PLAN_165 §3 — checked before either answer is acted on. If something
+  // outside StaXX has rebuilt one of these names since the handover began,
+  // neither branch below is safe: "It works" would clear away a set-aside
+  // that no longer matches what is running, and "It does not" would rename
+  // that set-aside straight into a collision with whatever is holding the
+  // name now.
+  $foreign = staxx_handover_foreign($rel, $state['targets']);
+  if ($foreign) {
+    $error = 'Something outside StaXX has rebuilt '.staxx_watch_join_names($foreign)
+           . ' since this handover began, so neither answer is safe to act on. Remove '
+           . 'that rebuilt container from Unraid\'s Docker page, then answer again.';
+    return '';
+  }
+
   $docker    = escapeshellarg(staxx_docker_bin());
   $stateFile = escapeshellarg($dir.'/'.STAXX_HANDOVER_FILE);
 
   if ($worked) {
+    // PLAN_165 §1 already moved the template and dropped the Auto Update
+    // entry; "It works" leaves both exactly where they are — the template
+    // is the route back, kept rather than deleted. Only the log's own
+    // success line changes, and only when a template actually moved.
+    $anyHeld = false;
+    foreach ($state['targets'] as $t) {
+      if (!empty($t['unraid']['template'])) { $anyHeld = true; break; }
+    }
+    $clearedMsg = $anyHeld
+      ? 'The old container has been cleared away. Its Unraid template is kept in StaXX\'s own folder.'
+      : 'The old container has been cleared away.';
+
     $steps = [];
     foreach ($state['targets'] as $t) {
       $steps[] = $docker.' rm -f '.escapeshellarg($t['setaside']).' 2>&1';
@@ -4966,25 +5296,38 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     $chain  = implode(' && ', $steps);
     $script = $chain.'; ec=$?; '
             . 'if [ "$ec" -eq 0 ]; then rm -f '.$stateFile.' 2>&1; '
-            . 'echo "The old container has been cleared away."; fi; '
+            . 'echo "'.$clearedMsg.'"; fi; '
             . 'echo "'.STAXX_JOB_END.' $ec"';
 
     $shown = implode(' && ', array_map(fn($t) => 'docker rm -f '.$t['setaside'], $state['targets']));
   } else {
+    // PLAN_165 §3 — put back what §1 took, synchronously and before the job
+    // script is even built: the template and the Auto Update entry are both
+    // PHP-side renames/rewrites, not shell steps, so there is nothing for
+    // the script itself to undo here.
+    $releaseSentences = [];
+    foreach ($state['targets'] as $t) {
+      if (!empty($t['unraid'])) {
+        $releaseSentences = array_merge($releaseSentences, staxx_handover_unraid_release($t['unraid']));
+      }
+    }
+
     // The moment the answer is "no", the stack must stop being runnable — and
     // that cannot wait for a background job, so the note goes back
     // synchronously, in PHP, before the job that undoes the rest is even
     // launched.
-    @file_put_contents($dir.'/'.STAXX_REVIEW_FILE,
-      "# Imported, handed over, and put back\n\n"
+    $reviewBody = "# Imported, handed over, and put back\n\n"
       . "This stack was started in place of its original container and reported "
       . "not to work, so everything was put back as it was: the original "
       . "container has its own name again and is running, and this stack is "
-      . "stopped and locked.\n\n"
+      . "stopped and locked.";
+    foreach ($releaseSentences as $sentence) $reviewBody .= ' '.$sentence;
+    $reviewBody .= "\n\n"
       . "Nothing was lost. Look at the compose file, change whatever was wrong, "
       . "then choose \"Take over and start\" from this stack's menu to try "
-      . "again.\n"
-    );
+      . "again.\n";
+
+    @file_put_contents($dir.'/'.STAXX_REVIEW_FILE, $reviewBody);
 
     $composeCmd = staxx_compose_cmd();
     $file       = staxx_find_compose_file($dir);
@@ -5038,6 +5381,148 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
   @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
 
   return $job;
+}
+
+/* -------------------------------------------------- PLAN_165 §5 sweep -----
+ *
+ * Every stack taken over before this plan left its template on flash, since
+ * nothing removed it before now — so every existing user has the fault
+ * PLAN_165 fixes waiting on the box. This is that backlog, surfaced on the
+ * Settings page rather than acted on unasked.
+ */
+
+/**
+ * Every StaXX stack's own declared container names, by name, first match
+ * wins — the map staxx_unraid_templates_at_risk() needs to tell "this
+ * template belongs to a stack" from "this template is nothing to do with
+ * us". Not staxx_handover_targets(), which only ever looks at one stack.
+ *
+ * @return array<string,string> containerName => stack rel path
+ */
+function staxx_unraid_named_containers(): array {
+  $map = [];
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['file'] === '') continue;
+    foreach (staxx_compose_meta($s['file'])['services'] as $info) {
+      $name = trim((string)($info['container_name'] ?? ''));
+      if ($name === '' || isset($map[$name])) continue;
+      $map[$name] = $s['name'];
+    }
+  }
+  return $map;
+}
+
+/**
+ * The Unraid templates still on flash that name a container a StaXX stack's
+ * own compose file claims — see the plan's "What 'at risk' means, exactly".
+ * 'state' is 'ours' (the name is StaXX's own container, so moving it is
+ * safe and reversible exactly like a fresh handover), 'absent' (no such
+ * container exists at all — moved too, since the stack file is the record
+ * now), or 'unraid' (the name is still genuinely Unraid's — a "take the
+ * stack over" case, never swept).
+ *
+ * $containers is staxx_docker_container_names()'s shape, injectable for the
+ * same reason every other reader of it takes the same parameter.
+ *
+ * @return array<int,array{template:string,name:string,stack:string,autoupdate:bool,state:string}>
+ */
+function staxx_unraid_templates_at_risk(?array $containers = null): array {
+  $dir = STAXX_UNRAID_TEMPLATES_DIR;
+  if (!is_dir($dir)) return [];
+
+  if ($containers === null) $containers = staxx_docker_container_names();
+  $named      = staxx_unraid_named_containers();
+  $autoupdate = staxx_autoupdate_read();
+  $onAutoupdate = is_array($autoupdate) ? array_keys($autoupdate['containers'] ?? []) : [];
+
+  $rows = [];
+  foreach ((array)@scandir($dir) as $file) {
+    if (!preg_match('/\.xml$/i', $file)) continue;
+    $path = $dir.'/'.$file;
+    if (!is_file($path)) continue;
+
+    $xml = @simplexml_load_file($path);
+    if ($xml === false) continue;
+    $name = trim((string)($xml->Name ?? ''));
+    if ($name === '' || !isset($named[$name])) continue;
+
+    $rel     = $named[$name];
+    $project = staxx_project_name(staxx_path_leaf($rel));
+    $held    = $containers[$name] ?? null;
+
+    if ($held === null) {
+      $state = 'absent';
+    } elseif (($held['project'] ?? '') === $project) {
+      $state = 'ours';
+    } else {
+      $state = 'unraid';
+    }
+
+    $rows[] = [
+      'template'   => $path,
+      'name'       => $name,
+      'stack'      => $rel,
+      'autoupdate' => in_array($name, $onAutoupdate, true),
+      'state'      => $state,
+    ];
+  }
+  return $rows;
+}
+
+/**
+ * Move the named templates (or every 'ours'/'absent' row when $names is
+ * empty) into StaXX's own store, the same way and for the same reason §1
+ * does at handover time — this just catches up on the ones §1 was never
+ * there to catch. A 'unraid' row is never touched, by any name given here:
+ * that template is still genuinely Unraid's own, and taking the stack over
+ * is what moves it, not this. Returns the names actually moved.
+ */
+function staxx_unraid_templates_reclaim(array $names, string &$error): array {
+  $error = '';
+  $rows  = array_filter(staxx_unraid_templates_at_risk(), function ($r) use ($names) {
+    if ($r['state'] === 'unraid') return false;
+    return $names === [] || in_array($r['name'], $names, true);
+  });
+
+  $moved = [];
+  foreach ($rows as $r) {
+    $heldDir = staxx_held_templates_dir();
+    if (!is_dir($heldDir) && !@mkdir($heldDir, 0755, true) && !is_dir($heldDir)) {
+      $error = 'Could not create '.$heldDir.'.';
+      continue;
+    }
+    $dest = $heldDir.'/'.basename($r['template']);
+    if (!@rename($r['template'], $dest)) {
+      $error = 'Could not move '.basename($r['template']).'.';
+      continue;
+    }
+    staxx_autoupdate_entry_remove($r['name']);
+    $moved[] = $r['name'];
+  }
+  return $moved;
+}
+
+/**
+ * PLAN_165 §6 — has the "Unraid templates found" window already been shown
+ * on this store? A plain marker file, not a setting: it lives beside the
+ * templates themselves so it is asked once per server, never once per
+ * browser, and a fresh store with nothing at risk is never marked at all.
+ */
+function staxx_unraid_templates_asked(): bool {
+  $root = staxx_config_root();
+  return $root !== '' && is_file($root.'/unraid-templates.asked');
+}
+
+/** Write that marker. Content is irrelevant — only its existence is read. */
+function staxx_unraid_templates_mark_asked(): bool {
+  $root = staxx_config_root();
+  if ($root === '') return false;
+  if (!is_dir($root) && !@mkdir($root, 0755, true) && !is_dir($root)) return false;
+
+  $path = $root.'/unraid-templates.asked';
+  if (@file_put_contents($path, '') === false) return false;
+  @chmod($path, 0644);
+  return true;
 }
 
 /* ------------------------------------------------------------ takeover ----
