@@ -14916,3 +14916,13 @@ dialog::backdrop {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--sm-fg) 14%, transparent) transparent;
 }
+
+/* PLAN_166 §3 — the list of what an intruder does not match, inside the
+   "does it work?" question. A bare <ul> in this dialog carries no margin at
+   all, so the line after it sat straight against the last difference and the
+   two read as one paragraph (seen on the box, 2026-09-18). */
+.staxx-scaffold .staxx-diffl {
+  margin: 0 0 0.8rem;
+  padding-left: 0;
+  list-style: none;
+}
