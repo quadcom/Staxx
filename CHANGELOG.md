@@ -1,18 +1,6 @@
 # Changelog
 
-What changed, newest first. Versions match the plugin manifest.
-
-**The top section is `Unreleased`.** Work lands there as it is done, and a development build
-publishes that section as its own release notes — so a change with no bullet in it is a change
-nobody outside this repository is told about. Cutting a stable release renames that heading to the
-version and its date; the build refuses to publish while it still says `Unreleased`.
-
-**Numbering changed at `00.01.00`.** Every component is now two digits, and the count restarted from
-`00.01.00` on the way to `01.00.00` — the first release meant for general use. The padding is not
-decoration: Unraid compares plugin versions as plain text, so `1.10.0` would sort *below* `1.5.0` and
-updates would silently stop being offered. Fixed-width numbers make text order and number order the
-same thing. Everything above `1.1.0` in this file used the old unpadded numbering, and the versions
-before that were dates.
+What changed in StaXX, newest first.
 
 ---
 
@@ -24,11 +12,7 @@ before that were dates.
 - The stack's menu no longer runs off the edge of the window. The explanation under "Take over and start" was held to one line, which stretched the menu wide enough to push the folder list beside it off the screen; it now wraps.
 - The editor's footer no longer shows what looked like an empty notice with a close cross and nothing in it. That cross is the "Not now" beside the bar offering to look up a stack's details, and it now sits on the bar's own line where it belongs. That bar also stopped ending in "create it", which belongs to the bars that create a missing file or folder.
 - Fixed in 00.04.03: If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's file asks for. If they match it clears it away and carries on with your answer; if they do not, it shows you what differs, when that container was built and when the file last changed, and offers to use the stack's version, instead of sending you to Unraid's Docker page.
-
-- If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's own file asks for. If they match, it clears it away and carries on with your answer. If they do not, it shows you what differs and offers to use the stack's version, instead of sending you to Unraid's Docker page.
 - Fixed in 00.04.02: Taking over an Unraid container now also moves its template out of Unraid's template folder and off the Auto Update Applications list, because both that plugin and Appdata Backup rebuild containers from the templates on flash and were pushing the stack's own container out days later. Answering "It does not" puts both back. If you took stacks over before this version, the stack list asks once on first load whether to move the templates still on flash, and Settings lists and moves them at any time.
-
-- Taking over an Unraid container now also moves its template out of Unraid's template folder and off the Auto Update Applications list for as long as StaXX owns it, so neither that plugin nor Appdata Backup can rebuild the old container behind the stack's back. Answer "It does not" and both go back exactly as they were. If something outside StaXX rebuilds the container while the question is open, both answers now refuse and say what to remove first. If you took stacks over before this version, the stack list asks once on first load whether to move the templates still on flash, and Settings lists them and moves them in one press at any time.
 - A merged stack no longer gets asked about wiring the wizard itself did. Every address the merge rewired to point at a sibling service is now recorded as a confirmed link, so the editor stops asking whether the two are related. And the new stack's own details are gathered from every source rather than the first one only: a description, category or link that only a later source carried now comes across, marked with where it came from, and a value you decline is kept in the merge summary instead of under a spare key in the file.
 - The Select tool gained two buttons: **Updates…** and **Notifications…** open a small window under the button row with the same controls the editor has, and apply your answer to every chosen stack at once.
 - With the .env tab open, clicking a setting that uses one of its variables now lights up the line in .env that defines it, the same way the compose file's lines light up.

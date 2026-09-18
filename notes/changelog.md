@@ -12,6 +12,11 @@ Cutting a stable release **renames** that heading to `## <version> — released 
 is not written then, it has been filling up all along. The build refuses to publish a stable release
 while the heading still says `Unreleased`.
 
+**The file itself says nothing but what changed.** Its top is the title and one line — *What
+changed in StaXX, newest first.* — and then the versions. How a release is built, what the build
+refuses, why the numbers are padded and what the numbering used to be are developer facts, and they
+live here, not in a file a user reads. That preamble was removed on 2026-09-18.
+
 Three consequences worth stating, because each one is a mistake somebody would otherwise make:
 
 - **One file, no per-branch copy.** `main` only ever receives commits by merging `dev` at a release,
