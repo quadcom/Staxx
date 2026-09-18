@@ -130,7 +130,10 @@ ok('a template held by no project at all (dockerman) reads "unraid", on Auto Upd
 /* ---------------------------------------------- staxx_unraid_templates_reclaim -- */
 
 $error = '';
-$moved = staxx_unraid_templates_reclaim([], $error);
+// The same injected list the classification above used — reclaim decides what
+// is still Unraid's from its own reading, so without this it would ask the real
+// Docker, find none of these fixtures, and move the one row it must not touch.
+$moved = staxx_unraid_templates_reclaim([], $error, $containers);
 sort($moved);
 
 ok('reclaim moves only the "ours" and "absent" rows',

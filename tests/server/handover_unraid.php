@@ -222,8 +222,23 @@ ok('writes a handover note carrying Unraid-N lines',
    staxx_handover_write($roundtripDir, $rtTargets, '2026-09-18T00:00:00+00:00'));
 
 $rtBack = staxx_handover_read($roundtripDir);
+// Compared field by field rather than as whole arrays: the note also carries
+// fields other plans own (the restart policy), and this suite is about the
+// Unraid record alone — a whole-array check would fail on any branch whose
+// note carries a different set of them.
+$rtKeys = ['original', 'setaside', 'wasRunning', 'unraid'];
+$rtGot  = array_map(function ($t) use ($rtKeys) {
+  $out = [];
+  foreach ($rtKeys as $k) $out[$k] = $t[$k] ?? null;
+  return $out;
+}, $rtBack['targets'] ?? []);
+$rtWant = array_map(function ($t) use ($rtKeys) {
+  $out = [];
+  foreach ($rtKeys as $k) $out[$k] = $t[$k] ?? null;
+  return $out;
+}, $rtTargets);
 ok('reads back the same targets, unraid record included, in order',
-   ($rtBack['targets'] ?? null) === $rtTargets, json_encode($rtBack));
+   $rtGot === $rtWant, json_encode($rtBack));
 
 @exec('rm -rf '.escapeshellarg($roundtripDir));
 
@@ -237,7 +252,10 @@ file_put_contents($noUnraidDir.'/'.STAXX_HANDOVER_FILE,
 );
 $noUnraidBack = staxx_handover_read($noUnraidDir);
 ok('a note with no Unraid line reads that target\'s unraid record as null',
-   ($noUnraidBack['targets'][0]['unraid'] ?? 'MISSING') === null, json_encode($noUnraidBack));
+   // array_key_exists, not ?? — the value being looked for IS null, and a
+   // null-coalescing default can never tell "present and null" from "absent".
+   array_key_exists('unraid', $noUnraidBack['targets'][0] ?? [])
+     && $noUnraidBack['targets'][0]['unraid'] === null, json_encode($noUnraidBack));
 @exec('rm -rf '.escapeshellarg($noUnraidDir));
 
 /* ------------------------------------------------- staxx_handover_foreign -- */
