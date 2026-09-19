@@ -79,6 +79,13 @@ way round they have to be built. A finding, a ruling or a correction that arrive
 written into the plan **in the same pass**, not remembered for later. Never answer a question only in
 chat when the answer changes a plan — the chat is the draft, the plan is the record.
 
+**Nothing is ever left hanging.** This is Adrian's standing rule and it is continuous, not a tidy-up at
+the end: the moment work is owed — something built but uncommitted, a guide page the change just made
+wrong, a test not written, a decision deferred, a check not run, a screenshot now out of date — it goes
+into the plan that owns it, then and there, saying what is owed and why. A loose end that exists only
+in the conversation is already lost, because the conversation is compacted or cleared without warning.
+If a loose end belongs to no plan, that is the signal to open one, not to leave it in chat.
+
 **A plan file is never deleted. There is no exception to this and no case where deleting one is the
 tidy answer.** A plan has exactly three ends: it is built, and moves to `plans/completed-plans/`; it
 is abandoned, and its status line says so and why, and it moves to `plans/completed-plans/` as the
@@ -167,6 +174,35 @@ matter every day:
   bash tools/publish-preview.sh review       # just the front page and the review history
   bash tools/publish-preview.sh <file.md>…   # just those files
   ```
+
+**Re-read the list of available skills before starting a different kind of work.** The list is handed
+over once, at the start of a session, and a long session drifts a long way from it — which is exactly
+how the row-marks page got rewritten by hand on 2026-09-18 with a purpose-built skill for that job
+sitting unused. Reading it back costs about twenty lines (`ls ~/.claude/skills/` and the `description:`
+line of each `SKILL.md`), so the cost is never the reason not to.
+
+**The trigger that matters most is the one Adrian named on 2026-09-18: a plan has been finished, he
+has said to build it, and nothing has been written yet.** Read the skill list there, every time,
+before the first edit or the first agent brief. He chose it because it is a boundary every piece of
+work crosses, it announces itself rather than having to be noticed, and it is the last moment where
+picking the right tool still costs nothing — once building has started, finding out there was a
+skill for it means the work is done twice.
+
+Other triggers, all of them a change of *kind* rather than of elapsed time, because elapsed time is
+not something a session can feel: before writing or editing anything a person outside this project
+reads (a guide page, the readme, the changelog, a release); before briefing an agent to do work that
+is not the work already in hand; and after a context compaction.
+Adrian's framing, 2026-09-18: the question is not whether the skill was known about, it is what
+connected "I am about to do this" to "there is a tool for this."
+
+**A guide page is never written or edited by hand, and never by an agent given a hand-written brief.**
+It goes through the `guide-writer` skill, and its pictures through `guide-shots`. Those skills carry
+rules that are not written down anywhere else and that are lost the moment somebody improvises: a page
+keeps the pictures it already has, and the `humanizer` pass runs over every page before it reaches the
+preview. On 2026-09-18 the row-marks page was rewritten by an agent briefed directly; it came back
+correct in substance with **all seven of its screenshots silently deleted** and no humanizer pass.
+Adrian found it. The trigger is the *subject*, not the size of the job: if the thing being changed is a
+page a user reads, the skill runs, however small the edit looks.
 
 - **Rebuild only the section you changed.** A full run empties the folder first, which is what makes
   a deleted page vanish; every sectioned run also refreshes the changelog, since it is the one page
