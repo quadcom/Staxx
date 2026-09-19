@@ -387,6 +387,14 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <div class="staxx-search-drop" id="staxx-find-drop" hidden></div>
     </div>
     <div class="staxx-buttons staxx-buttons--inline">
+      <!-- PLAN_168 — opens the legend (#staxx-legend, built by script). Icon
+           only, ordinary toolbar chrome (same border/background/height as its
+           neighbours), so it sits with the buttons rather than reading as a
+           stray link. -->
+      <button type="button" class="staxx-btn staxx-legend-btn" id="staxx-legend-btn"
+              title="<?= _('What the marks mean') ?>" aria-label="<?= _('What the marks mean') ?>">
+        <i class="fa fa-th-list" aria-hidden="true"></i>
+      </button>
       <!-- PLAN_78 — toggles selection mode; the marks it puts on every row
            and folder header, and the bar of verbs directly below this row,
            are both painted entirely by stacks.js. -->
@@ -396,26 +404,16 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-btn" id="staxx-settings-btn">
         <i class="fa fa-cog"></i> <?= _('Settings') ?>
       </button>
-      <button type="button" class="staxx-btn" id="staxx-add-folder">
-        <i class="fa fa-folder"></i> <?= _('New folder') ?>
-      </button>
-      <button type="button" class="staxx-btn" id="staxx-apps">
-        <i class="fa fa-th"></i> <?= _('Apps') ?>
-      </button>
-      <button type="button" class="staxx-btn" id="staxx-import">
-        <i class="fa fa-download"></i> <?= _('Import') ?>
-      </button>
-      <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add">
-        <i class="fa fa-plus"></i> <?= _('Add stack') ?>
-      </button>
-      <!-- PLAN_148 — a plain button, deliberately: this is not the Select
-           tool, and it must not pre-empt the later job that folds Apps,
-           Import, Merge and manual creation under one "Add stack" button.
-           Hidden below 990px (see staxx.css) — the merge window needs two
-           columns of source beside a third, and there is no small version
-           of this tool. -->
-      <button type="button" class="staxx-btn" id="staxx-merge-btn">
-        <i class="fa fa-compress"></i> <?= _('Merge') ?>
+      <!-- PLAN_173 — one door in for everything that ends in a stack: a
+           blank one, one from Apps, an import, a new folder to hold one, or
+           a merge of several into one. Routed through the page's own
+           #staxx-menu (buildAddMenu() in stacks.js) rather than a menu of
+           its own, so it inherits that menu's viewport-safe placement and
+           its sticky hover behaviour rather than reimplementing either. -->
+      <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add-btn"
+              data-menu="add" data-label="<?= _('Add') ?>"
+              aria-haspopup="menu" aria-expanded="false">
+        <i class="fa fa-plus"></i> <?= _('Add') ?> <i class="fa fa-caret-down" aria-hidden="true"></i>
       </button>
       <button type="button" class="staxx-btn" id="staxx-check-updates">
         <i class="fa fa-refresh"></i> <?= _('Check for updates') ?>
@@ -768,23 +766,33 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         </div>
         <!-- Always visible now, not only when there is more than one tab —
              it also carries the New file and Add a file controls, and
-             hiding the strip would hide those with it. Filled by script
-             (renderTabs() in stacks.js) with one button per file in the
-             stack's own folder; the compose file's own tab is pinned first
-             and cannot be closed — everything else in the folder follows it
-             alphabetically. -->
+             hiding the strip would hide those with it. #staxx-tabs is filled
+             by script (renderTabs() in stacks.js) with one entry per file in
+             the stack's own folder; the compose file's own tab is pinned
+             first and cannot be closed — everything else in the folder
+             follows it alphabetically.
+
+             PLAN_172: New file/Add a file sit at the LEFT of the strip,
+             before #staxx-tabs, as plain siblings rather than inside it —
+             renderTabs() rewrites #staxx-tabs wholesale on every file-list
+             change, so anything reparented into it is destroyed on the next
+             redraw. Each file tab draws its own chevron now (see
+             renderTabs()); the one chevron that used to sit here beside the
+             first tab, acting on whichever file was open, is gone. -->
         <div class="staxx-tabstrip">
+          <div class="staxx-filebtns">
+            <button type="button" class="staxx-filebtn" id="staxx-file-new"
+                    title="<?= _('Add a new, empty file to this stack') ?>"
+                    aria-label="<?= _('New file') ?>">
+              <i class="fa fa-plus" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="staxx-filebtn" id="staxx-file-add"
+                    title="<?= _('Upload a file from this computer') ?>"
+                    aria-label="<?= _('Upload a file from this computer') ?>">
+              <i class="fa fa-upload" aria-hidden="true"></i>
+            </button>
+          </div>
           <div class="staxx-tabs" id="staxx-tabs" role="tablist" aria-label="<?= _('Files in this stack') ?>"></div>
-          <button type="button" class="staxx-chevron" id="staxx-file-new"
-                  title="<?= _('Add a new, empty file to this stack') ?>"
-                  aria-label="<?= _('New file') ?>">
-            <i class="fa fa-plus" aria-hidden="true"></i>
-          </button>
-          <button type="button" class="staxx-chevron" id="staxx-file-add"
-                  title="<?= _('Add a file from this computer') ?>"
-                  aria-label="<?= _('Add a file from this computer') ?>">
-            <i class="fa fa-upload" aria-hidden="true"></i>
-          </button>
           <!-- Never shown itself. Both buttons above click it open, and so
                does Replace… on the binary panel further down — for that one
                it is switched to single-file for the one pick, because a
@@ -792,7 +800,8 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
                what the chosen file is called (see stacks.js). -->
           <input type="file" id="staxx-file-input" multiple hidden>
         </div>
-        <!-- The active tab's menu (Rename / Delete / Download). Not
+        <!-- The file menu (Rename / Delete / Download) for whichever tab's
+             own chevron last opened it — not necessarily the open tab. Not
              #staxx-menu — that one lives outside this dialog, and a
              <dialog> opened with showModal() paints in the top layer above
              anything outside it. A plain sibling of the strip rather than
@@ -1594,6 +1603,33 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     <div class="staxx-logdlg-foot">
       <button type="button" class="staxx-btn" id="staxx-log-close"><?= _('Close') ?></button>
     </div>
+
+  </dialog>
+
+  <!-- ------------------------------------------------------------ legend -- -->
+
+  <!-- PLAN_168 — what every chip on the page means. Opened from the toolbar
+       button above and from the row menu's "What do these marks mean?" item,
+       which used to send the reader to docs/guide/marks.md on GitHub; this
+       replaces that trip entirely, chips still visible on the page behind it.
+       Same recipe as .staxx-logdlg: own class, own :not([open]), ::backdrop
+       and @starting-style. The body is built by renderLegend() in stacks.js,
+       from the page's own chip classes and data-mark names — never
+       hand-written lookalike markup, which is the exact drift this replaces. -->
+  <dialog class="staxx-legend" id="staxx-legend" aria-labelledby="staxx-legend-title">
+
+    <div class="staxx-legend-head">
+      <div>
+        <h3 class="staxx-legend-title" id="staxx-legend-title"><?= _('What the marks mean') ?></h3>
+        <p class="staxx-legend-sub"><?= _('Colour says how much it wants from you · the mark says what it is about · movement says it is live.') ?></p>
+      </div>
+      <button type="button" class="staxx-legend-close" id="staxx-legend-close"
+              title="<?= _('Close') ?>" aria-label="<?= _('Close') ?>">
+        <i class="fa fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div class="staxx-legend-body" id="staxx-legend-body"></div>
 
   </dialog>
 

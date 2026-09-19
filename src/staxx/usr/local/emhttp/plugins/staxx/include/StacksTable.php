@@ -1701,15 +1701,19 @@ function staxx_portmark_html(array $meta, array $macvlanNames): string {
  */
 function staxx_header_row_html(): string {
   return '<div class="staxx-row staxx-head-row" role="row">'
-       . '<span class="staxx-cell" role="columnheader">'._('Stack').'</span>'
+       // PLAN_157 decision 1 — staxx-head--name/--state/--address each pull
+       // the heading to the left edge of what is underneath it, the same way
+       // staxx-head--services already did. See the matching CSS in
+       // staxx.css for what each one actually adds.
+       . '<span class="staxx-cell staxx-head--name" role="columnheader">'._('Stack').'</span>'
        // staxx-head--services (not staxx-cell--services, which the row cells
        // below carry for their two-row span and column width — reusing it
        // here would drag those layout rules onto the heading too) just
        // left-aligns this one heading, to sit over the left-aligned service
        // names beneath it rather than centred above them.
        . '<span class="staxx-cell staxx-head--services" role="columnheader">'._('Services').'</span>'
-       . '<span class="staxx-cell" role="columnheader">'._('State').'</span>'
-       . '<span class="staxx-cell" role="columnheader">'._('Address').'</span>'
+       . '<span class="staxx-cell staxx-head--state" role="columnheader">'._('State').'</span>'
+       . '<span class="staxx-cell staxx-head--address" role="columnheader">'._('Address').'</span>'
        . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="cpu">'._('CPU').'</span>'
        . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="mem">'._('Memory').'</span>'
        . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="net">'._('Network').'</span>'

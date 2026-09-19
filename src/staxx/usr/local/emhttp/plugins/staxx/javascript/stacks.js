@@ -349,12 +349,27 @@
     tickerActiveLine = incoming;
   }
 
+  // PLAN_171: with nothing to say, the bar still draws — quieter than any
+  // notice, no mark (a mark answers "what is it about", which a resting bar
+  // has no answer to), reusing the same button and text-line markup so the
+  // two states cannot drift apart in size or position.
+  function paintTickerResting() {
+    ticker.className = 'staxx-ticker staxx-ticker--resting';
+    tickerBtn.className = 'staxx-ticker-btn staxx-ticker-btn--resting';
+    tickerIcon.hidden = true;
+    tickerCount.hidden = true;
+    animateTickerText('Nothing needs your attention');
+  }
+
   function paintTickerSlot() {
     ensureTickerMarkup();
+    if (!tickerBtn) return;
     var list = activeNotices();
     var current = pickDisplayNotice(list);
-    if (!current || !tickerBtn) return;
+    if (!current) { paintTickerResting(); return; }
     ticker.className = 'staxx-ticker staxx-ticker--' + current.kind;
+    tickerBtn.className = 'staxx-ticker-btn';
+    tickerIcon.hidden = false;
     tickerIcon.className = 'fa staxx-ticker-icon ' + (NOTICE_ICONS[current.kind] || NOTICE_ICONS.info);
     animateTickerText(current.text);
     var extra = list.length - 1;
@@ -429,7 +444,7 @@
     if (!list.length) {
       var empty = document.createElement('li');
       empty.className = 'staxx-noticepanel-empty';
-      empty.textContent = 'Nothing to show.';
+      empty.textContent = 'Nothing needs your attention.';
       noticePanelList.appendChild(empty);
     } else {
       list.forEach(function (n) { noticePanelList.appendChild(buildNoticeRow(n)); });
@@ -493,18 +508,18 @@
     pageNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
+  // PLAN_171: the bar is never hidden — an empty list draws the resting
+  // state (paintTickerSlot, above) rather than vanishing. Rotation only
+  // matters with more than one notice to take turns showing, and the panel
+  // is left open across a redraw rather than snapped shut the moment the
+  // list empties — it now has its own line for "nothing waiting" instead of
+  // needing to disappear to say the same thing.
   function renderNotices() {
     if (!ticker) { paintPageNoticeFallback(); return; }
-    var list = activeNotices();
-    if (!list.length) {
-      ticker.hidden = true;
-      stopNoticeRotation();
-      closeNoticePanel();
-      return;
-    }
     ticker.hidden = false;
     paintTickerSlot();
-    startNoticeRotation();
+    var list = activeNotices();
+    if (list.length) { startNoticeRotation(); } else { stopNoticeRotation(); }
     if (noticePanel && noticePanel.open) renderNoticePanel();
   }
 
@@ -567,6 +582,11 @@
       })(stickyBlocks[sb]);
     }
   }
+
+  // notices.add() above only paints when there is something sticky to add —
+  // with none, the ticker needs telling anyway (PLAN_171), or it is left
+  // showing the server-rendered `hidden` attribute for good.
+  notices.render();
 
   var refNote      = document.getElementById('staxx-refnote');
   var gapNote     = document.getElementById('staxx-required-note');
@@ -1410,18 +1430,21 @@
 
   /* Asks for a name and creates the folder.
    *
-   * The naming box is always the toolbar's own New folder button, wherever the
-   * asking was started from. It is the one place on the page that already
-   * means "name a new folder", and a stack's context menu cannot hold the box
-   * itself: closing the menu empties it out, and an item's own click closes
-   * the menu before its handler runs.
+   * The naming box is always the toolbar's own Add button (PLAN_173 — it
+   * used to be the New folder button itself, before that became one of the
+   * items inside this one), wherever the asking was started from. It is the
+   * one place on the page that already means "add something", and a stack's
+   * context menu cannot hold the box itself: closing the menu empties it
+   * out, and an item's own click closes the menu before its handler runs —
+   * which is also why this anchors to the toolbar button rather than the
+   * menu item that was actually clicked.
    *
    * `then(id)` is for a caller with something to do with the new folder — a
    * stack's menu files that stack into it. Without one this is exactly what
    * the toolbar button has always done.
    */
   function askNewFolder(then) {
-    var host = document.getElementById('staxx-add-folder');
+    var host = document.getElementById('staxx-add-btn');
     if (!host) return;
 
     inlineName(host, '', {
@@ -1532,6 +1555,15 @@
   // autosave refuses to write anything while it is false. See loadCompanion().
   var fileEditable = false;
   var viewBeforeFile = null;   // the view (form/split/yaml) to restore on the way back to Compose
+  // PLAN_172: which file the open tab menu belongs to (null for the compose
+  // tab, a filename otherwise) and the chevron that opened it — a menu can
+  // now be opened from any tab, not only the one currently on screen, so
+  // this can no longer be read off fileOpen. tabmenuBtn is tracked so
+  // closeTabmenu() resets the right chevron's aria-expanded when several
+  // exist, and so a click on a different tab's chevron while a menu is
+  // already open switches the menu rather than just closing it.
+  var tabmenuFile = null;
+  var tabmenuBtn  = null;
   // filename -> the MIME type the browser reported when the bytes last
   // arrived from this computer (upload or Replace…). The server has no
   // reliable way to know a file's type, so this only ever holds an entry for
@@ -16025,11 +16057,16 @@
     var refs = fileRefMap();
     var name = tabLabel();
     var composeActive = fileOpen === null;
+    // A <div>, not a <button> — it now carries a real <button> of its own
+    // (the per-file chevron below), and a button inside a button is invalid
+    // (same reasoning as .staxx-ca-card elsewhere in this file). tabindex
+    // and the Enter/Space handler below stand in for what a real button
+    // would give for free.
     var rows = [
-      '<button type="button" class="staxx-tab" role="tab" data-file="" ' +
+      '<div class="staxx-tab" role="tab" tabindex="0" data-file="" ' +
         'aria-selected="' + (composeActive ? 'true' : 'false') + '" title="' + esc(name) + '">' +
-        '<span class="staxx-tab-name">' + esc(name) + '</span>' + tabDotHtml('') + '</button>' +
-        (composeActive ? tabMenuBtnHtml() : '')
+        '<span class="staxx-tab-name">' + esc(name) + '</span>' + tabDotHtml('') +
+        tabMenuBtnHtml('') + '</div>'
     ];
 
     for (var i = 0; i < FILES.length; i++) {
@@ -16058,10 +16095,10 @@
       }
 
       rows.push(
-        '<button type="button" class="' + cls + '" role="tab" data-file="' + esc(f.name) + '" ' +
+        '<div class="' + cls + '" role="tab" tabindex="0" data-file="' + esc(f.name) + '" ' +
           'aria-selected="' + (active ? 'true' : 'false') + '" title="' + esc(title) + '">' +
-          '<span class="staxx-tab-name">' + esc(f.name) + '</span>' + tabDotHtml(f.name) + '</button>' +
-          (active ? tabMenuBtnHtml() : '')
+          '<span class="staxx-tab-name">' + esc(f.name) + '</span>' + tabDotHtml(f.name) +
+          tabMenuBtnHtml(f.name) + '</div>'
       );
     }
 
@@ -16427,11 +16464,26 @@
         // listener below would see this same click and close what it just
         // opened.
         event.stopPropagation();
-        if (tabmenuOpen()) closeTabmenu(); else openTabmenu(menuBtn);
+        // Every tab carries its own chevron now, so a click can land on one
+        // while another tab's menu is already open — toggle only when it is
+        // the SAME chevron; otherwise switch the menu to the new one.
+        if (tabmenuOpen() && tabmenuBtn === menuBtn) closeTabmenu();
+        else openTabmenu(menuBtn, menuBtn.dataset.file === '' ? null : menuBtn.dataset.file);
         return;
       }
       var btn = event.target.closest('.staxx-tab');
       if (btn) openFile(btn.dataset.file || '');
+    });
+    // .staxx-tab is a <div role="tab">, not a real button (see renderTabs()),
+    // so it needs Enter/Space wired up by hand — same idiom the Community
+    // Applications card list uses for the same reason further up this file.
+    tabsBar.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target.closest('.staxx-tab-menubtn')) return;   // a real button — handles its own activation
+      var tab = event.target.closest('.staxx-tab');
+      if (!tab) return;
+      if (event.key === ' ') event.preventDefault();   // stop the strip scrolling
+      openFile(tab.dataset.file || '');
     });
   }
 
@@ -16443,18 +16495,25 @@
     if (openBtn) openFile(openBtn.dataset.openFile);
   });
 
-  /* ---- the active tab's menu: Rename, Delete, Download -----------------
+  /* ---- the file menu: Rename, Delete, Download --------------------------
    *
-   * One menu, for whichever tab is active — a menu on a tab you are not
-   * looking at would act on a file you cannot see. Modelled on the Outline
-   * button and #staxx-outline (openOutline()/closeOutline() above), not
-   * on #staxx-menu: that one lives outside this <dialog>, and a dialog
-   * opened with showModal() paints in the top layer above anything outside
-   * it, so it would be invisible here regardless of z-index.
+   * One shared panel, but opened from any tab's own chevron now (PLAN_172)
+   * — a single chevron beside whichever tab happened to be active used to
+   * act on "the current file", which read as belonging to the strip rather
+   * than to a file. tabmenuFile/tabmenuBtn above record which file and
+   * which chevron opened it, since that is no longer always fileOpen.
+   * Modelled on the Outline button and #staxx-outline (openOutline()/
+   * closeOutline() above), not on #staxx-menu: that one lives outside this
+   * <dialog>, and a dialog opened with showModal() paints in the top layer
+   * above anything outside it, so it would be invisible here regardless of
+   * z-index.
    */
 
-  function tabMenuBtnHtml() {
-    return '<button type="button" class="staxx-chevron staxx-tab-menubtn" ' +
+  // file is the tab's own filename ('' for the compose tab, matching
+  // data-file on the tab itself) — baked into the button so a click always
+  // knows which file it belongs to, never "whichever file is open".
+  function tabMenuBtnHtml(file) {
+    return '<button type="button" class="staxx-chevron staxx-tab-menubtn" data-file="' + esc(file) + '" ' +
            'aria-haspopup="menu" aria-expanded="false" title="' + esc('File options') + '">' +
            '<i class="fa fa-chevron-down" aria-hidden="true"></i></button>';
   }
@@ -16467,15 +16526,16 @@
     if (!tabmenuOpen()) return;
     tabmenuPanel.hidden = true;
     tabmenuPanel.innerHTML = '';
-    var btn = tabsBar && tabsBar.querySelector('.staxx-tab-menubtn');
-    if (btn) btn.setAttribute('aria-expanded', 'false');
+    if (tabmenuBtn) tabmenuBtn.setAttribute('aria-expanded', 'false');
+    tabmenuBtn = null;
+    tabmenuFile = null;
   }
 
   // The compose tab's own menu offers Download only — renaming it would
   // change which file compose runs, and deleting it deletes the stack, so
   // both are said plainly rather than shown as two items nobody can use.
   function tabmenuItemsHtml() {
-    if (fileOpen === null) {
+    if (tabmenuFile === null) {
       return '<div class="staxx-tabmenu-note">Renaming or deleting this file would change ' +
              'which file compose runs, or delete the stack — do either from the stack list ' +
              'instead.</div>' +
@@ -16495,8 +16555,10 @@
   // the active tab can be anywhere along a strip that scrolls sideways, so
   // there is nothing fixed here to hang a CSS-only position off, unlike
   // #staxx-outline's own button.
-  function openTabmenu(btn) {
+  function openTabmenu(btn, file) {
     if (!tabmenuPanel) return;
+    tabmenuFile = file;
+    tabmenuBtn  = btn;
     tabmenuPanel.innerHTML = tabmenuItemsHtml();
     tabmenuPanel.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
@@ -16574,7 +16636,7 @@
   }
 
   function renameFile() {
-    var name = fileOpen;
+    var name = tabmenuFile;   // the file whose chevron opened this menu, not necessarily the open tab
     if (name === null) return;   // the compose tab has no Rename item
 
     askText('Rename file', 'Rename "' + name + '" to', name).then(function (to) {
@@ -16605,11 +16667,12 @@
     });
   }
 
-  // Deletes the file on the active tab, through #staxx-confirm either way —
-  // a file nothing references gets the short one-line question, a file the
-  // compose file DOES reference gets the longer warning below.
+  // Deletes the file whose chevron opened this menu — not necessarily the
+  // open tab, now that every tab carries its own — through #staxx-confirm
+  // either way: a file nothing references gets the short one-line question,
+  // a file the compose file DOES reference gets the longer warning below.
   function deleteFile() {
-    var name = fileOpen;
+    var name = tabmenuFile;
     if (name === null) return;   // the compose tab has no Delete item
 
     function go() {
@@ -16678,13 +16741,21 @@
     }
   }
 
-  // The compose file's own text is already on screen, so that tab downloads
-  // it with no round trip. A companion file is not necessarily loaded —
-  // read() it fresh, so Download works for a file that is not the one open.
+  // The compose file's own text is already on screen when its tab is the
+  // one open, so that case downloads it with no round trip. But its chevron
+  // can now be used while a companion tab is open too — currentText() would
+  // then hold the companion's text, not the compose file's, so that case
+  // reads the compose text back out of fileStash, where it was set aside
+  // when the companion was opened. A companion file is not necessarily
+  // loaded at all — read() it fresh, so Download works for a file that is
+  // not the one open either.
   function downloadFile() {
-    if (fileOpen === null) { triggerDownload(tabLabel(), currentText()); return; }
+    if (tabmenuFile === null) {
+      triggerDownload(tabLabel(), fileOpen === null ? currentText() : fileStash);
+      return;
+    }
 
-    var name = fileOpen;
+    var name = tabmenuFile;
     call('file-read', { name: openedName, file: name }).then(function (res) {
       if (!res || !res.ok) {
         setYamlStatus((res && res.error) || ('Could not read "' + name + '".'));
@@ -18275,39 +18346,6 @@
     paintFailure(rows, verb);
   }
 
-  // PLAN_151 — same shape as paintFailure()/markFailed() just above, for a
-  // job this page lost track of rather than one the server reported as
-  // failing. Reuses the fail pill's own class and specificity trick (see the
-  // .staxx-scaffold .staxx-pill rules in staxx.css), so the colour still says
-  // something went wrong. The mark is what separates the two now that neither
-  // carries words: a warning triangle for a job that reported its own
-  // failure, a question for one whose outcome this page never learnt
-  // (PLAN_167 — colour is how much it wants from you, the mark is what it is
-  // about, so the same red can carry both).
-  function paintAbandoned(rows) {
-    rows.forEach(function (row) {
-      row.dataset.failed = '1';
-      var td = row.querySelector('[data-cell="state"]');
-      if (td) {
-        td.innerHTML = '<button type="button" class="staxx-pill staxx-pill--fail" ' +
-          'title="This page lost track of the job. Click to see its log.">' +
-          '<span class="staxx-chipmark" data-mark="question" aria-hidden="true"></span>' +
-          '<span class="staxx-chiptext"></span></button>';
-        // Same reason as setBusy()/paintFailure(): the record has to go or a
-        // later state matching what was last painted here would be skipped.
-        td.staxxTxt = '';
-      }
-    });
-  }
-
-  function markAbandoned(rows, verb, job) {
-    rows.forEach(function (row) {
-      var key = rowKey(row);
-      if (key) rowFailures[key] = { verb: verb, job: job, abandoned: true };
-    });
-    paintAbandoned(rows);
-  }
-
   // Clears a row's marker, on screen and in the map — called both when a new
   // run starts on the row (setBusy, below: trying again answers the old
   // failure) and when the marker itself is clicked (acknowledged).
@@ -18325,11 +18363,7 @@
       var rows = rowsForKey(key);
       if (!rows.length) return;
       var record = rowFailures[key];
-      // PLAN_151 — an abandoned job's marker (see markAbandoned() below)
-      // shares this same map and has to be repainted with its own wording,
-      // not the ordinary failure pill's.
-      if (record.abandoned) paintAbandoned(rows);
-      else paintFailure(rows, record.verb);
+      paintFailure(rows, record.verb);
     });
   }
 
@@ -19025,19 +19059,17 @@
   }
 
   // The backstop itself: the page can no longer say what happened to this
-  // job, so the row says exactly that — plainly, and with the log offered —
-  // rather than quietly going on showing "Starting…" (or whatever busy
-  // label it last painted) for good. See markAbandoned()/paintAbandoned()
-  // below for the marker itself, which reuses the sticky failure pill's
-  // look: this is not a new kind of thing for a person to learn, just a
-  // different reason the row stopped believing its own busy state.
+  // job, so the row stops sitting on "Starting…" (or whatever busy label it
+  // last painted) for good — clearBusy() lets the next ordinary state poll
+  // paint what the container is actually doing. PLAN_167/PLAN_168 decision C:
+  // no marker is drawn here any more, because the job may well have finished
+  // cleanly and red would say "broken" about a row that is not.
   function abandonJob(job) {
     var entry = jobs[job];
     if (!entry) return;   // already finished normally — a stale timer firing after that is moot, not a bug
     delete jobs[job];
     Object.keys(rowJobs).forEach(function (key) { if (rowJobs[key] === job) delete rowJobs[key]; });
     clearBusy(entry.rows);
-    markAbandoned(entry.rows, entry.verb, job);
     persistJobs();
     stopTickerIfIdle();
   }
@@ -19514,6 +19546,141 @@
     // identically.
     watch:    { cls: 'staxx-updatepill--waiting',  mark: 'page'     }
   };
+
+  /* PLAN_168 — the legend: what every chip on the page means, in a window of
+   * its own. Every row below is built from the same classes and data-mark
+   * names the rows themselves use (CHIP_LOOK just above, for the update
+   * column) rather than hand-written lookalike markup — a legend that can
+   * drift from the page is the exact fault this replaces. The pulse on the
+   * checked chip and the turning refresh mark on the busy chip are not
+   * reproduced here in script: PLAN_167 §9/§10's CSS rules are scoped to
+   * .staxx-scaffold, not to the grid, so the same classes inside this dialog
+   * already animate on their own.
+   *
+   * PLAN_168 decision C — the red "lost track of the job" chip is gone from
+   * the page (paintAbandoned() no longer draws it), so it has no row here
+   * either; a row that loses track of a job now shows its ordinary state.
+   */
+  var LEGEND_STATE = [
+    { tag: 'span', cls: 'staxx-pill staxx-pill--up', mark: 'play', text: '3',
+      desc: 'Running, and every check that exists says it is working — nothing to do. ' +
+        'The slow pulse is that check running and passing.' },
+    { tag: 'button', cls: 'staxx-pill staxx-pill--up staxx-pill--offer', mark: 'play', text: '',
+      desc: 'Running, but nothing checks it — press to see if StaXX can work a check out.' },
+    { tag: 'span', cls: 'staxx-pill staxx-pill--warn', mark: 'play', text: '2',
+      desc: 'Running, its own check has not finished deciding yet — give it a moment.' },
+    { tag: 'span', cls: 'staxx-pill staxx-pill--bad', mark: 'play', text: '1',
+      desc: 'Running, but the app inside says it is not working — worth a look.' },
+    { tag: 'span', cls: 'staxx-pill staxx-pill--down', mark: 'stop', text: '',
+      desc: 'Stopped, or never built from the file yet — start it when you are ready.' },
+    { tag: 'button', cls: 'staxx-pill staxx-pill--busy', mark: 'refresh', text: 'Starting…',
+      desc: 'A command you asked for is still running — wait, or press to watch it as it happens.' },
+    // PLAN_168 decision B — this mark and colour also mean "the update check
+    // keeps failing" and "templates left on flash", below; the hover text is
+    // what tells the three apart, so it is carried here too, not left off.
+    { tag: 'button', cls: 'staxx-pill staxx-pill--fail', mark: 'warn', text: '',
+      title: 'That command failed. Click to see what happened.',
+      desc: 'That command failed — press to read what happened.' }
+  ];
+
+  var LEGEND_UPDATE = [
+    { tag: 'button', cls: 'staxx-updatepill ' + CHIP_LOOK.update.cls, mark: CHIP_LOOK.update.mark, text: '1.2 → 1.3',
+      desc: 'A newer image has been published — update when you are ready.' },
+    { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.newbuild.cls, mark: CHIP_LOOK.newbuild.mark, text: '',
+      desc: 'The image moved under a build — rebuild when you are ready.' },
+    { tag: 'button', cls: 'staxx-pendingchip', mark: 'refresh', text: '',
+      desc: 'The compose file has moved on but the container has not caught up — restart to apply it.' },
+    { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.waiting.cls, mark: CHIP_LOOK.waiting.mark, text: 'in 3 days',
+      desc: 'An update is waiting, and why — nothing to do yet; the figure shown is when.' },
+    { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.notfound.cls, mark: CHIP_LOOK.notfound.mark, text: '',
+      desc: 'The image or its tag is gone from the registry — check the repository.' },
+    { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.watch.cls, mark: CHIP_LOOK.watch.mark, text: '2',
+      desc: 'The author’s own published example does things this file does not — open the stack to see what.' },
+    { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.failing.cls, mark: CHIP_LOOK.failing.mark, text: '',
+      title: 'Checking this image for updates keeps failing.',
+      desc: 'Checking this image for updates keeps failing — worth a look.' }
+  ];
+
+  var LEGEND_TOPBAR = [
+    { tag: 'span', cls: 'staxx-pill staxx-pill--down', mark: '', text: 'Checked 5 minutes ago',
+      desc: 'When the last update check ran — a quiet notice, nothing to do.' },
+    { tag: 'span', cls: 'staxx-pill staxx-pill--warn', mark: 'cloud', text: '3 updates waiting',
+      desc: 'How many updates are waiting across every stack — update when you are ready.' },
+    { tag: 'button', cls: 'staxx-pill staxx-pill--busy', mark: 'page', text: '2 author-example findings',
+      desc: 'How many of the author’s own example findings there are to look at — press to see them.' },
+    { tag: 'span', cls: 'staxx-pill staxx-pill--bad', mark: 'warn', text: '1 Unraid template to move',
+      title: 'Templates left in Unraid’s folder can rebuild the old container behind a taken-over stack. Open Settings to move them.',
+      desc: 'Unraid templates still on flash that can rebuild a taken-over container — open Settings to move them.' }
+  ];
+
+  // The five colours and what each says about how much a chip wants from
+  // you (PLAN_167 §2) — drawn once as a strip under the legend's title.
+  var LEGEND_COLOURS = [
+    { hex: '#3fb950', label: 'Green — working, nothing wanted' },
+    { hex: '#8b949e', label: 'Grey — at rest, nothing wanted' },
+    { hex: '#58a6ff', label: 'Blue — worth knowing, nothing to do now' },
+    { hex: '#f0a020', label: 'Amber — wants you, nothing is broken' },
+    { hex: '#f85149', label: 'Red — broken' }
+  ];
+
+  // One row's chip, built from the same three pieces every real chip is
+  // built from: the outer element and its class, the mark span, and the text
+  // span — a plain top-bar chip with no mark (the "when checked" notice)
+  // skips both spans and carries its words directly, matching paintUpdatesLine().
+  function legendChipHtml(row) {
+    var attrs = ' class="' + row.cls + '"';
+    if (row.title) attrs += ' title="' + esc(row.title) + '"';
+    var inner;
+    if (row.mark) {
+      inner = '<span class="staxx-chipmark" data-mark="' + row.mark + '" aria-hidden="true"></span>' +
+        '<span class="staxx-chiptext">' + esc(row.text || '') + '</span>';
+    } else {
+      inner = esc(row.text || '');
+    }
+    var tag = row.tag === 'button' ? 'button' : 'span';
+    return '<' + tag + (tag === 'button' ? ' type="button"' : '') + attrs + '>' + inner + '</' + tag + '>';
+  }
+
+  function legendSectionHtml(title, rows) {
+    var html = '<div class="staxx-legend-col"><h4>' + esc(title) + '</h4>';
+    rows.forEach(function (row) {
+      html += '<div class="staxx-legend-row">' + legendChipHtml(row) +
+        '<span class="staxx-legend-desc">' + esc(row.desc) + '</span></div>';
+    });
+    return html + '</div>';
+  }
+
+  var legendDlg   = document.getElementById('staxx-legend');
+  var legendBody  = document.getElementById('staxx-legend-body');
+  var legendBuilt = false;
+
+  // Built once, the first time the legend is opened — nothing in it changes
+  // between opens, so there is no reason to throw it away and rebuild it
+  // every time the way a data-driven dialog does.
+  function renderLegend() {
+    if (legendBuilt || !legendBody) return;
+    var html = '<div class="staxx-legend-colours">';
+    LEGEND_COLOURS.forEach(function (c) {
+      html += '<span class="staxx-legend-swatch">' +
+        '<span class="staxx-legend-swatch-dot" style="background:' + c.hex + '"></span>' +
+        esc(c.label) + '</span>';
+    });
+    html += '</div><div class="staxx-legend-columns">' +
+      legendSectionHtml('On a row — the state column', LEGEND_STATE) +
+      legendSectionHtml('On a row — the update column', LEGEND_UPDATE) +
+      legendSectionHtml('Along the top of the list', LEGEND_TOPBAR) +
+      '</div>';
+    legendBody.innerHTML = html;
+    legendBuilt = true;
+  }
+
+  // The one way in from anywhere on the page — the toolbar button and the
+  // row menu item both call this rather than each building the dialog.
+  function openLegend() {
+    if (!legendDlg) return;
+    renderLegend();
+    if (!legendDlg.open) legendDlg.showModal();
+  }
 
   // `source` is a stranger's text, off a registry label — opened only when
   // it looks like a genuine link, never handed to window.open() on trust.
@@ -20308,9 +20475,13 @@
     updatesLine.innerHTML = '';
     updatesLine.hidden = false;
 
+    // PLAN_167 §11 — grey, no mark, ever: a quiet notice in all three states
+    // (checked, never checked, could not finish), never the red --bad this
+    // used to switch to. Nothing here is broken in a way the person must act
+    // on, and red is reserved for that.
     var checked = !!(summary && summary.checked);
     var when = document.createElement('span');
-    when.className = 'staxx-pill ' + (checked && summary.ok ? 'staxx-pill--down' : 'staxx-pill--bad');
+    when.className = 'staxx-pill staxx-pill--down';
     when.textContent = !checked
       ? 'Never checked'
       : (summary.ok ? 'Checked ' + timeAgoWords(summary.checked) + ' ago' : 'Could not finish the last check');
@@ -20329,27 +20500,23 @@
       updatesLine.appendChild(updates);
     }
 
-    if (checked) {
-      if (summary.watchReason) {
-        var reasonChip = document.createElement('span');
-        reasonChip.className = 'staxx-pill staxx-pill--bad';
-        reasonChip.textContent = 'Author-example report unavailable';
-        reasonChip.title = summary.watchReason;
-        updatesLine.appendChild(reasonChip);
-      } else if (summary.watch) {
-        var w = summary.watch;
-        var findingsBtn = document.createElement('button');
-        findingsBtn.type = 'button';
-        findingsBtn.className = 'staxx-pill staxx-pill--busy';
-        // The document mark the rows wear for the same subject — an author's
-        // own published example (PLAN_167 §4). The dashed outline it already
-        // has stays: the bar's colours are its own.
-        findingsBtn.innerHTML = '<span class="staxx-chipmark" data-mark="page" aria-hidden="true"></span>' +
-          '<span class="staxx-chiptext">' +
-          esc(w + (w === 1 ? ' author-example finding' : ' author-example findings')) + '</span>';
-        findingsBtn.addEventListener('click', openWatchReport);
-        updatesLine.appendChild(findingsBtn);
-      }
+    // PLAN_167 §11 / PLAN_168 decision C — when the author-example report
+    // cannot be built, the bar says nothing about it rather than showing a
+    // red "unavailable" chip; summary.watchReason still carries why, for
+    // whoever goes looking on the settings page or in the log.
+    if (checked && summary.watch) {
+      var w = summary.watch;
+      var findingsBtn = document.createElement('button');
+      findingsBtn.type = 'button';
+      findingsBtn.className = 'staxx-pill staxx-pill--busy';
+      // The document mark the rows wear for the same subject — an author's
+      // own published example (PLAN_167 §4). The dashed outline it already
+      // has stays: the bar's colours are its own.
+      findingsBtn.innerHTML = '<span class="staxx-chipmark" data-mark="page" aria-hidden="true"></span>' +
+        '<span class="staxx-chiptext">' +
+        esc(w + (w === 1 ? ' author-example finding' : ' author-example findings')) + '</span>';
+      findingsBtn.addEventListener('click', openWatchReport);
+      updatesLine.appendChild(findingsBtn);
     }
   }
 
@@ -22182,13 +22349,9 @@
     openSettings('staxx-setting-spend-readout');
   });
 
-  document.getElementById('staxx-add').addEventListener('click', function () {
-    openEditor('', '', true, '');
-  });
-
-  document.getElementById('staxx-apps').addEventListener('click', caOpen);
-
-  document.getElementById('staxx-import').addEventListener('click', importOpen);
+  // Add a blank stack, From Apps and Import now live inside buildAddMenu()
+  // (PLAN_173) — the toolbar's own #staxx-add-btn opens that through the
+  // shared #staxx-menu rather than each keeping its own click listener.
 
   document.getElementById('staxx-modal-close').addEventListener('click', function () {
     confirmDiscard().then(function (go) { if (go) closeEditor(); });
@@ -22211,6 +22374,26 @@
     });
   }
 
+  // PLAN_168 — the legend. Escape is <dialog>'s own native behaviour and
+  // needs nothing here; the cross and the outside-click use the same recipe
+  // as the log dialog just above.
+  var legendBtn = document.getElementById('staxx-legend-btn');
+  if (legendBtn) legendBtn.addEventListener('click', openLegend);
+
+  var legendCloseBtn = document.getElementById('staxx-legend-close');
+  if (legendCloseBtn) legendCloseBtn.addEventListener('click', function () {
+    if (legendDlg) legendDlg.close();
+  });
+
+  if (legendDlg) {
+    legendDlg.addEventListener('click', function (event) {
+      if (event.target !== legendDlg) return;
+      var r = legendDlg.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) legendDlg.close();
+    });
+  }
+
   // A short server error, not real command output, so it reads as prose in
   // the same notice dialog every other plain message uses (card 01a08d0b) —
   // openLogDialog()'s monospace box stays for genuine output (job logs,
@@ -22225,9 +22408,7 @@
   // that no longer resolves to anything has to say that plainly rather than
   // opening on an empty box.
   function openJobOutput(record) {
-    var title = record
-      ? (record.abandoned ? 'Lost touch with this job' : (FAIL_LABEL[record.verb] || 'Output'))
-      : 'Output';
+    var title = record ? (FAIL_LABEL[record.verb] || 'Output') : 'Output';
     if (!record || !record.job) {
       openLogDialog(title, 'There is nothing more to show for this.');
       return;
@@ -27647,6 +27828,7 @@
     // a menu is even open — every click on the page goes through here. Doing
     // nothing when there is nothing to close is what makes that safe.
     if (menu.hidden) return;
+    addMenuCancelClose();   // a click/pick/Escape close must drop any pending hover timer
     menuFlush();
     // Read before anything below moves it: only when the menu itself still
     // held focus does closing it give focus back to the trigger — otherwise
@@ -28206,12 +28388,10 @@
     if (hasFile) addUpdatePolicyMenuItems(name, '');
     addProfilesMenuItems(d, name);
 
-    // Same window.open() pattern as "What changed" above — an outward link,
-    // not an action, so it sits with the informational items rather than
-    // among the run/stop/update verbs.
-    menuItem('What do these marks mean?', 'question-circle', function () {
-      window.open('https://github.com/quadcom/Staxx/blob/main/docs/guide/marks.md', '_blank', 'noopener');
-    });
+    // PLAN_168 — used to send the reader to docs/guide/marks.md on GitHub,
+    // leaving the page to read an answer about the page. Opens the legend
+    // instead, chips still visible behind it.
+    menuItem('What do these marks mean?', 'question-circle', openLegend);
 
     menuSeparator();
     menuItem('Remove stack', 'trash-o', function () { removeStack(name, label); }, { danger: true });
@@ -28454,6 +28634,66 @@
         });
       });
     }, { danger: true });
+  }
+
+  /* PLAN_173 — the toolbar's `+ Add ▾` button. Five routes into the same
+   * result (a stack, or the folder one goes in), folded under one menu
+   * rather than five buttons. Every item calls exactly what its old button
+   * called; this only changes where the click starts. No head text, so
+   * openMenu()'s `menuHead.textContent = d.label` prints the button's own
+   * "Add" rather than leaving the bar blank.
+   */
+  function buildAddMenu() {
+    menuItem('Add a blank stack', 'plus', function () { openEditor('', '', true, ''); });
+    menuItem('From Apps', 'th', caOpen);
+    menuItem('Import', 'download', importOpen);
+    menuItem('New folder', 'folder', function () { askNewFolder(); });
+
+    // Same refusal a disabled row-menu item shows elsewhere (opts.disabled
+    // plus a hint explaining why) rather than a dead click — merging needs
+    // something to merge, and (mergeNarrowQuery, declared further down but
+    // already live by the time anyone can click this) no small version of
+    // the wizard exists, which used to be why its own toolbar button simply
+    // vanished below 990px rather than opening something broken.
+    var stackCount = document.querySelectorAll('[data-menu="stack"]').length;
+    var narrow = !!(typeof mergeNarrowQuery !== 'undefined' && mergeNarrowQuery && mergeNarrowQuery.matches);
+    var mergeWhy = narrow ? 'The window is too narrow for the merge wizard.'
+                 : stackCount < 2 ? 'Needs at least two stacks to merge.' : '';
+    menuItem('Merge stacks…', 'compress', mergeOpen, { disabled: !!mergeWhy, hint: mergeWhy });
+  }
+
+  // PLAN_173 — the Add menu is sticky: the pointer leaving the button (to
+  // cross the few pixels of gap down to the menu) must not close it, but
+  // wandering off elsewhere still should, after a second nobody came back.
+  // Scoped to `menuTrigger === addBtn` throughout so this never reaches into
+  // a folder, stack or container menu — none of those close on hover, only
+  // on an outside click, a pick, or Escape, and that stays true here.
+  var addBtn           = document.getElementById('staxx-add-btn');
+  var addMenuCloseTimer = null;
+
+  function addMenuCancelClose() {
+    if (addMenuCloseTimer) { clearTimeout(addMenuCloseTimer); addMenuCloseTimer = null; }
+  }
+
+  function addMenuScheduleClose() {
+    addMenuCancelClose();
+    addMenuCloseTimer = setTimeout(function () {
+      addMenuCloseTimer = null;
+      if (menuTrigger === addBtn) closeMenu();
+    }, 1000);
+  }
+
+  if (addBtn) {
+    addBtn.addEventListener('mouseenter', addMenuCancelClose);
+    addBtn.addEventListener('mouseleave', function () {
+      if (menuTrigger === addBtn) addMenuScheduleClose();
+    });
+    menu.addEventListener('mouseenter', function () {
+      if (menuTrigger === addBtn) addMenuCancelClose();
+    });
+    menu.addEventListener('mouseleave', function () {
+      if (menuTrigger === addBtn) addMenuScheduleClose();
+    });
   }
 
   // PLAN_65 phase D — folderRun()'s "Start everything" is the other route to
@@ -29420,6 +29660,7 @@
     menuHead.textContent = d.label || '';
     if (d.menu === 'folder') buildFolderMenu(d);
     else if (d.menu === 'container') buildContainerMenu(trigger);
+    else if (d.menu === 'add') buildAddMenu();
     else buildStackMenu(d);
 
     // Show it before measuring — a hidden element has no size.
@@ -30472,10 +30713,9 @@
     if (state.chevron && state.chevron.isConnected) state.chevron.focus();
   }
 
-  // Shares askNewFolder() with the New folder item on a stack's own menu — see
-  // there for why the naming box is always this button's.
-  var addFolderBtn = document.getElementById('staxx-add-folder');
-  addFolderBtn.addEventListener('click', function () { askNewFolder(); });
+  // New folder's own click now runs through buildAddMenu() (PLAN_173); see
+  // askNewFolder() above for why the naming box always anchors to the
+  // toolbar's Add button, whichever menu item actually asked for it.
 
   /* -------------------------------------------------------------- wiring -- */
 
@@ -32169,7 +32409,6 @@
    * =====================================================================
    */
 
-  var mergeBtn   = document.getElementById('staxx-merge-btn');
   var mergeModal = document.getElementById('staxx-merge-modal');
 
   var MERGE_STEP_LABELS = [
@@ -32804,7 +33043,9 @@
     // threw them all away (Adrian, 2026-09-16). Cancel and Escape remain.
   }
 
-  if (mergeBtn) mergeBtn.addEventListener('click', mergeOpen);
+  // Merge's own trigger is now the "Merge stacks…" item in buildAddMenu()
+  // (PLAN_173), which calls mergeOpen() directly rather than keeping a
+  // click listener on a toolbar button that no longer exists.
 
   var mergeCancelBtn = document.getElementById('staxx-merge-cancel');
   if (mergeCancelBtn) mergeCancelBtn.addEventListener('click', mergeClose);

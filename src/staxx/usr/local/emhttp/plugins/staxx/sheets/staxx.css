@@ -118,6 +118,26 @@
      separately-maintained 8.8rem literals agreeing with each other. */
   --staxx-graph-w: 8.8rem;
 
+  /* PLAN_157 decision 1 — the widths .staxx-namebox strings together before
+     the name text (grip, chevron, icon, the WebUI/Repo/Logs/CA block) and
+     the gaps between them, named here once so the "Stack" column heading
+     can add up the same total instead of a second, drifting copy of each
+     number. Every one of these already existed as a bare literal on its own
+     rule (.staxx-grip, .staxx-chevron, .staxx-icon, .staxx-rowactions,
+     .staxx-namebox, .staxx-iconwrap, .staxx-pill, .staxx-cell) — this block
+     does not change what any of them draws, it just gives the number a name
+     so it is declared once. Change a row element's size here and the
+     heading follows it; change it only on the row rule below and the
+     heading will drift again. */
+  --staxx-cell-pad-x: 0.8rem;    /* .staxx-stacks .staxx-cell's own left padding */
+  --staxx-grip-w: 2.4rem;        /* .staxx-grip */
+  --staxx-chevron-w: 2.4rem;     /* .staxx-chevron */
+  --staxx-icon-w: 4.4rem;        /* .staxx-icon */
+  --staxx-iconwrap-gap: 0.6rem;  /* .staxx-iconwrap's gap, between the tile and the WebUI/Repo/Logs/CA block */
+  --staxx-rowactions-w: 4.2rem;  /* .staxx-rowactions' own min-width */
+  --staxx-namebox-gap: 1rem;     /* .staxx-namebox's gap, between grip/chevron/iconwrap/name */
+  --staxx-pill-pad-x: 0.8rem;    /* .staxx-pill's own left padding */
+
   /* Full width. The page previously capped itself at 60rem and left most of a
      wide screen empty; prose is capped individually below instead, so long
      service lists get the room and paragraphs stay readable. */
@@ -376,6 +396,17 @@
 
 .staxx-ticker--bad .staxx-ticker-icon  { color: var(--sm-danger); }
 .staxx-ticker--good .staxx-ticker-icon { color: var(--sm-good); }
+
+/* Resting state (PLAN_171): nothing waiting, drawn quieter than any notice
+   rather than hidden — muted text, a faint border, no fill — using the
+   page's own tokens so it tracks the rest of the bar rather than a colour of
+   its own. Same button, same size, same place; only this modifier class,
+   the hidden mark and the text differ from a notice's own painting. */
+.staxx-scaffold button.staxx-ticker-btn.staxx-ticker-btn--resting {
+  border-color: var(--sm-hairline);
+  background: transparent;
+  color: var(--sm-muted);
+}
 
 /* The rolling text: two lines stacked in the same box, one sliding out as the
    other slides in — animateTickerText() in stacks.js toggles these two
@@ -653,6 +684,13 @@ div.title.staxx-has-titlebar {
 .staxx-scaffold .staxx-btn--danger:hover:not(:disabled) {
   border-color: var(--sm-danger);
   color: var(--sm-danger);
+}
+
+/* PLAN_168 — the legend button carries no label, so its icon has to read on
+   its own rather than lean on text beside it; white, as mocked, rather than
+   the same washed-out `inherit` every labelled button uses. */
+.staxx-scaffold .staxx-legend-btn {
+  color: #fff;
 }
 
 /* The pause switch, once pressed (PLAN_45 phase 4-8) — filled in like
@@ -999,8 +1037,8 @@ div.title.staxx-has-titlebar {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 4.4rem;
-  height: 4.4rem;
+  width: var(--staxx-icon-w);
+  height: var(--staxx-icon-w);
   border: 0.1rem solid var(--sm-hairline);
   border-radius: 0.8rem;
   background: var(--sm-fill);
@@ -1312,7 +1350,7 @@ div.title.staxx-has-titlebar {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--staxx-iconwrap-gap);
   flex: 0 0 auto;
 }
 
@@ -1347,7 +1385,7 @@ div.title.staxx-has-titlebar {
      size everywhere and the names line up down the column. Wide enough for
      "WebUI" at 1.1rem; min- rather than a flat width so a longer translation
      grows the box instead of spilling out of it. */
-  min-width: 4.2rem;
+  min-width: var(--staxx-rowactions-w);
 }
 
 /* Added by PHP to every row, stack and service alike, because both carry all
@@ -1497,7 +1535,7 @@ div.title.staxx-has-titlebar {
      toggle beside it away from the name itself — pinning both to the top
      keeps the name where it always was. */
   align-items: flex-start;
-  gap: 1rem;
+  gap: var(--staxx-namebox-gap);
   min-width: 0;
   padding-left: calc(var(--sm-indent-base, 0rem) + var(--sm-indent-step, 0rem));
 }
@@ -1729,7 +1767,7 @@ div.title.staxx-has-titlebar {
  * does nothing on a grid item, and alignment here is already align-items'
  * job, immediately above. */
 .staxx-stacks .staxx-cell {
-  padding: 0.7rem 0.8rem;
+  padding: 0.7rem var(--staxx-cell-pad-x);
   text-align: left;
   word-break: break-word;
 }
@@ -1766,9 +1804,10 @@ div.title.staxx-has-titlebar {
 }
 
 /* The header row's bold weight, same idea as the two grids below and scoped
-   the same way. Centred rather than left, so a heading still sits over its
-   figures once the ~130rem fold below packs cpu/mem/net/gpu into a 2x2
-   block of centred numbers underneath it.
+   the same way. Centred is still the default here, right for the four stat
+   headings (CPU/Memory/Network/GPU stay centred over their figures — PLAN_157
+   decision 1) — Stack, Services, State and Address each override it below to
+   sit over their own column's left edge instead.
 
    PLAN_121 item 5: the rule-off used to live here, on every heading
    individually — harmless while every heading ran the same width, but once
@@ -1788,11 +1827,67 @@ div.title.staxx-has-titlebar {
   border-bottom: 0.1rem solid var(--sm-line);
 }
 
+/* PLAN_157 decision 1, measured live 2026-09-18: each of these three sits at
+   the left edge of what is underneath it rather than centred in its cell —
+   Services already did (below). Stack needs extra left padding to clear the
+   drag grip, chevron, icon tile and the WebUI/Repo/Logs/CA block that all sit
+   in front of the name in .staxx-namebox; State and Address do not, because
+   nothing sits in front of their content the way it does in the name cell. */
+.staxx-stacks [role="columnheader"].staxx-head--name,
+.staxx-stacks [role="columnheader"].staxx-head--services,
+.staxx-stacks [role="columnheader"].staxx-head--state,
+.staxx-stacks [role="columnheader"].staxx-head--address {
+  text-align: left;
+}
+
+/* The Stack heading's padding-left has to add up to the same distance
+   .staxx-namebox puts between the cell's own edge and the name text: the
+   indent a folder gives its stacks (--sm-indent-base, already an inherited
+   custom property — 0 here at the top of the page, 3.4rem inside a folder,
+   which is why this one rule serves both of staxx_header_row_html()'s two
+   call sites without needing two versions of itself), then the grip, then
+   the chevron, then the icon-and-links block, then the gap in front of the
+   name — each read from the same custom property the row's own rule uses
+   (see "PLAN_157" by --staxx-graph-w near the top of this file), so a widened
+   grip or a taller links block carries the heading with it instead of
+   leaving it behind. Longhand padding-left, not the padding shorthand: this
+   selector already has to out-specificity .staxx-stacks .staxx-cell's own
+   0.7rem 0.8rem below, and a longhand only overrides the one side it names —
+   which is why the cell's own left padding is added back in here rather than
+   assumed still present. */
+.staxx-stacks [role="columnheader"].staxx-head--name {
+  padding-left: calc(
+    var(--staxx-cell-pad-x) +
+    var(--sm-indent-base, 0rem) +
+    var(--staxx-grip-w) + var(--staxx-namebox-gap) +
+    var(--staxx-chevron-w) + var(--staxx-namebox-gap) +
+    var(--staxx-icon-w) + var(--staxx-iconwrap-gap) + var(--staxx-rowactions-w) +
+    var(--staxx-namebox-gap)
+  );
+}
+
+/* The State cell centres its chip (.staxx-cell--state, "The grid" section
+   above) rather than pinning it to the left, so — unlike the name column —
+   there is no fixed distance from the cell edge to the chip's left edge: it
+   moves with the chip's own width, which changes with how many digits or
+   pills a row is showing. This is the closest a static rule can get: the
+   cell's own left padding plus the pill's own left padding, which is where
+   the chip's text would start if the cell were left-aligned like Address is.
+   It will not track a chip that is wider or narrower than that plain case —
+   see PLAN_157's "Second pass" for why that was judged close enough rather
+   than reworked into a left-aligned cell. */
+.staxx-stacks [role="columnheader"].staxx-head--state {
+  padding-left: calc(var(--staxx-cell-pad-x) + var(--staxx-pill-pad-x));
+}
+
 /* Services is the odd one out: the service names in the rows beneath it are
    left-aligned (ordinary text, not a figure), so a centred heading floats
    above them instead of sitting over the column it names. Left it alone,
    same padding as every other cell, so the heading text lines up with the
-   first name below it. */
+   first name below it. Address is the same case: its content is plain text
+   with no left offset of its own, so the shared .staxx-cell padding these
+   two keep by not overriding padding-left is already where their content
+   starts. */
 .staxx-stacks [role="columnheader"].staxx-head--services {
   text-align: left;
 }
@@ -2311,8 +2406,8 @@ div.title.staxx-has-titlebar {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 2.4rem;
-  height: 2.4rem;
+  width: var(--staxx-chevron-w);
+  height: var(--staxx-chevron-w);
   border: 0;
   border-radius: 0.3rem;
   background: transparent;
@@ -2618,8 +2713,8 @@ div.title.staxx-has-titlebar {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 2.4rem;
-  height: 2.4rem;
+  width: var(--staxx-grip-w);
+  height: var(--staxx-grip-w);
   border: 0;
   border-radius: 0.3rem;
   background: transparent;
@@ -3091,22 +3186,52 @@ div.title.staxx-has-titlebar {
   /* The inline left/top are set right after `hidden = false`, for
      measurement, and only settle a moment later — opacity and translate do
      not collide with position, so the fade also covers up that brief
-     mis-placed instant at 0,0. */
+     mis-placed instant at 0,0.
+
+     PLAN_173 — the Add button's own menu is this same element, so its
+     approved opacity/translateY/scale animation is what every menu opened
+     here now plays. transform-origin sits top left because that is the
+     corner every trigger — a folder or stack icon, the Add button — opens
+     the menu from. */
   opacity: 1;
   translate: 0 0;
+  scale: 1;
+  transform-origin: top left;
   transition: opacity var(--sm-motion) var(--sm-ease),
               translate var(--sm-motion) var(--sm-ease),
+              scale var(--sm-motion) var(--sm-ease),
               display var(--sm-motion) allow-discrete;
 }
 
 .staxx-menu[hidden] {
   display: none;
   opacity: 0;
-  translate: 0 -0.4rem;
+  translate: 0 -0.6rem;
+  scale: 0.98;
 }
 
 @starting-style {
-  .staxx-menu { opacity: 0; translate: 0 -0.4rem; }
+  .staxx-menu { opacity: 0; translate: 0 -0.6rem; scale: 0.98; }
+}
+
+/* Someone who has asked for less movement gets the same fade with no slide
+   or shrink — the chip animations (PLAN_167 §9) follow the same rule. */
+@media (prefers-reduced-motion: reduce) {
+  .staxx-menu {
+    translate: 0 0;
+    scale: 1;
+    transition: opacity var(--sm-motion) var(--sm-ease),
+                display var(--sm-motion) allow-discrete;
+  }
+
+  .staxx-menu[hidden] {
+    translate: 0 0;
+    scale: 1;
+  }
+
+  @starting-style {
+    .staxx-menu { translate: 0 0; scale: 1; }
+  }
 }
 
 .staxx-menu-head {
@@ -3303,7 +3428,7 @@ div.title.staxx-has-titlebar {
    only thing that changes shape, not the box it sits in. */
 .staxx-pill {
   display: inline-block;
-  padding: 0.25rem 0.8rem;
+  padding: 0.25rem var(--staxx-pill-pad-x);
   border: 0.1rem solid transparent;
   border-radius: 1rem;
   background: var(--sm-fill-2);
@@ -3320,6 +3445,24 @@ div.title.staxx-has-titlebar {
   --chip: #3fb950;
   background: var(--chip);
   color: #fff;
+}
+
+/* PLAN_167 §9 — a running container nothing checks (--offer, pressable) and
+   a running container whose own health check is passing drew identically:
+   same green, same play mark, same count. Motion is the third axis that
+   tells them apart: the checked one pulses, the offer one does not. Both
+   keep their solid fill — the difference is only ever movement. :not(.staxx-
+   pill--offer) rather than a new class, since --offer already marks the one
+   that must stay still. */
+.staxx-scaffold .staxx-pill--up:not(.staxx-pill--offer) {
+  animation: staxx-checked-pulse 2s ease-out infinite;
+}
+
+@keyframes staxx-checked-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(63, 185, 80, .85); transform: scale(1); }
+  50% { transform: scale(1.04); }
+  70% { box-shadow: 0 0 0 .9rem rgba(63, 185, 80, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); transform: scale(1); }
 }
 
 .staxx-pill--down {
@@ -3353,6 +3496,33 @@ div.title.staxx-has-titlebar {
   border-color: var(--chip);
   background: transparent;
   color: var(--chip);
+}
+
+/* PLAN_167 §10 — only the busy chip's own refresh mark turns, and only while
+   its job is actually in flight: movement means something is live. The
+   "restart to apply" chip carries the same refresh mark but is a standing
+   state, so this is scoped to .staxx-pill--busy alone rather than to every
+   [data-mark="refresh"]. transform-origin is restated because the square
+   chipmark box (see .staxx-chipmark above) is what lets it turn true instead
+   of wobbling about an off-centre glyph. */
+.staxx-pill--busy .staxx-chipmark[data-mark="refresh"] {
+  animation: staxx-refresh-spin 1.6s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+@keyframes staxx-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* PLAN_167 §9/§10 — somebody who has asked for less movement gets neither
+   chip animation. The pulse's distinction then falls back to nothing; the
+   legend's wording carries it instead, which is acceptable. */
+@media (prefers-reduced-motion: reduce) {
+  .staxx-scaffold .staxx-pill--up:not(.staxx-pill--offer),
+  .staxx-pill--busy .staxx-chipmark[data-mark="refresh"] {
+    animation: none;
+  }
 }
 
 /* The sticky failure marker (PLAN_44 Part B4): coloured like --bad, since a
@@ -3541,12 +3711,22 @@ div.title.staxx-has-titlebar {
    (new build / rebuild ready) is drawn rather than a glyph — it is the one
    shape in the picked set, deliberately, so nothing in the font is asked
    for a mark it does not have. */
+/* PLAN_167 §10 — a mark's box used to be sized by its own glyph (the cloud
+   measured 11.3 x 10.5, every other mark slightly different), so a rotation
+   turned about the box's centre rather than the glyph's and wobbled. A
+   square box with the glyph centred both ways fixes that regardless of
+   which mark is spinning. */
 .staxx-chipmark {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  line-height: 1.15em;
+  vertical-align: middle;
   font-family: FontAwesome;
   font-style: normal;
   font-weight: 400;
-  line-height: 1;
 }
 .staxx-chipmark[data-mark="play"]::before { content: "\f04b"; }
 .staxx-chipmark[data-mark="stop"]::before { content: "\f04d"; }
@@ -7446,11 +7626,38 @@ div.title.staxx-has-titlebar {
   background: var(--sm-fill-0);
 }
 
-/* Same weight as the tab menu's own chevron above, not a full .staxx-btn —
-   these sit in a strip of tabs, not among the modal's main actions. */
-.staxx-tabstrip > .staxx-chevron {
+/* New file / Upload (PLAN_172) — a user hunted for these at the far right
+   of a wide window and never found them, so they sit at the LEFT of the
+   strip instead, ahead of the scrolling tab list. Orange glyph only: no
+   border and no fill (a bordered, filled mock was tried first and rejected
+   as too heavy for a tool-strip control). Sized well above .staxx-chevron
+   so they read as the strip's main controls, not more of its chrome. */
+.staxx-scaffold .staxx-filebtns {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   flex: 0 0 auto;
-  margin: 0 0.3rem;
+  margin-right: 0.6rem;
+}
+
+.staxx-scaffold .staxx-filebtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.9rem;
+  height: 2.9rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: #f0a020;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.staxx-scaffold .staxx-filebtn:hover {
+  color: #ffb84d;
+  background: transparent;
 }
 
 /* The tab menu panel below is positioned in pixels against whichever
@@ -7535,11 +7742,30 @@ div.title.staxx-has-titlebar {
   font-style: italic;
 }
 
-/* The chevron that opens the active tab's menu. Reuses .staxx-chevron,
-   the same small icon button the find bar's Previous/Next already are, so
-   this does not invent a fourth button look. */
+/* Each tab's own menu chevron (PLAN_172) — drawn by renderTabs() itself,
+   inside the tab, after the name and extension; one chevron acting on
+   whichever file happened to be open read as belonging to the strip, not to
+   a file. Reuses .staxx-chevron's shape but not its colour: orange, the
+   same #f0a020 as New file/Upload beside it. visibility rather than
+   display, so the space stays reserved and hovering across the strip does
+   not shuffle the tabs sideways as chevrons come and go. Shown on the open
+   tab; revealed by hover or keyboard focus on the rest, so the menu is not
+   mouse-only. */
 .staxx-scaffold .staxx-tab-menubtn {
-  margin: 0 0.3rem;
+  /* No margin — .staxx-tab's own flex gap already spaces it from the name. */
+  color: #f0a020;
+  visibility: hidden;
+}
+
+.staxx-scaffold .staxx-tab-menubtn:hover {
+  color: #ffb84d;
+  background: transparent;
+}
+
+.staxx-scaffold .staxx-tab[aria-selected="true"] .staxx-tab-menubtn,
+.staxx-scaffold .staxx-tab:hover .staxx-tab-menubtn,
+.staxx-scaffold .staxx-tab-menubtn:focus-visible {
+  visibility: visible;
 }
 
 /* Same visual family as .staxx-outline — opaque background, border,
@@ -11399,6 +11625,177 @@ dialog::backdrop {
   border-top: 0.1rem solid var(--sm-line);
 }
 
+/* ---- Legend --------------------------------------------------------------
+ *
+ * PLAN_168 — what every chip on the page means. Same recipe as .staxx-logdlg
+ * just above: own class, own :not([open]), ::backdrop and @starting-style.
+ * Width is min(1400px, 96vw) — at three columns that measured 445px tall
+ * with no scrolling on a 1918px-wide window (Adrian, 2026-09-18); below the
+ * 1330px card breakpoint the columns fall back to one and the dialog scrolls,
+ * matching the width chips themselves already collapse at.
+ */
+.staxx-legend {
+  width: min(140rem, 96vw);
+  max-height: 90vh;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: flex;
+  flex-direction: column;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-legend:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .staxx-legend[open] { opacity: 0; }
+}
+
+.staxx-legend::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-legend:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .staxx-legend[open]::backdrop { opacity: 0; }
+}
+
+.staxx-legend-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.2rem 1.4rem 0.8rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+.staxx-legend-title {
+  margin: 0 0 0.3rem;
+  font-size: 1.6rem;
+}
+
+.staxx-legend-sub {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+/* Same reset as .staxx-notice-close (PLAN_86): a single class outranks
+   Unraid's own button chrome via source order alone, which is fine here
+   since nothing more specific fights it on this dialog. */
+.staxx-scaffold .staxx-legend-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0.2rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-size: 1.4rem;
+  line-height: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-legend-close:hover,
+.staxx-scaffold .staxx-legend-close:focus-visible {
+  opacity: 1;
+}
+
+.staxx-legend-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 1.2rem 1.4rem 1.4rem;
+}
+
+.staxx-legend-colours {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem 1.6rem;
+  margin: 0 0 1.4rem;
+  padding-bottom: 1.2rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+.staxx-legend-swatch {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.1rem;
+}
+
+.staxx-legend-swatch-dot {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+}
+
+/* Three sections side by side so nothing scrolls at full width (Adrian: "I'm
+   trying to avoid having to scroll this panel, even that slight bit that it
+   needs scrolling") — one column below the same 1330px width every chip on
+   the page already falls back to a bare glyph at. */
+.staxx-legend-columns {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 2rem;
+}
+
+@media (max-width: 1330px) {
+  .staxx-legend-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.staxx-legend-col h4 {
+  margin: 0 0 0.8rem;
+  font-size: 1.2rem;
+}
+
+.staxx-legend-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+/* The chip itself must never shrink to make room for its own description —
+   that is what the description wrapping (below) is for. */
+.staxx-legend-row .staxx-pill,
+.staxx-legend-row .staxx-updatepill,
+.staxx-legend-row .staxx-pendingchip {
+  flex: 0 0 auto;
+}
+
+/* One column per row, not two (Adrian rejected a "what it means"/"what to
+   do" split): descriptions wrap onto a second line rather than widening the
+   box, which is what keeps three columns from needing horizontal scroll. */
+.staxx-legend-desc {
+  flex: 1 1 auto;
+  font-size: 1.1rem;
+  line-height: 1.35;
+}
+
 /* ---- Status and containers-by-stack tables ------------------------------
  *
  * Two small two-column tables — Environment's check/result list and the
@@ -11607,6 +12004,15 @@ dialog::backdrop {
   .staxx-stacks .staxx-stack-row .staxx-cell {
     padding-top: 0.9rem;
     padding-bottom: 0.9rem;
+  }
+
+  /* The icon grows to 5.2rem below (stack rows only), so the Stack heading's
+     own padding-left — built from --staxx-icon-w, see the PLAN_157 block near
+     --staxx-graph-w — has to grow with it or the heading falls 0.8rem short
+     of the name at this width. Scoped to .staxx-stacks, an ancestor of both
+     the icon and the heading cell, rather than repeated on either. */
+  .staxx-stacks {
+    --staxx-icon-w: 5.2rem;
   }
 
   /* 52px against the 44px every other .staxx-icon still uses — see the
@@ -12896,17 +13302,13 @@ dialog::backdrop {
    decides what a merge does, only how it is shown.
    ===================================================================== */
 
-/* The toolbar button: hidden at the same 990px line the stack table itself
-   drops to its narrow layout at, and the merge dialog fills the screen at
-   (see .staxx-modal's own 990px rule above) — the page changes character at
-   one point, not two. Written in pixels on purpose: a media query's rem is
-   the browser's 16px, not this sheet's 10px root, and rem here would land
-   the threshold somewhere else entirely (the same PLAN_128 trap the modal's
-   own comment records). No small version of this tool exists, so the
-   button is simply absent rather than disabled or explained. */
-@media (max-width: 990px) {
-  #staxx-merge-btn { display: none; }
-}
+/* PLAN_173 — Merge moved from its own toolbar button into "Merge stacks…"
+   inside the Add menu, so there is no button left to hide at the 990px line
+   the stack table itself drops to its narrow layout at. The item stays in
+   the menu at every width, disabled with a hint below 990px instead
+   (buildAddMenu() in stacks.js) — no small version of the wizard exists,
+   which is the same reason the old button simply vanished rather than
+   opening something broken. */
 
 /* ---- the dialog's own three bands: head, panes, foot ----
    .staxx-merge-modal carries .staxx-modal too, so the width/height/990px

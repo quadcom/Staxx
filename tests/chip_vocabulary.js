@@ -210,9 +210,235 @@ function checkMarksHaveGlyphs() {
   });
 }
 
+// ---------------------------------------------------------------------
+// Check 4 — the legend (PLAN_168) is a window onto the SAME chips the
+// grid draws, never hand-written lookalikes, and the red "broken" colour
+// is never paired again with the 'question' mark PLAN_168 decision C
+// retired.
+//
+// This is a text scan, so it checks what a text scan honestly can:
+//
+//   - every class and every mark a legend row (LEGEND_STATE, LEGEND_UPDATE,
+//     LEGEND_TOPBAR in stacks.js) uses is also found, as a literal, in the
+//     page's own chip-drawing code (StacksTable.php / stacks.js) OUTSIDE
+//     the legend's own three arrays — proof the legend did not invent a
+//     class or a mark of its own.
+//   - every such class and mark the page's own code draws is also present
+//     somewhere in the legend — proof nothing is shown on a row or in the
+//     top bar that the legend leaves out.
+//   - the 'question' mark belongs to exactly one meaning across the whole
+//     vocabulary, and that meaning's class is never one this suite can
+//     read off the stylesheet as red.
+//
+// What this does NOT cover, because a text scan cannot: whether a class
+// and a mark drawn together on one real row are the SAME pairing the
+// legend shows for that class — only that both independently appear
+// somewhere real. Genuinely checking the pairing would need the DOM the
+// code builds at runtime, not this file's text. A chip that reused an
+// already-legended class with a new, undocumented mark could slip past
+// this suite.
+// ---------------------------------------------------------------------
+
+// A hover-only addition to an existing chip's own meaning — "any of the
+// above with a danger border" (PLAN_168 §4) or a size tweak for the small
+// per-service pending chip — never a chip of its own, so it is excluded
+// from the "every page class is in the legend" comparison below, where it
+// would otherwise demand a legend row that could only ever repeat one
+// already there.
+var MODIFIER_CLASSES = {
+  'staxx-updatepill--noted': true,
+  'staxx-pendingchip--service': true
+};
+
+// Cuts the three legend arrays out of the JS source before it is scanned
+// for "what does the page itself draw" — without this, every legend class
+// and mark would trivially find itself, and Check 4 would prove nothing.
+function stripLegendArrays(src) {
+  return ['LEGEND_STATE', 'LEGEND_UPDATE', 'LEGEND_TOPBAR'].reduce(function (s, name) {
+    return s.replace(new RegExp('var\\s+' + name + '\\s*=\\s*\\[[\\s\\S]*?\\n\\s*\\];'), '');
+  }, src);
+}
+
+// Pulls the rows out of one LEGEND_* array. Each row is a flat object (no
+// row nests braces inside itself) in the fixed field order tag/cls/mark —
+// see the array literals themselves — so a row is read as everything
+// between "cls:" and "mark:" and between "mark:" and "text:", not parsed
+// as JavaScript. A row whose shape has changed is a FAILURE, not a skip.
+function readLegendRows(src, varName) {
+  var re = new RegExp('var\\s+' + varName + '\\s*=\\s*\\[([\\s\\S]*?)\\n\\s*\\];', 'm');
+  var m = re.exec(src);
+  if (!m) {
+    fail(JS_FILE + ': the "' + varName + ' = [...]" legend table was not found — has it moved or been renamed?');
+    return null;
+  }
+  var rows = [];
+  var rowRe = /\{[^{}]*\}/g, rm;
+  while ((rm = rowRe.exec(m[1]))) {
+    var text = rm[0];
+    var clsM  = /cls:\s*([^\n]*?),\s*mark:/.exec(text);
+    var markM = /mark:\s*([^\n]*?),\s*text:/.exec(text);
+    if (!clsM || !markM) {
+      fail(JS_FILE + ': a row in "' + varName + '" is not in the expected "cls: ..., mark: ..., text: ..." shape — has the legend row shape changed?');
+      continue;
+    }
+    rows.push({ varName: varName, clsExpr: clsM[1].trim(), markExpr: markM[1].trim() });
+  }
+  if (!rows.length) {
+    fail(JS_FILE + ': "' + varName + '" was found but no rows could be read out of it.');
+    return null;
+  }
+  return rows;
+}
+
+// A row's cls/mark field is either a plain string or a reference into
+// CHIP_LOOK ('staxx-updatepill ' + CHIP_LOOK.update.cls), joined with '+'
+// exactly the way the JS itself builds it — resolved here the same way,
+// against the jsLook table Check 1 already knows how to read.
+function resolveLegendExpr(expr, jsLook, varName, field) {
+  var parts = expr.split('+').map(function (s) { return s.trim(); });
+  var out = '', ok = true;
+  parts.forEach(function (p) {
+    var lit = /^'([^']*)'$/.exec(p);
+    var ref = new RegExp('^CHIP_LOOK\\.([A-Za-z_$][\\w$]*)\\.' + field + '$').exec(p);
+    if (lit) {
+      out += lit[1];
+    } else if (ref) {
+      if (!jsLook[ref[1]]) {
+        fail(JS_FILE + ': "' + varName + '" references CHIP_LOOK.' + ref[1] + '.' + field + ', which is not a meaning CHIP_LOOK defines.');
+        ok = false;
+      } else {
+        out += jsLook[ref[1]][field];
+      }
+    } else {
+      fail(JS_FILE + ': "' + varName + '" has a ' + field + ' expression this suite cannot read: "' + p + '" (expected a plain string or CHIP_LOOK.<meaning>.' + field + ').');
+      ok = false;
+    }
+  });
+  return ok ? out : null;
+}
+
+function collectVocabClasses(src, out) {
+  var re = /staxx-pill--[a-z]+|staxx-updatepill--[a-z]+|staxx-pendingchip(?:--[a-z]+)?/g, m;
+  while ((m = re.exec(src))) out[m[0]] = true;
+}
+
+function checkLegendVocabulary() {
+  var phpSrc = readFile(PHP_FILE);
+  var jsSrc  = readFile(JS_FILE);
+  var cssSrc = readFile(CSS_FILE);
+  if (phpSrc === null || jsSrc === null || cssSrc === null) return;
+
+  var jsLook = readChipLook(jsSrc, JS_FILE);
+  if (!jsLook) return;
+
+  var stateRows  = readLegendRows(jsSrc, 'LEGEND_STATE');
+  var updateRows = readLegendRows(jsSrc, 'LEGEND_UPDATE');
+  var topbarRows = readLegendRows(jsSrc, 'LEGEND_TOPBAR');
+  if (!stateRows || !updateRows || !topbarRows) return;
+
+  // Which classes count as red — read off the stylesheet itself, the same
+  // hex Check 2's PALETTE approves, rather than a second hard-coded list of
+  // class names that could drift from the CSS on its own.
+  var redClasses = {};
+  var blockRe = /([^{}]+)\{([^{}]*)\}/g, bm;
+  while ((bm = blockRe.exec(cssSrc))) {
+    if (!/--chip:\s*#f85149\b/i.test(bm[2])) continue;
+    var clsRe = /\.([\w-]+)/g, cm;
+    while ((cm = clsRe.exec(bm[1]))) redClasses[cm[1]] = true;
+  }
+  if (!Object.keys(redClasses).length) {
+    fail(CSS_FILE + ': no rule declaring "--chip: #f85149" was found — the red/question check has nothing to compare against.');
+    return;
+  }
+
+  var legendClasses = {}, legendMarks = {};
+
+  stateRows.concat(updateRows, topbarRows).forEach(function (row) {
+    var cls  = resolveLegendExpr(row.clsExpr, jsLook, row.varName, 'cls');
+    var mark = resolveLegendExpr(row.markExpr, jsLook, row.varName, 'mark');
+    if (cls === null || mark === null) return;
+
+    cls.split(/\s+/).filter(Boolean).forEach(function (token) {
+      if (token !== 'staxx-pill' && token !== 'staxx-updatepill') legendClasses[token] = true;
+    });
+    if (mark) legendMarks[mark] = true;
+
+    if (mark === 'question') {
+      cls.split(/\s+/).forEach(function (token) {
+        if (redClasses[token]) {
+          fail('a legend row in ' + row.varName + ' pairs the red class "' + token +
+               '" with the "question" mark — PLAN_168 decision C removed the red question chip; it must not come back.');
+        }
+      });
+    }
+  });
+
+  var jsStripped = stripLegendArrays(jsSrc);
+  var pageClasses = {}, pageMarks = {};
+  collectVocabClasses(phpSrc, pageClasses);
+  collectVocabClasses(jsStripped, pageClasses);
+  collectLiteralMarks(phpSrc, pageMarks);
+  collectLiteralMarks(jsStripped, pageMarks);
+
+  // The lookup tables' own values count as "drawn on the page" too, same as
+  // Check 3's reasoning: a class or mark assigned through $cls/$mark or
+  // CHIP_LOOK never has to appear a second time as a literal to be real.
+  var phpCls = readPhpAssoc(phpSrc, 'cls', PHP_FILE);
+  if (phpCls) Object.keys(phpCls).forEach(function (k) { pageClasses[phpCls[k]] = true; });
+  Object.keys(jsLook).forEach(function (k) {
+    pageClasses[jsLook[k].cls] = true;
+    if (jsLook[k].mark) pageMarks[jsLook[k].mark] = true;
+  });
+
+  Object.keys(legendClasses).sort().forEach(function (cls) {
+    if (!pageClasses[cls]) {
+      fail('the legend draws a chip using class "' + cls + '", which this suite cannot find anywhere in the page\'s own chip-drawing code — drift, or a typo.');
+    }
+  });
+  Object.keys(legendMarks).sort().forEach(function (mark) {
+    if (!pageMarks[mark]) {
+      fail('the legend draws a chip marked "' + mark + '", which this suite cannot find anywhere in the page\'s own chip-drawing code — drift, or a typo.');
+    }
+  });
+  Object.keys(pageClasses).sort().forEach(function (cls) {
+    if (MODIFIER_CLASSES[cls]) return;
+    if (!legendClasses[cls]) {
+      fail('class "' + cls + '" is drawn somewhere on the page but no legend row uses it — the legend is missing a chip.');
+    }
+  });
+  Object.keys(pageMarks).sort().forEach(function (mark) {
+    if (!legendMarks[mark]) {
+      fail('mark "' + mark + '" is drawn somewhere on the page but no legend row uses it — the legend is missing a chip.');
+    }
+  });
+
+  // The direct decision-C check: 'question' has to mean exactly one thing
+  // across the whole vocabulary (blue, meaning "notfound" — the image or
+  // its tag is gone from the registry). A second meaning claiming the mark,
+  // red or otherwise, is exactly how the retired chip would sneak back in
+  // under a new name.
+  var phpMark = readPhpAssoc(phpSrc, 'mark', PHP_FILE);
+  var questionMeanings = [];
+  if (phpMark) {
+    Object.keys(phpMark).forEach(function (k) { if (phpMark[k] === 'question') questionMeanings.push(k); });
+  }
+  Object.keys(jsLook).forEach(function (k) {
+    if (jsLook[k].mark === 'question' && questionMeanings.indexOf(k) < 0) questionMeanings.push(k);
+  });
+  if (questionMeanings.length !== 1 || questionMeanings[0] !== 'notfound') {
+    fail('the "question" mark is used by meaning(s) [' + questionMeanings.join(', ') +
+         '] — PLAN_168 decision C says it means exactly one thing ("notfound": blue, the image or its tag ' +
+         'is gone from the registry). It has either drifted to a new meaning or gone missing.');
+  } else if (phpCls && redClasses[phpCls['notfound']]) {
+    fail('meaning "notfound" (the "question" mark) uses class "' + phpCls['notfound'] +
+         '", which this suite reads off the stylesheet as RED — PLAN_168 decision C retired the red question chip.');
+  }
+}
+
 checkTablesAgree();
 checkPalette();
 checkMarksHaveGlyphs();
+checkLegendVocabulary();
 
 warnings.forEach(function (w) { console.log('  warn  ' + w); });
 
