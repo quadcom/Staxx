@@ -35,6 +35,17 @@ manifest route worked at 1.1.0 — it was `v1.2.0` that was cut without running 
 the manifest naming a package nobody uploaded and still carrying 1.1.0's two checksums. That is the
 exact failure `publish.yml`'s agreement checks exist to make impossible.
 
+**A nightly build runs on its own every day and pushes to `dev`.** `nightly-dev.yml` fires on a
+schedule at 07:00 UTC — Adrian's 3am — stamps `staxx.plg` with a dated development version and
+commits that back to the branch. So `dev` gains a commit overnight that nobody wrote, and a push
+rejected as "behind its remote counterpart" in the morning is almost always that, not another person
+working in the branch. It touches only the manifest, so rebasing onto it is safe.
+
+The practical consequence: **whatever is on `dev` at 07:00 UTC is what that night's build ships**,
+and the changelog's Unreleased section becomes its release notes verbatim. Work pushed after a run
+waits for the next one. GitHub also disables a schedule trigger after 60 days with no repository
+activity, so after a long quiet spell it needs re-enabling by hand from the Actions tab.
+
 CI (`release.yml`) runs every gate on each push to `main` and `dev` and publishes nothing. It used
 to publish a rolling tarball of the deploy bundle; that was retired when `dev` became a real install
 channel, because it was the only thing that ever put `dev-install.sh` in front of the public. The two
