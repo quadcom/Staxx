@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20260918">
+<!ENTITY version              "00.05.00_dev20260919">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "14b70cd28b70ffb3778f91efd0a24bbb">
-<!ENTITY packageSHA256        "cd7806b6d408c5900872c7d74b1070d79cdcc79626cf80a4554481967ca26b6f">
+<!ENTITY packageMD5           "2ef523574df4b847340b4ca992e30081">
+<!ENTITY packageSHA256        "2fdb230a8f5fe878cb11123c5fe4f2990322aa515990c2d55ecd14fa7ef25133">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,16 @@
 >
 
 <CHANGES>
-###00.05.00_dev20260918
+###00.05.00_dev20260919
+- The count of how many stacks you have picked for a merge now sits at the top of the window beside the step names, where it stays in view however long the list of stacks is. It used to sit under the very last tile, out of sight unless you scrolled to the bottom.
+- A long stack name is shown in full when you pick stacks to merge. It wraps onto a second line inside its tile instead of being cut short with a trailing ….
+- The chips summarising the whole list along the top now carry the same mark as the rows they speak for — a cloud for updates ready to fetch, a document for the author's own published examples — while keeping their words and their own colours. The chip warning that Unraid templates are still on flash wears red and a warning triangle, because one left there can rebuild the old container and push a stack's own out days later.
+- Every chip on the stack list now speaks one language: its colour says how much it wants from you — green working, grey at rest, blue worth knowing, amber wants you, red broken — and its mark says what it is about. Teal, purple and yellow have gone, so four near-identical warm colours no longer mean four different things. The two chips that still carried words, a job running and a job that failed, now carry marks like everything beside them, and the chips summarising the whole list along the top keep plain words instead of borrowing the row look.
+- A chip the stack list has nothing to say with no longer sits in the top bar as an empty coloured circle. The chip counting Unraid templates still on flash was the one that showed it: with none left to move it stayed on screen with no number in it and a tooltip telling you to go and move them.
+- The stack's menu no longer runs off the edge of the window. The explanation under "Take over and start" was held to one line, which stretched the menu wide enough to push the folder list beside it off the screen; it now wraps.
+- The editor's footer no longer shows what looked like an empty notice with a close cross and nothing in it. That cross is the "Not now" beside the bar offering to look up a stack's details, and it now sits on the bar's own line where it belongs. That bar also stopped ending in "create it", which belongs to the bars that create a missing file or folder.
+- Fixed in 00.04.03: If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's file asks for. If they match it clears it away and carries on with your answer; if they do not, it shows you what differs, when that container was built and when the file last changed, and offers to use the stack's version, instead of sending you to Unraid's Docker page.
+- Fixed in 00.04.02: Taking over an Unraid container now also moves its template out of Unraid's template folder and off the Auto Update Applications list, because both that plugin and Appdata Backup rebuild containers from the templates on flash and were pushing the stack's own container out days later. Answering "It does not" puts both back. If you took stacks over before this version, the stack list asks once on first load whether to move the templates still on flash, and Settings lists and moves them at any time.
 - A merged stack no longer gets asked about wiring the wizard itself did. Every address the merge rewired to point at a sibling service is now recorded as a confirmed link, so the editor stops asking whether the two are related. And the new stack's own details are gathered from every source rather than the first one only: a description, category or link that only a later source carried now comes across, marked with where it came from, and a value you decline is kept in the merge summary instead of under a spare key in the file.
 - The Select tool gained two buttons: **Updates…** and **Notifications…** open a small window under the button row with the same controls the editor has, and apply your answer to every chosen stack at once.
 - With the .env tab open, clicking a setting that uses one of its variables now lights up the line in .env that defines it, the same way the compose file's lines light up.
@@ -50,6 +59,7 @@
 - The user guide now reads as a manual. Every page was rewritten to teach a feature step by step, without narrating how the screen reacts or why a thing was built as it was, and gained close-ups of the controls it points at.
 - Clicking a service's icon now opens the editor in the same split view as clicking the stack's own icon, scrolled to that service, instead of the form on its own.
 - A stack's untouched containers no longer read as "not created yet" after one of its services is updated. If the store had been moved, or the stack filed into a folder, the containers still carried the old location and were dropped from the row the moment a recreated sibling carried the new one. They were running all along; the row now says so.
+- The chips on folder and stack rows now say what they mean by colour and a small mark — a green play for running, an orange cloud for an update ready, a teal diamond for a new build, a blue clock for waiting, a red warning triangle for a failed check, a purple question mark for an image that cannot be found — with only a count or a version as text. On a narrower window they shrink to the mark alone. A stack that is up to date, built here or never checked shows no update chip at all. Everything the chips used to spell out is in the tooltip.
 - The Select tool's actions are no longer hidden at the foot of the list. Choose a stack or two and a row of buttons — Start, Stop, Restart, Check for updates, Update — slides open directly beneath the Select button, outlined so the two read as one piece. It appears only once something is chosen, and slides away again when nothing is.
 - A filled button's label no longer vanishes when you hover it. Select while choosing, and Pause updates while updates are paused, both turned their text the same colour as the button behind it.
 - The warning that live updates aren't connected now appears in the notices area beside the search box instead of as a bar across the top of the list.
@@ -503,7 +513,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20260918-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20260919-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
