@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20260919">
+<!ENTITY version              "00.05.00_dev20260920">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "2ef523574df4b847340b4ca992e30081">
-<!ENTITY packageSHA256        "2fdb230a8f5fe878cb11123c5fe4f2990322aa515990c2d55ecd14fa7ef25133">
+<!ENTITY packageMD5           "33cec7a5d84200f0b0f9a451f6b28b2f">
+<!ENTITY packageSHA256        "112f2e943e9f5a0d8e8c7ba7e37ae2b3648ba85770b88e6193521a122fb15080">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,18 @@
 >
 
 <CHANGES>
-###00.05.00_dev20260919
+###00.05.00_dev20260920
+- The column headings on the stack list now line up with what sits under them, instead of starting a little to the left of it.
+- A stack's menu now has a legend you can open without leaving the page, explaining every mark and colour used on the stack list.
+- The legend is also reachable from a button of its own at the top of the list, beside Select.
+- A container that checks its own health now looks different from one that nothing checks: the green chip breathes slowly while its check is passing. Both used to look identical.
+- The arrows on a chip turn while a command you asked for is actually running, so a job in flight is obvious at a glance.
+- A row no longer shows a red mark when the page simply lost track of a job — usually because you closed the tab while something was running. It shows what the container is really doing instead, since nothing was necessarily wrong.
+- The note saying when updates were last checked is always a quiet grey now, including when a check has never run or did not finish. The red "report unavailable" chip is gone: when that report cannot be built, the top of the list says nothing about it.
+- The space to the left of the search box is now always there, saying "Nothing needs your attention" when there is nothing to report and carrying the newest notice when there is. Pressing it still opens the full list.
+- Adding a file to a stack is much easier to find. The two controls are larger, orange, and sit at the left-hand end of the file row instead of the far right.
+- Every file in a stack now carries its own menu arrow beside its name, so renaming, downloading or deleting acts on the file you are pointing at rather than on whichever one happens to be open.
+- Five buttons at the top of the list became one. Add now opens a short menu holding a blank stack, Apps, Import, New folder and Merge.
 - The count of how many stacks you have picked for a merge now sits at the top of the window beside the step names, where it stays in view however long the list of stacks is. It used to sit under the very last tile, out of sight unless you scrolled to the bottom.
 - A long stack name is shown in full when you pick stacks to merge. It wraps onto a second line inside its tile instead of being cut short with a trailing ….
 - The chips summarising the whole list along the top now carry the same mark as the rows they speak for — a cloud for updates ready to fetch, a document for the author's own published examples — while keeping their words and their own colours. The chip warning that Unraid templates are still on flash wears red and a warning triangle, because one left there can rebuild the old container and push a stack's own out days later.
@@ -513,7 +524,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20260919-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20260920-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
