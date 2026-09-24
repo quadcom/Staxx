@@ -524,6 +524,71 @@ if ($protectedDigest === null) {
      !$removedHasIt, $protectedImage . ' ' . $protectedDigest);
 }
 
+/* --------------------------------------------- 10b. cleanup: the matcher -- */
+
+// staxx_update_cleanup_pick() proved directly against fabricated `docker
+// image ls --digests` text, so the fault this replaced — asking docker for a
+// repository by the hub-path key the keep-set is stored under, which lists
+// nothing for an image docker itself stores under a longer local name such
+// as lscr.io/linuxserver/plex — cannot creep back in unnoticed. No real
+// image, container or docker call is involved.
+$digestKept   = 'sha256:' . str_repeat('a', 64);
+$digestRemove = 'sha256:' . str_repeat('b', 64);
+$digestUsed   = 'sha256:' . str_repeat('c', 64);
+$digestLib    = 'sha256:' . str_repeat('e', 64);
+$digestIgnore = 'sha256:' . str_repeat('f', 64);
+$digestDedup  = 'sha256:' . str_repeat('7', 64);
+
+$idUsed = 'c3c3c3c3c3c3';
+
+// The key a docker.io row is expected to fall under is computed via the
+// function under test rather than hard-coded, so a change to how it folds
+// Docker Hub's own host name into a key is caught here rather than silently
+// agreed with.
+$libraryKey = staxx_hub_repo_path('docker.io/library/x');
+
+$pickKeep = [
+  'linuxserver/x'    => [$digestKept],
+  'linuxserver/y'    => ['sha256:' . str_repeat('9', 64)],
+  'linuxserver/used' => ['sha256:' . str_repeat('9', 64)],
+  $libraryKey        => [$digestLib],
+  'linuxserver/z'    => ['sha256:' . str_repeat('0', 64)],
+];
+
+$pickUsed = [$idUsed => true];
+
+$pickListing = implode("\n", [
+  "lscr.io/linuxserver/x\t$digestKept\ta1a1a1a1a1a1",
+  "lscr.io/linuxserver/y\t$digestRemove\tb2b2b2b2b2b2",
+  "lscr.io/linuxserver/used\t$digestUsed\t$idUsed",
+  "lscr.io/linuxserver/x\t<none>\td5d5d5d5d5d5",
+  "docker.io/library/x\t$digestLib\te6e6e6e6e6e6",
+  "ghcr.io/someoneelse/y\t$digestIgnore\tf7f7f7f7f7f7",
+  "lscr.io/linuxserver/z\t$digestDedup\t8888888888aa",
+  "lscr.io/linuxserver/z\t$digestDedup\t8888888888aa",
+]);
+
+$pick = staxx_update_cleanup_pick($pickListing, $pickKeep, $pickUsed);
+
+ok('cleanup pick: a digest already in the keep-set is kept, not proposed for removal',
+   !in_array("lscr.io/linuxserver/x@$digestKept", $pick['remove'], true), json_encode($pick['remove']));
+ok('cleanup pick: a row not kept and not used is proposed for removal under its OWN repository name',
+   in_array("lscr.io/linuxserver/y@$digestRemove", $pick['remove'], true), json_encode($pick['remove']));
+ok('cleanup pick: a row not kept but in use by a container is kept, not removed',
+   !in_array("lscr.io/linuxserver/used@$digestUsed", $pick['remove'], true), json_encode($pick['remove']));
+ok('cleanup pick: a <none> digest row is skipped, counted neither kept nor removed',
+   !in_array('lscr.io/linuxserver/x@<none>', $pick['remove'], true), '');
+ok('cleanup pick: a docker.io/library row is matched under staxx_hub_repo_path()\'s own key',
+   $libraryKey !== '' && !in_array("docker.io/library/x@$digestLib", $pick['remove'], true), $libraryKey);
+ok('cleanup pick: a repository absent from the keep-set entirely is ignored, not removed',
+   !in_array("ghcr.io/someoneelse/y@$digestIgnore", $pick['remove'], true), json_encode($pick['remove']));
+ok('cleanup pick: the same digest listed under two tags becomes one ref, not two',
+   count(array_keys($pick['remove'], "lscr.io/linuxserver/z@$digestDedup", true)) === 1, json_encode($pick['remove']));
+ok('cleanup pick: exactly the two removable rows are proposed, nothing else',
+   count($pick['remove']) === 2, json_encode($pick['remove']));
+ok('cleanup pick: kept counts the three kept rows (by digest, by digest, by use)',
+   $pick['kept'] === 3, (string)$pick['kept']);
+
 /* --------------------------------------------------- 11. build base -- */
 
 $err = '';

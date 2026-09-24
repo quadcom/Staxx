@@ -1003,8 +1003,10 @@ function staxx_update_unpin(string $stack, string $service, string $yaml, string
  * general prune, which would be a foot-gun on a server carrying hand-built
  * images the way this one's own risk note describes.
  *
- * Walks only the repositories staxx_update_images() already tracks, so a
- * repository this plugin knows nothing about is never touched.
+ * Reads every image docker knows about once, then keeps only the rows whose
+ * own repository name matches a key in the keep-set (staxx_update_cleanup_pick()
+ * does the matching), so a repository this plugin knows nothing about is
+ * never touched.
  *
  * @return array{removed: string[], kept: int}
  */
@@ -1067,6 +1069,48 @@ function staxx_update_short_id(string $id): string {
   $id = trim($id);
   if (strncmp($id, 'sha256:', 7) === 0) $id = substr($id, 7);
   return substr($id, 0, 12);
+}
+
+/**
+ * Sorts one `docker image ls --digests` listing into what to remove and what
+ * to keep, against the keep-set and the in-use id list built elsewhere.
+ *
+ * Pulled out of staxx_update_cleanup() so it can be proved directly with
+ * fabricated listing text rather than re-implemented in a test and asserted
+ * about. A row's own Repository is normalised the same way
+ * staxx_update_keep_digests() normalises a ref, rather than asking docker for
+ * the key's own repository — docker was never asked by key in the first
+ * place; that per-repository `docker image ls <repo>` call is exactly the
+ * fault this replaced, since it fails for any image whose local name (e.g.
+ * `lscr.io/linuxserver/plex`) differs from the hub path the keep-set is keyed
+ * by (`linuxserver/plex`). Reading everything once and mapping each row's own
+ * name through the same rule as the keep-set means both sides always agree.
+ *
+ * @return array{remove: string[], kept: int}
+ */
+function staxx_update_cleanup_pick(string $listOut, array $keep, array $used): array {
+  $remove = [];
+  $kept   = 0;
+
+  foreach (explode("\n", $listOut) as $line) {
+    $cols = explode("\t", $line);
+    if (count($cols) < 3 || $cols[1] === '<none>' || $cols[1] === '') continue;
+    $repository = $cols[0];
+    $digest     = $cols[1];
+    $id         = $cols[2];
+
+    $key = staxx_hub_repo_path($repository);
+    if ($key === '') $key = preg_replace('/:[^\/]*$/', '', trim($repository));
+    if (!array_key_exists($key, $keep)) continue;
+
+    if (in_array($digest, $keep[$key], true)) { $kept++; continue; }
+    if (isset($used[staxx_update_short_id($id)])) { $kept++; continue; }
+
+    $ref = $repository.'@'.$digest;
+    if (!in_array($ref, $remove, true)) $remove[] = $ref;
+  }
+
+  return ['remove' => $remove, 'kept' => $kept];
 }
 
 function staxx_update_cleanup(bool $dry, string &$error): array {
@@ -1137,30 +1181,29 @@ function staxx_update_cleanup(bool $dry, string &$error): array {
     if ($line !== '') $used[staxx_update_short_id($line)] = true;
   }
 
-  foreach (array_keys($keep) as $repo) {
-    $listOut = staxx_sh(
-      staxx_docker_bin().' image ls --digests --format '
-        .escapeshellarg('{{.Repository}}'."\t".'{{.Digest}}'."\t".'{{.ID}}')
-        .' '.escapeshellarg($repo),
-      10
-    );
+  // One listing over every image, not one `docker image ls <repo>` call per
+  // keep-set key — the local name docker lists under (e.g.
+  // `lscr.io/linuxserver/plex`) often differs from the hub path the keep-set
+  // is keyed by (`linuxserver/plex`), so asking docker by that key found
+  // nothing and old releases of every such image were never removed. Reading
+  // everything once and letting staxx_update_cleanup_pick() normalise each
+  // row's own Repository the same way the keep-set is keyed means both sides
+  // always agree.
+  $listOut = staxx_sh(
+    staxx_docker_bin().' image ls --digests --format '
+      .escapeshellarg('{{.Repository}}'."\t".'{{.Digest}}'."\t".'{{.ID}}'),
+    20
+  );
 
-    foreach (explode("\n", $listOut) as $line) {
-      $cols = explode("\t", $line);
-      if (count($cols) < 3 || $cols[1] === '<none>' || $cols[1] === '') continue;
-      $digest = $cols[1];
-      $id     = $cols[2];
+  $pick = staxx_update_cleanup_pick($listOut, $keep, $used);
+  $kept += $pick['kept'];
 
-      if (in_array($digest, $keep[$repo] ?? [], true)) { $kept++; continue; }
-      if (isset($used[staxx_update_short_id($id)])) { $kept++; continue; }
+  foreach ($pick['remove'] as $ref) {
+    if ($dry) { $removed[] = $ref; continue; }
 
-      $ref = $repo.'@'.$digest;
-      if ($dry) { $removed[] = $ref; continue; }
-
-      $rmCode = 1;
-      staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($ref).' 2>&1', 20, $rmCode);
-      if ($rmCode === 0) $removed[] = $ref; else $kept++;
-    }
+    $rmCode = 1;
+    staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($ref).' 2>&1', 20, $rmCode);
+    if ($rmCode === 0) $removed[] = $ref; else $kept++;
   }
 
   return ['removed' => $removed, 'kept' => $kept];
