@@ -734,7 +734,12 @@ function staxx_expose_plan_service(
     return [];
   }
 
-  if ($host === null) {
+  if ($host === null && !$config['enabled']) {
+    // Switched off with no entry yet: there is nothing to switch off, and
+    // creating one only to disable it would put an entry in NPM nobody asked for.
+    $steps[] = ['service' => $service, 'target' => 'npm', 'op' => 'none',
+                'text' => 'Switched off, so there is no proxy entry for '.$config['domain'].'.'];
+  } elseif ($host === null) {
     $steps[] = [
       'service' => $service, 'target' => 'npm', 'op' => 'create',
       'text' => 'Create a proxy entry for '.$config['domain'].', forwarding to '

@@ -213,6 +213,13 @@ ok('plan_service: a Pi-hole record at another address is replaced',
    $piStep !== null && $piStep['op'] === 'replace'
    && strpos($piStep['text'], 'will change it to Nginx Proxy Manager') !== false, $err);
 
+$err = '';
+$steps = staxx_expose_plan_service('DEV/x', 'off', ['domain' => 'off.example.com', 'certificate' => '',
+  'dns' => false, 'websockets' => true, 'enabled' => false],
+  ['scheme' => 'http', 'host' => '10.0.0.1', 'port' => 80], [], [], [], '', [], $err);
+ok('plan_service: switched off with no entry yet needs nothing, and creates nothing',
+   $err === '' && count($steps) === 1 && $steps[0]['op'] === 'none', json_encode($steps));
+
 /* ---------------------------------------------------- staxx_expose_config */
 // The compose reader hands scalars over as the file's own text, so the
 // switches arrive as the strings "true" / "false", not booleans.
