@@ -1709,7 +1709,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 8;   // 8: each service gained a 'build' flag (PLAN_150 phase 6)
+const STAXX_META_VERSION = 9;   // 9: a profiled service's own fields are read too (PLAN_178 F5)
 
 /**
  * A hash of everything that can change what compose would report for a
