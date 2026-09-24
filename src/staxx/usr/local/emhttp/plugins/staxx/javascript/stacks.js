@@ -1207,6 +1207,15 @@
    * it. Cleared whenever the editor opens a stack, beside sectionsOpen. */
   var sectionOn = {};
 
+  /* PLAN_176 — services whose proxy and DNS entries are removed on the next
+   * save, as exposePendingRemove[service] = true. Set by confirmExposeRemove()
+   * once its confirm is accepted; the block is cleared from the model there
+   * and then, but the server-side expose-remove call waits for save so a
+   * stack that is never saved (or reverted with Undo before the block is
+   * gone again) never touches Nginx Proxy Manager or Pi-hole. Cleared
+   * whenever the editor opens a stack, beside sectionsOpen. */
+  var exposePendingRemove = {};
+
   /* PLAN_176 B3b — which GROUPS heads are collapsed, a page preference like
    * sectionOn just above but persisted (localStorage, not cleared per
    * stack/service): collapsing Ports stays collapsed for every service until
@@ -9095,8 +9104,31 @@
   // were confirmed) has been sent.
   function runExposeRemovalFlow(stackName, stackLabel) {
     var before = exposeAtOpen || {}, after = exposeSnapshot();
+
+    // Removal-on-save (Adrian, 2026-09-24) — a service confirmExposeRemove()
+    // already asked about needs no second question here: send expose-remove
+    // outright for each one whose block is still absent in the saved file,
+    // and leave it out of the ordinary cleared-domain dialog below. A block
+    // that is back (Undo, before save) means the removal never happened and
+    // is dropped silently — nothing to tell the server about.
+    var pendingCalls = [];
+    Object.keys(exposePendingRemove).forEach(function (svc) {
+      var a = after[svc] || {};
+      if (!!String(a.domain || '').trim()) return; // block came back — drop silently
+      pendingCalls.push(call('expose-remove', {
+        name: stackName, service: svc, npm: 'delete', dns: 'delete'
+      }).then(function (r) {
+        if (!r || !r.ok) failed('Proxy and DNS', (r && r.error) ||
+          'Could not reach Nginx Proxy Manager or Pi-hole to remove "' + svc + '" — check them by hand.');
+      }));
+    });
+    var pendingSvcs = exposePendingRemove;
+    exposePendingRemove = {};
+    var pendingDone = pendingCalls.length ? Promise.all(pendingCalls).then(loadExposeStatus) : Promise.resolve();
+
     var removals = [];
     Object.keys(before).forEach(function (svc) {
+      if (pendingSvcs[svc]) return; // handled above, unconditionally
       var b = before[svc] || {}, a = after[svc] || {};
       var hadDomain = !!String(b.domain || '').trim();
       var hasDomain = !!String(a.domain || '').trim();
@@ -9108,38 +9140,40 @@
         removals.push({ service: svc, domain: b.domain, npm: false, dns: true });
       }
     });
-    if (!removals.length) return Promise.resolve();
+    if (!removals.length) return pendingDone;
 
     var list = removals.map(function (r, i) {
       return exposeRemovalItemHtml(i, r.domain, r.npm, r.dns, 'disable');
     }).join('');
 
-    return askConfirm({
-      title: 'Update the proxy and DNS for "' + stackLabel + '"?',
-      bodyHtml: '<p>Clearing a domain or turning DNS off means StaXX no longer keeps these in ' +
-        'step. Choose what happens to each:</p>' +
-        '<ul class="staxx-confirm-list staxx-confirm-list--expose">' + list + '</ul>' +
-        '<p>Switched off, the proxy entry keeps its settings in Nginx Proxy Manager, so it can be ' +
-        'switched back on there later.</p>',
-      goLabel: 'Apply',
-      cancelLabel: 'Not now',
-      danger: false
-    }).then(function (go) {
-      closeConfirm();
-      if (!go) return;
-      var calls = removals.map(function (r, i) {
-        var npmSel = confirmBody.querySelector('input[name="expose-npm-' + i + '"]:checked');
-        var dnsSel = confirmBody.querySelector('input[name="expose-dns-' + i + '"]:checked');
-        return call('expose-remove', {
-          name: stackName, service: r.service,
-          npm: r.npm ? (npmSel ? npmSel.value : 'disable') : 'keep',
-          dns: r.dns ? (dnsSel ? dnsSel.value : 'delete') : 'keep'
+    return pendingDone.then(function () {
+      return askConfirm({
+        title: 'Update the proxy and DNS for "' + stackLabel + '"?',
+        bodyHtml: '<p>Clearing a domain or turning DNS off means StaXX no longer keeps these in ' +
+          'step. Choose what happens to each:</p>' +
+          '<ul class="staxx-confirm-list staxx-confirm-list--expose">' + list + '</ul>' +
+          '<p>Switched off, the proxy entry keeps its settings in Nginx Proxy Manager, so it can be ' +
+          'switched back on there later.</p>',
+        goLabel: 'Apply',
+        cancelLabel: 'Not now',
+        danger: false
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) return;
+        var calls = removals.map(function (r, i) {
+          var npmSel = confirmBody.querySelector('input[name="expose-npm-' + i + '"]:checked');
+          var dnsSel = confirmBody.querySelector('input[name="expose-dns-' + i + '"]:checked');
+          return call('expose-remove', {
+            name: stackName, service: r.service,
+            npm: r.npm ? (npmSel ? npmSel.value : 'disable') : 'keep',
+            dns: r.dns ? (dnsSel ? dnsSel.value : 'delete') : 'keep'
+          });
         });
-      });
-      return Promise.all(calls).then(function (results) {
-        var problems = results.filter(function (r) { return !r || !r.ok; });
-        if (problems.length) failed('Proxy and DNS', 'Some of that could not be applied — check ' +
-          'Nginx Proxy Manager and Pi-hole by hand.');
+        return Promise.all(calls).then(function (results) {
+          var problems = results.filter(function (r) { return !r || !r.ok; });
+          if (problems.length) failed('Proxy and DNS', 'Some of that could not be applied — check ' +
+            'Nginx Proxy Manager and Pi-hole by hand.');
+        });
       });
     });
   }
@@ -9204,57 +9238,43 @@
     });
   }
 
-  // PLAN_176 B3/B3b — shared by the group's own "Remove from proxy and DNS"
-  // button and by unticking Proxy and DNS in the Sections menu while a
-  // domain is still set (see the data-flag change listener below): both mean
-  // the same thing — the ordinary stash would take the expose: block out of
-  // the file and leave whatever StaXX made in Nginx Proxy Manager/Pi-hole
-  // behind unaccounted for — so both go through one confirm-and-remove.
-  // Server-side removal (deleting the NPM host and Pi-hole name first, from
-  // what expose.json says StaXX itself made) is B4/B5; this only clears the
-  // expose: block from the compose file once confirmed. Resolves true if the
-  // block was removed, false if the confirm was declined or the write
-  // failed — callers use that to decide whether a tick box should go back.
+  // PLAN_176 B3/B3b, removal-on-save (Adrian, 2026-09-24) — shared by the
+  // group's own "Remove from proxy and DNS" button and by unticking Proxy
+  // and DNS in the Sections menu while a domain is still set (see the
+  // data-flag change listener below): both mean the same thing — the
+  // ordinary stash would take the expose: block out of the file and leave
+  // whatever StaXX made in Nginx Proxy Manager/Pi-hole behind unaccounted
+  // for — so both go through one confirm-and-remove. Confirming here only
+  // clears the expose: block from the compose file and marks the service in
+  // exposePendingRemove; the actual expose-remove call is made by
+  // runExposeSaveFlow() once the file is saved and only if the block is
+  // still absent then, so closing the editor unsaved, or Undo bringing the
+  // block back, cancels the server-side removal without a second question.
+  // Resolves true if the block was removed, false if the confirm was
+  // declined or the write failed — callers use that to decide whether a
+  // tick box should go back.
   function confirmExposeRemove(serviceName) {
     return askConfirm({
       title: 'Remove from proxy and DNS?',
       bodyHtml: '<p>This clears the proxy and DNS settings stored for "' + esc(serviceName) +
-        '" in the compose file, and deletes the entries StaXX made for it in Nginx Proxy ' +
-        'Manager and Pi-hole.</p>',
+        '" in the compose file. The proxy entry and Pi-hole name are deleted when you save.</p>',
       goLabel: 'Remove'
     }).then(function (go) {
       if (!go) return false;
       closeConfirm();
-      // PLAN_176 B4/B5 — the server side: only what expose.json says THIS
-      // stack's THIS service made, deleted outright (never disable/keep —
-      // this is the explicit Remove button and the Sections-menu untick, not
-      // the softer choices save/archive offer). Best-effort against what the
-      // model edit below does: a stack that was never saved through StaXX
-      // (openedName empty) has nothing on the server to remove, and a
-      // server-side failure still leaves the file edit below to run, so the
-      // block is never left behind in the compose file just because NPM or
-      // Pi-hole could not be reached — but it is reported, since an orphaned
-      // entry there needs a human to know about it.
-      var removeCall = openedName
-        ? call('expose-remove', { name: openedName, service: serviceName, npm: 'delete', dns: 'delete' })
-            .then(function (r) {
-              if (!r || !r.ok) failed('Proxy and DNS', (r && r.error) ||
-                'Could not reach Nginx Proxy Manager or Pi-hole to remove this — the file is ' +
-                'still updated below, but check them by hand.');
-              else loadExposeStatus();
-            })
-        : Promise.resolve();
+      exposePendingRemove[serviceName] = true;
 
       flushPending();
       pushUndo('removing "' + serviceName + '" from proxy and DNS');
       var ok = YAML.removeKey(MODEL.doc, MODEL, serviceName, ['x-unraid', 'expose']);
       if (!ok) {
         undoStack.pop(); updateUndo();
+        delete exposePendingRemove[serviceName];
         setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
-        return removeCall.then(function () { return false; });
+        return false;
       }
       structuralEdit(-1, 'Removed "' + serviceName + '" from proxy and DNS.');
-      return removeCall.then(function () { return true; });
+      return true;
     });
   }
 
@@ -16181,6 +16201,7 @@
     // is exactly the same kind of leftover — findReset() below.
     sectionsOpen = {};
     sectionOn    = {};
+    exposePendingRemove = {};
     stackOpen    = false;
     netFoldOpen  = {};
     findReset();
