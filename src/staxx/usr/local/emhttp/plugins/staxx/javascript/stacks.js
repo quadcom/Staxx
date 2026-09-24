@@ -1226,7 +1226,7 @@
     } catch (e) { /* storage unavailable — nothing starts collapsed */ }
     return collapsedGroupsMap;
   }
-  function isGroupCollapsed(key) { return !!collapsedGroups()[key]; }
+  function isGroupCollapsed(key) { return key !== 'container' && !!collapsedGroups()[key]; }
   function setGroupCollapsed(key, collapsed) {
     var map = collapsedGroups();
     if (collapsed) map[key] = true; else delete map[key];
@@ -5563,8 +5563,10 @@
     // chevron pull away from the heading it belongs to.
     var bits = ['<div class="staxx-grouphead">',
                 '<div class="staxx-groupheading">',
-                collapseButtonHtml(serviceName, g.key, g.heading, collapsed),
-                '<h5 class="staxx-fieldgroup">' + headingToggleHtml(g.key, g.heading)];
+                // Container is always shown (Adrian, 2026-09-24), so it has
+                // no fold control and its heading is plain text.
+                g.key === 'container' ? '' : collapseButtonHtml(serviceName, g.key, g.heading, collapsed),
+                '<h5 class="staxx-fieldgroup">' + (g.key === 'container' ? esc(g.heading) : headingToggleHtml(g.key, g.heading))];
     if (g.note) bits.push(' <span class="staxx-groupnote">' + esc(g.note) + '</span>');
     bits.push(helpBtnHtml(help, helpId));
     bits.push('</h5>');
