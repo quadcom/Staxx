@@ -15628,3 +15628,7 @@ dialog::backdrop {
   opacity: .45;
   cursor: not-allowed;
 }
+
+/* PLAN_176: the Remove row is display:flex above, which would beat the hidden
+   attribute the page toggles while the domain box is empty. */
+.staxx-scaffold .staxx-expose-remove[hidden] { display: none; }

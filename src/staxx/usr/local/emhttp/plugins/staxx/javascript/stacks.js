@@ -4586,7 +4586,11 @@
 
   function exposeStatusHtml(svcName) {
     var entry = exposeCheckCache && exposeCheckCache[svcName];
-    if (!entry) return '<span class="staxx-sub">Checking…</span>';
+    // No answer yet means still checking. An answer with nothing for this
+    // service means the saved file does not expose it yet: what is on screen
+    // has not been saved.
+    if (!entry) return '<span class="staxx-sub">' +
+      (exposeCheckCache ? 'Not set up yet. Save to set it up.' : 'Checking…') + '</span>';
     if (entry.refusal) return '<span class="red-text">' + esc(entry.refusal) + '</span>';
     var steps = entry.steps || [];
     var bad = false;
@@ -4665,8 +4669,8 @@
         '<div class="staxx-expose-status" data-expose-status="' + esc(svc.name) + '">' + exposeStatusHtml(svc.name) + '</div>' +
       '</div>'
     );
-    if (!inert) out.push(
-      '<div class="staxx-expose-remove">' +
+    out.push(
+      '<div class="staxx-expose-remove"' + (inert ? ' hidden' : '') + '>' +
         '<button type="button" class="staxx-btn" data-expose-remove="' + esc(svc.name) + '">' +
           'Remove from proxy and DNS</button>' +
       '</div>'
@@ -8578,6 +8582,19 @@
   var commitTimer = null;
   var pendingEl   = null;
 
+  // The Proxy and DNS group is not redrawn while its domain is typed (that
+  // would take the cursor away), so its controls follow the box directly:
+  // usable once there is a domain, inert and faded without one.
+  formHost.addEventListener('input', function (event) {
+    var grp = event.target.closest && event.target.closest('.staxx-formgroup--expose');
+    if (!grp || event.target.type !== 'text' || event.target.dataset.part !== 'value') return;
+    if (event.target.closest('.staxx-fieldrow') !== grp.querySelector('.staxx-groupbody .staxx-fieldrow')) return;
+    var none = event.target.value.trim() === '';
+    grp.querySelectorAll('select[data-expose-cert], input[type=checkbox]').forEach(function (c) { c.disabled = none; });
+    var rm = grp.querySelector('.staxx-expose-remove');
+    if (rm) rm.hidden = none;
+  });
+
   formHost.addEventListener('input', function (event) {
     if (!event.target.dataset.row) return;
     // A declared network's rename box (data-rename) commits on Enter/blur via
@@ -9192,6 +9209,14 @@
   // stackName/fingerprint are the just-saved file's own — expose-apply
   // refuses if the file moved again since. Never blocks or undoes the save
   // that already happened; "Not now" only means nothing further happens.
+  // After a save or an apply, both views of the entries are asked again: the
+  // editor's Status row and the stack list's DNS marks.
+  function refreshExposeViews() {
+    exposeCheckLoaded = false;
+    loadExposeCheck();
+    loadExposeStatus();
+  }
+
   function runExposeSaveFlow(stackName, stackLabel, fingerprint) {
     runExposeRemovalFlow(stackName, stackLabel).then(function () {
       return call('expose-check', { name: stackName });
@@ -9205,7 +9230,7 @@
         (entry.steps || []).forEach(function (st) { if (st.op !== 'none') steps.push(st); });
       });
       if (refusals.length) failed('Proxy and DNS', refusals.join('  '));
-      if (!steps.length) { loadExposeStatus(); return; }
+      if (!steps.length) { refreshExposeViews(); return; }
 
       return askConfirm({
         title: 'Update the proxy and DNS for "' + stackLabel + '"?',
@@ -9220,7 +9245,7 @@
         danger: false
       }).then(function (go) {
         closeConfirm();
-        if (!go) { loadExposeStatus(); return; }
+        if (!go) { refreshExposeViews(); return; }
         return call('expose-apply', { name: stackName, fingerprint: fingerprint }).then(function (ar) {
           if (!ar || !ar.ok) { failed('Proxy and DNS', (ar && ar.error) || 'Could not apply.'); return; }
           var problems = [];
@@ -9232,7 +9257,7 @@
             });
           });
           if (problems.length) failed('Proxy and DNS', problems.join('  '));
-          loadExposeStatus();
+          refreshExposeViews();
         });
       });
     });
