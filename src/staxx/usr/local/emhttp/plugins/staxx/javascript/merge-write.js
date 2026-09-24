@@ -3008,7 +3008,11 @@
     // resolved to a line at or after the insertion point moves down by
     // however many lines were added.
     if (wiredLinks.length) {
-      var linkDoc = CM.parse(finalLines.join('\n') + '\n');
+      // No '+ \n' here: CM.parse just splits on '\n', so appending one would
+      // hand back an extra trailing '' line that finalLines never had —
+      // inflating insertedCount by one and shifting every change below the
+      // insert one line too far (PLAN_178 F4).
+      var linkDoc = CM.parse(finalLines.join('\n'));
       var declaredByPair = {};
       CM.detectLinks(CM.buildForm(linkDoc)).forEach(function (c) {
         if (c.kind !== 'reference') return;
@@ -3039,8 +3043,12 @@
     var text = finalLines.join('\n') + '\n';
 
     // sourceLine is kept — it is the whole point of fix 5, the source-pane
-    // mark's other half — only the internal bookkeeping fields go.
-    changes.forEach(function (c) { delete c.marker; delete c.resolved; delete c.topLevel; });
+    // mark's other half. `marker` is kept too (PLAN_178 F4's own audit
+    // guard reads it back to confirm `line` still names the right text —
+    // nothing in stacks.js reads it, so carrying it costs nothing); only
+    // `resolved`/`topLevel`, meaningful solely to the search loops just
+    // above, go.
+    changes.forEach(function (c) { delete c.resolved; delete c.topLevel; });
 
     return {
       text: text,

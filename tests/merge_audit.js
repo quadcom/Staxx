@@ -674,6 +674,45 @@ function configLevelAudit(sources, built, opts, problems) {
   });
 }
 
+/* =========================================================================
+ * MARKER LEVEL (PLAN_178 F4) — every change record's own position agrees
+ * with the merged file it was built against. buildMergedText() resolves a
+ * change's `line` by searching for its `marker` text inside finalLines
+ * (compose-model.js's own array of lines, one per array entry — see that
+ * function's own comment just above its PLAN_160 A block), so `marker` is
+ * always the exact text of the line `line` names, for EVERY kind of change
+ * — a rewired address, a moved port, a struck comment's replacement, a
+ * carried volume's declaration. That one relationship is general enough to
+ * check without knowing what kind of change it is; a change record whose
+ * `marker` and merged-file line have drifted apart is exactly the fault
+ * F4 was: every card after a links-block insert pointed one line too low.
+ *
+ * Two kinds are left out on purpose, both already excluded upstream by
+ * buildMergedText() itself, not by a limit of this check:
+ *   - `file: 'env'` — a joined .env line, never part of the compose text
+ *     built.text holds, so there is nothing here to compare it against.
+ *   - `removed: true` — its stand-in line is spliced OUT of finalLines
+ *     once resolved (see the removal pass in merge-write.js), so `line`
+ *     then means "insert a struck row before this index", not "this text
+ *     sits here"; checking it against the text that replaced it would be
+ *     comparing the wrong thing, not confirming the right one.
+ * ========================================================================= */
+
+function markerLevelAudit(built, problems) {
+  if (built.text === null) return;   // a refusal writes nothing
+  var mergedLines = built.text.split(/\r?\n/);
+  (built.changes || []).forEach(function (c) {
+    if (c.file === 'env') return;
+    if (c.removed) return;
+    if (typeof c.line !== 'number' || typeof c.marker !== 'string') return;
+    if (mergedLines[c.line] !== c.marker) {
+      problems.push((c.stack || '?') + ' key=' + c.key + ' "' + c.title + '": its marker text ("' +
+        c.marker + '") is not the merged file\'s line ' + (c.line + 1) + ' ("' + (mergedLines[c.line] || '') +
+        '") — this card is pointing at the wrong line.');
+    }
+  });
+}
+
 function audit(sources, built, opts) {
   sources = sources || [];
   built = built || {};
@@ -681,6 +720,7 @@ function audit(sources, built, opts) {
   var problems = [];
   textLevelAudit(sources, built, problems);
   configLevelAudit(sources, built, opts, problems);
+  markerLevelAudit(built, problems);
   return { ok: problems.length === 0, problems: problems };
 }
 
