@@ -6255,7 +6255,11 @@ div.title.staxx-has-titlebar {
 /* One line per switch that is on (exposeStatusHtml(), B5) — a matching
    Nginx Proxy Manager/Pi-hole line reads as ordinary text, a drifted one
    takes the same danger red every other fault on this page uses. */
-.staxx-expose-statusline--bad { color: var(--sm-danger); }
+/* Only the mark carries colour; the words stay in the form's own text colour,
+   as in the mock Adrian approved (PLAN_176 B3). */
+.staxx-scaffold .staxx-expose-statusmark { font-weight: 700; margin-right: 0.3em; }
+.staxx-scaffold .staxx-expose-statusmark--ok { color: #3fb950; }
+.staxx-scaffold .staxx-expose-statusmark--bad { color: #f85149; }
 .staxx-expose-status .staxx-btn { margin-top: 0.6rem; }
 
 /* --declared is a declaration in the Stack section — name, its one primary

@@ -4594,12 +4594,21 @@
     if (entry.refusal) return '<span class="red-text">' + esc(entry.refusal) + '</span>';
     var steps = entry.steps || [];
     var bad = false;
+    // Short state wording, one line per service; the full step sentences are
+    // for the box that opens after Save.
+    var SAY = {
+      npm: { none: 'matches', create: 'no proxy entry yet', adopt: 'an existing entry to take over',
+             update: 'differs from these settings', enable: 'switched off there', disable: 'still switched on there' },
+      pihole: { none: 'matches', create: 'the DNS name is missing', replace: 'the DNS name points somewhere else' }
+    };
     var lines = steps.map(function (st) {
       var ok = st.op === 'none';
       if (!ok) bad = true;
-      return '<div class="staxx-expose-statusline' + (ok ? '' : ' staxx-expose-statusline--bad') + '">' +
-             (ok ? '✓ ' : '✗ ') +
-             esc(st.target === 'npm' ? 'Nginx Proxy Manager' : 'Pi-hole') + ': ' + esc(st.text) +
+      var say = (SAY[st.target] && SAY[st.target][st.op]) || st.text;
+      return '<div class="staxx-expose-statusline">' +
+             '<span class="staxx-expose-statusmark staxx-expose-statusmark--' + (ok ? 'ok' : 'bad') + '">' +
+             (ok ? '✓' : '✗') + '</span>' +
+             esc(st.target === 'npm' ? 'Nginx Proxy Manager' : 'Pi-hole') + ': ' + esc(say) +
              '</div>';
     }).join('');
     if (bad) {
