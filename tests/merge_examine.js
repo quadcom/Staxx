@@ -431,8 +431,12 @@ console.log('\nE. Storage Docker manages — carried, never copied');
   var storage = findingsOf(r, 'storage-carry');
   ok('both sources\' own "data" volume are each carried', storage.length === 2);
   ok('the second source\'s merged key is disambiguated', storage[1].facts.mergedKey === 'data_APPB');
+  // PLAN_169 F7 — the real name Docker actually builds is the project name
+  // LOWER-CASED first ("appA" the folder becomes project "appa" on the real
+  // server, whatever case the folder itself is written in) — so both real
+  // names below are lower-case even though the sources' own leaves are not.
   ok('their real Docker names never collide even though the merged keys once would have',
-     storage[0].facts.realName === 'appA_data' && storage[1].facts.realName === 'appB_data');
+     storage[0].facts.realName === 'appa_data' && storage[1].facts.realName === 'appb_data');
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-15', name: 'demoapp' });
   ok('the merged file declares both, under their own disambiguated keys',
@@ -1165,14 +1169,16 @@ console.log('\nN. The clean pair — nothing clashes at all, and every category 
   var a = loadRaw('clean', 'host'), b = loadRaw('clean', 'incoming');
   var r = M.examine([descOf(a), descOf(b)]);
 
-  ['container-name-clash', 'port-clash', 'shorthand-clash', 'file-clash'].forEach(function (kind) {
+  ['container-name-clash', 'port-clash', 'shorthand-clash', 'label-clash', 'file-clash'].forEach(function (kind) {
     ok('nothing of kind ' + kind + ' is raised', findingsOf(r, kind).filter(function (f) {
       return f.severity !== 'clean';
     }).length === 0);
   });
 
+  // PLAN_169 F2/F9 added a fifth checked category (proxy labels) to the
+  // "checked and fine" list findCleanEntries() builds.
   var clean = findingsOf(r, 'clean');
-  ok('every checked category reports clean', clean.length === 4);
+  ok('every checked category reports clean', clean.length === 5);
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp' });
   assertMergedIsValid('clean pair', w.text, Object.keys(descOf(a).compose.services).concat(Object.keys(descOf(b).compose.services)));
@@ -1750,6 +1756,234 @@ console.log('\nR. Hidden config');
   var r5 = M.examine([descA5]);
   ok('(e) an empty runningFrom (nothing running) is never flagged',
      findingsOf(r5, 'hidden-config').length === 0);
+})();
+
+/* =========================================================================
+ * S. PLAN_169 round two — F1, F5, F6, F8 (compose-model.js/merge-write.js),
+ * F2/F3/F4/F7/F9/F10/F11 (merge-examine.js/merge-write.js) below them
+ * ========================================================================= */
+
+console.log('\nS. PLAN_169 round two fixes');
+
+(function () {
+  // F1 — a volume that already carries its own name: (or external: true)
+  // already has its real identity; the storage carry must never add a
+  // SECOND name: line beside it.
+  var a = { name: 'a', text: 'services:\n  svc:\n    image: alpine:3.20\n    volumes:\n      - namedvol:/data\nvolumes:\n  namedvol:\n    name: my-custom-real-name\n' };
+  var descA = MW.descriptorFromText(a.name, a.text, null, []);
+  var r = M.examine([descA]);
+  ok('F1: a volume with its own name: is never offered a storage-carry decision',
+     findingsOf(r, 'storage-carry').length === 0);
+
+  var w = MW.buildMergedText([a], { date: '2026-09-24', name: 'demoapp' });
+  ok('F1: the merged file keeps the one name: line and never doubles it',
+     (w.text.match(/name: my-custom-real-name/g) || []).length === 1);
+})();
+
+(function () {
+  // F5 — a comment attached to no key (a file-header comment, or one
+  // closing a service block one indent deeper than any key) is never
+  // inside any key's own span, so it must be carried by hand rather than
+  // silently dropped (CLAUDE.md rule 2).
+  var a = { name: 'a', text: '# a file header comment on a\nservices:\n  svc:\n    image: alpine:3.20\n    # a trailing comment at the end of a\'s own block\n' };
+  var b = { name: 'b', text: 'services:\n  svc2:\n    image: alpine:3.20\n' };
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F5: the first source\'s own file-header comment survives the merge', w.text.indexOf('a file header comment on a') >= 0);
+  ok('F5: the first source\'s own trailing block-closing comment survives the merge', w.text.indexOf('a trailing comment at the end') >= 0);
+})();
+
+(function () {
+  // F6 — links: and external_links: share the same "name:alias" shape and
+  // both follow a service rename; hostname: names the container's own
+  // self and must be left alone.
+  var a = loadRaw('r2-hostname-links', 'a');
+  var b = loadRaw('r2-hostname-links', 'b');
+  var descA = MW.descriptorFromText(a.name, a.text, a.envText, []);
+  var descB = MW.descriptorFromText(b.name, b.text, b.envText, []);
+  var rr = M.examine([descA, descB]);
+  var clash = findingsOf(rr, 'container-name-clash').filter(function (f) { return f.facts.field === 'service'; });
+  var newName = clash[0].facts.to;
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F6: external_links: follows the service rename',
+     new RegExp('external_links:\\s*\\n\\s*- ' + newName + ':extweb').test(w.text));
+  ok('F6: hostname: is left unchanged', /hostname: web\b/.test(w.text));
+})();
+
+(function () {
+  // F8 — a source compose-model cannot read in full (a bad line CM.parse()
+  // itself warns about) is refused by name, rather than merged minus the
+  // line it could not read.
+  var a = loadRaw('r2-yaml-error', 'a');
+  var b = loadRaw('r2-yaml-error', 'b');
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F8: buildMergedText() refuses outright rather than writing a file', w.text === null);
+  ok('F8: the refusal names the broken source and reads as the wizard\'s own sentence',
+     w.refusals.length === 1 && w.refusals[0].stack === 'a' &&
+     /has a line StaXX cannot read \(line \d+\)\. Fix it in the editor, then pick it again\./.test(w.refusals[0].message));
+})();
+
+(function () {
+  // F2/F9 — a clashing Traefik router name, found in either list or map
+  // form (the same trap the six-fixture walk's own trap 3 raises with
+  // ${COMPOSE_PROJECT_NAME}). The later source's own name gains its source
+  // leaf; the earlier one is left exactly as written.
+  var a = loadRaw('r2-label-router-clash', 'a');
+  var b = loadRaw('r2-label-router-clash', 'b');
+  var descA = MW.descriptorFromText(a.name, a.text, a.envText, []);
+  var descB = MW.descriptorFromText(b.name, b.text, b.envText, []);
+  var r = M.examine([descA, descB]);
+  var clash = findingsOf(r, 'label-clash');
+  ok('F2/F9: a router name clash is found whichever form the labels are written in (list vs map)',
+     clash.length === 1 && clash[0].stack === 'b' && clash[0].facts.section === 'routers' &&
+     clash[0].facts.from === 'web' && clash[0].facts.to === 'web-b');
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F2/F9: the second source\'s router is renamed in the merged file, the first left alone',
+     /traefik\.http\.routers\.web\.rule=Host/.test(w.text) &&
+     /traefik\.http\.routers\.web-b\.rule:\s*"PathPrefix/.test(w.text));
+  ok('F2/F9: the merged file still parses clean', CM.parse(w.text).warnings.length === 0);
+})();
+
+(function () {
+  // F9 (${COMPOSE_PROJECT_NAME} form) — two sources writing the SAME
+  // placeholder name are indistinguishable before any resolution at all
+  // (both write the literal text "${COMPOSE_PROJECT_NAME}-web"), which is
+  // exactly the shape PLAN_169 trap 3 raised: distinct while each ran on
+  // its own, one name the moment both share the new stack's own project.
+  var a = { name: 'a', text: 'services:\n  site:\n    image: nginx:alpine\n    labels:\n      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.rule=PathPrefix(`/`)"\n' };
+  var b = { name: 'b', text: 'services:\n  api:\n    image: alpine:3.20\n    labels:\n      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.rule=PathPrefix(`/api`)"\n' };
+  var descA = MW.descriptorFromText(a.name, a.text, null, []);
+  var descB = MW.descriptorFromText(b.name, b.text, null, []);
+  var r = M.examine([descA, descB], { newRel: 'MERGED/newstack' });
+  var clash = findingsOf(r, 'label-clash');
+  ok('F9: a placeholder router name clash is found once the new stack\'s own project name is known',
+     clash.length === 1 && clash[0].facts.from === '${COMPOSE_PROJECT_NAME}-web');
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'MERGED/newstack' });
+  ok('F9: ${COMPOSE_PROJECT_NAME} is kept exactly as written — only the literal name segment gains a suffix',
+     /routers\.\$\{COMPOSE_PROJECT_NAME\}-web-b\.rule=PathPrefix\(`\/api`\)/.test(w.text));
+})();
+
+(function () {
+  // F11 — a lead comment that names the OLD router name is struck once
+  // that line is rewritten, the same falsified-comment rule every other
+  // rename in this file already follows.
+  var a = { name: 'a', text: 'services:\n  site:\n    image: nginx:alpine\n    labels:\n      - "traefik.http.routers.web.rule=PathPrefix(`/`)"\n' };
+  var b = {
+    name: 'b',
+    text: 'services:\n  api:\n    image: alpine:3.20\n    labels:\n      # the only router in this file called "web".\n      - "traefik.http.routers.web.rule=PathPrefix(`/api`)"\n'
+  };
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F11: the falsified comment above the renamed router label is struck, not carried unchanged',
+     w.text.indexOf('the only router in this file called "web".') === -1);
+  var labelChange = w.changes.filter(function (c) { return /label-clash/.test(c.key); })[0];
+  ok('F11: the change record for that rename carries the struck text', labelChange && !!labelChange.struckComment);
+})();
+
+(function () {
+  // F3 — one parser for a published port: address (IPv4/hostname or a
+  // bracketed IPv6 literal), a host or container port RANGE, and an
+  // optional /tcp|/udp suffix. Before this, the address landed in the port
+  // slot outright ("[::1]:19800:80".split(':') put "[::1]" where the host
+  // port belongs).
+  var a = loadRaw('r2-port-range-proto-addr', 'a');
+  var b = loadRaw('r2-port-range-proto-addr', 'b');
+  var descA = MW.descriptorFromText(a.name, a.text, a.envText, []);
+  var descB = MW.descriptorFromText(b.name, b.text, a.envText, []);
+  var svcA = descA.compose.services.svc;
+  var ipv6 = svcA.ports.filter(function (p) { return p.address === '[::1]'; })[0];
+  ok('F3: an IPv6 address is read into its own slot, not the host-port slot',
+     !!ipv6 && ipv6.host === '19800' && ipv6.container === '80');
+
+  var r = M.examine([descA, descB]);
+  var clash = findingsOf(r, 'port-clash');
+  ok('F3: a host-port RANGE overlapping a single port is found as a clash',
+     clash.some(function (f) { return f.facts.port === '19100-19102' || f.facts.port === '19101'; }));
+  var rangeClash = clash.filter(function (f) { return f.facts.rangeInvolved; })[0];
+  ok('F3: a clash involving a range is never offered an automatic move — "leave" is the only choice',
+     rangeClash && rangeClash.choices.length === 1 && rangeClash.choices[0].id === 'leave');
+  ok('F3: the same port number on TCP and UDP is not a clash (different protocols)',
+     !clash.some(function (f) { return f.facts.port === '19200'; }));
+
+  // A plain single-port clash (no range on either side) still gets a real
+  // automatic move, unaffected by F3's own range handling.
+  var descC = MW.descriptorFromText('c', 'services:\n  x:\n    image: alpine:3.20\n    ports:\n      - "19101:9000"\n', null, []);
+  var descD = MW.descriptorFromText('d', 'services:\n  y:\n    image: alpine:3.20\n    ports:\n      - "19101:9001"\n', null, []);
+  var r2 = M.examine([descC, descD]);
+  var plainClash = findingsOf(r2, 'port-clash')[0];
+  ok('F3: an ordinary single-port clash (no range) still offers a numbered free port to move to',
+     plainClash && !plainClash.facts.rangeInvolved && typeof plainClash.facts.freePort === 'number');
+})();
+
+(function () {
+  // F4 — a top-level include: entry's own relative path is re-pointed at
+  // the new stack's depth by the same depth-path finding extends.file
+  // already uses, rather than silently dropped.
+  var a = { name: 'a', text: 'include:\n  - ../shared/common.yaml\nservices:\n  svc:\n    image: alpine:3.20\n', depth: 1 };
+  var b = { name: 'b', text: 'services:\n  svc2:\n    image: alpine:3.20\n', depth: 0 };
+  var descA = MW.descriptorFromText(a.name, a.text, null, [], { depth: 1 });
+  var descB = MW.descriptorFromText(b.name, b.text, null, [], { depth: 0 });
+  ok('F4: descriptorFromText() reads the top-level include: list', descA.compose.include.length === 1);
+  var r = M.examine([descA, descB], { newDepth: 0 });
+  var depthFindings = findingsOf(r, 'depth-path');
+  ok('F4: include:\'s own path is recognised as a relative path needing a depth fix',
+     depthFindings.some(function (f) { return f.facts.field === 'include[].path' && f.facts.oldPath.indexOf('common.yaml') >= 0; }));
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp', newDepth: 0 });
+  ok('F4: the include: entry survives the merge with its path fixed for the new depth',
+     /include:\s*\n\s*- \.\/shared\/common\.yaml/.test(w.text));
+})();
+
+(function () {
+  // F4 (object form) — include: entries written as a mapping (path:/
+  // project_directory:/env_file:) are read the same way a bare string is.
+  var text = 'include:\n  - path: ../shared/other.yaml\n    project_directory: ../shared\n    env_file: ../shared/.env\nservices:\n  svc:\n    image: alpine:3.20\n';
+  var desc = MW.descriptorFromText('a', text, null, [], { depth: 1 });
+  var r = M.examine([desc], { newDepth: 0 });
+  var fields = findingsOf(r, 'depth-path').map(function (f) { return f.facts.field; }).sort();
+  ok('F4: every one of include:\'s own path-bearing fields is read from the object form',
+     fields.join(',') === 'include[].env_file,include[].path,include[].project_directory');
+})();
+
+(function () {
+  // F7 — Compose lower-cases a project name (and only ever allows
+  // a-z0-9_-) before building a real volume name from it, whatever case
+  // the source's own folder or explicit name: is written in — comparing
+  // the UN-normalised strings would miss two sources that collide only
+  // after that fold ("T169-A", "t169-a"). Once folded, both really are the
+  // SAME real project on the real box, and Docker has already been using
+  // ONE volume for both of them — so realName must read the SAME for both,
+  // never a suffixed, invented name for the second one (Adrian's
+  // correction, 2026-09-24): that would point it at a volume that has
+  // never existed, so that service comes up with an empty store.
+  var a = { name: 'T169-A', text: 'services:\n  svc:\n    image: alpine:3.20\n    volumes:\n      - data:/data\nvolumes:\n  data: {}\n' };
+  var b = { name: 't169-a', text: 'services:\n  svc2:\n    image: alpine:3.20\n    volumes:\n      - data:/data\nvolumes:\n  data: {}\n' };
+  var descA = MW.descriptorFromText(a.name, a.text, null, []);
+  var descB = MW.descriptorFromText(b.name, b.text, null, []);
+  var r = M.examine([descA, descB]);
+  var storage = findingsOf(r, 'storage-carry');
+  ok('F7: both sources\' own "data" volume are still each carried', storage.length === 2);
+  ok('F7: both realNames fold to the one real volume Docker already built for them',
+     storage[0].facts.realName === 't169-a_data' && storage[1].facts.realName === 't169-a_data');
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F7: both carried volume declarations name: the same real volume, sharing it as before',
+     (w.text.match(/name: t169-a_data/g) || []).length === 2);
+})();
+
+(function () {
+  // F10 — verified rather than "fixed": each service reads its OWN
+  // env_file, so two different companion files setting the same variable
+  // name to different values never actually meet — no settings-join
+  // finding is raised (findSettingsJoin() only ever reads a root .env),
+  // and nothing here needs to.
+  var a = { name: 'a', text: 'services:\n  api:\n    image: alpine:3.20\n    env_file:\n      - ./api.env\n' };
+  var b = { name: 'b', text: 'services:\n  db:\n    image: alpine:3.20\n    env_file:\n      - ./db.env\n' };
+  var descA = MW.descriptorFromText(a.name, a.text, null, []);
+  var descB = MW.descriptorFromText(b.name, b.text, null, []);
+  var r = M.examine([descA, descB]);
+  ok('F10: two services\' own distinctly-named env_file companions raise no clash of any kind',
+     r.findings.filter(function (f) { return f.kind !== 'clean'; }).length === 0);
 })();
 
 /* =========================================================================

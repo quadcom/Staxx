@@ -1,0 +1,5 @@
+services:
+  web:
+    image: nginx:alpine
+  db:
+    image: mariadb:11

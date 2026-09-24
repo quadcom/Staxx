@@ -33953,6 +33953,29 @@
       var readRes = results[0], filesRes = results[1];
       if (!readRes.ok) return { name: name, label: label, error: readRes.error || 'Could not read this stack.' };
 
+      // PLAN_169 F8 — a file that reads fine as far as the server is
+      // concerned can still have a line compose-model.js itself cannot
+      // read (bad indentation, an unclosed quote…): CM.parse() leaves the
+      // rest of the file alone and reports it as a warning rather than
+      // throwing, so buildMergedText() would otherwise merge everything
+      // BUT that line and say nothing. Caught here, the same way a read
+      // failure already is, so mergeRenderStep2Cards() shows it on the
+      // source's own card and mergeUpdateStep2Live() refuses to go past
+      // picking until the stack is fixed in the editor or unpicked.
+      if (window.StaxxYaml) {
+        var parsed;
+        try { parsed = window.StaxxYaml.parse(readRes.body); } catch (e) { parsed = null; }
+        if (parsed && parsed.warnings && parsed.warnings.length) {
+          return {
+            name: name, label: label,
+            // The parser's own sentence says what is wrong: a line it cannot
+            // read, or a key written twice — both are files Compose rejects.
+            error: label + ' cannot be merged yet (line ' + (parsed.warnings[0].line + 1) + '). ' +
+              parsed.warnings[0].message + ' Fix it in the editor, then pick it again.'
+          };
+        }
+      }
+
       // merge-files deliberately excludes .env (it is joined, not copied),
       // so whether one exists is answered the same way the old picker asked
       // it — a direct read, treated as "no settings file" on any failure
@@ -34623,7 +34646,17 @@
     // directly, not mergeState.built), which reads exactly like that stack
     // had been dropped — the fault behind "Back to step 1 and Next again
     // dropped one of the two picked stacks" (PLAN_155).
-    if (nextBtn && mergeState.step === 2) nextBtn.disabled = v.state !== 'good' || !!mergeState.stacksLoading;
+    // PLAN_169 F8 — a picked source whose own card is showing an error
+    // (see mergeLoadStack()) must not be carried past this step: "unpick
+    // it or fix it" is the whole refusal, so Next stays off until neither
+    // is true of anything still picked.
+    var anySourceError = mergeState.picked.some(function (p) {
+      var s = mergeState.stacks[p.name];
+      return !!(s && s.error);
+    });
+    if (nextBtn && mergeState.step === 2) {
+      nextBtn.disabled = v.state !== 'good' || !!mergeState.stacksLoading || anySourceError;
+    }
     // No rebuild here — the right-hand cards are each source's own summary,
     // unaffected by the name or folder, and the merged file itself is only
     // built once Next is pressed (see mergeNext()'s own step-2 branch).

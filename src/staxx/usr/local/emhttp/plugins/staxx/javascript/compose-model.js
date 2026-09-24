@@ -6632,7 +6632,12 @@
    */
 
   var SERVICE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
-  var LINK_LIKE_KEYS = ['links', 'volumes_from'];
+  // hostname: is deliberately NOT here — it is the container's own name for
+  // itself, not a reference to another service, so a rename must leave it
+  // alone (decided 2026-09-24, PLAN_169 F6: R2-12 first assumed the
+  // opposite and was wrong). external_links: shares links:'s
+  // "name:alias" shape and is added here for the same reason links: is.
+  var LINK_LIKE_KEYS = ['links', 'volumes_from', 'external_links'];
 
   // Appends a {spot, decoded} edit for every reference to oldName found
   // among the five keys a rename must follow, inside one service's map.

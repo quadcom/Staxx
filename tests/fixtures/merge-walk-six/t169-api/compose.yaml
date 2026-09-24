@@ -1,0 +1,63 @@
+# t169-api — turns t169-store's database into JSON for the second merge walkthrough
+# (PLAN_169). Reached only through the edge; its own database address is filled in at install
+# time (never a real address in this repository).
+x-unraid:
+  version: 1
+  overview: Merge walkthrough fixture (PLAN_169). PostgREST, reading t169-store over the box's address.
+  category: Tools:Utilities
+
+services:
+  # A small companion this stack's own API depends on — also called "app", the exact same name
+  # t169-site's own service carries, so the merge must rename one and rewrite every place that
+  # names it, including the depends_on below.
+  app:
+    image: alpine:3.20
+    container_name: t169-api-app
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 5s
+      retries: 1
+    networks:
+      - t169-api-net
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    environment:
+      # __BOX_IP__ is filled in by install.sh; no real address ever sits in this repository.
+      # A merge that reaches this database over a shared network must rewrite this to a
+      # service name instead.
+      PGRST_DB_URI: postgres://authenticator:t169pass@__BOX_IP__:19432/t169
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_DB_SCHEMA: public
+      PGRST_SERVER_PORT: "3000"
+    env_file:
+      # Sets PGPASSWORD — t169-store's own env_file sets the same name to a different value,
+      # and the merge has to say which wins and why, out loud.
+      - ./api.env
+    depends_on:
+      # Already existed before any merge — the service this names moves stacks once "app" is
+      # renamed to resolve the clash above, and the merge must follow it there rather than
+      # leaving this pointed at whichever service ends up keeping the plain name "app".
+      app:
+        condition: service_healthy
+    networks:
+      - t169-edge-net
+      - t169-api-net
+    labels:
+      - "traefik.enable=true"
+      # Named with this stack's own project, so it never collides with another stack's router
+      # of the same plain name while each still runs on its own — the only router in this file
+      # called "${COMPOSE_PROJECT_NAME}-web".
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.rule=PathPrefix(`/api`)"
+      - "traefik.http.middlewares.api-strip.stripprefix.prefixes=/api"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.middlewares=api-strip"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.service=rest"
+      - "traefik.http.services.rest.loadbalancer.server.port=3000"
+    x-unraid:
+      icon: ./.staxx/icon.png
+
+networks:
+  t169-edge-net:
+    external: true
+  t169-api-net: {}

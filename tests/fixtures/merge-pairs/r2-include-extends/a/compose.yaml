@@ -1,0 +1,8 @@
+include:
+  - ../shared/common.yaml
+services:
+  svc:
+    image: alpine:3.20
+    extends:
+      file: ../shared/base.yaml
+      service: base

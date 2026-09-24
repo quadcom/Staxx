@@ -1,0 +1,33 @@
+# t169-edge — the front door for the second merge walkthrough (PLAN_169). Routes to two other
+# stacks by label; nothing here is built, only pulled.
+x-unraid:
+  version: 1
+  overview: Merge walkthrough fixture (PLAN_169). Traefik, routing to two other stacks by label.
+  category: Network:Web
+
+services:
+  edge:
+    image: traefik:v3.1
+    container_name: t169-edge
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+    ports:
+      - "19080:80"
+      - "19081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      # Shared with t169-site and t169-api, and declared external below — the merge must never
+      # rename or recreate it.
+      - t169-edge-net
+    x-unraid:
+      icon: ./.staxx/icon.png
+      webui: "http://[IP]:19081/"
+
+networks:
+  t169-edge-net:
+    external: true

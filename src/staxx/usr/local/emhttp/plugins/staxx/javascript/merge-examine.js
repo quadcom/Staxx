@@ -56,7 +56,13 @@
  *       services: {
  *         <serviceName>: {
  *           image, container_name,
- *           ports: [{ host, container, protocol }],   // host '' = not published
+ *           ports: [{ address, host, container, protocol, protocolSuffix }],  // host '' = not published;
+ *                                   // host/container may themselves be a "N-M" range; address is ''
+ *                                   // (unbound) or the literal text written ("192.0.2.9", "[::1]");
+ *                                   // protocol is the EFFECTIVE 'tcp'/'udp' (defaults 'tcp' when none
+ *                                   // was written); protocolSuffix is the exact "" | "/tcp" | "/udp"
+ *                                   // text as written, kept so a rewrite never adds or drops one that
+ *                                   // was not there — see parsePortSpec() below
  *           volumes: [{ type: 'named'|'bind'|'anonymous', source, target }],
  *           environment: { NAME: 'value' },
  *           env_file: ['relative/path', ...],
@@ -66,6 +72,9 @@
  *           depends_on: ['service', ...],
  *           build: { context } | string | undefined,
  *           extends: { file } | undefined,
+ *           labels: { 'traefik.http.routers.web.rule': 'Host(...)' , ... },  // flattened from either
+ *                                   // list ("key=value") or map form — a proxy label name clash
+ *                                   // (findLabelClashes() below) reads this, nothing else does
  *           x_unraid: {}                               // service-level block, carried whole
  *         }
  *       },
@@ -73,6 +82,10 @@
  *       networks: { name: { def: {} } },
  *       configs:  { name: { def: {} } },
  *       secrets:  { name: { def: {} } },
+ *       include: [ 'path' | { path, project_directory, env_file } , ... ],  // OPTIONAL — the
+ *                                   // top-level include: list, entries in either shape compose
+ *                                   // itself accepts; read only by findDepthPathFindings() below,
+ *                                   // the same way extends.file already is
  *       stack_x_unraid: {}                              // top-level (stack-level) x-unraid block
  *     }
  *   }
@@ -97,7 +110,7 @@
  *     kind: 'storage-carry' | 'file-clash' | 'key-copied' | 'outside-link' |
  *           'hidden-config' | 'unreferenced' | 'large-folder' | 'build-image' |
  *           'depth-path' | 'settings-join' | 'container-name-clash' |
- *           'port-clash' | 'shorthand-clash' | 'address-rewire' |
+ *           'port-clash' | 'shorthand-clash' | 'label-clash' | 'address-rewire' |
  *           'port-unneeded' | 'left-alone' | 'clean',
  *     severity: 'refusal' | 'decision' | 'automatic' | 'wiring' | 'info' |
  *               'warning' | 'clean',
@@ -191,6 +204,31 @@
     return (descriptor.compose && descriptor.compose.name) || leaf(descriptor.name);
   }
 
+  // F7 — Compose itself lower-cases a project name (and only ever allows
+  // a-z0-9_-) before using it to build a real volume/network name, whether
+  // that name came from an explicit `name:` or was inferred from the
+  // folder. Two folders that only differ by case ("T169-A", "t169-a")
+  // therefore compute the SAME real project name on the actual server —
+  // comparing them as the un-normalised strings the wizard happens to have
+  // (a folder leaf, or an author's own `name:`) would miss that collision
+  // entirely. Used wherever a real Docker name is BUILT, never where a
+  // merged file's own KEY is chosen (that only has to be unique within the
+  // one file being written, which mergedKeyTaken below already handles).
+  //
+  // Deliberately NOT disambiguated when two different sources normalise to
+  // the same text (Adrian's correction, 2026-09-24): if "T169-A" and
+  // "t169-a" really do fold to the same project, Docker ALREADY has just
+  // ONE real volume for both of them, on the real box, before this merge
+  // ever runs. Inventing a suffixed name for the second source's `name:`
+  // would point it at a volume that has never existed — that service comes
+  // up with an empty store, which reads as data loss. The correct, honest
+  // answer is that both carried declarations name the SAME real volume —
+  // two `name:` lines in the merged file agreeing is legal, and it is
+  // exactly the sharing that was already there.
+  function normalizeProjectName(name) {
+    return String(name).toLowerCase().replace(/[^a-z0-9_-]+/g, '');
+  }
+
   function findingKey(kind, stack, idx) {
     return kind + '|' + (stack || '') + '|' + idx;
   }
@@ -251,13 +289,87 @@
     return { prefix: m[1], quote: m[2], body: m[3] };
   }
 
-  function parsePortBody(body) {
-    var proto = '', main = body;
-    var pm = /(\/(?:tcp|udp))$/.exec(body);
-    if (pm) { proto = pm[1]; main = body.slice(0, -pm[1].length); }
-    var parts = main.split(':');
-    if (parts.length >= 2) return { host: parts[0], container: parts.slice(1).join(':'), proto: proto };
-    return { host: '', container: main, proto: proto };
+  // F3 — the one parser for a published port body (the text of a "ports:"
+  // list entry, quotes already stripped by parsePortListLine/splitPortEntry's
+  // own caller). Handles every shape docker compose accepts: a bare
+  // container port, "host:container", "address:host:container" (address an
+  // IPv4/hostname, or an IPv6 literal wrapped in its own brackets —
+  // "[::1]:19800:80"), a host or container PORT RANGE ("19100-19102"), and
+  // an optional "/tcp"|"/udp" suffix. Before this, the address slot was
+  // never recognised at all — "[::1]:19800:80".split(':') put "[::1]" in
+  // the host slot and "19800" in the container slot, silently misreading
+  // every address-bound port (PLAN_169 F3/R2-7).
+  //
+  // merge-write.js's splitPortEntry() (building a source descriptor's own
+  // `ports:` from the raw compose value) and its own line-based
+  // parsePortBody() (locating/rewriting one "ports:" list line) both
+  // delegate to this same function via merge-write.js's own `ME` require —
+  // one parser, never two copies to keep in step.
+  //
+  // Returns { address, host, container, protocol, protocolSuffix }: host/
+  // container may themselves be a "N-M" range string; protocol is the
+  // EFFECTIVE 'tcp'/'udp' (defaults 'tcp' when nothing was written, docker's
+  // own default); protocolSuffix is the exact "" | "/tcp" | "/udp" text as
+  // written, kept separately so a rewrite never adds a suffix that was not
+  // there, or drops one that was (rewritePortHost() in merge-write.js).
+  function parsePortSpec(entry) {
+    var text = String(entry);
+    var protocolSuffix = '', protocol = 'tcp';
+    var pm = /\/(tcp|udp)$/i.exec(text);
+    if (pm) { protocolSuffix = '/' + pm[1].toLowerCase(); protocol = pm[1].toLowerCase(); text = text.slice(0, -pm[0].length); }
+
+    var address = '';
+    if (text.charAt(0) === '[') {
+      var close = text.indexOf(']');
+      if (close >= 0) {
+        address = text.slice(0, close + 1);
+        text = text.slice(close + 1);
+        if (text.charAt(0) === ':') text = text.slice(1);
+      }
+    }
+
+    var parts = text.split(':');
+    var host = '', container = '';
+    if (address) {
+      if (parts.length >= 2) { host = parts[0]; container = parts.slice(1).join(':'); }
+      else { container = parts[0]; }
+    } else if (parts.length >= 3) {
+      address = parts[0];
+      host = parts[1];
+      container = parts.slice(2).join(':');
+    } else if (parts.length === 2) {
+      host = parts[0]; container = parts[1];
+    } else {
+      container = parts[0];
+    }
+    return { address: address, host: host, container: container, protocol: protocol, protocolSuffix: protocolSuffix };
+  }
+
+  // Kept as the old name for this file's own internal callers (locatePortLine
+  // below) — a thin alias, not a second implementation.
+  function parsePortBody(body) { return parsePortSpec(body); }
+
+  // A host or container port TEXT — a bare number, or a "N-M" range — as
+  // its own numeric bounds, for an overlap check. A malformed number reads
+  // as NaN, which every comparison below treats as "never overlaps"
+  // (NaN comparisons are always false), the safe direction: an unreadable
+  // port is left alone rather than guessed into a false clash.
+  function hostBounds(hostText) {
+    var m = /^(\d+)-(\d+)$/.exec(hostText);
+    if (m) return { lo: Number(m[1]), hi: Number(m[2]), isRange: true };
+    var n = Number(hostText);
+    return { lo: n, hi: n, isRange: false };
+  }
+
+  // Two published addresses can only clash if they are the SAME address —
+  // '' (unbound, every interface) is compatible with anything, since an
+  // unbound publish really does listen on every address including one a
+  // sibling service bound explicitly. Two DIFFERENT explicit addresses
+  // (127.0.0.2 and 127.0.0.3, PLAN_169 trap 12) never clash, whatever their
+  // port numbers do.
+  function addressesCompatible(a, b) {
+    if (!a || !b) return true;
+    return a === b;
   }
 
   // A per-examine() cache of parsed docs, keyed by source name — several
@@ -295,6 +407,21 @@
     var declMap = declMapOf(doc, kind);
     var p = declMap && declMap.pairs[name];
     return p ? p.start : -1;
+  }
+
+  // The first line, in this service's own range, whose text names a given
+  // Traefik label under the given section ("routers"/"services"/
+  // "middlewares") and name segment — works whether the label is written as
+  // a list item ("- traefik.http.routers.web.rule=...") or a map entry
+  // ("traefik.http.routers.web.rule: ..."), since both are found by the same
+  // literal substring search rather than any YAML-shape-specific parsing.
+  function locateLabelLine(doc, svcName, section, name) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[svcName];
+    if (!p) return -1;
+    var needle = 'traefik.http.' + section + '.' + name + '.';
+    for (var i = p.start; i < p.end; i++) if (doc.lines[i].indexOf(needle) >= 0) return i;
+    return -1;
   }
 
   function locateVolumeMountLines(doc, volName) {
@@ -364,7 +491,11 @@
 
       Object.keys(used).forEach(function (volName) {
         var decl = volDecl[volName];
-        if (decl && decl.external) return;   // already points at a fixed real volume — nothing changes identity
+        // external: true or a volume's own name: both already fix its real
+        // identity — nothing changes it, and the carry below must never
+        // add a SECOND name: line beside one the author already wrote
+        // (PLAN_169 F1: it did, and the file stopped loading).
+        if (decl && (decl.external || (decl.def && decl.def.name))) return;
 
         var mergedKey = volName;
         if (mergedKeyTaken[mergedKey]) mergedKey = volName + '_' + suffix(leaf(s.name));
@@ -387,7 +518,12 @@
           kind: 'storage-carry',
           severity: 'decision',
           stack: s.name,
-          facts: { volume: volName, mergedKey: mergedKey, realName: projectNameOf(s) + '_' + volName },
+          // F7 — the normalised (lower-cased) project name, exactly as
+          // Docker itself builds a volume name; NOT disambiguated between
+          // sources — see normalizeProjectName()'s own comment for why two
+          // sources that fold to the same text must be given the SAME
+          // realName here, not two different invented ones.
+          facts: { volume: volName, mergedKey: mergedKey, realName: normalizeProjectName(projectNameOf(s)) + '_' + volName },
           choices: [
             { id: 'carry', recommended: true },
             { id: 'start-empty', recommended: false }
@@ -652,6 +788,24 @@
           if (file) consider(s, kind + '[].file', null, file);
         });
       });
+
+      // F4 — a top-level include: entry, each in one of the two shapes
+      // compose itself accepts: a bare string (a path to another compose
+      // file), or a mapping carrying path/project_directory/env_file (any
+      // of which can itself be a single string or a list of them).
+      // extends.file already went through consider() above; this is the
+      // same relative-path fix, just for include:'s own several fields.
+      ((s.compose && s.compose.include) || []).forEach(function (entry) {
+        if (typeof entry === 'string') { consider(s, 'include[].path', null, entry); return; }
+        if (!entry || typeof entry !== 'object') return;
+        ['path', 'project_directory', 'env_file'].forEach(function (field) {
+          var v = entry[field];
+          if (typeof v === 'string') consider(s, 'include[].' + field, null, v);
+          else if (Array.isArray(v)) {
+            v.forEach(function (one) { if (typeof one === 'string') consider(s, 'include[].' + field, null, one); });
+          }
+        });
+      });
     });
 
     return out;
@@ -852,16 +1006,35 @@
   // side any more, the same two-line convention address-rewire's split
   // rewrite already uses, just naming two different stacks instead of two
   // lines in one.
+  // F3 — a clash needs the SAME address (or either side unbound), the SAME
+  // protocol, and overlapping host ports; a bare "-" range on either side is
+  // never moved automatically, since there is no single free port a whole
+  // range can slide onto — the finding offers only "leave", i.e. "pick which
+  // one keeps it and change the other by hand" (PLAN_169 F3). `seen` is a
+  // plain list rather than the old taken[p.host] dict, because two
+  // overlapping entries need not share the exact same written text any more
+  // (a range and a single port inside it, say).
   function findPortClashes(sources, docCache) {
     var out = [];
-    var taken = {};
+    var seen = [];
     var usedPorts = allPublishedPorts(sources);
     sources.forEach(function (s) {
       Object.keys(servicesOf(s)).forEach(function (svcName) {
         var profiled = (servicesOf(s)[svcName].profiles || []).length > 0;
         (servicesOf(s)[svcName].ports || []).forEach(function (p) {
           if (!p.host) return;
-          var held = taken[p.host];
+          var bounds = hostBounds(p.host);
+          var protocol = p.protocol || 'tcp';
+          var address = p.address || '';
+          var held = null;
+          for (var i = 0; i < seen.length; i++) {
+            var c = seen[i];
+            if (c.protocol !== protocol) continue;
+            if (!addressesCompatible(c.address, address)) continue;
+            if (bounds.lo > c.hi || c.lo > bounds.hi) continue;   // no overlap
+            held = c;
+            break;
+          }
           if (held) {
             // Default mover is whichever was picked SECOND; a profiles:
             // service yields to a plain one no matter the order.
@@ -870,24 +1043,28 @@
 
             var moverStack = moverIsLater ? s.name : held.stack;
             var moverSvc = moverIsLater ? svcName : held.svc;
+            var moverHost = moverIsLater ? p.host : held.hostText;
             var stayStack = moverIsLater ? held.stack : s.name;
             var staySvc = moverIsLater ? held.svc : svcName;
+            var stayHost = moverIsLater ? held.hostText : p.host;
 
-            var freePort = pickFreePort(usedPorts);
-            usedPorts[String(freePort)] = true;
+            var rangeInvolved = bounds.isRange || held.isRange;
 
             var moverDoc = docCache[moverStack];
             var stayDoc = docCache[stayStack];
             var lines = [];
-            if (moverDoc) lines = lines.concat(linesEntry(moverStack, locatePortLine(moverDoc, moverSvc, p.host)));
-            if (stayDoc) lines = lines.concat(linesEntry(stayStack, locatePortLine(stayDoc, staySvc, p.host)));
+            if (moverDoc) lines = lines.concat(linesEntry(moverStack, locatePortLine(moverDoc, moverSvc, moverHost)));
+            if (stayDoc) lines = lines.concat(linesEntry(stayStack, locatePortLine(stayDoc, staySvc, stayHost)));
 
-            out.push({
-              kind: 'port-clash', severity: 'decision', stack: moverStack,
-              facts: {
-                service: moverSvc, port: p.host, freePort: freePort,
-                heldBy: staySvc, heldByStack: stayStack
-              },
+            var choices, freePort = null;
+            if (rangeInvolved) {
+              // No automatic move: "leave" is the only choice, so approving
+              // and declining come to the same thing — both sides are left
+              // exactly as written, and a person has to change one by hand.
+              choices = [{ id: 'leave', recommended: true }];
+            } else {
+              freePort = pickFreePort(usedPorts);
+              usedPorts[String(freePort)] = true;
               // The recommended choice's own id IS the free port number —
               // merge-write.js's decisionValue() falls back to whichever
               // choice is recommended when nothing was clicked, and its
@@ -898,11 +1075,23 @@
               // publishing" — declining leaves both ports as written, and
               // the new stack simply will not start until a person changes
               // one of them.
-              choices: [{ id: freePort, recommended: true }, { id: 'leave', recommended: false }],
+              choices = [{ id: freePort, recommended: true }, { id: 'leave', recommended: false }];
+            }
+
+            out.push({
+              kind: 'port-clash', severity: 'decision', stack: moverStack,
+              facts: {
+                service: moverSvc, port: moverHost, freePort: freePort,
+                heldBy: staySvc, heldByStack: stayStack, rangeInvolved: rangeInvolved
+              },
+              choices: choices,
               lines: lines
             });
           } else {
-            taken[p.host] = { stack: s.name, svc: svcName, profiled: profiled };
+            seen.push({
+              stack: s.name, svc: svcName, profiled: profiled, address: address,
+              lo: bounds.lo, hi: bounds.hi, isRange: bounds.isRange, protocol: protocol, hostText: p.host
+            });
           }
         });
       });
@@ -933,6 +1122,68 @@
             // same definition — kept once, nothing renamed, no finding needed
           } else {
             canonical[name] = def;
+          }
+        });
+      });
+    });
+    return out;
+  }
+
+  // A Traefik label KEY — list or map form makes no difference here, since
+  // `labels` (descriptorFromText()'s own doing) is already a flat
+  // key->value map by the time this reads it. Captures the section
+  // ("routers"/"services"/"middlewares") and the name segment right after
+  // it, up to the next dot.
+  var TRAEFIK_LABEL_RE = /^traefik\.http\.(routers|services|middlewares)\.([^.]+)\./;
+
+  // ${COMPOSE_PROJECT_NAME} resolved against a real project name — '' when
+  // none is known yet (a caller that never passed opts.newRel), in which
+  // case the placeholder is left exactly as written. Two sources both
+  // writing the SAME placeholder text already compare equal without any
+  // resolution at all; this only matters for telling apart a literal name
+  // ("web") from one built on the placeholder once a real new-stack name is
+  // known.
+  function resolveProjectPlaceholder(text, projectName) {
+    if (!projectName) return text;
+    return String(text).replace(/\$\{COMPOSE_PROJECT_NAME\}/g, projectName);
+  }
+
+  // F2/F9/F11 — Traefik reads every container's labels box-wide, so a
+  // router/service/middleware name has to be unique across the WHOLE new
+  // stack, not just within the source that wrote it. Two sources naming one
+  // "web" router the plain way clash outright (PLAN_169 R2-6); two sources
+  // that each wrote "${COMPOSE_PROJECT_NAME}-web" — distinct while each ran
+  // as its own project — clash the moment both share the merged stack's own
+  // project name (PLAN_169 trap 3). Same "first source keeps it, second is
+  // renamed" shape every other clash finding here follows.
+  function findLabelClashes(sources, opts, docCache) {
+    var out = [];
+    var newProject = (opts && typeof opts.newRel === 'string') ? leaf(opts.newRel) : null;
+    var taken = {};   // "section|resolved name" -> { stack, service }
+    sources.forEach(function (s) {
+      Object.keys(servicesOf(s)).forEach(function (svcName) {
+        var labels = servicesOf(s)[svcName].labels || {};
+        var seenHere = {};   // this service's own several label keys under one name are one finding
+        Object.keys(labels).forEach(function (labelKey) {
+          var m = TRAEFIK_LABEL_RE.exec(labelKey);
+          if (!m) return;
+          var section = m[1], rawName = m[2];
+          var resolved = resolveProjectPlaceholder(rawName, newProject);
+          var takenKey = section + '|' + resolved;
+          if (seenHere[takenKey]) return;
+          seenHere[takenKey] = true;
+
+          var held = taken[takenKey];
+          if (held) {
+            var finalRaw = rawName + '-' + leaf(s.name);
+            var doc = docCache[s.name];
+            out.push({
+              kind: 'label-clash', severity: 'automatic', stack: s.name,
+              facts: { service: svcName, section: section, from: rawName, to: finalRaw, label: labelKey },
+              lines: doc ? linesEntry(s.name, locateLabelLine(doc, svcName, section, rawName)) : []
+            });
+          } else {
+            taken[takenKey] = { stack: s.name, service: svcName };
           }
         });
       });
@@ -1181,6 +1432,7 @@
       { kind: 'container-name-clash', label: 'container names' },
       { kind: 'port-clash', label: 'published ports' },
       { kind: 'shorthand-clash', label: 'networks, volumes, configs and secrets' },
+      { kind: 'label-clash', label: 'proxy labels' },
       { kind: 'file-clash', label: 'folders on the array' }
     ];
 
@@ -1226,6 +1478,7 @@
     findings = findings.concat(findContainerNameClashes(sources, docCache));
     findings = findings.concat(findPortClashes(sources, docCache));
     findings = findings.concat(findShorthandClashes(sources, docCache));
+    findings = findings.concat(findLabelClashes(sources, opts, docCache));
 
     findings = findings.concat(findWiringFindings(sources, opts, docCache));
 
@@ -1268,6 +1521,11 @@
     // than merely likely.
     pickFreePort: pickFreePort,
     allPublishedPorts: allPublishedPorts,
+    // F3 — the one port-body parser, shared with merge-write.js's own
+    // splitPortEntry() (descriptor building) and line-based parsePortBody()
+    // (locating/rewriting a "ports:" list entry), so the two files can never
+    // silently drift into reading a port two different ways.
+    parsePortSpec: parsePortSpec,
     // Exposed so the step 2 summary card can flag a hidden-config refusal
     // for one stack the moment it is read, without waiting on a full
     // examine() over every picked source.

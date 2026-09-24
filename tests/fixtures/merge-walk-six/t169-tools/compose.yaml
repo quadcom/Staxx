@@ -1,0 +1,54 @@
+# t169-tools — two services behind the second merge walkthrough (PLAN_169), written with
+# anchors and aliases so a merge that reorders anything has to keep every alias below its
+# anchor.
+x-common: &common
+  environment:
+    TZ: America/Toronto
+  networks:
+    - t169-tools-net
+
+x-unraid:
+  version: 1
+  overview: Merge walkthrough fixture (PLAN_169). Dozzle and an idle sidecar, sharing one anchor.
+  category: Tools:Utilities
+
+services:
+  dozzle:
+    <<: *common
+    image: amir20/dozzle:latest
+    ports:
+      # This stack's own debug page, kept off the box's shared address so it never collides
+      # with anything else that happens to use 19800 — the same port t169-site's debug page
+      # uses, on its own address instead.
+      - "127.0.0.3:19800:8080"
+    x-unraid:
+      icon: ./.staxx/icon.png
+
+  # Stopped rather than started by install.sh (a person would have stopped it too, once it
+  # clashed with t169-bus's broker on 19090) — but its own file still declares that port, which
+  # is what the merge has to notice once both land in one stack.
+  idle:
+    <<: *common
+    image: alpine:3.20
+    command: ["sh", "-c", "busybox httpd -f -p 80 -h /www"]
+    volumes:
+      - ./www:/www:ro
+    ports:
+      # t169-bus's own broker also publishes this exact port on every address — a real clash,
+      # unlike the loopback pair dozzle and t169-site use.
+      - "19090:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 10s
+      retries: 3
+    # Wired to its own stack-mate by service name from the start — one of the ways these six
+    # stacks find each other.
+    depends_on:
+      dozzle:
+        condition: service_started
+    x-unraid:
+      icon: ./.staxx/icon.png
+      webui: "http://[IP]:19090/"
+
+networks:
+  t169-tools-net: {}

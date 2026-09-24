@@ -1,0 +1,6 @@
+services:
+  web:
+    image: nginx:alpine
+    x-unraid:
+      webui: "http://[IP]:8091/"
+      icon: ./.staxx/icon.png

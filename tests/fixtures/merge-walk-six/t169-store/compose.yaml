@@ -1,0 +1,49 @@
+# t169-store — Postgres behind the second merge walkthrough (PLAN_169), seeded from a mounted
+# .sql file. Reached by t169-api over the box's own address until the merge rewires it to a
+# service name.
+x-unraid:
+  version: 1
+  overview: Merge walkthrough fixture (PLAN_169). Postgres, seeded with three greetings.
+  category: Tools:Databases
+
+services:
+  db:
+    image: postgres:16-alpine
+    # t169-bus's own file sets this exact same container name on a service of its own — a
+    # container name is not a service name, and nothing may quietly keep both.
+    container_name: t169-data
+    ports:
+      - "19432:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: t169pass
+    env_file:
+      # Sets PGPASSWORD — t169-api's own env_file sets the same name to a different value, and
+      # the merge has to say which wins and why, out loud.
+      - ./db.env
+    volumes:
+      # Long syntax rather than the usual "name:path" shorthand, on purpose.
+      - type: volume
+        source: data
+        target: /var/lib/postgresql/data
+      - type: bind
+        source: ./seed
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+      - /mnt/user/appdata/staxx-testing/t169-store/backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - t169-store-net
+    x-unraid:
+      icon: ./.staxx/icon.png
+
+volumes:
+  data:
+
+networks:
+  t169-store-net: {}

@@ -1,0 +1,57 @@
+# t169-bus — the message broker behind the second merge walkthrough (PLAN_169): mosquitto, plus
+# a one-shot that publishes a single retained message and exits.
+x-common: &common
+  restart: unless-stopped
+
+x-unraid:
+  version: 1
+  overview: Merge walkthrough fixture (PLAN_169). Mosquitto, seeded with one retained message.
+  category: Tools:Utilities
+
+services:
+  mqtt:
+    <<: *common
+    image: eclipse-mosquitto:2
+    # t169-store's own file sets this same container name on a service of its own — a
+    # container name is not a service name, and nothing may quietly keep both.
+    container_name: t169-data
+    ports:
+      - "19883:1883"
+      # t169-tools's own log viewer also publishes this exact port on every address — a real
+      # clash, unlike the loopback pair t169-site and t169-tools use for their debug pages.
+      - "19090:9090"
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - data:/mosquitto/data
+    configs:
+      - source: bus_banner
+        target: /mosquitto/config/banner.txt
+    networks:
+      - t169-bus-net
+    x-unraid:
+      icon: ./.staxx/icon.png
+      webui: "http://[IP]:19090/"
+
+  # Publishes one retained message and exits 0 — the merge must not read a stopped container as
+  # a failure, must not wait on it at the end, and must not offer it a health check.
+  seed:
+    image: eclipse-mosquitto:2
+    restart: "no"
+    depends_on:
+      mqtt:
+        condition: service_started
+    entrypoint: ["sh", "-c"]
+    command:
+      - "sleep 2 && mosquitto_pub -h mqtt -p 1883 -t t169/status -m ready -r"
+    networks:
+      - t169-bus-net
+
+volumes:
+  data:
+
+networks:
+  t169-bus-net: {}
+
+configs:
+  bus_banner:
+    file: ./config/banner.txt

@@ -1,0 +1,3 @@
+services:
+  svc2:
+    image: alpine:3.20

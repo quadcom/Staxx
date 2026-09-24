@@ -1,0 +1,43 @@
+# t169-site — the static page for the second merge walkthrough (PLAN_169). Served by nginx and
+# reached mostly through the edge; also carries its own debug copy on a loopback address so this
+# stack's own address keeps answering once six stacks become one.
+x-unraid:
+  version: 1
+  overview: Merge walkthrough fixture (PLAN_169). nginx serving the walkthrough's static page.
+  category: Network:Web
+
+services:
+  # Called "app" here and in t169-api's own file too — the merge must rename one and rewrite
+  # every place that names it.
+  app:
+    image: nginx:alpine
+    # This container's own name, not a service name — t169-store's own file sets this same
+    # value on a service of its own.
+    container_name: t169-site-app
+    ports:
+      # This stack's own debug copy, kept off the box's shared address so it never collides
+      # with anything else that happens to use 19800.
+      - "127.0.0.2:19800:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    environment:
+      # Every stack in this fixture keeps its own timezone; the merge must carry all six
+      # through rather than collapsing them into one.
+      TZ: America/Toronto
+    networks:
+      - t169-edge-net
+    labels:
+      - "traefik.enable=true"
+      # Named with this stack's own project, so it never collides with another stack's router
+      # of the same plain name while each still runs on its own — the only router in this file
+      # called "${COMPOSE_PROJECT_NAME}-web".
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-web.service=app"
+      - "traefik.http.services.app.loadbalancer.server.port=80"
+    x-unraid:
+      icon: ./.staxx/icon.png
+      webui: http://127.0.0.2:19800/
+
+networks:
+  t169-edge-net:
+    external: true

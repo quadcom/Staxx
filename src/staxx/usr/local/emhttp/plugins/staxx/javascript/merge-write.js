@@ -234,6 +234,50 @@
     return null;
   }
 
+  // F2/F9/F11 — a service's own Traefik labels, a proxy name renamed
+  // everywhere it appears: in every label KEY that names it directly
+  // (`traefik.http.<section>.<oldName>.*`, whichever of "rule"/"service"/
+  // "middlewares"/... follows), and — only when the renamed name is itself
+  // a "services" or "middlewares" object, since only those are ever named
+  // as someone ELSE's target — in any label VALUE that points at it (a
+  // router's own `.service=<name>`/`.middlewares=<name>`). Text-based, not
+  // YAML-shape-based, so it rewrites a label whether it was written as a
+  // list item ("- traefik...=...") or a map entry ("traefik...: ..."), the
+  // same way locateLabelLine() (merge-examine.js) finds it either way.
+  // ${COMPOSE_PROJECT_NAME} is left exactly as written — only the literal
+  // name segment beside it changes, matching PLAN_169's own decision.
+  //
+  // Strikes a falsified lead comment on every line it actually changes
+  // (stripCommentAbove(), same rule every other rewrite in this file
+  // follows) — since a strike shortens doc.lines by one, `end` and the loop
+  // cursor `i` are both stepped back to stay aligned with the shifted array.
+  // Returns one { line, text, struckComment } per line actually changed.
+  function rewriteServiceLabels(doc, serviceKey, section, oldName, newName) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[serviceKey];
+    if (!p) return [];
+    var out = [];
+    var oldEsc = escapeRegExp(oldName);
+    var keyRe = new RegExp('(traefik\\.http\\.' + section + '\\.)' + oldEsc + '(?=\\.)');
+    var valueRe = new RegExp('(\\.(?:service|middlewares)[:=]\\s*["\']?)' + oldEsc + '(["\']?\\s*(?:#.*)?)$');
+    var end = p.end;
+    for (var i = p.start; i < end; i++) {
+      var line = doc.lines[i];
+      if (line.indexOf('traefik.http.') === -1) continue;
+      var next = line.replace(keyRe, '$1' + newName);
+      if ((section === 'services' || section === 'middlewares') && valueRe.test(next)) {
+        next = next.replace(valueRe, '$1' + newName + '$2');
+      }
+      if (next === line) continue;
+      var struck = stripCommentAbove(doc, i);
+      var idx = struck ? i - 1 : i;
+      doc.lines[idx] = next;
+      out.push({ line: idx, text: next, struckComment: struck });
+      if (struck) { end--; i--; }
+    }
+    return out;
+  }
+
   // The same search rewriteEnvAddressTracked() below uses, without editing
   // anything — a declined rewire needs to point its change record's marker
   // at the exact line that stays, not at a line it just rewrote.
@@ -317,14 +361,12 @@
     return { prefix: m[1], quote: m[2], body: m[3] };
   }
 
-  function parsePortBody(body) {
-    var proto = '', main = body;
-    var pm = /(\/(?:tcp|udp))$/.exec(body);
-    if (pm) { proto = pm[1]; main = body.slice(0, -pm[1].length); }
-    var parts = main.split(':');
-    if (parts.length >= 2) return { host: parts[0], container: parts.slice(1).join(':'), proto: proto };
-    return { host: '', container: main, proto: proto };
-  }
+  // F3 — a thin alias for merge-examine.js's own parsePortSpec(), so a
+  // "ports:" list line is read the same way here (locating/rewriting one
+  // entry) as merge-examine.js reads it (findPortClashes()) and as
+  // splitPortEntry() below reads it (building a source descriptor). One
+  // parser, kept in ME so it is never accidentally forked into two.
+  function parsePortBody(body) { return ME.parsePortSpec(body); }
 
   // The bare lookup rewritePortHost() (below) uses — split out so a decline
   // can point a change record's marker at the SAME line without rewriting
@@ -350,7 +392,10 @@
     if (i === null) return null;
     var parsed = parsePortListLine(doc.lines[i]);
     var pb = parsePortBody(parsed.body);
-    doc.lines[i] = parsed.prefix + parsed.quote + newHostPort + ':' + pb.container + pb.proto + parsed.quote;
+    // F3 — an address prefix (an IPv4/hostname, or a bracketed IPv6
+    // literal) travels with the entry unchanged; only the HOST port moves.
+    doc.lines[i] = parsed.prefix + parsed.quote + (pb.address ? pb.address + ':' : '') +
+      newHostPort + ':' + pb.container + pb.protocolSuffix + parsed.quote;
     return { line: i, text: doc.lines[i] };
   }
 
@@ -750,14 +795,10 @@
     return Array.isArray(v) ? v.slice() : [v];
   }
 
-  function splitPortEntry(entry) {
-    var text = String(entry), proto = 'tcp';
-    var pm = /\/(tcp|udp)$/.exec(text);
-    if (pm) { proto = pm[1]; text = text.slice(0, -pm[0].length); }
-    var parts = text.split(':');
-    if (parts.length >= 2) return { host: parts[0], container: parts[1], protocol: proto };
-    return { host: '', container: parts[0], protocol: proto };
-  }
+  // F3 — a source descriptor's own `ports:` entries are read by the exact
+  // same parser findPortClashes() (merge-examine.js) uses to READ a port
+  // clash, so the two can never disagree about what a "ports:" entry means.
+  function splitPortEntry(entry) { return ME.parsePortSpec(entry); }
 
   function readEnvText(text) {
     if (text == null) return null;
@@ -1337,6 +1378,21 @@
         environmentResolved[varName] = { value: resolveEnvValue(environment[varName], envMap, via), via: via };
       });
 
+      // F2/F9/F11 — flattened to a plain key->value map regardless of
+      // whether the author wrote labels: as a list ("key=value" entries) or
+      // a map (key: value directly) — findLabelClashes() (merge-examine.js)
+      // only ever needs to ask "what is this label's own value", never how
+      // it was shaped.
+      var labels = {};
+      if (Array.isArray(raw.labels)) {
+        raw.labels.forEach(function (kv) {
+          var eq = String(kv).indexOf('=');
+          if (eq >= 0) labels[kv.slice(0, eq)] = kv.slice(eq + 1);
+        });
+      } else if (raw.labels && typeof raw.labels === 'object') {
+        labels = raw.labels;
+      }
+
       services[svcName] = {
         image: raw.image || '',
         container_name: raw.container_name || undefined,
@@ -1346,6 +1402,7 @@
         environment: environment,
         environmentResolved: environmentResolved,
         env_file: asStringArray(raw.env_file),
+        labels: labels,
         // Read only so a port-clash finding can tell whether a service is
         // ever started by default (PLAN_155 C10/F16) — nothing here writes
         // profiles: back out, so no rename or rewrite touches it.
@@ -1400,7 +1457,13 @@
         volumes: declBlock('volumes'),
         networks: declBlock('networks'),
         configs: declBlock('configs'),
-        secrets: declBlock('secrets')
+        secrets: declBlock('secrets'),
+        // F4 — the top-level include: list, read only so
+        // findDepthPathFindings() can re-point a "../" path in it exactly
+        // like extends.file; nothing here ever edits this array back out,
+        // since the general top-level-key carry (buildMergedText()'s own
+        // "C1" pass) already copies the whole `include:` block verbatim.
+        include: Array.isArray(plain.include) ? plain.include : []
         // No stack_x_unraid — a stack has no icon or description of its
         // own, only a service does, so nothing here ever reads a top-level
         // x-unraid block back out of a parsed source.
@@ -1479,6 +1542,35 @@
     var filesReplies = opts.files || {};
     var newDepth = typeof opts.newDepth === 'number' ? opts.newDepth
       : (opts.name && opts.name.indexOf('/') >= 0 ? 1 : 0);
+
+    // PLAN_169 F8 — the wizard already refuses to carry an unreadable
+    // source past picking (see stacks.js, mergeLoadStack()/
+    // mergeUpdateStep2Live()), but this is the one place every route into
+    // a merge — the wizard, a probe, a future caller — passes through, so
+    // it is refused again here rather than trusted to have been checked
+    // already. CM.parse()'s own warnings mean it read what it could and
+    // left the rest of the file alone; merging that silently would build a
+    // file missing whatever line broke, with nothing said. `text: null` is
+    // the caller-facing half of the refusal — nothing downstream can
+    // mistake this for a normal result and finish writing it out.
+    var unreadable = sources.map(function (s) {
+      var warnings = CM.parse(s.text).warnings || [];
+      return warnings.length ? { stack: s.name, line: warnings[0].line } : null;
+    }).filter(Boolean);
+    if (unreadable.length) {
+      return {
+        text: null, env: null, files: [], changes: [], newProject: null, findings: [],
+        refusals: unreadable.map(function (u) {
+          return {
+            kind: 'unreadable-source', severity: 'refusal', stack: u.stack,
+            facts: { line: u.line },
+            message: leaf(u.stack) + ' has a line StaXX cannot read (line ' + (u.line + 1) +
+              '). Fix it in the editor, then pick it again.',
+            lines: []
+          };
+        })
+      };
+    }
 
     var descs = sources.map(function (s) {
       var reply = filesReplies[s.name] || {};
@@ -1661,6 +1753,27 @@
         pushAutoRenameChanges(changes, f, before, doc.lines, 'Renamed to keep it distinct',
           'Two source stacks both had a ' + f.facts.declKind.replace(/s$/, '') + ' called "' + f.facts.from +
           '", for different things — this one is now "' + f.facts.to + '".');
+      });
+
+      // F2/F9/F11 — two sources both named a Traefik router/service/
+      // middleware the same thing (Traefik reads labels box-wide, so a name
+      // has to be unique across the whole new stack). rewriteServiceLabels()
+      // does its own line-by-line edit (never a doc.lines diff, unlike the
+      // renames above) so it can strike a falsified lead comment on exactly
+      // the line it touches — F11's own struck-comment requirement, the same
+      // mechanism every other rewrite here uses (stripCommentAbove()).
+      exam.findings.forEach(function (f) {
+        if (f.kind !== 'label-clash' || f.stack !== s.name) return;
+        var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
+        var results = rewriteServiceLabels(doc, finalSvc, f.facts.section, f.facts.from, f.facts.to);
+        results.forEach(function (r, i) {
+          changes.push({
+            key: f.key, part: i, stack: s.name, sourceLine: sourceLineFor(f), marker: r.text,
+            title: 'Two services use the proxy name ' + f.facts.from,
+            reason: 'Renamed to ' + f.facts.to + ' in ' + finalSvc + ' so both keep working.',
+            struckComment: r.struckComment || null, cannotLeave: true
+          });
+        });
       });
 
       // A storage-carry finding whose merged file needs a different key
@@ -2417,14 +2530,45 @@
       if (!svcMap) return;
       var blocks = computeBlocks(sd.doc, svcMap);
 
-      blocks.order.forEach(function (key) {
+      // A comment on no key at all is never inside any key's own span, so
+      // computeBlocks() — which only ever walks a KEY's lead comment and
+      // trailing gap — cannot see it, and it was silently dropped (PLAN_169
+      // F5; CLAUDE.md rule 2). Two shapes of it exist: a file-header
+      // comment sitting above this source's own `services:` line, and a
+      // comment closing the source's last service — written one indent
+      // deeper than any key, which compose-model.js therefore treats as
+      // lying OUTSIDE the services: map's own span rather than as part of
+      // it. Both are located here, once per source, and carried by hand.
+      var servicesPair = sd.doc.root.pairs['services'];
+      var headerLines = [];
+      var closingLines = [];
+      if (servicesPair) {
+        var hStart = leadStart(sd.doc.lines, servicesPair.start, servicesPair.indent);
+        headerLines = sd.doc.lines.slice(hStart, servicesPair.start);
+
+        var rootKeys = sd.doc.root.keys;
+        var svcIdx = rootKeys.indexOf('services');
+        // No next top-level key: the file's own last line is the limit —
+        // doc.root.end stops at the same place svcMap.end does (both
+        // exclude this same orphaned comment), so it cannot be used here.
+        var nextStart = sd.doc.lines.length;
+        if (svcIdx >= 0 && svcIdx + 1 < rootKeys.length) {
+          var nextPair = sd.doc.root.pairs[rootKeys[svcIdx + 1]];
+          nextStart = leadStart(sd.doc.lines, nextPair.start, nextPair.indent);
+        }
+        closingLines = sd.doc.lines.slice(servicesPair.end, nextStart);
+      }
+
+      blocks.order.forEach(function (key, ki) {
         var block = blocks.blocks[key];
         var pIndent = svcMap.pairs[key].indent;
         var pad = new Array(pIndent + 1).join(' ');
 
         var blockStartFinal = finalLines.length;
+        if (ki === 0 && headerLines.length) finalLines = finalLines.concat(headerLines);
         finalLines.push(pad + '# From ' + leaf(sd.name));
         finalLines = finalLines.concat(block);
+        if (ki === blocks.order.length - 1 && closingLines.length) finalLines = finalLines.concat(closingLines);
         var blockEndFinal = finalLines.length;
 
         // Resolve any pending change against this exact block's own
