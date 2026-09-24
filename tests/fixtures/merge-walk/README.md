@@ -31,9 +31,11 @@ Adrian's rule, 2026-09-17, sharpened 2026-09-18: **every address that answered b
 answer after it.** Not "did it write a file", and not just the front door — each merged stack
 published its own ports, and every one of them has to keep working once they are one stack. A single
 address gone quiet fails the walk. `check-page.sh` is that rule in a script: the page on `18080`, TLS
-on `18443`, Adminer on `18081`, and the database and cache proved through the page itself — which also
+on `18443`, Adminer on `18081`, the database and cache proved through the page itself — which also
 shows the merged services now talk to each other by service name rather than through the box's
-address.
+address — and, after the merge, MariaDB's and Redis's own published ports checked directly, since a
+service being reachable by name inside the stack says nothing about whether anything outside it still
+needs the port it used to be reached on.
 
 ## Running it
 
@@ -64,11 +66,12 @@ bash teardown.sh                         # removes the four, the merged stack, v
 `check-page.sh` prints the page it fetched, then one line per check. Anything other than all
 `pass` lines is a failure to chase, and the page's own text usually says which half broke.
 
-**Known gap, 2026-09-18.** The script checks the site's own addresses, not the ports the four sources
-each published — so a walk reads green even though the database's published port is gone after the
-merge. Under the pass rule above that is a failure, not a detail. The script grows the full inventory
-when `PLAN_170` is built, which is also where the merge stops unpublishing a port it only knows is
-surplus to the stacks inside the merge.
+After the merge it also checks the two published ports the pass rule above actually cares about:
+MariaDB's own `13306` and Redis's own `16379`, both still reachable on the box's own address exactly
+as they were standalone — `port-unneeded` (`PLAN_170`) leaves a port published by default, since
+stopping it can break something outside the merge StaXX cannot see, so a walk that left both merged
+services reachable but a database's own published port silently gone would fail here rather than
+reading green.
 
 ## What each script refuses to do
 

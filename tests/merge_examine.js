@@ -893,15 +893,61 @@ console.log('\nK. Wiring');
      rewire[0].facts.toService === 'db' && rewire[0].facts.toPort === '3306');
 
   var unneeded = findingsOf(r, 'port-unneeded');
-  ok('the now-unneeded published port is recommended and ticked by default, same as address-rewire',
-     unneeded.length === 1 && unneeded[0].choices[0].recommended === true && unneeded[0].choices[0].ticked === true);
+  ok('the now-unneeded published port is recommended and ticked OFF by default (PLAN_170 — keeping ' +
+     'it costs nothing; stopping it can break something outside the merge StaXX cannot see)',
+     unneeded.length === 1 && unneeded[0].choices[0].recommended === false && unneeded[0].choices[0].ticked === false);
+  ok('the finding carries the caller that made it unneeded, and the address it wrote',
+     unneeded[0].facts.callers.length === 1 && unneeded[0].facts.callers[0] === 'web' &&
+     unneeded[0].facts.host === '192.0.2.88');
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-14', name: 'demoapp' });
   ok('the address becomes the arriving service\'s name and real port', /DB_ADDRESS: db:3306/.test(w.text));
-  ok('the now-unneeded port is removed by default, and produces its own change record',
-     w.text.indexOf('3307:3306') === -1 &&
-     w.changes.some(function (c) { return c.title === 'No longer published'; }));
+  ok('left published by default, and the card asks rather than asserts',
+     w.text.indexOf('3307:3306') >= 0 &&
+     w.changes.some(function (c) {
+       return c.declined === true && c.title === 'Is anything outside this merge using db on port 3307?';
+     }));
   assertMergedIsValid('wiring', w.text, ['web', 'db']);
+})();
+
+console.log('\nK1b. port-unneeded — the evidence line, and both branches\' record text (PLAN_170)');
+
+(function () {
+  var a = loadRaw('wiring', 'host'), b = loadRaw('wiring', 'incoming');
+  var finding = M.examine([descOf(a), descOf(b)]).findings.filter(function (f) { return f.kind === 'port-unneeded'; })[0];
+
+  function reasonFor(portUsers, approved) {
+    var decisions = {};
+    if (approved) decisions[finding.key] = true;
+    var opts = { date: '2026-09-14', name: 'demoapp', decisions: decisions };
+    if (portUsers !== undefined) { opts.portUsers = {}; opts.portUsers[finding.key] = portUsers; }
+    var w = MW.buildMergedText([a, b], opts);
+    return w.changes.filter(function (c) { return c.key === finding.key; })[0].reason;
+  }
+
+  ok('not yet answered — no evidence line at all, the card still reads correctly without one',
+     reasonFor(undefined, false) ===
+       'Inside the new stack, web now reaches it by name, so it does not need this published port. ' +
+       'Anything else that connects from outside still does: another stack, a tool on your network, a script. ' +
+       'Kept published. Approve to stop publishing it.');
+
+  ok('found — one stack, singular "also connects", and names it',
+     reasonFor(['homeassistant'], false).indexOf(
+       'homeassistant also connects to this port. Stop publishing it and that stack breaks.') >= 0);
+
+  ok('found — several stacks joined with commas and "and", plural "also connect"',
+     reasonFor(['homeassistant', 'grafana'], false).indexOf(
+       'homeassistant and grafana also connect to this port. Stop publishing it and those stacks break.') >= 0);
+
+  ok('not found — StaXX says plainly it cannot see off this box',
+     reasonFor([], false).indexOf(
+       'No other stack on this server connects to this address. StaXX cannot see anything off this server.') >= 0);
+
+  ok('declined branch ends "Kept published. Approve to stop publishing it."',
+     / Kept published\. Approve to stop publishing it\.$/.test(reasonFor(['homeassistant'], false)));
+
+  ok('approved branch ends "Stops being published."',
+     / Stops being published\.$/.test(reasonFor(['homeassistant'], true)));
 })();
 
 console.log('\nK2. The falsified-comment fault — struck, not carried across unchanged');
@@ -929,14 +975,19 @@ console.log('\nK2. The falsified-comment fault — struck, not carried across un
      change.reason === 'Was 192.0.2.88:3307, out on the network.');
   assertMergedIsValid('falsified-comment', w.text, ['web', 'db']);
 
-  // Ticking port-unneeded also removes a line and records its own change.
+  // Approving port-unneeded (off by default, PLAN_170) still removes the
+  // line and records its own change — only the default flipped, not the
+  // mechanics of acting on a "yes".
   var portFinding = M.examine([MW.descriptorFromText('demo-web', host.text, null, []),
     MW.descriptorFromText('demo-db', incoming.text, null, [])]).findings.filter(function (f) { return f.kind === 'port-unneeded'; })[0];
   var decisions = {}; decisions[portFinding.key] = true;
   var closed = MW.buildMergedText([host, incoming], { date: '2026-09-15', name: 'demoapp', decisions: decisions });
-  ok('ticking "no longer published" removes the port, and the change record says so plainly',
+  ok('approving "stop publishing" removes the port, and the change record ends "Stops being published."',
      closed.text.indexOf('3307:3306') === -1 &&
-     closed.changes.some(function (c) { return c.title === 'No longer published'; }));
+     closed.changes.some(function (c) {
+       return c.title === 'Is anything outside this merge using db on port 3307?' &&
+         !c.declined && / Stops being published\.$/.test(c.reason);
+     }));
 })();
 
 console.log('\nK3. Wiring is found through the settings file too (C2, PLAN_156 F2)');
@@ -1188,7 +1239,8 @@ console.log('\nO. Full-rel source names — the leaf, not the rel, is what gets 
   // 2 — the falsified comment above a rewritten line is struck AND
   // recorded, even in the split _HOST/_PORT shape where the comment sits
   // above the HOST line and only the PORT line was being checked before.
-  // 3 — port-unneeded applies by default and yields its own change record.
+  // 3 — port-unneeded is LEFT AS WRITTEN by default (PLAN_170) and still
+  // yields its own change record, asking rather than asserting.
   // 5 — every change record carries both `line` (merged text) and
   // `sourceLine` (that source's own original text).
   var db = {
@@ -1232,14 +1284,15 @@ console.log('\nO. Full-rel source names — the leaf, not the rel, is what gets 
      typeof byPart.port.line === 'number' && typeof byPart.port.sourceLine === 'number' &&
      byPart.port.sourceLine !== byPart.host.sourceLine);
 
-  ok('the now-unneeded port is removed by default (no decision needed)', w.text.indexOf('3307:3306') === -1);
-  var unneeded = w.changes.filter(function (c) { return c.title === 'No longer published'; })[0];
-  ok('...and produces its own change record, with a source line too',
-     !!unneeded && unneeded.removed === true &&
-     unneeded.reason === 'This line is removed from the written file. Nothing outside the stack needs to reach mariadb now.' &&
+  ok('the now-unneeded port is kept published by default (no decision needed)', w.text.indexOf('3307:3306') >= 0);
+  var unneeded = w.changes.filter(function (c) {
+    return c.title === 'Is anything outside this merge using mariadb on port 3307?';
+  })[0];
+  ok('...and produces its own change record, declined by default, with a source line too',
+     !!unneeded && unneeded.declined === true &&
+     / Kept published\. Approve to stop publishing it\.$/.test(unneeded.reason) &&
      typeof unneeded.sourceLine === 'number');
-
-  assertMergedIsValid('full-rel (falsified comment + port-unneeded default)', w.text, ['mariadb', 'web']);
+  assertMergedIsValid('full-rel (falsified comment + port-unneeded, kept by default)', w.text, ['mariadb', 'web']);
 })();
 
 /* =========================================================================
@@ -1408,16 +1461,25 @@ console.log('\nO2. Finding `lines` populated for every rewriting kind, threading
 console.log('\nP. Closing the last published port leaves valid, explicit YAML');
 
 (function () {
+  // PLAN_170: port-unneeded is off by default now, so approving it (as if
+  // the wizard's own "stop publishing" answer had been clicked) is what
+  // this suite exercises — the mechanics under removePortPublishTracked()
+  // this section is actually about are unchanged by the default flipping.
   var db = { name: 'demo-db', text: 'services:\n  mariadb:\n    image: mariadb:11\n    ports:\n      - "3307:3306"\n' };
   var web = { name: 'demo-web', text: 'services:\n  web:\n    image: nginx:latest\n    environment:\n      DB_ADDRESS: 192.0.2.88:3307\n' };
+  var finding = M.examine([MW.descriptorFromText('demo-db', db.text, null, []),
+    MW.descriptorFromText('demo-web', web.text, null, [])]).findings.filter(function (f) { return f.kind === 'port-unneeded'; })[0];
+  var decisions = {}; decisions[finding.key] = true;
 
-  var w = MW.buildMergedText([db, web], { date: '2026-09-15', name: 'demoapp' });
+  var w = MW.buildMergedText([db, web], { date: '2026-09-15', name: 'demoapp', decisions: decisions });
   ok('the only port entry going drops the "ports:" key from the written file entirely',
      !/ports:/.test(w.text));
 
-  var unneeded = w.changes.filter(function (c) { return c.title === 'No longer published'; })[0];
+  var unneeded = w.changes.filter(function (c) {
+    return c.title === 'Is anything outside this merge using mariadb on port 3307?';
+  })[0];
   ok('the change record is marked removed, carrying the exact line that would have stayed',
-     !!unneeded && unneeded.removed === true && unneeded.removedText === '    ports: []');
+     !!unneeded && !unneeded.declined && unneeded.removed === true && unneeded.removedText === '    ports: []');
   ok('its `line` is where the struck ghost row belongs — the line now standing where "ports: []" would have',
      typeof unneeded.line === 'number' && w.text.split('\n')[unneeded.line] !== '    ports: []');
   assertMergedIsValid('last-port-closed', w.text, ['mariadb', 'web']);
@@ -1433,14 +1495,19 @@ console.log('\nP. Closing the last published port leaves valid, explicit YAML');
     ].join('\n')
   };
   var web = { name: 'demo-web', text: 'services:\n  web:\n    image: nginx:latest\n    environment:\n      DB_ADDRESS: 192.0.2.88:3307\n' };
+  var finding2 = M.examine([MW.descriptorFromText('demo-db', db.text, null, []),
+    MW.descriptorFromText('demo-web', web.text, null, [])]).findings.filter(function (f) { return f.kind === 'port-unneeded'; })[0];
+  var decisions2 = {}; decisions2[finding2.key] = true;
 
-  var w = MW.buildMergedText([db, web], { date: '2026-09-15', name: 'demoapp' });
+  var w = MW.buildMergedText([db, web], { date: '2026-09-15', name: 'demoapp', decisions: decisions2 });
   ok('the surviving port stays published, "ports:" left as a real block, not "[]"',
      /- "3308:3308"/.test(w.text) && !/ports: \[\]/.test(w.text));
 
-  var unneeded = w.changes.filter(function (c) { return c.title === 'No longer published'; })[0];
+  var unneeded = w.changes.filter(function (c) {
+    return c.title === 'Is anything outside this merge using mariadb on port 3307?';
+  })[0];
   ok('the change record\'s line points at the "ports:" key line, not the service key',
-     !!unneeded && w.text.split('\n')[unneeded.line] === '    ports:');
+     !!unneeded && !unneeded.declined && w.text.split('\n')[unneeded.line] === '    ports:');
   assertMergedIsValid('one-of-two-ports-closed', w.text, ['mariadb', 'web']);
 })();
 

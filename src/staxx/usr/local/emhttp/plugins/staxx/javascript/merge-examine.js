@@ -1065,18 +1065,29 @@
       });
 
       var key = target.stack + '/' + target.service + '/' + portVal;
-      if (!rewired[key]) {
-        rewired[key] = true;
+      if (rewired[key]) {
+        // Another caller reaching the same target/port — the question is
+        // asked once per port, not once per caller, so its name is folded
+        // into the one finding already raised rather than raising a second.
+        var existingCallers = rewired[key].facts.callers;
+        if (existingCallers.indexOf(svcName) === -1) existingCallers.push(svcName);
+      } else {
         var targetDoc = docCache[target.stack];
-        findings.push({
+        // PLAN_170: recommended and ticked OFF by default — this rewire only
+        // knows the port is unneeded INSIDE this merge; something outside it
+        // (another stack, a tool on the network, a script) may still reach
+        // it, and StaXX cannot see that. `callers` names every service whose
+        // rewire raised this same question; `host` is the address the first
+        // of them actually wrote, carried through so the wizard's own
+        // merge-port-users scan can search other stacks for it.
+        var puFinding = {
           kind: 'port-unneeded', severity: 'wiring', stack: target.stack,
-          facts: { service: target.service, port: portVal },
-          // Recommended and ticked by default, the same as address-rewire —
-          // it is the port THIS rewire just made unnecessary, not a general
-          // "maybe something else needs it" guess.
-          choices: [{ id: 'stop-publishing', recommended: true, ticked: true }],
+          facts: { service: target.service, port: portVal, callers: [svcName], host: hostVal },
+          choices: [{ id: 'stop-publishing', recommended: false, ticked: false }],
           lines: targetDoc ? linesEntry(target.stack, locatePortLine(targetDoc, target.service, portVal)) : []
-        });
+        };
+        rewired[key] = puFinding;
+        findings.push(puFinding);
       }
     });
   }
@@ -1118,15 +1129,25 @@
               lines: doc ? linesEntry(d.name, locateEnvLine(doc, svcName, varName, written)) : []
             });
             var key = target.stack + '/' + target.service + '/' + port;
-            if (!rewired[key]) {
-              rewired[key] = true;
+            if (rewired[key]) {
+              // Same target/port as a finding already raised (see this
+              // function's split-host/port sibling above) — the caller's
+              // name joins that one instead of a second question being asked.
+              var existingCallers2 = rewired[key].facts.callers;
+              if (existingCallers2.indexOf(svcName) === -1) existingCallers2.push(svcName);
+            } else {
               var targetDoc = docCache[target.stack];
-              findings.push({
+              // PLAN_170: off by default, same reasoning as the split-
+              // host/port branch above — this address only proves nothing
+              // INSIDE the merge needs the port any more.
+              var puFinding2 = {
                 kind: 'port-unneeded', severity: 'wiring', stack: target.stack,
-                facts: { service: target.service, port: port },
-                choices: [{ id: 'stop-publishing', recommended: true, ticked: true }],
+                facts: { service: target.service, port: port, callers: [svcName], host: addrHost },
+                choices: [{ id: 'stop-publishing', recommended: false, ticked: false }],
                 lines: targetDoc ? linesEntry(target.stack, locatePortLine(targetDoc, target.service, port)) : []
-              });
+              };
+              rewired[key] = puFinding2;
+              findings.push(puFinding2);
             }
           } else {
             findings.push({

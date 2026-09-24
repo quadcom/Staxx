@@ -368,6 +368,75 @@ function staxx_merge_files(string $rel, string &$error): ?array {
 }
 
 /**
+ * PLAN_170 — before the merge wizard asks "is anything outside this merge
+ * still using this port?", this looks for as much of the answer as StaXX
+ * can actually see: every other stack IN THE STORE (never anything outside
+ * it — see the standing rule against searching off the box) whose own
+ * compose file or .env still names $host and $port together. $excludeRels
+ * are the stacks taking part in this merge, so none of them can answer the
+ * question against itself; $host is the address the calling service
+ * actually wrote. The box's own LAN address and hostname are tried
+ * alongside it, since another stack may have spelled this same machine a
+ * different way.
+ *
+ * A stack counts as still using the port when its text holds "$host:$port"
+ * written together, or holds $host and $port each sitting alone as some
+ * setting's own value on its own line — the split HOST/PORT shape the
+ * wiring pass in merge-examine.js already understands. This is a text
+ * search, not a live connection: it can never prove nothing reaches the
+ * port, only that nothing ON THIS BOX said so in writing — which is exactly
+ * what the wizard's "not found" wording says.
+ *
+ * @return string[] the rel of every matching stack
+ */
+function staxx_merge_port_users(array $excludeRels, string $port, string $host): array {
+  $port = trim($port);
+  if ($port === '' || !preg_match('/^\d{1,5}$/', $port)) return [];
+
+  $hosts = array_values(array_unique(array_filter(
+    [trim($host), staxx_host_ip(), (string)gethostname()],
+    function ($h) { return $h !== ''; }
+  )));
+  if ($hosts === []) return [];
+
+  $out = [];
+  foreach (staxx_list_stacks() as $s) {
+    if (in_array($s['name'], $excludeRels, true)) continue;
+    if ($s['file'] === '') continue;
+
+    $text = '';
+    foreach (staxx_compose_files($s['file']) as $f) {
+      $text .= "\n" . (string)@file_get_contents($f);
+    }
+    $envFile = rtrim($s['dir'], '/') . '/.env';
+    if (is_file($envFile)) $text .= "\n" . (string)@file_get_contents($envFile);
+    if ($text === '') continue;
+
+    $lines = preg_split('/\r\n|\r|\n/', $text);
+
+    foreach ($hosts as $h) {
+      $hq = preg_quote($h, '/');
+      // "<host>:<port>" written together, however it is quoted.
+      if (preg_match('/'.$hq.':'.$port.'\b/', $text)) { $out[] = $s['name']; continue 2; }
+
+      // The split shape: the host alone as a setting's own value on one
+      // line, the port alone as a setting's own value on another.
+      $hasHostLine = false;
+      $hasPortLine = false;
+      foreach ($lines as $line) {
+        $trimmed = trim($line);
+        if (!$hasHostLine && preg_match('/[:=]\s*["\']?'.$hq.'["\']?\s*$/', $trimmed)) $hasHostLine = true;
+        if (!$hasPortLine && preg_match('/[:=]\s*["\']?'.$port.'["\']?\s*$/', $trimmed)) $hasPortLine = true;
+        if ($hasHostLine && $hasPortLine) break;
+      }
+      if ($hasHostLine && $hasPortLine) { $out[] = $s['name']; continue 2; }
+    }
+  }
+
+  return $out;
+}
+
+/**
  * What a stack's own RUNNING containers were actually started from
  * (PLAN_155 C18) — the files compose stamped onto them, not the files the
  * wizard can see. A merge only ever reads the main compose file plus the

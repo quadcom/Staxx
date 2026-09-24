@@ -668,6 +668,37 @@ switch ($action) {
       'runningFrom' => staxx_merge_running_from($name),
     ]);
 
+  /* ---- merge-port-users: PLAN_170 — before the wizard asks "is anything
+   * outside this merge still using this port?", this looks for the answer
+   * itself. 'exclude' is a JSON array of the rels taking part in the merge
+   * (so none of them can answer the question against itself); 'port' and
+   * 'host' are the port and the address the calling service actually wrote.
+   * See staxx_merge_port_users()'s own comment in Merge.php for what counts
+   * as a match.
+   */
+  case 'merge-port-users':
+    $exclude = json_decode((string)($_POST['exclude'] ?? ''), true);
+    if (!is_array($exclude)) {
+      staxx_reply(['ok' => false, 'error' => 'The list of stacks to exclude did not arrive as valid data.']);
+    }
+    foreach ($exclude as $excludeRel) {
+      if (!is_string($excludeRel) || $excludeRel === '') {
+        staxx_reply(['ok' => false, 'error' => 'The list of stacks to exclude did not arrive as valid data.']);
+      }
+    }
+
+    $portUsersPort = (string)($_POST['port'] ?? '');
+    if (!preg_match('/^\d{1,5}$/', $portUsersPort)) {
+      staxx_reply(['ok' => false, 'error' => 'That is not a port number.']);
+    }
+
+    $portUsersHost = (string)($_POST['host'] ?? '');
+    if ($portUsersHost === '') {
+      staxx_reply(['ok' => false, 'error' => 'No address arrived with this request.']);
+    }
+
+    staxx_reply(['ok' => true, 'stacks' => staxx_merge_port_users($exclude, $portUsersPort, $portUsersHost)]);
+
   /* --------------------------------------------------- PLAN_76 — export ----
    *
    * 'export-sort' just reads and reports; 'export-pack' is where a person's

@@ -33552,7 +33552,14 @@
       step6FormWidth: null,  // step 6's own drag grip — null until dragged, then a clamped px width
       mergeStop: false,      // step 6's own "Stop the original stacks" switch — off by default
       mergeStart: false,     // "Start the new stack when done" — turning this on forces mergeStop on
-      stacksLoading: false   // true only while mergeEnterStep2()'s own load is in flight
+      stacksLoading: false,  // true only while mergeEnterStep2()'s own load is in flight
+      // PLAN_170 — a port-unneeded finding's own key -> the merge-port-users
+      // reply's stack list, once it has answered ([] means the scan ran and
+      // found nothing; the key stays absent until it has). portUsersLoading
+      // guards against asking twice for the same key while its own request
+      // is still in flight.
+      portUsers: {},
+      portUsersLoading: {}
     };
   }
 
@@ -34063,7 +34070,8 @@
       date: mergeTodayDate(),
       files: mergeFilesMap(),
       newDepth: mergeNewDepth(),
-      envNames: mergeState.envNames   // see mergeFreshState()'s own comment — not read yet
+      envNames: mergeState.envNames,  // see mergeFreshState()'s own comment — not read yet
+      portUsers: mergeState.portUsers // PLAN_170 — merge-port-users' answers so far, by finding key
       // thisServer is left unset here on purpose: the page's own address
       // (location.hostname) is very often not the literal LAN address a
       // compose file's own author wrote, and supplying one that does not
@@ -34087,6 +34095,35 @@
       var errorEl = document.getElementById('staxx-merge-error');
       if (errorEl) { errorEl.hidden = false; errorEl.textContent = 'Could not work out this merge: ' + (e && e.message || e); }
     }
+  }
+
+  // PLAN_170 — once per port-unneeded finding (several callers of the same
+  // port share the one finding, so this is keyed on it, not on them),
+  // asks the server which OTHER stacks in the store still refer to the
+  // caller's own host and port — the evidence the wizard's card offers
+  // before asking "is anything outside this merge using this port?".
+  // portUsersLoading guards a key already in flight, so re-entering step 3
+  // (or a rebuild fired for an unrelated reason) never asks twice. A
+  // failure — network, a bad reply — simply leaves the key absent, same as
+  // never having asked: the card reads correctly with no evidence line.
+  function mergeFetchPortUsers() {
+    if (!mergeState || !mergeState.built) return;
+    var exclude = mergeState.picked.map(function (p) { return p.name; });
+    (mergeState.built.findings || []).forEach(function (f) {
+      if (f.kind !== 'port-unneeded') return;
+      if (mergeState.portUsers[f.key] !== undefined || mergeState.portUsersLoading[f.key]) return;
+      var key = f.key;
+      mergeState.portUsersLoading[key] = true;
+      call('merge-port-users', { exclude: JSON.stringify(exclude), port: f.facts.port, host: f.facts.host })
+        .then(function (res) {
+          if (!mergeState) return;   // the wizard may have been closed while this was in flight
+          delete mergeState.portUsersLoading[key];
+          if (!res || !res.ok) return;
+          mergeState.portUsers[key] = res.stacks || [];
+          mergeRebuild();
+          if (mergeState.step === 4) mergeRenderStep4(); else mergeRenderMergedPane();
+        });
+    });
   }
 
   /* --------------------------------------------------------- open/close -- */
@@ -38138,6 +38175,7 @@
       mergeState.step = 3;
       mergeState.walkLast = null;
       mergeRender();
+      mergeFetchPortUsers();   // PLAN_170 — step 3's own port-unneeded findings are known now
       return;
     }
     if (mergeState.step === 3) {

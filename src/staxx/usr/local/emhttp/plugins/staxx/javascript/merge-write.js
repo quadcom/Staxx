@@ -1868,21 +1868,42 @@
         }
       });
 
-      // A published port nothing needs any more — recommended and ticked
-      // by default now, the same as address-rewire (see merge-examine.js's
-      // own comment on port-unneeded's choice).
+      // A published port a REWIRE just made unneeded INSIDE this merge —
+      // recommended and ticked OFF by default (PLAN_170: keeping a port
+      // published costs nothing; stopping it can break something outside
+      // the merge that StaXX cannot see). The card asks rather than
+      // asserts, and answers as much of it as opts.portUsers already knows
+      // — see merge-examine.js's own comment on this finding for what
+      // `callers` and `host` carry, and PLAN_170's build decisions
+      // for the wording below, which is verbatim.
       exam.findings.forEach(function (f) {
         if (f.kind !== 'port-unneeded' || f.stack !== s.name) return;
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
+
+        var title = 'Is anything outside this merge using ' + f.facts.service + ' on port ' + f.facts.port + '?';
+        var reason = 'Inside the new stack, ' + joinNames(f.facts.callers || [f.facts.service]) +
+          ' now reaches it by name, so it does not need this published port. Anything else that ' +
+          'connects from outside still does: another stack, a tool on your network, a script.';
+
+        // opts.portUsers[f.key] is absent until the wizard's own scan has
+        // answered — no evidence line at all then, the card still reads
+        // correctly without one. Present as [] means the scan ran and found
+        // nothing; present with names means it found stacks still using it.
+        var users = opts.portUsers ? opts.portUsers[f.key] : undefined;
+        if (users !== undefined) {
+          reason += users.length
+            ? ' ' + joinNames(users) + ' also connect' + (users.length === 1 ? 's' : '') +
+              ' to this port. Stop publishing it and ' + (users.length === 1 ? 'that stack breaks.' : 'those stacks break.')
+            : ' No other stack on this server connects to this address. StaXX cannot see anything off this server.';
+        }
 
         if (!decisionValue(decisions, f)) {
           var declPortLine = findPortLine(doc, finalSvc, f.facts.port);
           if (declPortLine === null) return;
           changes.push({
             key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declPortLine],
-            title: 'No longer published',
-            reason: 'Left as written: nothing outside the stack needs to reach ' + f.facts.service +
-              ' now, but approving is what would actually stop publishing it.',
+            title: title,
+            reason: reason + ' Kept published. Approve to stop publishing it.',
             struckComment: null
           });
           return;
@@ -1901,8 +1922,8 @@
           // to actually strike this line, not merely mark it changed.
           var rec = {
             key: f.key, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[result.line],
-            title: 'No longer published',
-            reason: 'Nothing outside the stack needs to reach ' + f.facts.service + ' now.',
+            title: title,
+            reason: reason + ' Stops being published.',
             struckComment: result.struckComment || null
           };
           if (result.emptied) {
