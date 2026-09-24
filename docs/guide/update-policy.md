@@ -23,9 +23,9 @@ Change both from a container's own page in the editor, or straight from its row 
 
 ## From a container's own page
 
-![The Updates box in the editor, showing the When row set to Automatic with Immediate and Delayed underneath it, and beneath it a separate Notifications box with three switches — New image, Image installed and Installation failed — each shown as an orange tick or a red cross, and a note reading Default = Installation failed](../images/guide/update-policy-editor.png)
+![The When to update box in the editor, showing the When row set to Automatic with Immediate and Delayed underneath it, and beneath it a separate Notifications box with three switches — New image, Image installed and Installation failed — each shown as an orange tick, and a note reading Default = New image, Image installed, Installation failed](../images/guide/update-policy-editor.png)
 
-Open the stack, then the container inside it, and find the **Updates** box below its container
+Open the stack, then the container inside it, and find the **When to update** box below its container
 settings.
 
 | Row | Choices | What it does |
@@ -37,9 +37,9 @@ A short note beside the **When** row states what is actually going to happen rig
 words — for example "Waits 24 hours, then installs in the quiet hours." Press the bold words inside
 the note to jump straight to the server setting it names.
 
-![The Updates section with Automatic chosen and the note beside the When row outlined, reading Waits 24 hours, then installs in the quiet hours](../images/guide/update-policy-when-note.png)
+![The When to update box with Automatic chosen and the note beside the When row outlined, reading Waits 24 hours, then installs in the quiet hours](../images/guide/update-policy-when-note.png)
 
-Below the **Updates** box sits a **Notifications** box, showing the same three switches as your
+Below the **When to update** box sits a **Notifications** box, showing the same three switches as your
 server-wide notification settings — **New image**, **Image installed** and **Installation failed** —
 each on (an orange tick) or off (a red cross). They start out matching your server. Leave all three
 alone and this container follows the server, however you change it later. Flip any one of them and

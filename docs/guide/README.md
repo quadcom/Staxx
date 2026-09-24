@@ -29,8 +29,8 @@ This guide is written in English only.
 - **[Choosing how a container updates](update-policy.md)** — letting one container update itself, or
   wait for you, and whether it is mentioned in update messages — set on its own page or from its
   row.
-- **[Row marks and icons](marks.md)** — a quick key to every mark on the stacks page: running state,
-  update state, and the rest.
+- **[Row marks and icons](marks.md)** — a quick key to every mark and colour on the stacks page:
+  what each one means and what to do about it.
 - **[File locations and the data store](where-things-live.md)** — what is in the data store, what is
   on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page.
 - **[The Manage tab](the-manage-tab.md)** — what the Manage tab is for, how to open it, and what
@@ -43,6 +43,8 @@ This guide is written in English only.
 - **[Sanitise mode](hiding-your-values.md)** — the Sanitise tick that hides values marked secret
   while you photograph the editor, exactly what it leaves showing, what it switches off while it is
   on, and the one tab it cannot cover.
+- **[Proxy and DNS](proxy-and-dns.md)** — giving an app a web address through Nginx Proxy Manager
+  and a local DNS name in Pi-hole, and what the DNS mark on the stack list means.
 - **[Folders](folders.md)** — grouping stacks on the list: making a folder, moving a stack in or
   out, running everything inside one at once, renaming, and deleting.
 - **[Create a new stack](making-a-stack.md)** — starting a stack with nothing but a name: the

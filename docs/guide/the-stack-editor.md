@@ -74,9 +74,16 @@ service — then one section per service.
 Each service then gets its own set of groups. Press a service's **Sections** button to choose which
 of them to show; a tick marks each one already showing.
 
+Press the arrow beside a section's heading, or the heading itself, to fold the section away. Press
+it again to open it. Every section except **Container** folds. StaXX remembers which kinds of
+section you folded, in this browser, so folding **Ports** folds it on every stack you open.
+
+![Two section headings in the editor: Updates folded, with its arrow pointing right, and Proxy and DNS open below it, with its arrow pointing down](../images/guide/the-stack-editor-fold.png)
+
 | Group | For |
 |---|---|
 | Container | The image, the name and how it restarts. Always shown — every service must have it. |
+| Proxy and DNS | Shown only once Nginx Proxy Manager is set up in [Settings](settings.md). See [proxy and DNS](proxy-and-dns.md). |
 | Networks | Which networks this service joins. |
 | Ports | Which ports it publishes. On by default. |
 | Volumes | Folders and files it shares with the server. On by default. |

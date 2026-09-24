@@ -38,6 +38,20 @@ The dialog lists, in order:
   volumes by name marked *(a volume Docker manages)*, or **none**. None of these are moved or
   changed. A named volume is removed only by Docker's own clean-up, never by StaXX.
 
+### Proxy and DNS entries
+
+If StaXX made a proxy entry or a Pi-hole name for the stack, the dialog also asks what to do with
+each. See [Proxy and DNS](proxy-and-dns.md).
+
+![The Proxy and DNS part of the removal box: the proxy entry with Switch off ticked and Delete and Keep beside it, and the Pi-hole name with Delete ticked and Keep beside it](../images/guide/removing-a-stack-proxy-dns.png)
+
+| For | Choices | Chosen unless you change it |
+|---|---|---|
+| The proxy entry | **Switch off**, **Delete** or **Keep** | **Switch off** |
+| The Pi-hole name | **Delete** or **Keep** | **Delete** |
+
+A switched-off proxy entry keeps its settings and can be switched back on in Nginx Proxy Manager.
+
 ## What happens
 
 Removing a stack can take a little while. Once it is done:

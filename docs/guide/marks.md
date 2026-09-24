@@ -136,6 +136,22 @@ All three reasons below show the same chip. Hover it to see which one you have.
 | <img src="../images/guide/marks-restart-reason-absent.png" alt="The circular arrow chip with its hover text reading Not started yet" width="330"> | In the file, never started |
 | <img src="../images/guide/marks-restart-reason-leftover.png" alt="The circular arrow chip with its hover text reading No longer in the file" width="330"> | Removed from the file after its container started; still running, but orphaned |
 
+## The DNS mark
+
+![An expanded folder on the stack list; the jellyfin-demo row's Services column reads jellyfin with a red DNS mark and requests with a grey DNS mark](../images/guide/marks-dnsmark-row.png)
+
+A small **DNS** mark beside a service's name in the Services column, shown when that service has a
+domain name set in its Proxy and DNS section. See [Proxy and DNS](proxy-and-dns.md).
+
+| Colour | Meaning | Hovering shows |
+|---|---|---|
+| Green | Its proxy entry and its Pi-hole name match | The domain name, with a tick for Nginx Proxy Manager and for Pi-hole |
+| Red | One of them is missing or has changed | The domain name, with a tick or a cross for Nginx Proxy Manager and for Pi-hole. Press the mark to open the editor at that app's Proxy and DNS section |
+| Grey | Switched off | Switched off |
+
+![A green DNS mark beside the service name plex](../images/guide/marks-dnsmark-green.png)
+![A red DNS mark beside jellyfin and a grey DNS mark beside requests](../images/guide/marks-dnsmark-red-grey.png)
+
 ## Tags beside the name
 
 ![Three stack rows, each with an orange "needs review" tag sitting next to the stack's name](../images/guide/marks-needs-review.png)

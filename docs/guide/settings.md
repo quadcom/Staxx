@@ -95,9 +95,10 @@ This tab is explained fully in [checking for updates](updates.md).
 | Remove old images automatically | No / Yes, once a week | No | With this on, once a week StaXX removes downloaded images that nothing is running and that are no longer kept for putting back. It never removes anything else. With it off, old images stay until you remove them yourself. |
 | Update-check activity | — | — | Shows, for each place StaXX asks about updates, how many times it has asked this hour and today, how many of those counted against that place's limit. Where there is something to say about a place — that it sets no limit of its own, or that it has stopped answering — the row carries an asterisk and the note appears once underneath the table. Look here when a row keeps saying `could not check`. See [checking for updates](updates.md#docker-hubs-limit). |
 
-## Registries and security tab
+## Integrations tab
 
-![The Registries and security tab in full: the Docker Hub access box with its Username and Access token fields, the Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box with its dropdown, its state line, the four password formats each marked passes, the What is inside it list and the Show the recipe link](../images/guide/settings-registries-tab.png)
+![The Integrations tab in full: the Docker Hub access box with its Username and Access token fields, the Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box with its dropdown, its state line, the four password formats each marked passes, the What is inside it list and the Show the recipe link](../images/guide/settings-registries-tab.png)
+![The lower part of the Integrations tab: the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch and Test connection with its result](../images/guide/settings-integrations-proxy.png)
 
 | Setting | What it does |
 |---|---|
@@ -105,6 +106,15 @@ This tab is explained fully in [checking for updates](updates.md).
 | Docker Hub access token | The second half of signing in. Make one in Docker Hub's own account settings, under Security → Personal access tokens, choosing the **read-only, public repositories** permission. Even a leaked token could only look, never change or delete anything. It is stored in StaXX's settings inside the data store, where only the server's administrator can read it. Leave both boxes blank to sign out. |
 | Registries you run yourself | If you run your own image registry at home, naming it here lets StaXX check it for updates even though it has no public security certificate, or none at all. Only ever name a machine you control. Type its address the way it appears in an image name and press Add; remove one with its cross. A password is never sent to a registry reached without encryption. |
 | StaXXCrypt hashing container | With Keep it running, making a password hash is instant. With Only while hashing, the container starts when you need it and stops after; each hash then takes a couple of seconds longer. Under the dropdown you can see whether the container is built and running, which password formats it has proved it can make, the recipe number, a plain list of what is inside it, and a **Show the recipe** link that reveals exactly how it is built. The recipe number is a fingerprint of the recipe: change one line and the number changes, so matching numbers tell you the running container matches the recipe StaXX ships today. When an update to StaXX brings a new recipe, the number changes, the container is rebuilt from it, and the old one is removed. See [making a password hash](passwords-and-hashes.md). |
+| Nginx Proxy Manager address | The address of Nginx Proxy Manager's admin page, the one on port 81. With it filled in, you can give an app a domain name in the editor and StaXX adds its proxy entry. |
+| Nginx Proxy Manager email | The email you sign in to Nginx Proxy Manager with. |
+| Nginx Proxy Manager password | The password you sign in to Nginx Proxy Manager with. |
+| Pi-hole address | The address of your Pi-hole. With it filled in, StaXX can add a local DNS name for an app, pointing at Nginx Proxy Manager. |
+| Pi-hole app password | An app password made in Pi-hole's own Settings → Web interface / API, under Enable new app password. Leave this blank if your Pi-hole has no admin password. |
+| Allow insecure connections | With this on, StaXX is allowed to reach Nginx Proxy Manager and Pi-hole over a plain, unencrypted connection, or over an encrypted one without checking that the address really belongs to them. Anyone able to watch your network traffic could then read their passwords, and another device could pretend to be one of them. With it off, StaXX only connects to them when the connection is both encrypted and verified. |
+| Test connection | Signs in to Nginx Proxy Manager and Pi-hole with the addresses and passwords you have saved, and reports what each one says. Save your changes first. |
+
+See [Proxy and DNS](proxy-and-dns.md) for using Nginx Proxy Manager and Pi-hole with your stacks.
 
 ## Self-test
 
