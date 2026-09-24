@@ -193,6 +193,12 @@ var CLASH_KINDS = { 'container-name-clash': 1, 'port-clash': 1, 'shorthand-clash
   var rewires = exam.findings.filter(function (f) { return f.kind === 'address-rewire'; });
   if (rewires.length < 2) fail('rewire-count', 'order ' + o.label + ': expected at least two address-rewire findings (ES and Redis), found ' + rewires.length);
 
+  // PLAN_178 F2 — a comment naming what a field is FOR ("# Redis", "# ElasticSearch"), not the
+  // address being replaced, stays true after the rewire and must survive it, marker and all —
+  // otherwise Sanitise mode would quietly stop blanking these two addresses.
+  if (text.indexOf('# Redis -!S') === -1) fail('comment-redis', 'order ' + o.label + ': the "# Redis -!S" label above REDIS_CON did not survive the rewire');
+  if (text.indexOf('# ElasticSearch -!S') === -1) fail('comment-es', 'order ' + o.label + ': the "# ElasticSearch -!S" label above ES_URL did not survive the rewire');
+
   // The two published ports survive (PLAN_170's default: a rewired port is left published
   // unless the wizard is explicitly told to stop publishing it, which this walk never does).
   if (text.indexOf('17920:9200') === -1) fail('ports-es', 'order ' + o.label + ': the Elasticsearch port (17920:9200) did not survive the merge');

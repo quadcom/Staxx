@@ -34441,8 +34441,18 @@
     if (base) out.push(base);
     if (joined) out.push(joined);
 
+    // PLAN_178 F3 — a leaf whose own remainder already starts with a dash
+    // ("-ES") gets a second one from the join above ("Demo-TubeArchivist" +
+    // "-" + "-ES"), so "Demo-TubeArchivist--ES--Redis" was offered instead
+    // of "Demo-TubeArchivist-ES-Redis". Collapsed here, once, rather than
+    // taught to every caller of mergeCommonPrefix().
+    function collapseDashes(s) { return s.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, ''); }
+
     var seen = {}, result = [];
-    out.forEach(function (s) { if (s && !seen[s]) { seen[s] = 1; result.push(s); } });
+    out.forEach(function (s) {
+      s = collapseDashes(s);
+      if (s && !seen[s]) { seen[s] = 1; result.push(s); }
+    });
     return result;
   }
 

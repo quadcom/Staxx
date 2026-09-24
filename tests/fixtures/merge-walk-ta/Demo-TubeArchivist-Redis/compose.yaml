@@ -1,6 +1,3 @@
-# Demo-TubeArchivist-Redis — the Redis container from Community Applications' own
-# "TubeArchivist-Redis" template (PLAN_178). Community Applications gives this container no
-# health check and no settings of its own.
 x-unraid:
   version: 1
   imported:

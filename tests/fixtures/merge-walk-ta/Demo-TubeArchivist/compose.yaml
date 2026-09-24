@@ -1,8 +1,3 @@
-# Demo-TubeArchivist — the app container from Community Applications' "TubeArchivist" template
-# (PLAN_178, the third merge walkthrough). Installed the way a real Unraid user has it: talking
-# to its own Elasticsearch and Redis over the server's own address and their published ports,
-# because that is the only way three separate CA templates can find each other. The merge's job
-# is to let the three talk by name instead, once they share one stack.
 x-unraid:
   version: 1
   imported:
@@ -26,25 +21,21 @@ services:
       - /mnt/user/appdata/Demo-TubeArchivist/youtube:/youtube
       - /mnt/user/appdata/Demo-TubeArchivist/cache:/cache
     environment:
-      # The address this stack answers on, filled in by install.sh — never a real address in
-      # the repository. -!S
+      # HOST -!S
       TA_HOST: __BOX_IP__
       TA_USERNAME: tubearchivist
-      # Throwaway test password, never a real one. -!R -!S
+      # TA Password -!R -!S
       TA_PASSWORD: t178-test-only
-      # Reaches Redis over the server's own address before the merge; the merge should rewrite
-      # this to the Redis service's own name. -!S
+      # Redis -!S
       REDIS_CON: redis://__BOX_IP__:17637
-      # Must match archivist-es's own ELASTIC_PASSWORD. -!R -!S
+      # ElasticSearch Password -!R -!S
       ELASTIC_PASSWORD: t178-test-only
-      # Reaches Elasticsearch over the server's own address before the merge; the merge should
-      # rewrite this to the Elasticsearch service's own name. -!S
+      # ElasticSearch -!S
       ES_URL: http://__BOX_IP__:17920
       TZ: America/Toronto
       HOST_UID: "99"
       HOST_GID: "100"
     healthcheck:
-      # Matches Tube Archivist's own image — curl is already installed there for this.
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
       interval: 2m
       timeout: 10s

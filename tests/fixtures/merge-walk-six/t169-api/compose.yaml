@@ -24,7 +24,7 @@ services:
   rest:
     image: postgrest/postgrest:v12.2.3
     environment:
-      # __BOX_IP__ is filled in by install.sh; no real address ever sits in this repository.
+      # The address below is filled in by install.sh; no real one ever sits in this repository.
       # A merge that reaches this database over a shared network must rewrite this to a
       # service name instead.
       PGRST_DB_URI: postgres://authenticator:t169pass@__BOX_IP__:19432/t169

@@ -156,17 +156,77 @@
    * indent keeps matching (the same rule leadStart() above already applies
    * to a whole block's own lead comment), not just checking the one line
    * above, and every line in that run is removed together.
+   *
+   * PLAN_178 F2 — striking the whole run regardless of what it said lost
+   * comments that stay true after the rewrite ("# Redis -!S" above a
+   * REDIS_CON address, rewritten only to point at the new host, is still
+   * a correct label for what the line holds). A comment is now struck only
+   * when its text actually names the value being replaced — every caller
+   * passes the exact old text it is about to overwrite, the same way it
+   * already does for the rewrite itself. When the struck run carried a
+   * sanitise marker (`-!S`, `-!R`, or any other `-!<letter>`; see
+   * docs/x-unraid-schema.md "Notes and markers"), that marker is not lost
+   * with the prose around it: it is written back as a comment line of its
+   * own, same indent, directly above the rewritten line — otherwise a
+   * value that was blanked in Sanitise mode would quietly stop being
+   * blanked once its label was struck.
    * ===================================================================== */
 
-  function stripCommentAbove(doc, lineIdx) {
+  // A port is matched only as a whole number — "637" must not strike a
+  // comment that merely contains "16370" — everything else (an address, a
+  // host, a label name, a path) is a plain substring test.
+  function commentNamesValue(text, value) {
+    if (value === null || value === undefined || value === '') return false;
+    value = String(value);
+    if (/^\d+$/.test(value)) {
+      return new RegExp('(^|[^0-9])' + value + '(?=[^0-9]|$)').test(text);
+    }
+    return text.indexOf(value) !== -1;
+  }
+
+  // Callers pass every shape of "the old text" a comment might name: the
+  // whole old address, and — since a comment can just as easily call out
+  // only the host or only the port ("# Redis" said nothing, but a fixture
+  // could say "# port 6379") — its host and port halves too, when the value
+  // looks like "host:port".
+  function commentNamesAnyValue(text, values) {
+    for (var i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (v === null || v === undefined) continue;
+      if (commentNamesValue(text, v)) return true;
+      var hp = /^([^:\s]+):(\d+)$/.exec(String(v));
+      if (hp && (commentNamesValue(text, hp[1]) || commentNamesValue(text, hp[2]))) return true;
+    }
+    return false;
+  }
+
+  // Every "-!<LETTER>" sanitise marker in a comment run, first-seen order,
+  // each kept once — a run naming "-!S -!R" twice over two lines still
+  // yields one marker line with both, not a repeat.
+  function extractMarkers(text) {
+    var re = /-![A-Z]\b/g, out = [], m;
+    while ((m = re.exec(text))) { if (out.indexOf(m[0]) === -1) out.push(m[0]); }
+    return out;
+  }
+
+  // Returns { lines, shift } on a strike (lines is the exact struck comment
+  // text, for the source-pane highlight; shift is how many lines the doc
+  // actually lost — one less than lines.length when a marker line was
+  // written back in their place) or null when nothing was struck, either
+  // because there was no comment above or because it named none of `values`.
+  function stripCommentAbove(doc, lineIdx, values) {
     if (lineIdx <= 0) return null;
     var target = lineKind(doc.lines[lineIdx]);
     var above = lineKind(doc.lines[lineIdx - 1]);
     if (above.kind !== 'comment' || above.indent !== target.indent) return null;
     var start = leadStart(doc.lines, lineIdx, target.indent);
     var texts = doc.lines.slice(start, lineIdx);
-    CM.splice(doc, start, texts.length, []);
-    return texts;
+    if (!commentNamesAnyValue(texts.join('\n'), values || [])) return null;
+    var markers = extractMarkers(texts.join('\n'));
+    var indent = /^[ \t]*/.exec(doc.lines[lineIdx - 1])[0];
+    var replacement = markers.length ? [indent + '# ' + markers.join(' ')] : [];
+    CM.splice(doc, start, texts.length, replacement);
+    return { lines: texts, shift: texts.length - replacement.length };
   }
 
   function rewriteScalarValue(line, newValue) {
@@ -282,11 +342,11 @@
         next = next.replace(valueRe, '$1' + newName + '$2');
       }
       if (next === line) continue;
-      var struck = stripCommentAbove(doc, i);
-      var shift = struck ? struck.length : 0;
+      var struck = stripCommentAbove(doc, i, [oldName]);
+      var shift = struck ? struck.shift : 0;
       var idx = i - shift;
       doc.lines[idx] = next;
-      out.push({ line: idx, text: next, struckComment: struck });
+      out.push({ line: idx, text: next, struckComment: struck ? struck.lines : null });
       if (shift) { end -= shift; i -= shift; }
     }
     return out;
@@ -319,10 +379,10 @@
     for (var i = p.start; i < p.end; i++) {
       var line = doc.lines[i];
       if (line.indexOf(envVar) === -1 || line.indexOf(oldAddr) === -1) continue;
-      var struck = stripCommentAbove(doc, i);
-      var idx = i - (struck ? struck.length : 0);
+      var struck = stripCommentAbove(doc, i, [oldAddr]);
+      var idx = i - (struck ? struck.shift : 0);
       doc.lines[idx] = doc.lines[idx].split(oldAddr).join(newAddr);
-      return { line: idx, struckComment: struck, text: doc.lines[idx] };
+      return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
     }
     return null;
   }
@@ -448,15 +508,15 @@
         if (k !== i && parsePortListLine(doc.lines[k])) { remaining = true; break; }
       }
 
-      var struck = stripCommentAbove(doc, i);
-      var idx = i - (struck ? struck.length : 0);
+      var struck = stripCommentAbove(doc, i, [hostPort]);
+      var idx = i - (struck ? struck.shift : 0);
       CM.splice(doc, idx, 1, []);
 
       if (!remaining) {
         var pad = /^(\s*)/.exec(doc.lines[range.keyLine])[1];
         doc.lines[range.keyLine] = pad + 'ports: []';
       }
-      return { struckComment: struck, line: range.keyLine, emptied: !remaining };
+      return { struckComment: struck ? struck.lines : null, line: range.keyLine, emptied: !remaining };
     }
     return null;
   }
@@ -514,10 +574,10 @@
   function rewritePathOccurrenceTracked(doc, oldPath, newPath) {
     for (var i = 0; i < doc.lines.length; i++) {
       if (doc.lines[i].indexOf(oldPath) === -1) continue;
-      var struck = stripCommentAbove(doc, i);
-      var idx = i - (struck ? struck.length : 0);
+      var struck = stripCommentAbove(doc, i, [oldPath]);
+      var idx = i - (struck ? struck.shift : 0);
       doc.lines[idx] = doc.lines[idx].split(oldPath).join(newPath);
-      return { line: idx, struckComment: struck, text: doc.lines[idx] };
+      return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
     }
     return null;
   }

@@ -442,15 +442,17 @@ if (!CHECK) {
     }
   });
 
-  // F15 — stripCommentAbove() strikes the WHOLE contiguous comment run directly above a
-  // rewritten line, not just the one line touching it. t169-api's own PGRST_DB_URI carries a
-  // two-line "must rewrite this" sentence right above it (plus a further __BOX_IP__ note above
-  // that, also struck as part of the same run) — neither half may survive once the line is
-  // rewritten onto the store's own service name.
-  ['A merge that reaches this database over a shared network must rewrite this to a',
+  // F15/F2 — stripCommentAbove() strikes the WHOLE contiguous comment run directly above a
+  // rewritten line, not just the one line touching it, but (PLAN_178 F2) only when that run
+  // actually names the value being replaced. t169-api's own PGRST_DB_URI carries a three-line
+  // comment above it, and none of it names the old address, host or port — "the address below
+  // is filled in by install.sh" and "a merge... must rewrite this to a service name instead"
+  // are both still true after the rewrite — so, unlike before F2, this one now SURVIVES.
+  ['The address below is filled in by install.sh',
+   'A merge that reaches this database over a shared network must rewrite this to a',
    'service name instead.'].forEach(function (snippet) {
-    if (text.indexOf(snippet) !== -1) {
-      fail('F15', 'order ' + o.label + ': the falsified comment above PGRST_DB_URI survived: "' + snippet + '"');
+    if (text.indexOf(snippet) === -1) {
+      fail('F15', 'order ' + o.label + ': the true comment above PGRST_DB_URI was struck though it names no value: "' + snippet + '"');
     }
   });
 

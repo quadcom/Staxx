@@ -1068,10 +1068,13 @@ console.log('\nK1b. port-unneeded — the evidence line, and both branches\' rec
 console.log('\nK2. The falsified-comment fault — struck, not carried across unchanged');
 
 (function () {
+  // PLAN_178 F2 — a comment is struck only when it actually names the value
+  // being replaced, so this one has to say the old address out loud for the
+  // strike to still be the right call.
   var host = {
     name: 'demo-web', text: [
       'services:', '  web:', '    image: nginx:latest', '    ports:', '      - "8091:80"',
-      '    environment:', '      # Points at the database over the LAN, because it lives in its own stack.',
+      '    environment:', '      # Points at 192.0.2.88:3307 over the LAN, because it lives in its own stack.',
       '      DB_ADDRESS: 192.0.2.88:3307'
     ].join('\n')
   };
@@ -1079,12 +1082,12 @@ console.log('\nK2. The falsified-comment fault — struck, not carried across un
 
   var w = MW.buildMergedText([host, incoming], { date: '2026-09-15', name: 'demoapp' });
   ok('the falsified comment is gone from the merged text, not carried across describing something no longer true',
-     w.text.indexOf('Points at the database over the LAN') === -1);
+     w.text.indexOf('Points at 192.0.2.88:3307 over the LAN') === -1);
   ok('the rewritten address line is still there, correct', /DB_ADDRESS: db:3306/.test(w.text));
 
   var change = w.changes.filter(function (c) { return c.key.indexOf('address-rewire') === 0; })[0];
   ok('the change record carries the struck comment\'s own text, so the wizard can show it struck through',
-     !!change && change.struckComment.join('\n').indexOf('Points at the database over the LAN') >= 0);
+     !!change && change.struckComment.join('\n').indexOf('Points at 192.0.2.88:3307 over the LAN') >= 0);
   ok('the change record names a merged-text line, and the plain-English title/reason the plan asks for',
      typeof change.line === 'number' && change.title === 'Now reaches db inside the stack' &&
      change.reason === 'Was 192.0.2.88:3307, out on the network.');
@@ -1402,7 +1405,7 @@ console.log('\nO. Full-rel source names — the leaf, not the rel, is what gets 
   var web = {
     name: 'DEV-TESTING/demo-web', depth: 1, text: [
       'services:', '  web:', '    image: nginx:latest', '    ports:', '      - "8091:80"',
-      '    environment:', '      # Points at the database over the LAN, because it lives in its own stack.',
+      '    environment:', '      # Points at 192.0.2.88 over the LAN, because it lives in its own stack.',
       '      DB_HOST: 192.0.2.88', '      DB_PORT: "3307"'
     ].join('\n')
   };
@@ -1411,12 +1414,12 @@ console.log('\nO. Full-rel source names — the leaf, not the rel, is what gets 
   ok('the split pair is rewired by default', /DB_HOST: mariadb/.test(w.text) && /DB_PORT: "3306"/.test(w.text));
   ok('the old address is gone', w.text.indexOf('192.0.2.88') === -1);
   ok('the falsified comment above DB_HOST is gone from the merged text',
-     w.text.indexOf('Points at the database over the LAN') === -1);
+     w.text.indexOf('Points at 192.0.2.88 over the LAN') === -1);
 
   var splitChanges = w.changes.filter(function (c) { return c.key.indexOf('address-rewire') === 0; });
   var rewire = splitChanges[0];
   ok('...and IS recorded as struck on the address-rewire change, not lost silently',
-     !!rewire && rewire.struckComment && rewire.struckComment.join('\n').indexOf('Points at the database over the LAN') >= 0);
+     !!rewire && rewire.struckComment && rewire.struckComment.join('\n').indexOf('Points at 192.0.2.88 over the LAN') >= 0);
   ok('the address-rewire change carries both a merged-text line and its own source line',
      typeof rewire.line === 'number' && typeof rewire.sourceLine === 'number');
 
@@ -2022,6 +2025,59 @@ console.log('\nS. PLAN_169 round two fixes');
      w.text.indexOf('the only router in this file called "web".') === -1);
   var labelChange = w.changes.filter(function (c) { return /label-clash/.test(c.key); })[0];
   ok('F11: the change record for that rename carries the struck text', labelChange && !!labelChange.struckComment);
+})();
+
+console.log('\nK2b. PLAN_178 F2 — a comment is struck only when it names the value being replaced');
+
+(function () {
+  // A comment naming the old address (host:port, or either half on its own)
+  // is still struck — this is the literal case the whole rule exists for.
+  var host = {
+    name: 'demo-web', text: [
+      'services:', '  web:', '    image: nginx:latest', '    environment:',
+      '      # Was 192.0.2.88:3307, before the merge.',
+      '      DB_ADDRESS: 192.0.2.88:3307'
+    ].join('\n')
+  };
+  var incoming = { name: 'demo-db', text: 'services:\n  db:\n    image: mariadb:11\n    ports:\n      - "3307:3306"\n' };
+  var w = MW.buildMergedText([host, incoming], { date: '2026-09-24', name: 'demoapp' });
+  ok('a comment naming the old address is struck',
+     w.text.indexOf('Was 192.0.2.88:3307, before the merge.') === -1);
+})();
+
+(function () {
+  // A comment that never names the value it sits above — a plain template
+  // label — stays, because it is still true once the value is rewritten.
+  var host = {
+    name: 'demo-web', text: [
+      'services:', '  web:', '    image: nginx:latest', '    environment:',
+      '      # Database address',
+      '      DB_ADDRESS: 192.0.2.88:3307'
+    ].join('\n')
+  };
+  var incoming = { name: 'demo-db', text: 'services:\n  db:\n    image: mariadb:11\n    ports:\n      - "3307:3306"\n' };
+  var w = MW.buildMergedText([host, incoming], { date: '2026-09-24', name: 'demoapp' });
+  ok('a label comment naming no value is kept', w.text.indexOf('# Database address') >= 0);
+  ok('...directly above the rewritten line', /# Database address\n\s*DB_ADDRESS: db:3306/.test(w.text));
+})();
+
+(function () {
+  // A struck comment that carried a sanitise marker leaves the marker
+  // behind, on a line of its own, same indent, directly above the
+  // rewritten line — losing "-!S" would stop Sanitise mode blanking a
+  // value that is still just as secret after the merge.
+  var host = {
+    name: 'demo-web', text: [
+      'services:', '  web:', '    image: nginx:latest', '    environment:',
+      '      # Was 192.0.2.88:3307 -!S',
+      '      DB_ADDRESS: 192.0.2.88:3307'
+    ].join('\n')
+  };
+  var incoming = { name: 'demo-db', text: 'services:\n  db:\n    image: mariadb:11\n    ports:\n      - "3307:3306"\n' };
+  var w = MW.buildMergedText([host, incoming], { date: '2026-09-24', name: 'demoapp' });
+  ok('the falsified prose is gone', w.text.indexOf('Was 192.0.2.88:3307') === -1);
+  ok('the marker survives on a comment line of its own, same indent, directly above the rewrite',
+     /^ {6}# -!S\n {6}DB_ADDRESS: db:3306$/m.test(w.text));
 })();
 
 (function () {
