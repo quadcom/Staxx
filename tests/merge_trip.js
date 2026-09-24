@@ -247,8 +247,8 @@ console.log('\nR2-6. A clashing router label is found in either list or map form
   var descB = MW.descriptorFromText(b.name, b.text, b.envText, []);
   var r = M.examine([descA, descB]);
   var routerClash = r.findings.filter(function (f) {
-    return f.facts && (f.facts.label === 'traefik.http.routers.web.rule' ||
-      (f.facts.declKind === undefined && JSON.stringify(f.facts).indexOf('routers.web') >= 0));
+    return f.kind === 'label-clash' && f.facts && f.facts.from === 'web' &&
+      (f.facts.sections || []).indexOf('routers') >= 0;
   });
   ok('a clashing Traefik router label ("web", declared in both list and map form) is found',
      routerClash.length >= 1,
@@ -442,7 +442,13 @@ console.log('\nR2-13. Two sources\' disagreeing per-service x-unraid each keep t
 (function () {
   var a = loadRaw('r2-xunraid-disagree', 'a');
   var b = loadRaw('r2-xunraid-disagree', 'b');
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  // F16 — planIconCopies() only plans a copy for a file the source's own
+  // listing actually holds; this fixture's icon.png is never shipped on
+  // disk, so it has to be named here the same way a real merge-files reply
+  // would.
+  var iconEntry = { path: '.staxx/icon.png', size: 512, dir: false, outside: false };
+  var files = { a: { files: [iconEntry] }, b: { files: [iconEntry] } };
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp', files: files });
   ok('the first source\'s own webui address survives untouched', w.text.indexOf('http://[IP]:8091/') >= 0);
   ok('the second source\'s own webui address survives untouched, on its own (renamed) service',
      w.text.indexOf('http://[IP]:8092/') >= 0);

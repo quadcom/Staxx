@@ -190,7 +190,7 @@ function runWalk(label, leaves) {
   console.log('  changes (' + built.changes.length + '):');
   built.changes.forEach(function (c) {
     console.log('    ' + (c.file || 'compose') + ' key=' + c.key + ' title="' + c.title + '"' + (c.removed ? ' (removed)' : '') +
-      (c.struckComment ? '  struckComment="' + c.struckComment + '"' : ''));
+      (c.struckComment ? '  struckComment="' + c.struckComment.join(' / ') + '"' : ''));
   });
 
   console.log('\n  --- merged compose text (order ' + label + ') ---\n');
@@ -400,6 +400,31 @@ if (!CHECK) {
   if (text.indexOf('PGRST_DB_URI: ' + wantUri) === -1) {
     fail(14, 'order ' + o.label + ': PGRST_DB_URI did not come out as "' + wantUri + '"');
   }
+
+  // F13 — one label-clash finding per service per clashing name, covering every namespace it
+  // clashed in, never one identical-looking card per namespace. This fixture's own
+  // "${COMPOSE_PROJECT_NAME}-web" clash (trap 3) is the regression guard: t169-api's "rest"
+  // must get exactly one finding, not one per namespace the name happens to be used in.
+  var webClashes = exam.findings.filter(function (f) { return f.kind === 'label-clash' && f.facts.from === '${COMPOSE_PROJECT_NAME}-web'; });
+  var webClashCounts = {};
+  webClashes.forEach(function (f) { webClashCounts[f.stack + '|' + f.facts.service] = (webClashCounts[f.stack + '|' + f.facts.service] || 0) + 1; });
+  Object.keys(webClashCounts).forEach(function (k) {
+    if (webClashCounts[k] !== 1) {
+      fail('F13', 'order ' + o.label + ': ' + k + ' got ' + webClashCounts[k] + ' label-clash findings for "${COMPOSE_PROJECT_NAME}-web", not one');
+    }
+  });
+
+  // F15 — stripCommentAbove() strikes the WHOLE contiguous comment run directly above a
+  // rewritten line, not just the one line touching it. t169-api's own PGRST_DB_URI carries a
+  // two-line "must rewrite this" sentence right above it (plus a further __BOX_IP__ note above
+  // that, also struck as part of the same run) — neither half may survive once the line is
+  // rewritten onto the store's own service name.
+  ['A merge that reaches this database over a shared network must rewrite this to a',
+   'service name instead.'].forEach(function (snippet) {
+    if (text.indexOf(snippet) !== -1) {
+      fail('F15', 'order ' + o.label + ': the falsified comment above PGRST_DB_URI survived: "' + snippet + '"');
+    }
+  });
 
   // General sanity, same shape as the first walk's own probe.
   if (/^version:/m.test(text)) fail('gen', 'order ' + o.label + ': a "version:" line survived into the merged file');

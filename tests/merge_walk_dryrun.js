@@ -260,7 +260,7 @@ function runWalk(label, LEAVES) {
   console.log('  changes (' + built.changes.length + '):');
   built.changes.forEach(function (c) {
     console.log('    ' + (c.file || 'compose') + ' key=' + c.key + ' title="' + c.title + '"' + (c.removed ? ' (removed)' : '') +
-      (c.struckComment ? '  struckComment="' + c.struckComment + '"' : ''));
+      (c.struckComment ? '  struckComment="' + c.struckComment.join(' / ') + '"' : ''));
   });
 
   console.log('  files (' + built.files.length + '):');

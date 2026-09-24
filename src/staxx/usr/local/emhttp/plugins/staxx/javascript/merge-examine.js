@@ -1156,8 +1156,20 @@
   // as its own project — clash the moment both share the merged stack's own
   // project name (PLAN_169 trap 3). Same "first source keeps it, second is
   // renamed" shape every other clash finding here follows.
+  //
+  // PLAN_169 F13 — a router and its matching service are usually written
+  // under the SAME literal name (that is the ordinary Traefik shape), so
+  // when two sources both used it, detecting per-namespace raised one
+  // "label-clash" for the routers section and an identical-looking second
+  // one for the services section — the person answered the same decision
+  // twice, though only 17 (not 18) actual renames happened. Clashes are
+  // still found per namespace below (a router and a service are still
+  // different things, and only naming one of them a genuine clash is
+  // correct), but they are then grouped into one finding per (stack,
+  // service, name) covering every namespace it clashed in — one card, one
+  // rename applied to all of them at once.
   function findLabelClashes(sources, opts, docCache) {
-    var out = [];
+    var raw = [];
     var newProject = (opts && typeof opts.newRel === 'string') ? leaf(opts.newRel) : null;
     var taken = {};   // "section|resolved name" -> { stack, service }
     sources.forEach(function (s) {
@@ -1175,20 +1187,37 @@
 
           var held = taken[takenKey];
           if (held) {
-            var finalRaw = rawName + '-' + leaf(s.name);
-            var doc = docCache[s.name];
-            out.push({
-              kind: 'label-clash', severity: 'automatic', stack: s.name,
-              facts: { service: svcName, section: section, from: rawName, to: finalRaw, label: labelKey },
-              lines: doc ? linesEntry(s.name, locateLabelLine(doc, svcName, section, rawName)) : []
-            });
+            raw.push({ stack: s.name, service: svcName, section: section, rawName: rawName });
           } else {
             taken[takenKey] = { stack: s.name, service: svcName };
           }
         });
       });
     });
-    return out;
+
+    var order = [], groups = {};
+    raw.forEach(function (r) {
+      var gk = r.stack + '\u0000' + r.service + '\u0000' + r.rawName;
+      if (!groups[gk]) {
+        groups[gk] = { stack: r.stack, service: r.service, rawName: r.rawName, sections: [] };
+        order.push(gk);
+      }
+      if (groups[gk].sections.indexOf(r.section) === -1) groups[gk].sections.push(r.section);
+    });
+    return order.map(function (gk) {
+      var g = groups[gk];
+      var finalRaw = g.rawName + '-' + leaf(g.stack);
+      var doc = docCache[g.stack];
+      var lines = [];
+      g.sections.forEach(function (section) {
+        if (doc) lines = lines.concat(linesEntry(g.stack, locateLabelLine(doc, g.service, section, g.rawName)));
+      });
+      return {
+        kind: 'label-clash', severity: 'automatic', stack: g.stack,
+        facts: { service: g.service, sections: g.sections, from: g.rawName, to: finalRaw },
+        lines: lines
+      };
+    });
   }
 
   /* =====================================================================

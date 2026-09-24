@@ -147,6 +147,15 @@
    * that comment is struck rather than carried across describing something
    * that is no longer true. stripCommentAbove() is the one place that
    * happens, so every rewriter below shares it.
+   *
+   * PLAN_169 F15 — a lead comment is often more than one line ("A merge
+   * that reaches this database... / ...must rewrite this to a / service
+   * name instead." split across two), and striking only the one line
+   * directly above the rewritten value left half a sentence behind,
+   * describing nothing. Struck lines are found by walking upward while the
+   * indent keeps matching (the same rule leadStart() above already applies
+   * to a whole block's own lead comment), not just checking the one line
+   * above, and every line in that run is removed together.
    * ===================================================================== */
 
   function stripCommentAbove(doc, lineIdx) {
@@ -154,9 +163,10 @@
     var target = lineKind(doc.lines[lineIdx]);
     var above = lineKind(doc.lines[lineIdx - 1]);
     if (above.kind !== 'comment' || above.indent !== target.indent) return null;
-    var text = doc.lines[lineIdx - 1];
-    CM.splice(doc, lineIdx - 1, 1, []);
-    return text;
+    var start = leadStart(doc.lines, lineIdx, target.indent);
+    var texts = doc.lines.slice(start, lineIdx);
+    CM.splice(doc, start, texts.length, []);
+    return texts;
   }
 
   function rewriteScalarValue(line, newValue) {
@@ -249,9 +259,12 @@
   //
   // Strikes a falsified lead comment on every line it actually changes
   // (stripCommentAbove(), same rule every other rewrite in this file
-  // follows) — since a strike shortens doc.lines by one, `end` and the loop
-  // cursor `i` are both stepped back to stay aligned with the shifted array.
-  // Returns one { line, text, struckComment } per line actually changed.
+  // follows) — since a strike can now remove more than one line (F15,
+  // whichever comment lines make up the whole run above), `end` and the
+  // loop cursor `i` are both stepped back by however many lines that strike
+  // actually removed, to stay aligned with the shifted array.
+  // Returns one { line, text, struckComment } per line actually changed;
+  // struckComment is the array of struck lines' own text, or null.
   function rewriteServiceLabels(doc, serviceKey, section, oldName, newName) {
     var svcMap = servicesMapOf(doc);
     var p = svcMap && svcMap.pairs[serviceKey];
@@ -270,10 +283,11 @@
       }
       if (next === line) continue;
       var struck = stripCommentAbove(doc, i);
-      var idx = struck ? i - 1 : i;
+      var shift = struck ? struck.length : 0;
+      var idx = i - shift;
       doc.lines[idx] = next;
       out.push({ line: idx, text: next, struckComment: struck });
-      if (struck) { end--; i--; }
+      if (shift) { end -= shift; i -= shift; }
     }
     return out;
   }
@@ -306,7 +320,7 @@
       var line = doc.lines[i];
       if (line.indexOf(envVar) === -1 || line.indexOf(oldAddr) === -1) continue;
       var struck = stripCommentAbove(doc, i);
-      var idx = struck ? i - 1 : i;
+      var idx = i - (struck ? struck.length : 0);
       doc.lines[idx] = doc.lines[idx].split(oldAddr).join(newAddr);
       return { line: idx, struckComment: struck, text: doc.lines[idx] };
     }
@@ -435,7 +449,7 @@
       }
 
       var struck = stripCommentAbove(doc, i);
-      var idx = struck ? i - 1 : i;
+      var idx = i - (struck ? struck.length : 0);
       CM.splice(doc, idx, 1, []);
 
       if (!remaining) {
@@ -501,7 +515,7 @@
     for (var i = 0; i < doc.lines.length; i++) {
       if (doc.lines[i].indexOf(oldPath) === -1) continue;
       var struck = stripCommentAbove(doc, i);
-      var idx = struck ? i - 1 : i;
+      var idx = i - (struck ? struck.length : 0);
       doc.lines[idx] = doc.lines[idx].split(oldPath).join(newPath);
       return { line: idx, struckComment: struck, text: doc.lines[idx] };
     }
@@ -616,19 +630,39 @@
   // that is the name the icon has to keep matching from here on. A service
   // declaring no icon gets nothing; two services sharing one source file
   // each get their own copy (PLAN_155 C17 — "icons are not a question").
-  function planIconCopies(descs, plan) {
+  //
+  // PLAN_169 F16 — a source can declare an icon that was never actually
+  // shipped with it (the file deleted, or — as in the merge-walk-six
+  // fixture, kept on purpose as trap 14 — never there in the first place);
+  // planning a copy for it anyway meant step 4 showed it as "renamed for
+  // its service" right up until the last click, where Merge.php's own
+  // refusal ("... is not a file ... can offer to this merge") stopped the
+  // whole merge with nothing written. This only ever plans a copy for a
+  // file the source's OWN file listing (`d.files`, the same list planFiles()
+  // below reads) actually holds; a missing one is appended to `missing`
+  // instead (when the caller passes an array to collect them) and its
+  // icon: line is never touched by the rewrite pass further down, so it is
+  // carried exactly as written.
+  function planIconCopies(descs, plan, missing) {
     var out = [];
     (descs || []).forEach(function (d) {
       var services = (d.compose && d.compose.services) || {};
+      var files = d.files || [];
       Object.keys(services).forEach(function (svcName) {
         var icon = services[svcName].x_unraid && services[svcName].x_unraid.icon;
         if (!icon) return;
         var m = /^(?:\.\/)?\.staxx\/([^\/]+)$/.exec(String(icon).trim());
         if (!m) return;   // not a file inside this source's own .staxx/
-        var ext = (/\.([^./]+)$/.exec(m[1]) || [null, ''])[1];
+        var path = '.staxx/' + m[1];
         var finalSvc = plan.serviceRenames[d.name + '/' + svcName] || svcName;
+        var present = files.some(function (e) { return !e.dir && !e.outside && e.path === path; });
+        if (!present) {
+          if (missing) missing.push({ source: d.name, service: svcName, finalService: finalSvc, ref: String(icon).trim() });
+          return;
+        }
+        var ext = (/\.([^./]+)$/.exec(m[1]) || [null, ''])[1];
         out.push({
-          source: d.name, path: '.staxx/' + m[1], service: svcName, finalService: finalSvc,
+          source: d.name, path: path, service: svcName, finalService: finalSvc,
           oldRef: String(icon).trim(),
           newRef: './.staxx/icon-' + finalSvc + (ext ? '.' + ext : '')
         });
@@ -1559,7 +1593,7 @@
     }).filter(Boolean);
     if (unreadable.length) {
       return {
-        text: null, env: null, files: [], changes: [], newProject: null, findings: [],
+        text: null, env: null, files: [], missingIcons: [], changes: [], newProject: null, findings: [],
         refusals: unreadable.map(function (u) {
           return {
             kind: 'unreadable-source', severity: 'refusal', stack: u.stack,
@@ -1654,7 +1688,8 @@
     // .staxx/ — computed from `plan` (so a clash rename is already known)
     // ahead of both the file plan and the doc edits, same reasoning as the
     // storage-carry map above.
-    var iconCopies = planIconCopies(descs, plan);
+    var missingIcons = [];
+    var iconCopies = planIconCopies(descs, plan, missingIcons);
 
     // The companion-file copy plan, decided ahead of the doc edits below —
     // fault 3's "rename it" answer is no good to anyone if the service
@@ -1762,16 +1797,28 @@
       // renames above) so it can strike a falsified lead comment on exactly
       // the line it touches — F11's own struck-comment requirement, the same
       // mechanism every other rewrite here uses (stripCommentAbove()).
+      //
+      // F13 — the finding now names every namespace ("routers", "services",
+      // ...) the clashing name was used in for this one service, since a
+      // router and its matching service commonly share one literal name and
+      // grouping them separately raised one identical-looking card per
+      // namespace. Rewriting each section in turn still produces its own
+      // change records (each namespace's own labels are on their own
+      // lines), but they all share the one finding's key, title and reason —
+      // one card, whichever namespaces it touched.
       exam.findings.forEach(function (f) {
         if (f.kind !== 'label-clash' || f.stack !== s.name) return;
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
-        var results = rewriteServiceLabels(doc, finalSvc, f.facts.section, f.facts.from, f.facts.to);
-        results.forEach(function (r, i) {
-          changes.push({
-            key: f.key, part: i, stack: s.name, sourceLine: sourceLineFor(f), marker: r.text,
-            title: 'Two services use the proxy name ' + f.facts.from,
-            reason: 'Renamed to ' + f.facts.to + ' in ' + finalSvc + ' so both keep working.',
-            struckComment: r.struckComment || null, cannotLeave: true
+        var part = 0;
+        (f.facts.sections || []).forEach(function (section) {
+          var results = rewriteServiceLabels(doc, finalSvc, section, f.facts.from, f.facts.to);
+          results.forEach(function (r) {
+            changes.push({
+              key: f.key, part: part++, stack: s.name, sourceLine: sourceLineFor(f), marker: r.text,
+              title: 'Two services use the proxy name ' + f.facts.from,
+              reason: 'Renamed to ' + f.facts.to + ' in ' + finalSvc + ' so both keep working.',
+              struckComment: r.struckComment || null, cannotLeave: true
+            });
           });
         });
       });
@@ -2775,6 +2822,7 @@
       text: text,
       env: envText,
       files: filesOut,
+      missingIcons: missingIcons,
       changes: changes,
       // The new stack's own LEAF — never its full rel, and never left for
       // the caller to re-derive from opts.name by hand.

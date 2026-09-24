@@ -14890,6 +14890,15 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
+/* F16 — the one-line notice for a service whose icon file was never
+   shipped with its source; sits in the new-folder tree since that is
+   where a copy would otherwise have been listed. */
+.staxx-merge-ticon-missing {
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+  font-style: italic;
+}
+
 /* ---- the grab handles between step 4's two right-hand panes, and step
    6's form/preview split turned on its side to match. One shared shape
    rather than two copies (Adrian: the old step 6 grip was "hard to see"). ---- */
@@ -15156,6 +15165,22 @@ dialog::backdrop {
 .staxx-merge-depline.is-hot {
   stroke: #e05555;
   stroke-width: 0.35rem;
+}
+
+/* PLAN_169 F14 — a dependency the source files already wrote
+   (mergeExistingDeps() in stacks.js) is drawn muted rather than in its
+   service's own colour, and never turns the "about to remove" red on
+   hover, since a click on it does nothing (stacks.js gives it no
+   data-dep-index to remove). Placed after the hover rule above so equal
+   specificity still resolves in this rule's favour. */
+.staxx-scaffold .staxx-merge-depline--fixed,
+.staxx-scaffold .staxx-merge-depline--fixed:hover,
+.staxx-scaffold .staxx-merge-depline--fixed.is-hot {
+  stroke: var(--sm-line);
+  stroke-width: 0.12rem;
+  stroke-dasharray: 0.3rem 0.25rem;
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* PLAN_155 C17 — the real reason a click never reached a line at all: this

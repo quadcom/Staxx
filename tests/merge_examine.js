@@ -573,8 +573,13 @@ console.log('\nH. One stack-level x-unraid (the first source\'s), services keep 
     name: 'srcF', text: 'x-unraid:\n  icon: ./.staxx/icon.png\n  description: "Second app"\n' +
       'services:\n  svc2:\n    image: alpine\n    x-unraid:\n      icon: ./.staxx/svc2-icon.png\n'
   };
+  // F16 — planIconCopies() only ever plans a copy for a file the source's
+  // own listing actually holds, so these two are named here even though
+  // neither service's icon clashes with anything.
+  var eFiles = { files: [{ path: '.staxx/svc-icon.png', size: 200, dir: false, outside: false }] };
+  var fFiles = { files: [{ path: '.staxx/svc2-icon.png', size: 200, dir: false, outside: false }] };
 
-  var w = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp' });
+  var w = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp', files: { srcE: eFiles, srcF: fFiles } });
   ok('the merged text carries exactly one top-level x-unraid: key — the FIRST source\'s',
      (w.text.match(/^x-unraid:/gm) || []).length === 1);
   ok('...and it is that source\'s own text, description included', w.text.indexOf('First app') >= 0);
@@ -596,7 +601,10 @@ console.log('\nH. One stack-level x-unraid (the first source\'s), services keep 
   // into the file — the file keeps the base's value either way, and the
   // declined text travels only on the change record, for the merge's own
   // summary (Adrian, 2026-09-17: no dead spare key).
-  var kept = MW.buildMergedText([e, f], { date: '2026-09-15', name: 'demoapp', decisions: { 'top-xunraid|srcF|description': 'leave' } });
+  var kept = MW.buildMergedText([e, f], {
+    date: '2026-09-15', name: 'demoapp', files: { srcE: eFiles, srcF: fFiles },
+    decisions: { 'top-xunraid|srcF|description': 'leave' }
+  });
   ok('choosing "leave" still keeps only the first source\'s description in the file',
      kept.text.indexOf('Second app') === -1 && kept.text.indexOf('x-unraid-srcF') === -1);
   var keptChange = kept.changes.filter(function (c) { return c.key === 'top-xunraid|srcF|description'; })[0];
@@ -666,6 +674,32 @@ console.log('\nH1. Icons are not a question — never a clash, one copy per refe
      iconFiles.some(function (fi) { return fi.from === 'srcG' && fi.to === '.staxx/icon-api.png'; }) &&
      iconFiles.some(function (fi) { return fi.from === 'srcH' && fi.to === '.staxx/icon-db.png'; }));
   assertMergedIsValid('icons are not a question', w.text, ['web', 'api', 'db']);
+})();
+
+(function () {
+  // PLAN_169 F16 — a service can declare an icon that was never actually
+  // shipped with its source (the file deleted, or — as in the six-fixture
+  // merge walk, trap 14 — never there in the first place). Before this
+  // fix, planIconCopies() planned a copy regardless, step 4 showed it as
+  // "renamed for its service", and Merge.php refused the whole merge
+  // outright at the last click ("... is not a file ... can offer to this
+  // merge"), with nothing written. The file listing here deliberately
+  // omits '.staxx/icon.png' — the same shape as a real merge-files reply
+  // for a stack whose icon is missing.
+  var j = {
+    name: 'srcJ', text: 'services:\n  web:\n    image: alpine\n    x-unraid:\n      icon: ./.staxx/icon.png\n'
+  };
+  var filesReplies = { srcJ: { files: [] } };
+
+  var w = MW.buildMergedText([j], { date: '2026-09-24', name: 'demoapp', files: filesReplies });
+  ok('F16: no copy is planned for an icon file the source\'s own listing does not hold',
+     !w.files.some(function (fi) { return fi.path === '.staxx/icon.png'; }));
+  ok('F16: the icon: line is carried exactly as written, never rewritten to a per-service name',
+     /icon: \.\/\.staxx\/icon\.png/.test(w.text) && w.text.indexOf('icon-web') === -1);
+  ok('F16: the missing icon is reported back so step 4 can say so, rather than only failing at the last click',
+     w.missingIcons.length === 1 && w.missingIcons[0].source === 'srcJ' &&
+     w.missingIcons[0].finalService === 'web' && w.missingIcons[0].ref === './.staxx/icon.png');
+  assertMergedIsValid('missing icon file is left alone', w.text, ['web']);
 })();
 
 console.log('\nH2. Every other top-level key travels too (C1, PLAN_156 F1, trap 18)');
@@ -973,7 +1007,7 @@ console.log('\nK2. The falsified-comment fault — struck, not carried across un
 
   var change = w.changes.filter(function (c) { return c.key.indexOf('address-rewire') === 0; })[0];
   ok('the change record carries the struck comment\'s own text, so the wizard can show it struck through',
-     !!change && change.struckComment.indexOf('Points at the database over the LAN') >= 0);
+     !!change && change.struckComment.join('\n').indexOf('Points at the database over the LAN') >= 0);
   ok('the change record names a merged-text line, and the plain-English title/reason the plan asks for',
      typeof change.line === 'number' && change.title === 'Now reaches db inside the stack' &&
      change.reason === 'Was 192.0.2.88:3307, out on the network.');
@@ -1305,7 +1339,7 @@ console.log('\nO. Full-rel source names — the leaf, not the rel, is what gets 
   var splitChanges = w.changes.filter(function (c) { return c.key.indexOf('address-rewire') === 0; });
   var rewire = splitChanges[0];
   ok('...and IS recorded as struck on the address-rewire change, not lost silently',
-     !!rewire && rewire.struckComment && rewire.struckComment.indexOf('Points at the database over the LAN') >= 0);
+     !!rewire && rewire.struckComment && rewire.struckComment.join('\n').indexOf('Points at the database over the LAN') >= 0);
   ok('the address-rewire change carries both a merged-text line and its own source line',
      typeof rewire.line === 'number' && typeof rewire.sourceLine === 'number');
 
@@ -1867,8 +1901,8 @@ console.log('\nS. PLAN_169 round two fixes');
   var r = M.examine([descA, descB]);
   var clash = findingsOf(r, 'label-clash');
   ok('F2/F9: a router name clash is found whichever form the labels are written in (list vs map)',
-     clash.length === 1 && clash[0].stack === 'b' && clash[0].facts.section === 'routers' &&
-     clash[0].facts.from === 'web' && clash[0].facts.to === 'web-b');
+     clash.length === 1 && clash[0].stack === 'b' && clash[0].facts.sections.length === 1 &&
+     clash[0].facts.sections[0] === 'routers' && clash[0].facts.from === 'web' && clash[0].facts.to === 'web-b');
 
   var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('F2/F9: the second source\'s router is renamed in the merged file, the first left alone',
@@ -1911,6 +1945,45 @@ console.log('\nS. PLAN_169 round two fixes');
      w.text.indexOf('the only router in this file called "web".') === -1);
   var labelChange = w.changes.filter(function (c) { return /label-clash/.test(c.key); })[0];
   ok('F11: the change record for that rename carries the struck text', labelChange && !!labelChange.struckComment);
+})();
+
+(function () {
+  // PLAN_169 F13 — a router and its matching Traefik service commonly
+  // share one literal name (the ordinary shape); when two sources each
+  // wrote both under "web", detecting per-namespace used to raise one
+  // label-clash for the routers section and an identical-looking second
+  // one for the services section, so the person answered the same rename
+  // decision twice. One finding now covers every namespace the name
+  // clashed in, and the rewrite renames all of them together.
+  var a = {
+    name: 'a', text: [
+      'services:', '  site:', '    image: nginx:alpine', '    labels:',
+      '      - "traefik.http.routers.web.rule=Host(`a.example`)"',
+      '      - "traefik.http.services.web.loadbalancer.server.port=80"'
+    ].join('\n')
+  };
+  var b = {
+    name: 'b', text: [
+      'services:', '  api:', '    image: alpine:3.20', '    labels:',
+      '      - "traefik.http.routers.web.rule=Host(`b.example`)"',
+      '      - "traefik.http.services.web.loadbalancer.server.port=8080"',
+      '      - "traefik.http.routers.web.service=web"'
+    ].join('\n')
+  };
+  var descA = MW.descriptorFromText(a.name, a.text, null, []);
+  var descB = MW.descriptorFromText(b.name, b.text, null, []);
+  var r = M.examine([descA, descB]);
+  var clash = findingsOf(r, 'label-clash');
+  ok('F13: one finding covers every namespace the same name clashed in, not one card per namespace',
+     clash.length === 1 && clash[0].facts.sections.length === 2 &&
+     clash[0].facts.sections.indexOf('routers') >= 0 && clash[0].facts.sections.indexOf('services') >= 0);
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F13: both namespaces are renamed together in the merged file',
+     /traefik\.http\.routers\.web-b\.rule=Host\(`b\.example`\)/.test(w.text) &&
+     /traefik\.http\.services\.web-b\.loadbalancer\.server\.port=8080/.test(w.text) &&
+     /traefik\.http\.routers\.web-b\.service=web-b/.test(w.text));
+  ok('F13: the merged file still parses clean', CM.parse(w.text).warnings.length === 0);
 })();
 
 (function () {

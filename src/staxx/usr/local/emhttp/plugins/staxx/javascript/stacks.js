@@ -35214,7 +35214,12 @@
       var changeMap = mergeChangesBySourceLine(rel);
       var struckAbove = {};
       Object.keys(changeMap).forEach(function (li) {
-        if (changeMap[li].struckComment) struckAbove[Number(li) - 1] = true;
+        // F15 — struckComment is every line a rewrite's stripCommentAbove()
+        // removed, not just the one directly above; mark each of them
+        // struck in the pristine source pane, not only the last one.
+        var sc = changeMap[li].struckComment;
+        if (!sc || !sc.length) return;
+        for (var n = 1; n <= sc.length; n++) struckAbove[Number(li) - n] = true;
       });
 
       mergePaintCode(code, text, function (row, i) {
@@ -36488,6 +36493,29 @@
       }
       container.appendChild(row);
     });
+
+    // F16 — a source can declare an icon that was never actually shipped
+    // (planIconCopies() in merge-write.js only ever plans a copy for a file
+    // its own source's file listing holds); nothing appears in the tree
+    // above for it, so this is the one place a person is told the icon:
+    // line is being left exactly as written, rather than finding out only
+    // once Merge.php refuses the whole merge at the last click.
+    ((mergeState.built && mergeState.built.missingIcons) || []).forEach(function (mi) {
+      var row = document.createElement('div');
+      row.className = 'staxx-merge-trow staxx-merge-trow--note';
+      var dot = document.createElement('span');
+      dot.className = 'staxx-merge-tdot';
+      row.appendChild(dot);
+      var main = document.createElement('div');
+      main.className = 'staxx-merge-tmain';
+      main.style.paddingLeft = '1.8rem';
+      var note = document.createElement('span');
+      note.className = 'staxx-merge-ticon-missing';
+      note.textContent = mi.finalService + '’s icon file is missing, so none is copied. Its icon line is kept as written.';
+      main.appendChild(note);
+      row.appendChild(main);
+      container.appendChild(row);
+    });
   }
 
   // The joined-settings/new-folder split (C17) as a pair of fr shares,
@@ -36793,6 +36821,36 @@
     }
   }
 
+  // PLAN_169 F14 — every depends_on edge a source file already wrote (a
+  // plain list, or the map form with its own `condition:`), read straight
+  // off the merged text rather than any finding — nothing rewired these, so
+  // there is no finding to read them from. Returned with `fixed: true` so
+  // mergeSeededDeps() below can tell them apart from a line the person can
+  // still draw or remove.
+  function mergeExistingDeps(doc) {
+    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
+    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var deps = [];
+    if (!map) return deps;
+    map.keys.forEach(function (svcName) {
+      var pair = map.pairs[svcName];
+      var own = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
+      var dep = own ? own.pairs['depends_on'] : null;
+      if (!dep || !dep.value) return;
+      if (dep.value.kind === 'map') {
+        Object.keys(dep.value.pairs).forEach(function (to) {
+          deps.push({ from: svcName, to: to, fixed: true });
+        });
+      } else if (dep.value.kind === 'seq') {
+        (dep.value.items || []).forEach(function (it) {
+          var v = it && it.value;
+          if (v && v.kind === 'scalar') deps.push({ from: svcName, to: v.value, fixed: true });
+        });
+      }
+    });
+    return deps;
+  }
+
   // PLAN_156 F14: one {from, to} pair for every address-rewire finding step
   // 3 left approved (mergeFindingDecision(), the same truthy check
   // merge-write.js's own decisionValue() makes before it rewrites the line) —
@@ -36806,6 +36864,14 @@
   // new name, or the line would draw from a service the merged file no
   // longer has. 'to' is left exactly as the finding names it, the same
   // choice merge-write.js's own rewrite makes for the same field.
+  //
+  // PLAN_169 F14 — Step 5 used to draw only the lines a rewire created, so a
+  // dependency the sources already wrote (rest -> app's own service_healthy,
+  // say) was invisible and a person could draw it again as if it were new.
+  // The board now also carries every existing edge (mergeExistingDeps()),
+  // marked `fixed: true`: drawn muted, not offered for removal, and never
+  // re-added or duplicated by merge-suggest.js's own apply() (its
+  // dependsOnAlready() guard already refuses to add a key that is there).
   function mergeSeededDeps() {
     var findings = (mergeState.built && mergeState.built.findings) || [];
     var renamed = {};
@@ -36822,6 +36888,14 @@
       if (from === to) return;
       if (!deps.some(function (d) { return d.from === from && d.to === to; })) deps.push({ from: from, to: to });
     });
+    if (mergeState.built && mergeState.built.text) {
+      try {
+        var doc = YAML.parse(mergeState.built.text);
+        mergeExistingDeps(doc).forEach(function (d) {
+          if (!deps.some(function (e) { return e.from === d.from && e.to === d.to; })) deps.push(d);
+        });
+      } catch (e) { /* a merged file that fails to parse leaves the board seeded from findings alone */ }
+    }
     return deps;
   }
 
@@ -36970,21 +37044,37 @@
 
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', dAttr);
-      path.setAttribute('class', 'staxx-merge-depline');
+      // F14 — a line already in the file's own text is drawn muted (the
+      // stylesheet mutes '--fixed', per CLAUDE.md's specificity rule) and
+      // never offered for removal — see the click handler below.
+      path.setAttribute('class', 'staxx-merge-depline' + (d.fixed ? ' staxx-merge-depline--fixed' : ''));
       path.setAttribute('stroke', mergeSvcColor(services, d.from));
       path.dataset.depFrom = d.from;
       path.dataset.depTo = d.to;
-      path.dataset.depIndex = idx;
+      if (!d.fixed) path.dataset.depIndex = idx;
+      if (d.fixed) {
+        var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        title.textContent = 'Already in ' + d.from + '’s file.';
+        path.appendChild(title);
+      }
       els.svg.appendChild(path);
 
       // The visible stroke is too thin to hit reliably (C17: "no way to
       // undo that") — a wide transparent twin with the same "d" carries
       // the real pointer target, and toggles is-hot on the line it
-      // shadows so hovering either one highlights the same line.
+      // shadows so hovering either one highlights the same line. A fixed
+      // line still gets one, so hovering and the tooltip work, but it
+      // carries no removable index of its own (F14 — see the click
+      // handler this shadows).
       var hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       hit.setAttribute('d', dAttr);
       hit.setAttribute('class', 'staxx-merge-dephit');
-      hit.dataset.depIndex = idx;
+      if (!d.fixed) hit.dataset.depIndex = idx;
+      if (d.fixed) {
+        var hitTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        hitTitle.textContent = 'Already in ' + d.from + '’s file.';
+        hit.appendChild(hitTitle);
+      }
       els.svg.appendChild(hit);
 
       function setHot(on) { path.classList.toggle('is-hot', on); }
