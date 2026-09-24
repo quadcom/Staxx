@@ -46,6 +46,8 @@ services:
       - t169-api-net
     labels:
       - "traefik.enable=true"
+      # On more than one network, so Traefik is told which one it can reach this service on.
+      - "traefik.docker.network=t169-edge-net"
       # Named with this stack's own project, so it never collides with another stack's router
       # of the same plain name while each still runs on its own — the only router in this file
       # called "${COMPOSE_PROJECT_NAME}-web".
