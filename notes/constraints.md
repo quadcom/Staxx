@@ -36,6 +36,18 @@
   the next morning, on step 6 — the same fault, one step over. **When a fault like this is fixed
   in one place, grep for the sibling renders and check every one in the same pass**; Adrian's
   words: "these need to be caught when they're being made, rather than found later."
+- **`staxx_hub_repo_path()` is for asking a registry, never for asking local Docker.** It turns
+  `lscr.io/linuxserver/plex` into `linuxserver/plex` on purpose, for the Hub lookups — but Docker
+  stores the image under the name it was pulled as, so `docker image ls|inspect linuxserver/plex…`
+  finds nothing. That one mix-up made the weekly image cleanup miss every linuxserver image and made
+  every linuxserver roll-back refuse as "no longer present" (both fixed 2026-09-24, PLAN_180 parts 2
+  and 2c). A local Docker call uses the service's own reference with its tag and digest stripped
+  (`staxx_update_local_repo()`), or reads Docker's whole listing and normalises each row's own
+  name through the same rule as whatever it is compared with (`staxx_update_cleanup_pick()`).
+- **`docker rmi repo@digest` frees nothing while the image still has a tag.** It only drops the
+  digest reference — and then the image has no digest at all, so anything matching by digest can
+  never find it again. Measured 2026-09-24 on Plex `1.42.2` and friends. Remove every `repo:tag`
+  first, then the digest or ID, never `-f`, and check the image is actually gone before counting it.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
   invisible to us and change between releases. Every class used is `staxx-`-prefixed.
 - `staxx.plg` is fully populated — real author, real repo, real checksums. Nothing there guards
