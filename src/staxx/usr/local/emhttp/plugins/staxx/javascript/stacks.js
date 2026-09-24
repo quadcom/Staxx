@@ -4448,7 +4448,7 @@
              groupHeadHtml(grp, svc.name, null, collapsed) +
              groupBodyOpenHtml(svc.name, 'updates', collapsed) +
                '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
-                 '<legend>Updates</legend>' +
+                 '<legend>When to update</legend>' +
                  notice +
                  updatesHtml +
                '</fieldset>' +
