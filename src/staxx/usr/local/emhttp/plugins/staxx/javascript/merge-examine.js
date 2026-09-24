@@ -1370,10 +1370,23 @@
 
           if (known && target && !(target.stack === d.name && target.service === svcName)) {
             var doc = docCache[d.name];
+            // A single env var can hold a whole URL — user, password, scheme
+            // and database name around the "host:port" that actually moves —
+            // so only that matched fragment is safe to substring-replace;
+            // 'from' stays the whole written value for the card and change
+            // record text (CLAUDE.md rule 2: nothing else in the value may be
+            // lost). When the value is built with ${VAR} interpolation and
+            // that literal fragment is not itself present in what was
+            // written, there is nothing safe to substring on, so the rewrite
+            // falls back to swapping the whole value, same as before this
+            // fix.
+            var matchedAddr = addrHost + ':' + port;
+            var rewriteAddr = (written.indexOf(matchedAddr) !== -1) ? matchedAddr : written;
             findings.push({
               kind: 'address-rewire', severity: 'wiring', stack: d.name,
               facts: {
                 service: svcName, envVar: varName, from: written, fromResolved: value,
+                matchAddr: rewriteAddr,
                 toStack: target.stack, toService: target.service, toPort: target.container
               },
               choices: [{ id: 'rewire', recommended: true, ticked: true }],

@@ -7,8 +7,9 @@
  * shape: it drives merge-examine.js/merge-write.js/merge-suggest.js against the six fixtures
  * under tests/fixtures/merge-walk-six/ the way the wizard's own client-side code would,
  * entirely on the dev machine, before anything touches the box. It prints what it found so a
- * person can read it; with --check it also asserts PLAN_169's own thirteen traps and exits
- * non-zero on the first miss.
+ * person can read it; with --check it also asserts PLAN_169's own thirteen traps, plus a
+ * fourteenth added for the address-rewire fix (F12, 2026-09-24), and exits non-zero on the
+ * first miss.
  *
  * Every source is named exactly as the wizard names it — its path under the store
  * ("DEV-TESTING/t169-site"), not its bare folder name — for the same reason PLAN_156's own
@@ -42,9 +43,18 @@ var checkFails = [];   // {trap, message} — printed and turned into the exit c
 
 function section(title) { console.log('\n' + title); }
 
+// install.sh does this same substitution with sed before the fixture ever reaches a real box
+// (t169-api/compose.yaml's own comment explains why the placeholder is there); done here too,
+// with a documentation-range address (RFC 5737), so the dry run exercises the real
+// address-rewire path instead of leaving a literal "__BOX_IP__" sitting where nothing written
+// with a leading letter, let alone a digit, could ever match it as a host.
+var BOX_IP = '192.0.2.169';
+
 function readText(leafName, rel) {
   var p = path.join(FIXTURES, leafName, rel);
-  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+  if (!fs.existsSync(p)) return null;
+  var text = fs.readFileSync(p, 'utf8');
+  return text.indexOf('__BOX_IP__') === -1 ? text : text.split('__BOX_IP__').join(BOX_IP);
 }
 
 function sizeOf(leafName, rel) { return fs.statSync(path.join(FIXTURES, leafName, rel)).size; }
@@ -218,7 +228,8 @@ if (!CHECK) {
 }
 
 /* =========================================================================
- * --check: the thirteen traps from PLAN_169, read from the merged text and
+ * --check: the thirteen traps from PLAN_169, plus trap 14 (the F12 address-rewire fix), read
+ * from the merged text and
  * change records alone (what a real walk would also check on disk). Run
  * against BOTH orders — the point of this probe is that neither may
  * disagree with the other.
@@ -247,7 +258,8 @@ if (!CHECK) {
     });
   }
 
-  // Trap 2 — same container_name (t169-data) on t169-store and t169-bus.
+  // Trap 2 — same container_name (t169-data) on t169-store and t169-tools's "idle" (never
+  // started by install.sh — a real Docker host can only hold one "t169-data" at a time).
   var dataCount = (text.match(/container_name:\s*t169-data\b/mg) || []).length;
   if (dataCount !== 1) fail(2, 'order ' + o.label + ': expected exactly one surviving "container_name: t169-data", found ' + dataCount);
   var cnClash = exam.findings.filter(function (f) { return f.kind === 'container-name-clash' && f.facts.field === 'container_name'; });
@@ -377,6 +389,17 @@ if (!CHECK) {
   ['kept off the box\'s shared address so it never collides', 'Every stack in this fixture keeps its own timezone'].forEach(function (snippet) {
     if (text.indexOf(snippet) === -1) fail(13, 'order ' + o.label + ': an untouched comment from t169-site did not survive: "' + snippet + '"');
   });
+
+  // Trap 14 — t169-api's PGRST_DB_URI (postgres://authenticator:t169pass@__BOX_IP__:19432/t169)
+  // is a whole database URI in one env var, not a bare "host:port"; the address-rewire fix
+  // (F12, 2026-09-24) must move only the host:port inside it onto the store's own service name
+  // and its real port, keeping the login, scheme and database name exactly as the author wrote
+  // them (CLAUDE.md rule 2).
+  var storeName = exam.plan.serviceRenames[storeNameFor('t169-store') + '/db'] || 'db';
+  var wantUri = 'postgres://authenticator:t169pass@' + storeName + ':5432/t169';
+  if (text.indexOf('PGRST_DB_URI: ' + wantUri) === -1) {
+    fail(14, 'order ' + o.label + ': PGRST_DB_URI did not come out as "' + wantUri + '"');
+  }
 
   // General sanity, same shape as the first walk's own probe.
   if (/^version:/m.test(text)) fail('gen', 'order ' + o.label + ': a "version:" line survived into the merged file');

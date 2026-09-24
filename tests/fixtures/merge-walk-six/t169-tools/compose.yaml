@@ -16,6 +16,9 @@ services:
   dozzle:
     <<: *common
     image: amir20/dozzle:latest
+    volumes:
+      # Dozzle reads the logs it shows straight from Docker; nothing else is mounted.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       # This stack's own debug page, kept off the box's shared address so it never collides
       # with anything else that happens to use 19800 — the same port t169-site's debug page
@@ -30,6 +33,10 @@ services:
   idle:
     <<: *common
     image: alpine:3.20
+    # t169-store's own file sets this exact same container name on a service of its own — a
+    # container name is not a service name, and nothing may quietly keep both. Never started by
+    # install.sh, so this clash too exists only in the files.
+    container_name: t169-data
     command: ["sh", "-c", "busybox httpd -f -p 80 -h /www"]
     volumes:
       - ./www:/www:ro

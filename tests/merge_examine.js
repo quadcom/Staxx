@@ -1039,6 +1039,39 @@ console.log('\nK3. Wiring is found through the settings file too (C2, PLAN_156 F
   assertMergedIsValid('wiring-env', w.text, ['web1', 'web2', 'web3', 'db1', 'db2', 'db3']);
 })();
 
+console.log('\nK3b. address-rewire keeps everything but the host:port — a whole env value ' +
+  'can be a database URI, and only the address inside it moves (F- fix, 2026-09-24)');
+
+(function () {
+  // Same host/incoming shape as K2 (db published on 3307, arrives as
+  // db:3306) with three different shapes of value wrapped around the
+  // same address, each once: a login-carrying URI, a bare host:port, and
+  // an http URL with a path after it. Before this fix the whole env value
+  // was substring-replaced, so a URI's user, password, scheme and database
+  // name were lost along with the address (found live on the box: F12).
+  function mergedFor(envLine) {
+    var host = { name: 'demo-web', text: [
+      'services:', '  web:', '    image: nginx:latest',
+      '    environment:', '      ' + envLine
+    ].join('\n') };
+    var incoming = { name: 'demo-db', text: [
+      'services:', '  db:', '    image: mariadb:11', '    ports:', '      - "3307:3306"'
+    ].join('\n') };
+    return MW.buildMergedText([host, incoming], { date: '2026-09-24', name: 'demoapp' }).text;
+  }
+
+  ok('a postgres URI keeps its user, password and database name; only host:port moves',
+     /DB_URI: postgres:\/\/authenticator:t169pass@db:3306\/t169/.test(
+       mergedFor('DB_URI: postgres://authenticator:t169pass@192.0.2.88:3307/t169')));
+
+  ok('a bare host:port value still becomes the plain service:port pair',
+     /DB_ADDR: db:3306/.test(mergedFor('DB_ADDR: 192.0.2.88:3307')));
+
+  ok('an http URL keeps its scheme and path; only host:port moves',
+     /WEBHOOK_URL: http:\/\/db:3306\/api\/callback/.test(
+       mergedFor('WEBHOOK_URL: http://192.0.2.88:3307/api/callback')));
+})();
+
 console.log('\nK4. PLAN_155 C15 — a rewired connection must land on a shared network');
 
 (function () {

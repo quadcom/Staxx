@@ -1909,7 +1909,11 @@
           if (rHost) wiredLinks.push({ fromService: finalSvc, envVar: f.facts.hostVar, toService: finalToServiceName(f) });
           if (rPort) wiredLinks.push({ fromService: finalSvc, envVar: f.facts.portVar, toService: finalToServiceName(f) });
         } else {
-          var result = rewriteEnvAddressTracked(doc, finalSvc, f.facts.envVar, f.facts.from, f.facts.toService + ':' + f.facts.toPort);
+          // matchAddr is the "host:port" fragment alone, not the whole value
+          // f.facts.from carries for display — a database URI's user,
+          // password, scheme and database name sit either side of it and
+          // must survive the merge (CLAUDE.md rule 2).
+          var result = rewriteEnvAddressTracked(doc, finalSvc, f.facts.envVar, f.facts.matchAddr, f.facts.toService + ':' + f.facts.toPort);
           if (result) {
             changes.push({
               key: f.key, stack: s.name, sourceLine: sourceLineFor(f), marker: result.text,

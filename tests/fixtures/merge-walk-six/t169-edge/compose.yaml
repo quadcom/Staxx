@@ -7,7 +7,7 @@ x-unraid:
 
 services:
   edge:
-    image: traefik:v3.1
+    image: traefik:v3.6
     container_name: t169-edge
     command:
       - "--providers.docker=true"

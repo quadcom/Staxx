@@ -12,13 +12,11 @@ services:
   mqtt:
     <<: *common
     image: eclipse-mosquitto:2
-    # t169-store's own file sets this same container name on a service of its own — a
-    # container name is not a service name, and nothing may quietly keep both.
-    container_name: t169-data
     ports:
       - "19883:1883"
-      # t169-tools's own log viewer also publishes this exact port on every address — a real
+      # t169-tools's own "idle" also publishes this exact port on every address — a real
       # clash, unlike the loopback pair t169-site and t169-tools use for their debug pages.
+      # "idle" is never started by install.sh (see that script), so this stack keeps 19090.
       - "19090:9090"
     volumes:
       - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

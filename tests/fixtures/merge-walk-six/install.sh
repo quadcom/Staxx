@@ -39,11 +39,12 @@ chown -R nobody:users "$DEST"/t169-* /mnt/user/appdata/staxx-testing/t169-store
 docker network create t169-edge-net >/dev/null 2>&1 || true
 
 # Start in dependency order. This pulls Traefik, nginx, PostgREST, Postgres, Mosquitto, Dozzle
-# and Alpine — nothing here is built. t169-tools's own "idle" also publishes 19090, the same
-# port t169-bus's broker uses — a real clash a single Docker host cannot host at once — so it
-# is left out here, exactly the shape a person has when they stopped a service because it
-# clashed. Its own file still declares that port, which is what the merge has to notice once
-# both land in one stack.
+# and Alpine — nothing here is built. t169-tools's own "idle" also publishes 19090 and also sets
+# container_name: t169-data — both the same values t169-bus's broker and t169-store's own
+# Postgres use — real clashes a single Docker host cannot hold at once, so "idle" is left out
+# here, exactly the shape a person has when they stopped a service because it clashed. Its own
+# file still declares both, which is what the merge has to notice once everything lands in one
+# stack.
 cd "$DEST/t169-store" && docker compose up -d
 cd "$DEST/t169-bus"   && docker compose up -d
 cd "$DEST/t169-tools" && docker compose up -d dozzle
@@ -52,9 +53,20 @@ cd "$DEST/t169-api"   && docker compose up -d
 cd "$DEST/t169-edge"  && docker compose up -d
 
 echo "Waiting for the database to come up..."
+# Found by image rather than by container_name: t169-data — "idle" (never started above) sets
+# that same name on its own file, and this must keep meaning Postgres regardless.
 for n in $(seq 1 30); do
-  docker inspect -f '{{.State.Health.Status}}' t169-data 2>/dev/null | grep -q healthy && break
+  PG_CID=$(docker ps -q --filter "ancestor=postgres:16-alpine" | head -n1)
+  [ -n "$PG_CID" ] && docker inspect -f '{{.State.Health.Status}}' "$PG_CID" 2>/dev/null | grep -q healthy && break
   sleep 2
+done
+
+# Traefik takes a few seconds to read the other containers' labels after it starts; checked at
+# once, both routes through it read as dead.
+echo "Waiting for the edge to find its routes..."
+for n in $(seq 1 30); do
+  curl -s --max-time 2 "http://$IP:19080/" | grep -q "T169-SITE-MARKER-OK" && break
+  sleep 1
 done
 
 bash "$HERE/check-page.sh"

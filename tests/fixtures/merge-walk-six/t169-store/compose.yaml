@@ -9,8 +9,10 @@ x-unraid:
 services:
   db:
     image: postgres:16-alpine
-    # t169-bus's own file sets this exact same container name on a service of its own — a
-    # container name is not a service name, and nothing may quietly keep both.
+    # t169-tools's own "idle" sets this exact same container name on a service of its own — a
+    # container name is not a service name, and nothing may quietly keep both. "idle" is never
+    # started by install.sh (a real Docker host can only hold one "t169-data" at a time), so
+    # the clash exists only in the files, where the merge must still catch it.
     container_name: t169-data
     ports:
       - "19432:5432"
