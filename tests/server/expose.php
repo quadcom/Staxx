@@ -213,6 +213,19 @@ ok('plan_service: a Pi-hole record at another address is replaced',
    $piStep !== null && $piStep['op'] === 'replace'
    && strpos($piStep['text'], 'will change it to Nginx Proxy Manager') !== false, $err);
 
+/* ---------------------------------------------------- staxx_expose_config */
+// The compose reader hands scalars over as the file's own text, so the
+// switches arrive as the strings "true" / "false", not booleans.
+$c = staxx_expose_config(['expose.domain' => 'a.example.com', 'expose.enabled' => 'false',
+                          'expose.websockets' => 'false', 'expose.dns' => 'true']);
+ok('expose_config: the text "false" switches Enabled and WebSockets off',
+   $c !== null && $c['enabled'] === false && $c['websockets'] === false, json_encode($c));
+ok('expose_config: the text "true" switches DNS name on', $c !== null && $c['dns'] === true, json_encode($c));
+$c = staxx_expose_config(['expose.domain' => 'a.example.com']);
+ok('expose_config: absent Enabled and WebSockets mean on, absent DNS name means off',
+   $c['enabled'] === true && $c['websockets'] === true && $c['dns'] === false, json_encode($c));
+ok('expose_config: no domain means no proxy entry at all', staxx_expose_config(['expose.dns' => 'true']) === null);
+
 /* ------------------------------------------------------ staxx_expose_http */
 // The one network-shaped case that belongs in the always-run half: it never
 // reaches curl at all, because the scheme is refused before the call is
