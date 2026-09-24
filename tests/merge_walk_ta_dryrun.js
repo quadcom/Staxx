@@ -24,6 +24,8 @@ var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose
 var ME = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-examine.js');
 var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-write.js');
 var MS = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js');
+var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference between the sources and
+                                            // buildMergedText()'s own output must be accounted for.
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk-ta');
 
@@ -105,10 +107,11 @@ function runWalk(label, leaves) {
     filesReplies[storeNameFor(leafName)] = { files: STACKS[leafName].files, large: STACKS[leafName].large };
   });
 
-  var built = MW.buildMergedText(sources, {
+  var buildOpts = {
     name: MERGED_NAME, date: '2026-09-24',
     decisions: {}, envNames: {}, files: filesReplies
-  });
+  };
+  var built = MW.buildMergedText(sources, buildOpts);
 
   if (built.refusals && built.refusals.length) {
     console.log('  REFUSALS (nothing written past these):');
@@ -141,7 +144,7 @@ function runWalk(label, leaves) {
   section('5. wrote merged file (order ' + label + ')');
   console.log('  ' + outFile);
 
-  return { exam: exam, built: built, suggested: suggested, sources: sources };
+  return { exam: exam, built: built, suggested: suggested, sources: sources, opts: buildOpts };
 }
 
 var ORDER_A = ['Demo-TubeArchivist', 'Demo-TubeArchivist-ES', 'Demo-TubeArchivist-Redis'];
@@ -232,7 +235,18 @@ var CLASH_KINDS = { 'container-name-clash': 1, 'port-clash': 1, 'shorthand-clash
   // General sanity, same shape as the other two walks' own probes.
   if (/^version:/m.test(text)) fail('gen', 'order ' + o.label + ': a "version:" line survived into the merged file');
   if (!built.changes.length) fail('gen', 'order ' + o.label + ': no change records were produced at all — a rewritten line with no mark');
+
+  // PLAN_179 — every difference between this order's own sources and buildMergedText()'s own
+  // output (never the post-suggest text) must be explained by a change record.
+  var auditResult = AUDIT.audit(o.r.sources, built, o.r.opts);
+  if (!auditResult.ok) {
+    auditResult.problems.forEach(function (p) { fail('audit', 'order ' + o.label + ': ' + p); });
+  }
 });
+
+// PLAN_179 — the two pick orders' own merged configs must agree apart from block order.
+var orderCmp = AUDIT.compareOrders(resultA.sources, resultA.built, resultB.built);
+if (!orderCmp.ok) orderCmp.problems.forEach(function (p) { fail('audit-order', p); });
 
 if (checkFails.length) {
   console.log('\nFAILED:');

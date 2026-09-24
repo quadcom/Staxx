@@ -1,0 +1,58 @@
+# Filled in for you — check these before starting:
+# - This container is set to use the network "immich". That network must already
+#   exist on this server or Compose will refuse to start the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-server.xml"
+    name: "immich-server"
+  category: MediaApp:Photos
+  project: https://immich.app/
+  support: https://github.com/immich-app/immich/discussions
+  author: sgraaf's Repository
+  overview: |
+    Immich is a high-performance, self-hosted photo and video management solution.
+    This is the main "immich-server" service (it runs both the API and
+    microservices workers) from the official Immich `docker-compose.yml` and
+    provides the web UI on port 2283. This container depends on the
+    "immich-postgres", "immich-redis" and "immich-machine-learning" containers.
+    All four containers MUST share the same user-defined Docker network (named
+    "immich" in these templates) so that Immich can reach them by container name.
+    Start order: immich-postgres and immich-redis first, then
+    immich-machine-learning, then immich-server. The DB_PASSWORD set here MUST
+    match POSTGRES_PASSWORD in the `immich-postgres` container.
+
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich-server
+    restart: unless-stopped
+    networks:
+      - immich
+    ports:
+      - "2283:2283"  # Port for the Immich web interface and mobile app API. -!R
+    volumes:
+      - /mnt/user/photos/immich:/data     # Where Immich stores uploaded photos and videos (thumbnails, originals, etc). Equivalent to UPLOAD_LOCATION in the compose .env file. Point this at an array… -!R
+      - /etc/localtime:/etc/localtime:ro  # Read-only host clock mount, as in the compose file. Optional if TZ is set.
+    environment:
+      DB_HOSTNAME: "immich-postgres"                        # Hostname of the Postgres container. Must equal the Name of the postgres container (immich-postgres) and both must be on the 'immich' network. -!R
+      DB_PORT: "5432"                                       # Postgres port (internal). Leave at 5432.
+      DB_USERNAME: "postgres"                               # Postgres username. Must match POSTGRES_USER in immich-postgres. -!R
+      DB_PASSWORD: ""                                       # Postgres password. MUST match POSTGRES_PASSWORD in the immich-postgres container. Use only A-Za-z0-9 characters. -!R -!S
+      DB_DATABASE_NAME: "immich"                            # Postgres database name. Must match POSTGRES_DB in immich-postgres. -!R
+      REDIS_HOSTNAME: "immich-redis"                        # Hostname of the Redis/Valkey container. Must equal the Name of the redis container (immich-redis) and both must be on the 'immich' network. -!R
+      REDIS_PORT: "6379"                                    # Redis port (internal). Leave at 6379.
+      IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning:3003"  # URL of the machine-learning container. Must use the Name of the ML container (immich-machine-learning) on the 'immich' network. Set to 'false' to disable ML…
+      TZ: "Europe/Amsterdam"                                # Optional timezone, e.g. Europe/Amsterdam or Etc/UTC. Affects timestamps shown in the UI.
+    x-unraid:
+      icon: https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-server.png
+      webui: "http://[IP]:2283/"
+      project: https://immich.app/
+      support: https://github.com/immich-app/immich/discussions
+
+networks:
+  immich:
+    external: true

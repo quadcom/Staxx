@@ -2226,6 +2226,84 @@ console.log('\nK2b. PLAN_178 F2 — a comment is struck only when it names the v
 })();
 
 /* =========================================================================
+ * T. PLAN_179 P1/P2
+ * ========================================================================= */
+
+console.log('\nT. PLAN_179 P1/P2');
+
+(function () {
+  // P1a — a header comment separated from its first top-level key by a
+  // blank line (ca-convert.js's own shape) is still carried, on the file's
+  // ONLY source.
+  var a = { name: 'a', text: '# header for a\n\nx-unraid:\n  version: 1\n\nservices:\n  svc:\n    image: alpine:3.20\n' };
+  var w = MW.buildMergedText([a], { date: '2026-09-24', name: 'demoapp' });
+  ok('P1a: a blank-separated header on the only (first) source survives the merge',
+     w.text.indexOf('header for a') >= 0);
+})();
+
+(function () {
+  // P1b — a second source's own header, directly above its x-unraid: (its
+  // own first key, no blank), also survives — the field-by-field x-unraid
+  // carry used to read only the FIELDS inside x-unraid, never this.
+  var a = { name: 'a', text: 'x-unraid:\n  version: 1\n  overview: stack a\n\nservices:\n  svc:\n    image: alpine:3.20\n' };
+  var b = { name: 'b', text: '# header for b\nx-unraid:\n  version: 1\n  category: Tools\n\nservices:\n  svc2:\n    image: alpine:3.20\n' };
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('P1b: a non-first source\'s own header, directly above its x-unraid, survives the merge',
+     w.text.indexOf('header for b') >= 0);
+})();
+
+(function () {
+  // P1c — a non-first source whose x-unraid is NOT its own first key (a
+  // dropped "version:" line precedes it, ca-corpus/tube-archivist's own
+  // shape) still keeps the comment sitting directly above x-unraid.
+  var a = { name: 'a', text: 'x-unraid:\n  version: 1\n  overview: stack a\n\nservices:\n  svc:\n    image: alpine:3.20\n' };
+  var c = { name: 'c', text: 'version: "3.9"\n# header for c\nx-unraid:\n  version: 1\n  support: https://example.test\n\nservices:\n  svc3:\n    image: alpine:3.20\n' };
+  var w = MW.buildMergedText([a, c], { date: '2026-09-24', name: 'demoapp' });
+  ok('P1c: a non-first source\'s x-unraid comment survives even when x-unraid is not its own first key',
+     w.text.indexOf('header for c') >= 0);
+})();
+
+(function () {
+  // P2 — a sidecar's network_mode: "container:<name>" naming another
+  // service's own container_name INSIDE the merge is rewritten to
+  // "service:<that service's final key>".
+  var vpn = { name: 'vpn', text: 'services:\n  vpn:\n    image: qmcgaw/gluetun\n    container_name: my-vpn\n' };
+  var dl = { name: 'dl', text: 'services:\n  dl:\n    image: lscr.io/linuxserver/qbittorrent\n    network_mode: "container:my-vpn"\n' };
+  var descVpn = MW.descriptorFromText(vpn.name, vpn.text, null, []);
+  var descDl = MW.descriptorFromText(dl.name, dl.text, null, []);
+  var r = M.examine([descVpn, descDl]);
+  var nmj = findingsOf(r, 'network-mode-join')[0];
+  ok('P2: a container: reference to a service INSIDE the merge raises a network-mode-join finding',
+     !!nmj && nmj.facts.fromContainer === 'my-vpn' && nmj.facts.toService === 'vpn');
+  ok('P2: the finding is ticked/recommended by default (Approve/Decline like every other rewire)',
+     !!nmj && nmj.choices[0].recommended && nmj.choices[0].ticked);
+
+  var w = MW.buildMergedText([vpn, dl], { date: '2026-09-24', name: 'demoapp' });
+  ok('P2: the merged file rewrites it to service:vpn, quote and all',
+     w.text.indexOf('network_mode: "service:vpn"') >= 0);
+  ok('P2: the change record names what it now joins', w.changes.some(function (c) {
+    return /Now joins vpn.s network inside the stack/.test(c.title);
+  }));
+})();
+
+(function () {
+  // P2 (untouched half) — a container: naming something OUTSIDE the merge
+  // (no service in this merge has that container_name) is left exactly as
+  // written; StaXX cannot know whether it still exists.
+  var solo = { name: 'solo', text: 'services:\n  dl:\n    image: foo\n    network_mode: "container:some-other-box-container"\n' };
+  var other = { name: 'other2', text: 'services:\n  x:\n    image: bar\n' };
+  var descSolo = MW.descriptorFromText(solo.name, solo.text, null, []);
+  var descOther = MW.descriptorFromText(other.name, other.text, null, []);
+  var r = M.examine([descSolo, descOther]);
+  ok('P2: a container: naming a container outside the merge raises no network-mode-join finding',
+     findingsOf(r, 'network-mode-join').length === 0);
+
+  var w = MW.buildMergedText([solo, other], { date: '2026-09-24', name: 'demoapp' });
+  ok('P2: the merged file leaves it exactly as written',
+     w.text.indexOf('network_mode: "container:some-other-box-container"') >= 0);
+})();
+
+/* =========================================================================
  * Summary
  * ========================================================================= */
 

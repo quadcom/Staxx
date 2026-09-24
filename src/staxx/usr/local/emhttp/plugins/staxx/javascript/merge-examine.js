@@ -111,7 +111,7 @@
  *           'hidden-config' | 'unreferenced' | 'large-folder' | 'build-image' |
  *           'depth-path' | 'settings-join' | 'container-name-clash' |
  *           'port-clash' | 'shorthand-clash' | 'label-clash' | 'address-rewire' |
- *           'port-unneeded' | 'left-alone' | 'clean',
+ *           'port-unneeded' | 'network-mode-join' | 'left-alone' | 'clean',
  *     severity: 'refusal' | 'decision' | 'automatic' | 'wiring' | 'info' |
  *               'warning' | 'clean',
  *     stack: 'DEV-TESTING/demo-db' | null,   // the source's own FULL REL, exactly as the caller
@@ -399,6 +399,16 @@
       var cm = /^([^#]*?)(\s*#.*)?$/.exec(m[1]);
       var val = cm[1].replace(/^['"]|['"]$/g, '').trim();
       if (val === oldName) return i;
+    }
+    return -1;
+  }
+
+  function locateNetworkModeLine(doc, svcName) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[svcName];
+    if (!p) return -1;
+    for (var i = p.start; i < p.end; i++) {
+      if (/^\s*network_mode:\s*/.test(doc.lines[i])) return i;
     }
     return -1;
   }
@@ -979,6 +989,48 @@
     return out;
   }
 
+  // PLAN_179 P2 — a sidecar written `network_mode: "container:<name>"`
+  // before the two stacks were merged names a container that now sits
+  // beside it in the same stack, if that name matches another service's
+  // own container_name. Compose can only start one container after
+  // ANOTHER SERVICE, not after a bare container name it does not manage
+  // itself, so left as "container:" the sidecar would simply never come
+  // up in the right order — this rewrites it to "service:<that service's
+  // own key>" instead, which Compose does understand. A `container:` name
+  // that matches nothing inside the merge is left exactly as written: it
+  // names something outside this stack, which StaXX cannot see.
+  function findNetworkModeContainerJoins(sources, docCache) {
+    var out = [];
+    var byContainerName = {};
+    sources.forEach(function (s) {
+      Object.keys(servicesOf(s)).forEach(function (svcName) {
+        var svc = servicesOf(s)[svcName];
+        if (svc.container_name) byContainerName[svc.container_name] = { stack: s.name, service: svcName };
+      });
+    });
+
+    sources.forEach(function (s) {
+      Object.keys(servicesOf(s)).forEach(function (svcName) {
+        var svc = servicesOf(s)[svcName];
+        var nm = svc.network_mode;
+        if (!nm || nm.indexOf('container:') !== 0) return;
+        var named = nm.slice('container:'.length);
+        var target = byContainerName[named];
+        if (!target) return;   // names a container outside the merge — left alone
+        if (target.stack === s.name && target.service === svcName) return;   // cannot join itself
+
+        var doc = docCache[s.name];
+        out.push({
+          kind: 'network-mode-join', severity: 'wiring', stack: s.name,
+          facts: { service: svcName, fromContainer: named, toStack: target.stack, toService: target.service },
+          choices: [{ id: 'join', recommended: true, ticked: true }],
+          lines: doc ? linesEntry(s.name, locateNetworkModeLine(doc, svcName)) : []
+        });
+      });
+    });
+    return out;
+  }
+
   // The lowest free port at or above 20000 — high enough that it is never
   // one a person chose on purpose, so a service landing there always reads
   // as "StaXX moved this", never as a coincidence. `usedPorts` is a plain
@@ -1529,6 +1581,7 @@
     findings = findings.concat(findPortClashes(sources, docCache));
     findings = findings.concat(findShorthandClashes(sources, docCache));
     findings = findings.concat(findLabelClashes(sources, opts, docCache));
+    findings = findings.concat(findNetworkModeContainerJoins(sources, docCache));
 
     findings = findings.concat(findWiringFindings(sources, opts, docCache));
 

@@ -31,6 +31,8 @@ var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose
 var ME = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-examine.js');
 var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-write.js');
 var MS = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js');
+var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference between the sources and
+                                            // buildMergedText()'s own output must be accounted for.
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk');
 
@@ -223,10 +225,11 @@ function runWalk(label, LEAVES) {
     filesReplies[storeNameFor(leafName)] = { files: STACKS[leafName].files, large: STACKS[leafName].large };
   });
 
-  var built = MW.buildMergedText(sources, {
+  var buildOpts = {
     name: 'T155-MERGED/t155-site', date: '2026-09-15',
     decisions: decisions, envNames: envNames, files: filesReplies
-  });
+  };
+  var built = MW.buildMergedText(sources, buildOpts);
 
   if (built.refusals && built.refusals.length) {
     console.log('  REFUSALS (nothing written past these):');
@@ -287,7 +290,7 @@ function runWalk(label, LEAVES) {
   section('5. wrote merged files (order ' + label + ')');
   console.log('  ' + outFile);
 
-  return { exam: exam, built: built, suggested: suggested, sources: sources };
+  return { exam: exam, built: built, suggested: suggested, sources: sources, opts: buildOpts };
 }
 
 var ORDER_A = ['t155-web', 't155-db', 't155-cache', 't155-admin'];
@@ -526,6 +529,15 @@ if (CHECK) {
     checkNetworksShared(o.label, doc, o.r.exam);
     checkLinkRecords(o.label, doc, o.r.exam, text);
 
+    // PLAN_179 — every difference between this order's own sources and
+    // buildMergedText()'s own output (never the post-suggest text, which
+    // the audit's own table already accounts for separately) must be
+    // explained by a change record.
+    var auditResult = AUDIT.audit(o.r.sources, o.r.built, o.r.opts);
+    if (!auditResult.ok) {
+      auditResult.problems.forEach(function (p) { fail('audit', 'order ' + o.label + ': ' + p); });
+    }
+
     ['t155-web_data', 't155-db_data', 't155-cache_data'].forEach(function (n) {
       if (text.indexOf('name: ' + n) === -1) fail(1, 'order ' + o.label + ': volume "' + n + '" has no name: line');
     });
@@ -583,6 +595,10 @@ if (CHECK) {
       fail(12, 'order ' + o.label + ': the dhparam bind mount is not carried through unchanged from appdata');
     }
   });
+
+  // PLAN_179 — the two pick orders' own merged configs must agree apart from block order.
+  var orderCmp = AUDIT.compareOrders(resultA.sources, resultA.built, resultB.built);
+  if (!orderCmp.ok) orderCmp.problems.forEach(function (p) { fail('audit-order', p); });
 
   if (checkFails.length) {
     console.log('  FAILED:');

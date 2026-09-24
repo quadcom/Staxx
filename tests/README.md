@@ -36,11 +36,13 @@ node tests/pin_image.js             # pinning an image to one exact build
 node tests/export_redact.js         # what export blanks out before a stack leaves the machine
 node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
 node tests/pull_progress.js         # the row overlay's parser — layer/container progress, byte units, failures
-node tests/merge_walk_dryrun.js     # the merge walkthrough's dry run: examine()/buildMergedText()/apply() against the four-stack fixture, off the box; --check asserts the phase 4 shape
+node tests/merge_walk_dryrun.js     # the merge walkthrough's dry run: examine()/buildMergedText()/apply() against the four-stack fixture, off the box; --check asserts the phase 4 shape AND runs merge_audit.js's own audit()/compareOrders() over both pick orders (PLAN_179)
                                     # the walk itself — four running stacks merged into one, the same page checked before and after — is tests/fixtures/merge-walk/README.md
-node tests/merge_walk_six_dryrun.js # the second walkthrough's dry run: six stacks behind a Traefik front door, thirteen planted traps, two pick orders; --check asserts every trap (PLAN_169)
-node tests/merge_walk_ta_dryrun.js  # the third walkthrough's dry run: three Community Applications templates (Tube Archivist, its Elasticsearch and its Redis), no traps planted, two pick orders; --check asserts the two address rewires, the surviving ports and mounts, and a clean parse (PLAN_178)
-node tests/merge_trip.js            # round two: small source pairs under merge-pairs/r2-*, each a way to trip the merge (sidecars, CRLF, port ranges, proxy labels, unreadable files…); SKIP lines are proven on the box
+node tests/merge_walk_six_dryrun.js # the second walkthrough's dry run: six stacks behind a Traefik front door, thirteen planted traps, two pick orders; --check asserts every trap (PLAN_169) AND the PLAN_179 audit
+node tests/merge_walk_ta_dryrun.js  # the third walkthrough's dry run: three Community Applications templates (Tube Archivist, its Elasticsearch and its Redis), no traps planted, two pick orders; --check asserts the two address rewires, the surviving ports and mounts, a clean parse (PLAN_178) AND the PLAN_179 audit
+node tests/merge_trip.js            # round two: small source pairs under merge-pairs/r2-*, each a way to trip the merge (sidecars, CRLF, port ranges, proxy labels, unreadable files…); SKIP lines are proven on the box; every buildMergedText() call here is also run through merge_audit.js's own audit() (PLAN_179)
+node tests/merge_audit_all.js       # PLAN_179 part 1: the audit (tests/merge_audit.js) run over every merge fixture this project has — the three walks, every merge-pairs/ pair, every tests/fixtures/ca-corpus/ family, both pick orders — checking that every difference between the sources and the merged file is accounted for by a change record, rather than predicting one trap at a time
+node tests/merge_corpus.js          # PLAN_179 part 3: merges every family under tests/fixtures/ca-corpus/ (real Community Applications templates, converted by tests/tools/build_ca_corpus.js) in both pick orders — parse, wiring, and merge_audit.js's own audit()
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```

@@ -1,0 +1,42 @@
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/tubearchivist/unraid-templates/main/TubeArchivist.xml"
+    name: "TubeArchivist"
+  category: Backup
+  project: https://github.com/tubearchivist/tubearchivist
+  support: https://forums.unraid.net/topic/114073-support-crocs-tube-archivist/
+  author: TubeArchivist's Official Repository
+  overview: |
+    Your self hosted YouTube media server.
+    https://docs.tubearchivist.com/installation/Unraid/
+
+services:
+  tubearchivist:
+    image: bbilly1/tubearchivist:latest
+    container_name: TubeArchivist
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "8000:8000"
+    volumes:
+      - /mnt/user/:/youtube
+      - /mnt/user/appdata/TubeArchivist/:/cache
+    environment:
+      TA_HOST: "192.0.2.10"
+      TA_USERNAME: "tubearchivist"
+      TA_PASSWORD: "verysecret"
+      REDIS_CON: "redis://192.0.2.10:6379"
+      ELASTIC_PASSWORD: "verysecret"
+      ES_URL: "http://192.0.2.10:9200"  # leave the 'http://'
+      TZ: "America/Chicago"
+      HOST_GID: "100"
+      HOST_UID: "99"
+    x-unraid:
+      icon: https://i.imgur.com/6n4ljjQ.png
+      webui: "http://[IP]:8000"
+      project: https://github.com/tubearchivist/tubearchivist
+      support: https://forums.unraid.net/topic/114073-support-crocs-tube-archivist/

@@ -1,0 +1,49 @@
+# Filled in for you — check these before starting:
+# - This container is set to use the network "immich". That network must already
+#   exist on this server or Compose will refuse to start the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-postgres.xml"
+    name: "immich-postgres"
+  category: Tools:Utilities
+  project: https://www.postgresql.org/
+  support: https://github.com/immich-app/immich/discussions
+  author: sgraaf's Repository
+  overview: |
+    PostgreSQL 14 database for Immich, pre-built with the VectorChord / pgvecto.rs
+    vector extensions that Immich requires. This is the "database" service from
+    the official Immich docker-compose.yml. It must be on the same custom Docker
+    network ("immich") as the Immich server so the server can reach it by the
+    container name "immich-postgres". POSTGRES_PASSWORD here must match
+    DB_PASSWORD in the immich-server container. NOTE: changing the
+    username/database/password after first start has no effect because the data
+    directory is already initialized.
+
+services:
+  immich-postgres:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    container_name: immich-postgres
+    restart: unless-stopped
+    shm_size: 128m
+    networks:
+      - immich
+    volumes:
+      - /mnt/user/appdata/immich/postgres:/var/lib/postgresql/data  # Postgres data directory. Equivalent to DB_DATA_LOCATION in the compose .env file. Keep this on fast/SSD storage. Do NOT use a path that is also handled by… -!R
+    environment:
+      POSTGRES_PASSWORD: ""                     # Password for the Postgres database. MUST match DB_PASSWORD set in the immich-server container. Use only A-Za-z0-9 characters. -!R -!S
+      POSTGRES_USER: "postgres"                 # Postgres username. MUST match DB_USERNAME in immich-server. -!R
+      POSTGRES_DB: "immich"                     # Postgres database name. MUST match DB_DATABASE_NAME in immich-server. -!R
+      POSTGRES_INITDB_ARGS: "--data-checksums"  # Arguments passed to initdb on first start. Leave as --data-checksums.
+      DB_STORAGE_TYPE: ""                       # Optional. Set to HDD if the database data is NOT stored on an SSD. Leave blank for SSD.
+    x-unraid:
+      icon: https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-postgres.png
+      project: https://www.postgresql.org/
+      support: https://github.com/immich-app/immich/discussions
+
+networks:
+  immich:
+    external: true

@@ -1,0 +1,45 @@
+# Filled in for you — check these before starting:
+# - The path "Appdata" had no value; used /mnt/user/appdata/mariadb/config as a
+#   placeholder — check it before starting the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/linuxserver/templates/main/unraid/mariadb.xml"
+    name: "mariadb"
+  category: Tools:Utilities
+  project: https://mariadb.org/
+  support: https://github.com/linuxserver/docker-mariadb/issues/new/choose
+  readme: https://github.com/linuxserver/docker-mariadb#readme
+  author: linuxserver's Repository
+  overview: |
+    Mariadb(https://mariadb.org/) is one of the most popular database servers.
+    Made by the original developers of MySQL.
+
+services:
+  mariadb:
+    image: lscr.io/linuxserver/mariadb
+    container_name: mariadb
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "3306:3306"  # MariaDB listens on this port. -!R
+    volumes:
+      - /mnt/user/appdata/mariadb/config:/config  # Persistent config files -!R
+    environment:
+      MYSQL_ROOT_PASSWORD: "ROOT_ACCESS_PASSWORD"           # Set this to root password for installation (minimum 4 characters and non-alphanumeric passwords must be properly escaped). (valid only for first run) -!R -!S
+      MYSQL_DATABASE: "USER_DB_NAME"                        # Specify the name of a database to be created. (valid only for first run)
+      MYSQL_USER: "MYSQL_USER"                              # This user will have superuser access to the database specified by MYSQL_DATABASE (do not use root here). (valid only for first run)
+      MYSQL_PASSWORD: "DATABASE_PASSWORD"                   # Set this to the password you want to use for you MYSQL_USER (minimum 4 characters and non-alphanumeric passwords must be properly escaped). (valid only for… -!S
+      REMOTE_SQL: "http://URL1/your.sql,https://URL2/your.sql"  # Set this to ingest sql files from an http/https endpoint (comma seperated array).
+      CLI_OPTS: ""                                          # Pass CLI options to mariadbd via mariadbd-safe. Use with caution as mariadbd option precedence is complex.
+      PUID: "99"                                            # Container Variable: PUID -!R
+      PGID: "100"                                           # Container Variable: PGID -!R
+      UMASK: "022"                                          # Container Variable: UMASK
+    x-unraid:
+      icon: https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/mariadb-logo.png
+      project: https://mariadb.org/
+      support: https://github.com/linuxserver/docker-mariadb/issues/new/choose

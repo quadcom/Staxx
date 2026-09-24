@@ -1,0 +1,27 @@
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/tubearchivist/unraid-templates/main/TubeArchivist-RedisJSON.xml"
+    name: "TubeArchivist-Redis"
+  category: MediaServer:Other
+  support: https://forums.unraid.net/topic/114073-support-crocs-tube-archivist/
+  author: TubeArchivist's Official Repository
+  overview: |
+    This is a dependancy container for the application "TubeArchivist"
+
+services:
+  tubearchivist-redis:
+    image: redis
+    container_name: TubeArchivist-Redis
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "6379:6379"
+    volumes:
+      - /mnt/user/appdata/TubeArchivist/redis:/data
+    x-unraid:
+      icon: https://i.imgur.com/dtGJa5y.jpeg
+      support: https://forums.unraid.net/topic/114073-support-crocs-tube-archivist/

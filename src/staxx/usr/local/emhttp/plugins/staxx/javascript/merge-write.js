@@ -76,6 +76,36 @@
     return i + 1;
   }
 
+  // A source's own file header — every line before its first top-level key,
+  // blank lines between included (PLAN_179 P1). This is deliberately NOT
+  // leadStart() above: leadStart() walks a KEY's own lead comment, which
+  // stops the moment it hits a blank line, because a blank line really does
+  // separate one key's comment from the next one up. A file's header note
+  // is not attached to any key at all — it is only ever directly above
+  // whichever key happens to be first — so a blank line before that key
+  // must not stop it being read. Nothing can legitimately sit between line
+  // 0 and the first top-level key of a valid compose file except comments
+  // and blanks, so the slice is exact.
+  function fileHeaderLines(doc) {
+    if (!doc.root || doc.root.kind !== 'map' || !doc.root.keys.length) return [];
+    return doc.lines.slice(0, doc.root.pairs[doc.root.keys[0]].start);
+  }
+
+  // A block's own leading comment lines (as computeBlocks() already
+  // isolated them — this never re-derives anything, only splits a block
+  // computeBlocks() built into "the comment on top" and "everything else").
+  // Needed because x-unraid's field-by-field carry (below) only ever reads
+  // the FIELDS inside x-unraid, never its own outer lead comment, which is
+  // otherwise only carried as a side effect of concatenating the WHOLE
+  // block — something only the first-ever x-unraid source's branch does
+  // (PLAN_179 P1: a later source whose x-unraid follows some other key,
+  // "version:" say, lost this comment outright).
+  function leadingCommentLinesOf(block) {
+    var idx = 0;
+    while (idx < block.length && lineKind(block[idx]).kind === 'comment') idx++;
+    return block.slice(0, idx);
+  }
+
   // A map's direct children as whole blocks: a key's own lead comment (same
   // indent, directly above), its own lines, and the gap up to the next
   // key's OWN lead-inclusive start (so a blank line or a trailing note
@@ -385,6 +415,33 @@
       return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
     }
     return null;
+  }
+
+  // PLAN_179 P2 — the line the network_mode rewrite below both finds and
+  // (via rewriteNetworkModeTracked()) edits: a service's own network_mode:
+  // scalar, matched by its exact current value (never a substring, unlike
+  // an address — "container:foo" must not match "container:foobar").
+  function findNetworkModeLine(doc, serviceKey, value) {
+    var svcMap = servicesMapOf(doc);
+    var p = svcMap && svcMap.pairs[serviceKey];
+    if (!p) return null;
+    for (var i = p.start; i < p.end; i++) {
+      var m = /^\s*network_mode:\s*(.*)$/.exec(doc.lines[i]);
+      if (!m) continue;
+      var cm = /^([^#]*?)(\s*#.*)?$/.exec(m[1]);
+      var val = cm[1].replace(/^['"]|['"]$/g, '').trim();
+      if (val === value) return i;
+    }
+    return null;
+  }
+
+  function rewriteNetworkModeTracked(doc, serviceKey, oldValue, newValue) {
+    var lineIdx = findNetworkModeLine(doc, serviceKey, oldValue);
+    if (lineIdx === null) return null;
+    var struck = stripCommentAbove(doc, lineIdx, [oldValue]);
+    var idx = lineIdx - (struck ? struck.shift : 0);
+    doc.lines[idx] = rewriteScalarValue(doc.lines[idx], newValue);
+    return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
   }
 
   /* =====================================================================
@@ -2067,6 +2124,44 @@
         }
       });
 
+      // PLAN_179 P2 — a sidecar's own network_mode: "container:<name>" now
+      // names a service sharing this same stack; rewritten to "service:
+      // <that service's final key>" so Compose starts it after that
+      // service rather than never (Compose only follows a "service:"
+      // reference, never a bare container name it does not itself manage).
+      // A wiring finding, ticked by default like every other rewire here;
+      // a decline leaves the line exactly as written.
+      exam.findings.forEach(function (f) {
+        if (f.kind !== 'network-mode-join' || f.stack !== s.name) return;
+        var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
+        var finalTarget = plan.serviceRenames[f.facts.toStack + '/' + f.facts.toService] || f.facts.toService;
+        var oldValue = 'container:' + f.facts.fromContainer;
+
+        if (!decisionValue(decisions, f)) {
+          var declLine = findNetworkModeLine(doc, finalSvc, oldValue);
+          if (declLine !== null) {
+            changes.push({
+              key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declLine],
+              title: 'Now joins ' + finalTarget + '’s network inside the stack',
+              reason: 'Left as written: still container:' + f.facts.fromContainer +
+                '; approving would switch it to service:' + finalTarget + ' instead.',
+              struckComment: null
+            });
+          }
+          return;
+        }
+
+        var result = rewriteNetworkModeTracked(doc, finalSvc, oldValue, 'service:' + finalTarget);
+        if (result) {
+          changes.push({
+            key: f.key, stack: s.name, sourceLine: sourceLineFor(f), marker: result.text,
+            title: 'Now joins ' + finalTarget + '’s network inside the stack',
+            reason: 'Was container:' + f.facts.fromContainer + '; now starts after ' + finalTarget + ' instead.',
+            struckComment: result.struckComment
+          });
+        }
+      });
+
       // Port clash (PLAN_155 C10) — the finding's recommended choice IS the
       // free port examine() already picked, so an untouched decision moves
       // that service's port with no further click needed (CLAUDE.md rule 2:
@@ -2490,7 +2585,27 @@
       // two must not be conflated.
       var blocks = computeBlocks(doc, doc.root);
       var origBlocks = computeBlocks(sd.origDoc, sd.origDoc.root);
+
+      // PLAN_179 P1 — this source's own file header, carried once above
+      // whichever key turns out to be first, whatever key that is. A
+      // "services:" header is left to the services pass further down
+      // (the one place this text can already be attached correctly);
+      // everywhere else, computeBlocks() above may already have picked
+      // the header up as the first key's own lead comment (true only when
+      // no blank line separates them — see leadStart()'s own comment), so
+      // it is stripped back off that block first to avoid carrying it
+      // twice.
+      var srcFirstKey = doc.root.keys.length ? doc.root.keys[0] : null;
+      var srcHeader = (srcFirstKey && srcFirstKey !== 'services') ? fileHeaderLines(doc) : [];
+      if (srcHeader.length && blocks.blocks[srcFirstKey]) {
+        var hb = blocks.blocks[srcFirstKey];
+        if (hb.length >= srcHeader.length && hb.slice(0, srcHeader.length).join('\n') === srcHeader.join('\n')) {
+          blocks.blocks[srcFirstKey] = hb.slice(srcHeader.length);
+        }
+      }
+
       blocks.order.forEach(function (key) {
+        if (key === srcFirstKey && srcHeader.length) topAdditions = topAdditions.concat(srcHeader);
         if (KNOWN_FIVE[key]) return;
 
         if (key === 'version') {
@@ -2562,6 +2677,17 @@
               subBlocks.order.forEach(function (sk) { xuFieldText[sk] = subBlocks.blocks[sk].join('\n'); });
             }
             return;
+          }
+
+          // PLAN_179 P1 — this source's own comment directly above its
+          // "x-unraid:" line, carried once here since the field-by-field
+          // splice below never reads it (only the FIELDS inside x-unraid).
+          // Skipped when x-unraid is this source's own first key: the
+          // generic file-header carry (this function's own docs.forEach,
+          // above) already carried it there, blank line or not.
+          if (srcFirstKey !== 'x-unraid') {
+            var xuOwnLead = leadingCommentLinesOf(blocks.blocks[key]);
+            if (xuOwnLead.length) topAdditions = topAdditions.concat(xuOwnLead);
           }
 
           if (!subBlocks) return;   // this source's own x-unraid carried nothing structured
@@ -2683,13 +2809,18 @@
       // deeper than any key, which compose-model.js therefore treats as
       // lying OUTSIDE the services: map's own span rather than as part of
       // it. Both are located here, once per source, and carried by hand.
+      //
+      // PLAN_179 P1 gave the header half of this one mechanism, shared with
+      // the topAdditions pass above: fileHeaderLines() reads every line
+      // before the file's own first top-level key, blank lines included,
+      // so it is carried here only when "services:" truly IS that first
+      // key — otherwise it already belongs to whichever earlier key (x-
+      // unraid, version, ...) sits above it, and the topAdditions pass
+      // already carried it there.
       var servicesPair = sd.doc.root.pairs['services'];
-      var headerLines = [];
+      var headerLines = sd.doc.root.keys[0] === 'services' ? fileHeaderLines(sd.doc) : [];
       var closingLines = [];
       if (servicesPair) {
-        var hStart = leadStart(sd.doc.lines, servicesPair.start, servicesPair.indent);
-        headerLines = sd.doc.lines.slice(hStart, servicesPair.start);
-
         var rootKeys = sd.doc.root.keys;
         var svcIdx = rootKeys.indexOf('services');
         // No next top-level key: the file's own last line is the limit —

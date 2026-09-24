@@ -26,6 +26,8 @@ var path = require('path');
 var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 var M = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-examine.js');
 var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-write.js');
+var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference between the sources and
+                                            // buildMergedText()'s own output must be accounted for.
 
 var pass = 0, fail = 0, skip = 0;
 
@@ -34,6 +36,17 @@ function ok(name, condition, detail) {
   fail++;
   console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
   return false;
+}
+
+// PLAN_179 — every call this file makes to buildMergedText() is audited in the same pass, so a
+// silent change slipped into any of these round-two probes fails here too, not only in
+// tests/merge_audit_all.js's own separate run of the same fixtures. audit() itself no-ops when
+// built.text is null (a refusal), so this is always safe to run, whatever the case is testing.
+function auditedBuild(sources, opts) {
+  var built = MW.buildMergedText(sources, opts || {});
+  var a = AUDIT.audit(sources, built, opts || {});
+  ok('audit: every difference from the source(s) is accounted for', a.ok, a.problems.join('\n'));
+  return built;
 }
 
 function skipCase(name, where) {
@@ -124,7 +137,7 @@ console.log('\nR2-1. network_mode: "service:X" follows a rename');
   var clash = findingsOf(r, 'container-name-clash').filter(function (f) { return f.facts.field === 'service'; });
   ok('the second source\'s "vpn" is the one renamed', clash.length === 1 && clash[0].stack === 'b' && clash[0].facts.from === 'vpn');
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   var newName = clash[0].facts.to;
   ok('the sidecar\'s network_mode: reference follows the rename',
      new RegExp('network_mode: "service:' + newName + '"').test(w.text));
@@ -148,7 +161,7 @@ console.log('\nR2-2. An external volume, and a volume with its own name:, both l
   ok('the external volume is never offered a storage-carry decision',
      findingsOf(r, 'storage-carry').filter(function (f) { return f.facts.volume === 'extvol'; }).length === 0);
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('extvol keeps external: true, untouched', /extvol:\s*\n\s*external: true/.test(w.text));
   ok('namedvol keeps its own custom name:, untouched, and is not ALSO given a project-prefixed name: override',
      /namedvol:\s*\n\s*name: my-custom-real-name/.test(w.text) &&
@@ -173,7 +186,7 @@ console.log('\nR2-3. A secret name clash is renamed like any other declared name
   var clash = findingsOf(r, 'shorthand-clash').filter(function (f) { return f.facts.declKind === 'secrets'; });
   ok('the disagreeing "creds" secret is found and renamed', clash.length === 1 && clash[0].facts.from === 'creds');
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   var newName = clash.length ? clash[0].facts.to : null;
   ok('both secrets end up declared under distinct names, each keeping its own file:',
      newName && new RegExp(newName + ':\\s*\\n\\s*file: \\./secrets/b-creds\\.txt').test(w.text) &&
@@ -202,7 +215,7 @@ console.log('\nR2-4. Disagreeing .env values behind the same variable are said, 
   ok('TAG is recognised as disagreeing and renamed rather than merged silently',
      renamed.some(function (x) { return x.from === 'TAG'; }));
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('both values survive in the merged .env, under distinct names',
      /^TAG=1\.26/m.test(w.env) && /^TAG_B=1\.30/m.test(w.env));
   assertRoundTrip('R2-4', w.text);
@@ -219,7 +232,7 @@ console.log('\nR2-5. A same-named environment key in two services is not a clash
 (function () {
   var a = loadRaw('r2-env-form-mix', 'a');
   var b = loadRaw('r2-env-form-mix', 'b');
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('the first service keeps its own list-form environment entry',
      /svc:\s*\n\s*image: alpine:3\.20\s*\n\s*environment:\s*\n\s*- TZ=Europe\/London/.test(w.text));
   ok('the second service keeps its own map-form environment entry',
@@ -293,7 +306,7 @@ console.log('\nR2-8. The same profile name in two sources is kept, not clashed')
   ok('no clash of any kind is raised over a shared profile name',
      r.findings.filter(function (f) { return f.kind !== 'clean'; }).length === 0);
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('both services keep the "optional" profile, under their own names',
      /svc:\s*\n\s*image: alpine:3\.20\s*\n\s*profiles:\s*\n\s*- optional/.test(w.text) &&
      /svc2:\s*\n\s*image: alpine:3\.20\s*\n\s*profiles:\s*\n\s*- optional/.test(w.text));
@@ -318,7 +331,7 @@ console.log('\nR2-9. include: and extends: — the path is carried and fixed, or
   ok('extends.file is recognised as a relative path needing a depth fix',
      depthFindings.some(function (f) { return f.facts.oldPath && f.facts.oldPath.indexOf('base.yaml') >= 0; }));
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp', newDepth: 0 });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp', newDepth: 0 });
   ok('extends.file is re-pointed one level shallower, same as any other relative path',
      /extends:\s*\n\s*file: \.\/shared\/base\.yaml/.test(w.text));
   ok('the top-level include: entry is either carried across with its path fixed, or the merge refuses and says why',
@@ -345,7 +358,7 @@ console.log('\nR2-10. CRLF and a leading byte-order mark are read cleanly, nothi
 
   var a = { name: 'a', text: rawA.toString('utf8') };
   var b = { name: 'b', text: rawB.toString('utf8') };
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('the merged file carries no CRLF of its own', w.text.indexOf('\r') === -1);
   ok('the merged file carries no byte-order mark, and no literal "ï»¿" text where one was read',
      w.text.charCodeAt(0) !== 0xFEFF && w.text.indexOf('﻿') === -1 && w.text.indexOf('ï»¿') === -1,
@@ -370,7 +383,7 @@ console.log('\nR2-11. Non-English text and emoji survive byte-identical');
 (function () {
   var a = loadRaw('r2-unicode-emoji', 'a');
   var b = loadRaw('r2-unicode-emoji', 'b');
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('the French inline comment and emoji survive exactly', w.text.indexOf('Ce service sert la page d\'accueil 🚀') >= 0);
   ok('the accented value survives exactly', w.text.indexOf('café, naïve, façade') >= 0);
   ok('the Japanese inline comment and emoji survive exactly', w.text.indexOf('このサービスはデータベースです 🎉') >= 0);
@@ -392,7 +405,7 @@ console.log('\nR2-11b. A standalone comment with no key of its own is dropped (f
 (function () {
   var a = { name: 'a', text: '# a file header comment on a\nservices:\n  svc:\n    image: alpine:3.20\n    # a trailing comment at the end of a\'s own block\n' };
   var b = { name: 'b', text: 'services:\n  svc2:\n    image: alpine:3.20\n' };
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('a leading file-header comment (attached to no key) survives the merge — CLAUDE.md rule 2',
      w.text.indexOf('a file header comment on a') >= 0,
      'merged text:\n' + w.text);
@@ -422,7 +435,7 @@ console.log('\nR2-12. links: and external_links: follow a service rename; hostna
   ok('the second source\'s "web" is the one renamed', clash.length === 1 && clash[0].stack === 'b');
   var newName = clash[0].facts.to;
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('links: follows the rename (already covered by renameService())',
      new RegExp('links:\\s*\\n\\s*- ' + newName + ':webalias').test(w.text));
   ok('hostname: is left UNCHANGED, still naming the original service', /hostname: web\b/.test(w.text),
@@ -448,7 +461,7 @@ console.log('\nR2-13. Two sources\' disagreeing per-service x-unraid each keep t
   // would.
   var iconEntry = { path: '.staxx/icon.png', size: 512, dir: false, outside: false };
   var files = { a: { files: [iconEntry] }, b: { files: [iconEntry] } };
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp', files: files });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp', files: files });
   ok('the first source\'s own webui address survives untouched', w.text.indexOf('http://[IP]:8091/') >= 0);
   ok('the second source\'s own webui address survives untouched, on its own (renamed) service',
      w.text.indexOf('http://[IP]:8092/') >= 0);
@@ -471,7 +484,7 @@ console.log('\nR2-14. healthcheck: {disable: true} is left alone, never offered 
 (function () {
   var a = loadRaw('r2-healthcheck-disable', 'a');
   var b = loadRaw('r2-healthcheck-disable', 'b');
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('the disable: true line survives the merge untouched',
      /idle:\s*\n\s*image: alpine:3\.20\s*\n\s*healthcheck:\s*\n\s*disable: true/.test(w.text));
 
@@ -527,7 +540,7 @@ console.log('\nR2-15. Project names that collide only after lower-casing still g
      storage[0].facts.realName === 't169-a_data' && storage[1].facts.realName === 't169-a_data',
      'realName A: ' + storage[0].facts.realName + ', realName B: ' + storage[1].facts.realName);
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('both carried volume declarations name: the SAME real volume — sharing it is legal, '
      + 'and is exactly the sharing that already existed',
      (w.text.match(/name: t169-a_data/g) || []).length === 2);
@@ -564,7 +577,7 @@ console.log('\nR2-17. Merging a single stack, or the same stack twice, is refuse
   // What buildMergedText() itself actually does with one source, recorded
   // so the gap above is not just asserted but shown.
   var a = loadRaw('r2-self-merge', 'a');
-  var w = MW.buildMergedText([a], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a], { date: '2026-09-24', name: 'demoapp' });
   ok('(for the record) buildMergedText() does not itself refuse a single source — it writes '
      + 'the one file through, which is exactly why the refusal has to sit in Merge.php instead',
      typeof w.text === 'string' && w.text.indexOf('services:') >= 0);
@@ -592,7 +605,7 @@ console.log('\nR2-18. An alias whose anchor lives in a different source still re
   // provable off-box is that the MERGED file ends up with both the anchor
   // and the alias, anchor first.)
 
-  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   assertRoundTrip('R2-18', w.text);
   ok('the merged file really does carry both the anchor and the alias', /&shared-logging/.test(w.text) && /\*shared-logging/g.test(w.text));
 })();
@@ -613,7 +626,7 @@ console.log('\nR2-19. A source with a YAML error is refused by name, not merged 
 
   var threw = false, w = null;
   try {
-    w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+    w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   } catch (e) { threw = true; }
 
   if (threw) {

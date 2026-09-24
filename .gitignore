@@ -84,3 +84,8 @@ tests/fixtures/merge-walk-six/.dryrun/
 # PLAN_178's own dry-run output (node tests/merge_walk_ta_dryrun.js) — same reasoning as
 # PLAN_156's above; regenerated on every run, never committed.
 tests/fixtures/merge-walk-ta/.dryrun/
+
+# PLAN_179 part 3's cached Community Applications feed (tests/tools/build_ca_corpus.js) — about
+# 17 MB, fetched once and reused; the generated corpus files themselves ARE committed (see that
+# script's own header for why), only this cache is not.
+tests/fixtures/ca-corpus/.feed/
