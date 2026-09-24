@@ -1820,9 +1820,29 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   $cmd  = staxx_compose_cmd();
   $yaml = '';
 
+  // PLAN_178 F5 — `config` with no profile active drops every profiled
+  // service from its own output (see the profiles pass below, which found
+  // this on 2026-09-11 for the profiles: field itself). That silently took
+  // a retired stack's icon, image and ports with it too: a merge marks each
+  // source service "retired" so plain `compose up` starts nothing, and that
+  // is a profile like any other. Passing every profile the file(s) declare
+  // keeps `config` from hiding a service just because nothing switched its
+  // profile on — a service still not running has always been read from what
+  // the file declares, never from what is currently active.
+  $declaredProfileNames = [];
+  foreach ($files as $srcFile) {
+    foreach (staxx_service_profiles((string)@file_get_contents($srcFile)) as $profiles) {
+      foreach ($profiles as $p) $declaredProfileNames[$p] = true;
+    }
+  }
+  $profileArgs = implode(' ', array_map(
+    fn($p) => '--profile '.escapeshellarg($p), array_keys($declaredProfileNames)
+  ));
+
   if ($cmd !== '') {
     $code = 1;
-    $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files).' config 2>&1', 15, $code);
+    $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files)
+                      .($profileArgs !== '' ? ' '.$profileArgs : '').' config 2>&1', 15, $code);
     if ($code !== 0) {
       // Compose is installed and it rejected the file. Report that rather than
       // falling through to the rough read below — guessing at a broken file
