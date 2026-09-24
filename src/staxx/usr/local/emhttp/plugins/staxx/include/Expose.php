@@ -346,12 +346,21 @@ function staxx_expose_json_update(string $rel, string $service, array $record): 
 function staxx_expose_config(array $svcX): ?array {
   $domain = trim((string)($svcX['expose.domain'] ?? ''));
   if ($domain === '') return null;
+  // The compose reader hands scalars over as the text written in the file, so
+  // `false` arrives as the string "false", which a plain (bool) cast reads as
+  // true. Only the YAML spellings of false count as off.
+  $flag = function (string $key, bool $absent) use ($svcX): bool {
+    if (!array_key_exists($key, $svcX)) return $absent;
+    $v = $svcX[$key];
+    if (is_bool($v)) return $v;
+    return !in_array(strtolower(trim((string)$v)), ['false', 'no', 'off', '0', ''], true);
+  };
   return [
     'domain'      => $domain,
     'certificate' => isset($svcX['expose.certificate']) ? trim((string)$svcX['expose.certificate']) : '',
-    'dns'         => array_key_exists('expose.dns', $svcX) ? (bool)$svcX['expose.dns'] : false,
-    'websockets'  => array_key_exists('expose.websockets', $svcX) ? (bool)$svcX['expose.websockets'] : true,
-    'enabled'     => array_key_exists('expose.enabled', $svcX) ? (bool)$svcX['expose.enabled'] : true,
+    'dns'         => $flag('expose.dns', false),
+    'websockets'  => $flag('expose.websockets', true),
+    'enabled'     => $flag('expose.enabled', true),
   ];
 }
 
