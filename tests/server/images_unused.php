@@ -157,7 +157,7 @@ foreach ($listing['groups']['wanted'] as $row) {
   if (in_array($TAG1, $row['tags'], true)) { $inWanted = true; $wantedRow = $row; break; }
 }
 ok('an image with no RepoDigests is treated as built on this server', $inWanted
-  && strpos($wantedRow['note'] ?? '', 'Built on this server') === 0);
+  && strpos($wantedRow['note'] ?? '', 'Docker has no download record') === 0);
 
 ok('nothing in the "keep" group ever came from this fixture',
   images_find(['groups' => ['keep' => $listing['groups']['keep']]], $TAG1) === null);

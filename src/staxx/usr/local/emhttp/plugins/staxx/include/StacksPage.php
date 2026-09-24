@@ -1594,7 +1594,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
        fills in (the grouped list, or the job's own log once removal has
        started), and a foot whose buttons change meaning between the two —
        see renderImagesList()/openImagesDialog() in stacks.js. -->
-  <dialog class="staxx-settings staxx-settings--wide" id="staxx-images-dlg" aria-labelledby="staxx-images-title">
+  <dialog class="staxx-settings staxx-settings--fit" id="staxx-images-dlg" aria-labelledby="staxx-images-title">
 
     <div class="staxx-settings-head">
       <h3 class="staxx-settings-title" id="staxx-images-title"><?= _('Scan stored images') ?></h3>

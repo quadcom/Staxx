@@ -121,9 +121,10 @@ function staxx_images_stack_refs(): array {
 /**
  * The grouped list the window shows. Every rule in PLAN_180 lives here:
  *
- *  3.  fails closed the instant a container cannot be read, rather than
- *      quietly omitting it from the in-use set — an omission there would
- *      make that container's image look unused.
+ *  3.  a container `docker inspect` cannot read no longer refuses the whole
+ *      list: its image is protected by name instead, via `docker ps`, and a
+ *      warning says so. Only a container `docker ps` itself cannot name an
+ *      image for still fails the list closed.
  *  4a. a roll-back image is matched by digest alone.
  *  4b. fails closed on the same three conditions staxx_update_cleanup() does.
  *  4c. StaXX's own images (the crypt container) are excluded by their own
@@ -131,7 +132,7 @@ function staxx_images_stack_refs(): array {
  *  6.  a stack's images are its compose file's resolved "image:" values.
  *  7.  "built here" means no RepoDigests (a pulled image always has one).
  *
- * @return array{ok:bool, groups?:array, totals?:array}
+ * @return array{ok:bool, groups?:array, totals?:array, warnings?:string[]}
  */
 function staxx_images_unused(string &$error): array {
   $error = '';
@@ -175,7 +176,8 @@ function staxx_images_unused(string &$error): array {
   }
   $cids = array_values(array_filter(array_map('trim', explode("\n", $psOut))));
 
-  $used = [];   // short image id => true
+  $used     = [];   // short image id => true
+  $warnings = [];   // one sentence per container the batch could not read
   if ($cids) {
     $idsArg = implode(' ', array_map('escapeshellarg', $cids));
     $inCode = 1;
@@ -186,8 +188,13 @@ function staxx_images_unused(string &$error): array {
     $inLines = array_values(array_filter(explode("\n", $inOut), function ($l) { return trim($l) !== ''; }));
 
     if ($inCode !== 0 || count($inLines) !== count($cids)) {
-      // The batch could not account for every container — find the one at
-      // fault so the refusal can name it, rather than saying so in general.
+      // The batch could not account for every container. Rather than refuse
+      // the whole list over one unreadable container, inspect each on its
+      // own: a container that reads fine still counts as using its image;
+      // one that does not is protected by name instead, via `docker ps`,
+      // which (unlike `docker inspect`) still answers for a container in a
+      // broken state. Only a container `docker ps` itself cannot name an
+      // image for still refuses the whole listing.
       $namesOut = staxx_sh(
         staxx_docker_bin().' ps -a --format '.escapeshellarg('{{.ID}}'."\t".'{{.Names}}'), 10
       );
@@ -196,26 +203,60 @@ function staxx_images_unused(string &$error): array {
         $cols = explode("\t", $line, 2);
         if (count($cols) === 2) $names[$cols[0]] = $cols[1];
       }
+      $sawFailure = false;
       foreach ($cids as $cid) {
         $oneCode = 1;
-        staxx_sh(staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.escapeshellarg($cid), 8, $oneCode);
-        if ($oneCode !== 0) {
-          $error = 'Docker could not read the container "'.($names[$cid] ?? $cid).'" ('.$cid.'), so StaXX '
+        $oneOut  = staxx_sh(staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.escapeshellarg($cid), 8, $oneCode);
+        if ($oneCode === 0) {
+          $used[staxx_update_short_id(trim($oneOut))] = true;
+          continue;
+        }
+        $sawFailure = true;
+        $name = $names[$cid] ?? $cid;
+
+        $psCode = 1;
+        $ref = trim(staxx_sh(
+          staxx_docker_bin().' ps -a --no-trunc --filter '.escapeshellarg('id='.$cid)
+            .' --format '.escapeshellarg('{{.Image}}'), 8, $psCode
+        ));
+        if ($psCode !== 0 || $ref === '') {
+          // `docker ps` cannot even name an image for it — nothing to
+          // protect on disk, so this is the one case still worth refusing
+          // the whole listing over.
+          $error = 'Docker could not read the container "'.$name.'" ('.$cid.'), so StaXX '
                  . 'cannot tell which images are in use. Nothing will be removed until that container '
                  . 'is fixed or deleted.';
           return ['ok' => false];
         }
-      }
-      // Could not reproduce the failure a second time — still refuse, since
-      // the count genuinely disagreed once and a stale answer is worse than
-      // a repeated check.
-      $error = 'Docker could not be asked about every container, so StaXX cannot tell which images '
-             . 'are in use. Nothing will be removed — try again in a moment.';
-      return ['ok' => false];
-    }
 
-    foreach ($inLines as $line) {
-      $used[staxx_update_short_id(trim($line))] = true;
+        $shownRef = strncmp($ref, 'sha256:', 7) === 0 ? staxx_update_short_id($ref) : $ref;
+
+        $resolveCode = 1;
+        $resolvedId  = trim(staxx_sh(
+          staxx_docker_bin().' image inspect --format '.escapeshellarg('{{.Id}}').' '.escapeshellarg($ref),
+          8, $resolveCode
+        ));
+        if ($resolveCode === 0 && $resolvedId !== '') {
+          $used[staxx_update_short_id($resolvedId)] = true;
+        }
+        // Whether or not it resolved, the container itself could not be
+        // read, so the window says so — the image is protected either way,
+        // by being added to $used above when it resolves.
+        $warnings[] = 'Docker could not read the container "'.$name.'", so the image it uses ('
+                    . $shownRef.') is left out of this list and will not be removed.';
+      }
+      if (!$sawFailure) {
+        // Could not reproduce the failure a second time — still refuse,
+        // since the count genuinely disagreed once and a stale answer is
+        // worse than a repeated check.
+        $error = 'Docker could not be asked about every container, so StaXX cannot tell which images '
+               . 'are in use. Nothing will be removed — try again in a moment.';
+        return ['ok' => false];
+      }
+    } else {
+      foreach ($inLines as $line) {
+        $used[staxx_update_short_id(trim($line))] = true;
+      }
     }
   }
 
@@ -247,7 +288,8 @@ function staxx_images_unused(string &$error): array {
   }
   if (!$byId) {
     return ['ok' => true, 'groups' => ['keep' => [], 'dangling' => [], 'older' => [], 'unused' => [], 'wanted' => []],
-             'totals' => ['removableCount' => 0, 'removableBytes' => 0, 'keptCount' => 0, 'keptBytes' => 0]];
+             'totals' => ['removableCount' => 0, 'removableBytes' => 0, 'keptCount' => 0, 'keptBytes' => 0],
+             'warnings' => $warnings];
   }
 
   // Rules 4a/4c/6/7 all need docker image inspect's own view — RepoDigests,
@@ -315,8 +357,9 @@ function staxx_images_unused(string &$error): array {
     foreach ($tags as $ref) {
       if (isset($stackRefs[$ref])) { $namedBy = $stackRefs[$ref]; break; }
     }
-    // Rule 7 — built here: no RepoDigests at all (a pulled image always has
-    // one).
+    // Rule 7 — built here: no RepoDigests at all. A pulled image always has
+    // one, but removing it by digest (what the weekly cleanup used to do) also
+    // strips it, so the note says "may have been" rather than claiming it.
     $builtLocally = !$digests;
 
     // "Still wanted" images keep their own checkbox — rule 2 lets the
@@ -337,7 +380,7 @@ function staxx_images_unused(string &$error): array {
       continue;
     }
     if ($builtLocally) {
-      $row['note'] = 'Built on this server. Removing it means building it again; it cannot be downloaded.';
+      $row['note'] = 'Docker has no download record for this, so it may have been built on this server. If it was, removing it means building it again.';
       $groups['wanted'][] = $row;
       $removableCount++; $removableBytes += $size;
       continue;
@@ -370,12 +413,13 @@ function staxx_images_unused(string &$error): array {
   unset($g);
 
   return [
-    'ok'     => true,
-    'groups' => $groups,
-    'totals' => [
+    'ok'       => true,
+    'groups'   => $groups,
+    'totals'   => [
       'removableCount' => $removableCount, 'removableBytes' => $removableBytes,
       'keptCount'      => $keptCount,      'keptBytes'      => $keptBytes,
     ],
+    'warnings' => $warnings,
   ];
 }
 

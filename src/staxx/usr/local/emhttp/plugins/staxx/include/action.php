@@ -1953,7 +1953,12 @@ switch ($action) {
   case 'images_unused':
     $listing = staxx_images_unused($error);
     if (!$listing['ok']) staxx_reply(['ok' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'groups' => $listing['groups'], 'totals' => $listing['totals']]);
+    staxx_reply([
+      'ok'       => true,
+      'groups'   => $listing['groups'],
+      'totals'   => $listing['totals'],
+      'warnings' => $listing['warnings'] ?? [],
+    ]);
 
   // ---- removing the ticked images — a detached job, same shape as every other one ----
   case 'images_remove':

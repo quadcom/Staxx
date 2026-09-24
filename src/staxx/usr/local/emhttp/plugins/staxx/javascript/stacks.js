@@ -28764,7 +28764,11 @@
         ', ' + (totals.keptCount === 1 ? 'is' : 'are') + ' kept for rolling back.';
     }
 
-    var html = '<p class="staxx-images-summary">' + esc(summary) + '</p>';
+    var html = '';
+    (imagesData.warnings || []).forEach(function (w) {
+      html += '<p class="staxx-notice">' + esc(w) + '</p>';
+    });
+    html += '<p class="staxx-images-summary">' + esc(summary) + '</p>';
     IMAGES_GROUP_DEFS.forEach(function (def) {
       html += imagesGroupHtml(def, imagesData.groups[def.key] || []);
     });
@@ -28832,7 +28836,7 @@
           esc(res.error || 'Could not read the images.') + '</p>';
         return;
       }
-      imagesData = { groups: res.groups, totals: res.totals };
+      imagesData = { groups: res.groups, totals: res.totals, warnings: res.warnings || [] };
       renderImagesList();
     });
   }

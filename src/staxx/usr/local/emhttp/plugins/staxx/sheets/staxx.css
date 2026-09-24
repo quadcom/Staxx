@@ -11007,8 +11007,29 @@ dialog::backdrop {
    rule above rather than beside the editor's block earlier in the file —
    same selector, same specificity, so it has to come later in source to
    win over the base rule's plain width/height. */
+/* PLAN_181 item 7b — "Scan stored images" needs --wide's width (a row of
+ * tags, a size and a note needs the room) but has no tab strip, so --wide's
+ * fixed height and four-row grid (built for a head/tabstrip/body/foot with
+ * a flexible body row) left the foot itself sitting in the flexible row
+ * instead, stretching it to fill the dialog and leaving a blank gap above
+ * the buttons whenever the list was short. This modifier keeps the width
+ * and goes back to the base class's own flex column, sized to content and
+ * capped by max-height — the same recipe every other tab-less StaXX
+ * dialog already uses. */
+.staxx-settings--fit {
+  width: min(93rem, 96vw);
+  height: auto;
+  max-height: min(76vh, 88rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.staxx-settings--fit .staxx-settings-body {
+  min-height: 0;
+}
+
 @media (max-width: 990px) {
-  .staxx-settings, .staxx-settings--wide {
+  .staxx-settings, .staxx-settings--wide, .staxx-settings--fit {
     position: fixed;
     inset: 0;
     margin: 0;
