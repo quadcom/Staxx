@@ -446,6 +446,24 @@ staxx_update_history_push($hStack, $hSvc, $before[0]); // same digest again, "ru
 $after = staxx_update_history($hStack, $hSvc);
 ok('history: pushing the same digest twice in a row does not record it twice', $before === $after, json_encode($after));
 
+/* ------------------------------------------ 8b. local repo name for a roll back -- */
+
+// Pure string arithmetic, no docker call — proves the name staxx_update_rollback()
+// checks presence against is built from the reference as written, not from
+// staxx_hub_repo_path()'s hub-path translation (see PLAN_180 part 2c: that
+// translation is right for talking to a registry, but the image is stored
+// locally under the name it was pulled AS, e.g. lscr.io/linuxserver/plex).
+ok('local repo: strips a plain tag',
+   staxx_update_local_repo('lscr.io/linuxserver/plex:latest') === 'lscr.io/linuxserver/plex');
+ok('local repo: strips an existing digest pin',
+   staxx_update_local_repo('lscr.io/linuxserver/plex@sha256:' . str_repeat('a', 64)) === 'lscr.io/linuxserver/plex');
+ok('local repo: a bare Docker Hub name needs no rewriting',
+   staxx_update_local_repo('redis:7-alpine') === 'redis');
+ok('local repo: a port in the registry host is not mistaken for a tag',
+   staxx_update_local_repo('registry.local:5000/app:1.0') === 'registry.local:5000/app');
+ok('local repo: an already-untagged reference is left alone',
+   staxx_update_local_repo('ghcr.io/a/b') === 'ghcr.io/a/b');
+
 /* ---------------------------------------------------------- 9. rollback -- */
 
 $state = staxx_update_state();

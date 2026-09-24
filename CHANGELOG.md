@@ -63,6 +63,7 @@ What changed in StaXX, newest first.
 - Fixed in 00.04.01: Unraid's padlock in the top bar now works on the StaXX page. Clicking it used to throw a script error, and the drag handles for changing start order stayed live regardless. The page now starts locked, the way Unraid's own Docker page does, the handles are hidden until the padlock is opened, and the padlock's icon and wording follow along.
 - Fixed in 00.04.01: A blank line in an .env file, or any other settings file opened in the editor, keeps its height. It used to collapse to nothing in the coloured overlay, so every line after it sat one row out of step with the line numbers and with where a click landed.
 - Removing old images automatically now clears old releases of linuxserver apps such as Plex, which it had been missing, and removing an old release now frees its space even when it still has a version label.
+- Rolling back an update to a linuxserver app such as Plex works again. It used to say the old version was no longer on the server even when it was.
 
 ## 00.04.00 — released 2026-09-14
 

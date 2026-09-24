@@ -727,6 +727,30 @@ function staxx_update_history(string $stack, string $service): array {
 /* ------------------------------------------------------------------- roll back -- */
 
 /**
+ * The name Docker keeps an image under locally, with any tag or existing
+ * pin removed — e.g. "lscr.io/linuxserver/plex:latest" or an already-pinned
+ * "lscr.io/linuxserver/plex@sha256:…" both become "lscr.io/linuxserver/plex".
+ *
+ * Deliberately NOT staxx_hub_repo_path(): that turns a registry mirror
+ * address into the plain Docker Hub path it mirrors (e.g.
+ * "lscr.io/linuxserver/plex" -> "linuxserver/plex"), which is the name the
+ * image was fetched FROM, not the name Docker stored it under — `docker
+ * image inspect linuxserver/plex@<digest>` finds nothing even though the
+ * image is present as `lscr.io/linuxserver/plex@<digest>`. Using the
+ * reference exactly as the compose file wrote it sidesteps that mismatch.
+ * A bare Docker Hub name such as "redis" needs no rewriting either way.
+ *
+ * @param string $ref an image reference as it appears in a compose file,
+ *   e.g. "repo:tag" or an already-pinned "repo@digest"
+ */
+function staxx_update_local_repo(string $ref): string {
+  $ref = trim($ref);
+  $at = strpos($ref, '@');
+  if ($at !== false) $ref = substr($ref, 0, $at);
+  return preg_replace('/:[^\/]*$/', '', $ref);
+}
+
+/**
  * Point one or more services' images back at a version each has run
  * before, and bring them all up in ONE recreate job. $targets is
  * service => digest, any version that service itself recorded — which the
@@ -854,8 +878,7 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   // test that arranged one would then fall through into the save and the job
   // below, which a test run must never do.
   foreach ($targets as $service => $target) {
-    $repo = staxx_hub_repo_path($images[$service]);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($images[$service]));
+    $repo = staxx_update_local_repo($images[$service]);
 
     $checkCode = 1;
     staxx_sh(
