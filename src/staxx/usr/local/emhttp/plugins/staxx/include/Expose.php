@@ -601,6 +601,23 @@ function staxx_pihole_delete(string $url, array $headers, string $ip, string $na
   return true;
 }
 
+/** Reads Pi-hole's own list straight back and confirms the record just added
+ * is really there, at the address it was just given. Phase 0 only measured
+ * a successful add reading back correctly; it never measured a call that
+ * returns success but silently does nothing, so expose-apply checks this
+ * explicitly rather than trusting a 20x/201 status alone. */
+function staxx_pihole_confirm(string $url, array $headers, string $domain, string $ip, string &$err): bool {
+  $err = '';
+  $fresh = staxx_pihole_hosts($url, $headers, $err);
+  if ($err !== '') return false;
+  $rec = staxx_pihole_find($fresh, $domain);
+  if ($rec === null || $rec['ip'] !== $ip) {
+    $err = "Pi-hole accepted the DNS name but does not list it. Check Pi-hole's Local DNS page.";
+    return false;
+  }
+  return true;
+}
+
 /** Phase 0 left unproven whether a password-protected Pi-hole needs "app
  * sudo" turned on before an app password can change DNS settings — this
  * turns a refusal that looks like it (403, or Pi-hole's own permission
@@ -825,6 +842,7 @@ function staxx_expose_apply_step(
 
     if ($step['op'] === 'create') {
       if (!staxx_pihole_add($piUrl, $piHeaders, $dnsIp, $config['domain'], $err)) return false;
+      if (!staxx_pihole_confirm($piUrl, $piHeaders, $config['domain'], $dnsIp, $err)) return false;
       $record['dns_ip'] = $dnsIp;
       return true;
     }
@@ -838,6 +856,7 @@ function staxx_expose_apply_step(
         staxx_pihole_delete($piUrl, $piHeaders, $old['ip'], $config['domain'], $delErr); // best-effort; the add below still tries
       }
       if (!staxx_pihole_add($piUrl, $piHeaders, $dnsIp, $config['domain'], $err)) return false;
+      if (!staxx_pihole_confirm($piUrl, $piHeaders, $config['domain'], $dnsIp, $err)) return false;
       $record['dns_ip'] = $dnsIp;
       return true;
     }

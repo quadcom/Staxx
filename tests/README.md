@@ -92,6 +92,7 @@ Four rules run through the whole set:
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
+| `expose` | Nginx Proxy Manager and Pi-hole (PLAN_176): certificate resolution, the proxy host payload's owned fields, the create/adopt/refusal plan built against in-memory hosts and records, and the plain-http refusal | store's own `config/staxx.cfg` (not the flash file) forced to `EXPOSE_ALLOW_INSECURE="no"`; live half **opt-in** `STAXX_EXPOSE_LIVE=1`, against whichever NPM/Pi-hole are already configured |
 | `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
 | `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
 | `handover_unraid` | The Unraid-template half of a handover: finding a template by name, holding and releasing it and its Auto Update entry, the `Unraid-N` note line's round trip, and which targets a foreign rebuild leaves unsafe to answer | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
