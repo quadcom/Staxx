@@ -4049,6 +4049,57 @@ div.title.staxx-has-titlebar {
   font-size: 1.1rem;
 }
 
+/* PLAN_176 B5 — the per-service DNS mark: a small solid "DNS" box right
+   after a service's own name, saying whether Nginx Proxy Manager (and, if
+   turned on, Pi-hole) still match what StaXX made. Green in sync, red
+   drifted, grey while the service's own Enabled switch is off ("at rest" —
+   Adrian, 2026-09-24: "grey is fine"). Values measured live against the
+   agreed mock (plans/PLAN_176-mock/dns-mark-in-sync.png,
+   dns-mark-drifted.png): an integer width because a fractional one drew the
+   two marks a pixel apart even though both measured the same, the 1px top
+   padding optically centres the capitals, and vertical-align:2px puts the
+   mark's own middle level with the middle of the 13px service name's
+   capitals beside it (measured baseline 384.4, cap-middle 379.7, mark
+   middle 379.8) — not the mark's own baseline, which would sit visibly low.
+   Hidden by default: staxx_dnsmark_placeholder_html() never carries a real
+   state (the periodic row refresh must never call NPM/Pi-hole), so
+   stacks.js's paintDnsMarks() is what reveals it once a state is known. */
+.staxx-scaffold .staxx-dnsmark {
+  --ok:  #3fb950;
+  --bad: #f85149;
+  --off: #8b949e;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 10px;
+  padding: 1px 0 0;
+  font: 700 7px/1 sans-serif;
+  letter-spacing: .03em;
+  text-indent: .03em;
+  margin-left: 4px;
+  border-radius: 2px;
+  border: 0;
+  vertical-align: 2px;
+  color: #fff;
+  background: var(--off);
+}
+
+.staxx-scaffold .staxx-dnsmark--ok  { background: var(--ok); }
+.staxx-scaffold .staxx-dnsmark--bad { background: var(--bad); }
+
+/* The red mark alone is a real <button> (it opens the editor at the service's
+   Proxy and DNS group); the green/grey marks are plain <span>s and take no
+   pointer affordance — see paintDnsMarks() in stacks.js. */
+.staxx-scaffold button.staxx-dnsmark--bad {
+  cursor: pointer;
+}
+
+.staxx-scaffold span.staxx-dnsmark {
+  cursor: default;
+}
+
 /* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
    but hidden by default, because "off" is the common case and a lightning
    bolt on every row would be noise, not information. Keyed off the ROW's own
@@ -6201,6 +6252,12 @@ div.title.staxx-has-titlebar {
   min-height: 1px;   /* B4/B5 fill this; keeps the row from collapsing while it is */
 }
 
+/* One line per switch that is on (exposeStatusHtml(), B5) — a matching
+   Nginx Proxy Manager/Pi-hole line reads as ordinary text, a drifted one
+   takes the same danger red every other fault on this page uses. */
+.staxx-expose-statusline--bad { color: var(--sm-danger); }
+.staxx-expose-status .staxx-btn { margin-top: 0.6rem; }
+
 /* --declared is a declaration in the Stack section — name, its one primary
    setting, note, × — which is the same four-track shape as a mapped pair, so
    the two share a rule rather than repeating one. */
@@ -6950,6 +7007,12 @@ div.title.staxx-has-titlebar {
 .staxx-updcard__mono {
   font-family: ui-monospace, Consolas, monospace;
 }
+
+/* PLAN_176 B5 — the DNS mark's own card, the ✓/✗ per fact row (Adrian,
+   2026-09-24: "checkmarks or red X's for both"). Same two literals the mark
+   itself uses. */
+.staxx-updcard__ok  { color: #3fb950; }
+.staxx-updcard__bad { color: #f85149; }
 
 .staxx-scaffold .staxx-required {
   display: block;
@@ -10503,6 +10566,27 @@ div.title.staxx-has-titlebar {
   color: var(--sm-muted);
   font-size: 1.2rem;
   white-space: nowrap;
+}
+
+/* PLAN_176 B5 — the save-confirm and archive-confirm Proxy and DNS lists.
+   The shared list above lays each row out with space-between and a
+   nowrap meta column, sized for a short fact like a date; a step's own
+   sentence ("Create a proxy entry for…, forwarding to…, with the…
+   certificate.") is much longer and was being cut off flush at the list's
+   edge in the mock. Block layout and a normal wrap put it on its own line
+   instead, wrapping like ordinary text. */
+.staxx-confirm-list--expose li {
+  display: block;
+}
+
+.staxx-confirm-list--expose code {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.staxx-confirm-list--expose .staxx-confirm-meta {
+  display: block;
+  white-space: normal;
 }
 
 /* The env-file wiring picker (Phase B4): a checkbox per service, on the

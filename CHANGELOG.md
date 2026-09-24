@@ -7,7 +7,9 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - Settings has a new Integrations tab (it used to be called Registries and security) where you can enter the address and login for Nginx Proxy Manager and Pi-hole, and test that StaXX can reach them.
-- The stack editor has a Proxy and DNS section you can add to any app from the Sections menu once Nginx Proxy Manager is set up: a domain name, a certificate, WebSockets and a Pi-hole switch. It is saved in the compose file; StaXX does not yet create the entries for you.
+- The stack editor has a Proxy and DNS section you can add to any app from the Sections menu once Nginx Proxy Manager is set up: a domain name, a certificate, WebSockets and a Pi-hole switch. When you save, StaXX shows what it will change in Nginx Proxy Manager and Pi-hole and does it when you press Apply. An entry you already made for that name can be taken over as it is.
+- A small DNS mark beside a service's name on the stack list shows green when its proxy and Pi-hole entries match, red when they have drifted (click it to fix), and grey when switched off. Hover it for the domain and each entry's state.
+- Removing a stack now asks what to do with its proxy entry and Pi-hole name: switch off, delete or keep.
 - Every section of the stack editor can now be folded away with the arrow beside its heading. StaXX remembers which kinds you folded, in this browser.
 - The column headings on the stack list now line up with what sits under them, instead of starting a little to the left of it.
 - A stack's menu now has a legend you can open without leaving the page, explaining every mark and colour used on the stack list.

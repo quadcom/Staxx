@@ -2524,6 +2524,13 @@ switch ($action) {
     if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
     staxx_reply(['ok' => true, 'rows' => $rows]);
 
+  /* ---- read-only, one stack: what expose.json lists for it, so the
+   * archive dialog (B5) knows whether to show its Proxy and DNS part at
+   * all, and what to offer per service, without applying anything. ---- */
+  case 'expose-records':
+    if (!staxx_valid_path($name)) staxx_reply(['ok' => false, 'error' => 'That stack name is not valid.']);
+    staxx_reply(['ok' => true, 'records' => staxx_expose_json_read($name)]);
+
   /* ---- switching one service's tick off, or archiving a stack: acts only
    * on what expose.json says StaXX made, never on anything else. 'service'
    * is optional — omitted, every service the stack's expose.json lists is

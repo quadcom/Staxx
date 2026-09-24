@@ -1591,6 +1591,9 @@
                                 // sends it back so the server can refuse a write that would
                                 // overwrite a change made elsewhere since (see PLAN_60 3.1)
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
+  var exposeAtOpen = null;  // PLAN_176 B5 — exposeSnapshot() taken right after this editor's first
+                             // reparse(); save() diffs the current snapshot against this to decide
+                             // whether the proxy-and-DNS confirm flow is worth running at all
 
   // PLAN_84 phase 5 — "fill in this stack's details". detailSeen tracks which
   // image (tag stripped) has already been looked up for each service THIS
@@ -4550,10 +4553,47 @@
            '</div>';
   }
 
-  // Filled in by B4/B5 once there is something to check the file against —
-  // a named, empty hook rather than a row that is simply missing, so it is
-  // obvious in the markup that this is meant to hold something later.
-  function exposeStatusHtml() { return ''; }
+  // PLAN_176 B5 — what expose-check said for this stack, cached across the
+  // editor session the same way exposeCertsCache is: reparse() redraws the
+  // whole form on every keystroke, and this must not re-ask NPM/Pi-hole on
+  // each one. Cleared and re-asked once per editor open (openEditor() resets
+  // exposeCheckLoaded), and again after this stack's own Apply button or the
+  // save-time flow succeeds.
+  var exposeCheckLoaded = false;
+  var exposeCheckCache  = null;   // {svcName: {steps:[...]} | {refusal: '...'}}
+  function loadExposeCheck() {
+    // A brand-new, unsaved stack has no compose file on disk yet for
+    // expose-check to read — nothing to ask until the first save.
+    if (exposeCheckLoaded || !openedName) return;
+    exposeCheckLoaded = true;
+    call('expose-check', { name: openedName }).then(function (r) {
+      if (!r || !r.ok) return;
+      exposeCheckCache = r.services || {};
+      document.querySelectorAll('[data-expose-status]').forEach(function (el) {
+        el.innerHTML = exposeStatusHtml(el.dataset.exposeStatus);
+      });
+    }).catch(function () { /* the row just stays on "Checking…" */ });
+  }
+
+  function exposeStatusHtml(svcName) {
+    var entry = exposeCheckCache && exposeCheckCache[svcName];
+    if (!entry) return '<span class="staxx-sub">Checking…</span>';
+    if (entry.refusal) return '<span class="red-text">' + esc(entry.refusal) + '</span>';
+    var steps = entry.steps || [];
+    var bad = false;
+    var lines = steps.map(function (st) {
+      var ok = st.op === 'none';
+      if (!ok) bad = true;
+      return '<div class="staxx-expose-statusline' + (ok ? '' : ' staxx-expose-statusline--bad') + '">' +
+             (ok ? '✓ ' : '✗ ') +
+             esc(st.target === 'npm' ? 'Nginx Proxy Manager' : 'Pi-hole') + ': ' + esc(st.text) +
+             '</div>';
+    }).join('');
+    if (bad) {
+      lines += '<button type="button" class="staxx-btn" data-expose-apply="' + esc(svcName) + '">Apply</button>';
+    }
+    return lines;
+  }
 
   function exposeGroupHtml(svc, rows, fields, collapsed) {
     var by = {};
@@ -4613,7 +4653,7 @@
     out.push(
       '<div class="staxx-fieldrow staxx-fieldrow--exposestatus">' +
         '<span class="staxx-fieldlabel">Status</span>' +
-        '<div class="staxx-expose-status" data-expose-status="' + esc(svc.name) + '">' + exposeStatusHtml() + '</div>' +
+        '<div class="staxx-expose-status" data-expose-status="' + esc(svc.name) + '">' + exposeStatusHtml(svc.name) + '</div>' +
       '</div>'
     );
     if (!inert) out.push(
@@ -8898,6 +8938,272 @@
     if (box) { box.focus(); box.select(); }
   }
 
+  // PLAN_176 B5 — every x-unraid.expose.* leaf across every service, read
+  // off MODEL.fields the same way exposeGroupHtml() reads them to draw the
+  // group — used both to capture exposeAtOpen (openEditor(), right after the
+  // first reparse()) and to see what save() is about to write. Raw field
+  // values, not the absent-means-true defaults exposeGroupHtml() applies:
+  // exposeChanged() below only cares whether the same key reads the same
+  // both times, not what it practically means.
+  function exposeSnapshot() {
+    var out = {};
+    if (!MODEL || !MODEL.fields) return out;
+    MODEL.fields.forEach(function (f) {
+      if (!f.service || f.target.indexOf('x-unraid.expose.') !== 0) return;
+      var key = f.target.slice('x-unraid.expose.'.length);
+      var val = (!f.absent && f.parts && f.parts.value) ? f.parts.value.value : undefined;
+      (out[f.service] = out[f.service] || {})[key] = val;
+    });
+    return out;
+  }
+
+  // True if any service's expose block reads differently now than it did
+  // when this editor opened (exposeAtOpen) — the one gate on whether save()
+  // bothers asking NPM/Pi-hole anything at all.
+  function exposeChanged() {
+    var before = exposeAtOpen || {}, after = exposeSnapshot();
+    var services = {};
+    Object.keys(before).forEach(function (s) { services[s] = true; });
+    Object.keys(after).forEach(function (s) { services[s] = true; });
+    return Object.keys(services).some(function (s) {
+      var b = before[s] || {}, a = after[s] || {};
+      var keys = {};
+      Object.keys(b).forEach(function (k) { keys[k] = true; });
+      Object.keys(a).forEach(function (k) { keys[k] = true; });
+      return Object.keys(keys).some(function (k) { return b[k] !== a[k]; });
+    });
+  }
+
+  // PLAN_176 B5 — every exposed service's live state across the whole stack
+  // list, one NPM login and one Pi-hole session for all of them
+  // (staxx_expose_status()). Cached here rather than re-read from the DOM,
+  // because the periodic row refresh (refreshRows()) rewrites the cells the
+  // marks live in without asking this again — see paintDnsMarks()'s own
+  // comment. Keyed "<stack>/<service>" to match staxx_dnsmark_placeholder_
+  // html()'s own data-dnsmark attribute.
+  var EXPOSE_STATUS = {};
+  function loadExposeStatus() {
+    return call('expose-status', {}).then(function (r) {
+      if (!r || !r.ok || !Array.isArray(r.rows)) return;
+      EXPOSE_STATUS = {};
+      r.rows.forEach(function (row) { EXPOSE_STATUS[row.stack + '/' + row.service] = row; });
+      paintDnsMarks();
+    }).catch(function () { /* the list still shows the blank placeholders */ });
+  }
+
+  // Fills in every placeholder staxx_dnsmark_placeholder_html() drew (hidden,
+  // with nothing but data-dnsmark on it) from EXPOSE_STATUS. Called on page
+  // load, straight after expose-apply, when an editor opens, AND after every
+  // refreshRows() repaint — never by the repaint's own timer, since that
+  // would mean asking NPM/Pi-hole every few seconds (B5's "when it checks").
+  // refreshRows() replaces the whole rows table with staxx_render_rows()'s
+  // fresh, always-blank markup, so the mark has to be painted back on from
+  // this cache every single time, exactly as restoreFailures()/restoreBusy()
+  // put their own page-only state back after the same swap.
+  //
+  // Rebuilt as a new element rather than restyled in place: a red mark is a
+  // real <button> (clickable) and green/grey are a plain <span> (not), and an
+  // element cannot change its own tag.
+  function paintDnsMarks() {
+    document.querySelectorAll('[data-dnsmark]').forEach(function (el) {
+      var row = EXPOSE_STATUS[el.dataset.dnsmark];
+      if (!row) { el.hidden = true; return; }
+      var grey = !row.enabled;
+      var bad  = !grey && (row.npm === false || row.dns === false);
+      var mark = document.createElement(bad ? 'button' : 'span');
+      if (bad) mark.type = 'button';
+      mark.className = 'staxx-dnsmark' + (grey ? '' : bad ? ' staxx-dnsmark--bad' : ' staxx-dnsmark--ok');
+      mark.dataset.dnsmark = el.dataset.dnsmark;
+      mark.dataset.domain  = row.domain || '';
+      // '' (neither ok nor bad) means "not shown" — the Pi-hole row only
+      // exists in the card when dns is actually on (B5: "the Pi-hole row
+      // only when dns is on"), same as row.dns === null meaning the switch
+      // is off rather than drifted.
+      mark.dataset.npm = row.npm === false ? 'bad' : row.npm === true ? 'ok' : '';
+      mark.dataset.dns = row.dns === false ? 'bad' : row.dns === true ? 'ok' : '';
+      mark.dataset.tip = grey ? 'Switched off' : '';
+      mark.textContent = 'DNS';
+      el.replaceWith(mark);
+    });
+  }
+
+  // A red mark's click — the only one of the three that does anything
+  // (Adrian, 2026-09-24: green is a plain span, grey never earns a button at
+  // all). Opens the editor at that one service, scrolled to its Proxy and
+  // DNS group (openEditor()'s own focusField handling expands the group
+  // first if a past collapse left it folded).
+  document.addEventListener('click', function (event) {
+    var mark = event.target.closest && event.target.closest('button.staxx-dnsmark[data-dnsmark]');
+    if (!mark) return;
+    var key = mark.dataset.dnsmark, slash = key.lastIndexOf('/');
+    if (slash < 0) return;
+    var stack = key.slice(0, slash), service = key.slice(slash + 1);
+    editStack(stack, stack, service, null, 'x-unraid.expose.domain');
+  });
+
+  // PLAN_176 B5 — one <label> for the "Switch off/Delete/Keep" and
+  // "Delete/Keep" radio rows the save-confirm removal choices and the
+  // archive dialog both draw, styled as StaXX's own ticks rather than a
+  // browser radio (Adrian, 2026-09-24) — the same markup
+  // updTickOptionHtml()/settingsControlHtml()'s 'ticks' control already
+  // draws, reused rather than re-invented.
+  function exposeTickHtml(name, value, label, checked) {
+    return '<label class="staxx-tickopt"><input type="radio" name="' + esc(name) + '" value="' +
+           esc(value) + '"' + (checked ? ' checked' : '') + '>' +
+           '<svg class="staxx-tickmark" viewBox="0 0 16 16" aria-hidden="true">' +
+           '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+           '<span class="staxx-tickword">' + esc(label) + '</span></label>';
+  }
+
+  // One <li> pair (proxy + DNS) for one service's removal choices — shared
+  // by runExposeRemovalFlow() (save-time: a cleared domain or DNS switched
+  // off) and removeStack()'s own archive dialog, which is why `showNpm`/
+  // `showDns` are asked for rather than assumed: a save-time DNS-off with the
+  // domain untouched has nothing for the NPM radios to decide (proxy is kept
+  // regardless), where archiving always offers both, one pair per exposed
+  // service.
+  function exposeRemovalItemHtml(idx, domain, showNpm, showDns, npmDefault) {
+    var out = '';
+    if (showNpm) {
+      out += '<li><code>Nginx Proxy Manager</code>' +
+        '<span class="staxx-confirm-meta">The proxy entry for ' + esc(domain) + '</span>' +
+        '<div class="staxx-tickrow" role="radiogroup" aria-label="Nginx Proxy Manager">' +
+          exposeTickHtml('expose-npm-' + idx, 'disable', 'Switch off', npmDefault === 'disable') +
+          exposeTickHtml('expose-npm-' + idx, 'delete', 'Delete', npmDefault === 'delete') +
+          exposeTickHtml('expose-npm-' + idx, 'keep', 'Keep', npmDefault === 'keep') +
+        '</div></li>';
+    }
+    if (showDns) {
+      out += '<li><code>Pi-hole</code>' +
+        '<span class="staxx-confirm-meta">The local DNS name ' + esc(domain) + '</span>' +
+        '<div class="staxx-tickrow" role="radiogroup" aria-label="Pi-hole">' +
+          exposeTickHtml('expose-dns-' + idx, 'delete', 'Delete', true) +
+          exposeTickHtml('expose-dns-' + idx, 'keep', 'Keep', false) +
+        '</div></li>';
+    }
+    return out;
+  }
+
+  // PLAN_176 B5 — a cleared domain or a DNS switch turned off, caught by
+  // diffing exposeSnapshot() against exposeAtOpen the same way exposeChanged()
+  // does. Unlike an ordinary drift (handled by runExposeSaveFlow() below),
+  // staxx_expose_run() never sees these services at all once the domain is
+  // gone (staxx_expose_config() returns null with no domain), so the only way
+  // to offer anything to remove is expose.json's own last-applied record —
+  // which is exactly what expose-remove already reads, so nothing here needs
+  // to know npm_id/dns_ip itself. Resolves once every chosen removal (if any
+  // were confirmed) has been sent.
+  function runExposeRemovalFlow(stackName, stackLabel) {
+    var before = exposeAtOpen || {}, after = exposeSnapshot();
+    var removals = [];
+    Object.keys(before).forEach(function (svc) {
+      var b = before[svc] || {}, a = after[svc] || {};
+      var hadDomain = !!String(b.domain || '').trim();
+      var hasDomain = !!String(a.domain || '').trim();
+      var hadDns = b.dns === 'true';
+      var hasDns = a.dns === 'true';
+      if (hadDomain && !hasDomain) {
+        removals.push({ service: svc, domain: b.domain, npm: true, dns: hadDns });
+      } else if (hadDomain && hasDomain && hadDns && !hasDns) {
+        removals.push({ service: svc, domain: b.domain, npm: false, dns: true });
+      }
+    });
+    if (!removals.length) return Promise.resolve();
+
+    var list = removals.map(function (r, i) {
+      return exposeRemovalItemHtml(i, r.domain, r.npm, r.dns, 'disable');
+    }).join('');
+
+    return askConfirm({
+      title: 'Update the proxy and DNS for "' + stackLabel + '"?',
+      bodyHtml: '<p>Clearing a domain or turning DNS off means StaXX no longer keeps these in ' +
+        'step. Choose what happens to each:</p>' +
+        '<ul class="staxx-confirm-list staxx-confirm-list--expose">' + list + '</ul>' +
+        '<p>Switched off, the proxy entry keeps its settings in Nginx Proxy Manager, so it can be ' +
+        'switched back on there later.</p>',
+      goLabel: 'Apply',
+      cancelLabel: 'Not now',
+      danger: false
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) return;
+      var calls = removals.map(function (r, i) {
+        var npmSel = confirmBody.querySelector('input[name="expose-npm-' + i + '"]:checked');
+        var dnsSel = confirmBody.querySelector('input[name="expose-dns-' + i + '"]:checked');
+        return call('expose-remove', {
+          name: stackName, service: r.service,
+          npm: r.npm ? (npmSel ? npmSel.value : 'disable') : 'keep',
+          dns: r.dns ? (dnsSel ? dnsSel.value : 'delete') : 'keep'
+        });
+      });
+      return Promise.all(calls).then(function (results) {
+        var problems = results.filter(function (r) { return !r || !r.ok; });
+        if (problems.length) failed('Proxy and DNS', 'Some of that could not be applied — check ' +
+          'Nginx Proxy Manager and Pi-hole by hand.');
+      });
+    });
+  }
+
+  // PLAN_176 B5 — what a service's own step (from expose-check/expose-apply)
+  // reads as one <li>: the target it names ("Nginx Proxy Manager" or
+  // "Pi-hole") and the step's own plain sentence.
+  function exposeStepLineHtml(step) {
+    return '<li><code>' + esc(step.target === 'npm' ? 'Nginx Proxy Manager' : 'Pi-hole') + '</code>' +
+           '<span class="staxx-confirm-meta">' + esc(step.text) + '</span></li>';
+  }
+
+  // PLAN_176 B5 — the editor's save(): once the file itself is safely saved
+  // and only if exposeChanged() said the block itself is different, this
+  // asks what StaXX would now do about it and, on Apply, does it.
+  // stackName/fingerprint are the just-saved file's own — expose-apply
+  // refuses if the file moved again since. Never blocks or undoes the save
+  // that already happened; "Not now" only means nothing further happens.
+  function runExposeSaveFlow(stackName, stackLabel, fingerprint) {
+    runExposeRemovalFlow(stackName, stackLabel).then(function () {
+      return call('expose-check', { name: stackName });
+    }).then(function (r) {
+      if (!r) return;
+      if (!r.ok) { failed('Proxy and DNS', r.error); return; }
+      var steps = [], refusals = [];
+      Object.keys(r.services || {}).forEach(function (svc) {
+        var entry = r.services[svc];
+        if (entry.refusal) { refusals.push(svc + ': ' + entry.refusal); return; }
+        (entry.steps || []).forEach(function (st) { if (st.op !== 'none') steps.push(st); });
+      });
+      if (refusals.length) failed('Proxy and DNS', refusals.join('  '));
+      if (!steps.length) { loadExposeStatus(); return; }
+
+      return askConfirm({
+        title: 'Update the proxy and DNS for "' + stackLabel + '"?',
+        bodyHtml: '<p>The stack is saved. StaXX will now make these changes:</p>' +
+          '<ul class="staxx-confirm-list staxx-confirm-list--expose">' +
+            steps.map(exposeStepLineHtml).join('') +
+          '</ul>' +
+          '<p>If you choose Not now, the stack stays saved and nothing else changes. The DNS ' +
+          'mark on the stack list will show red until this is done.</p>',
+        goLabel: 'Apply',
+        cancelLabel: 'Not now',
+        danger: false
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) { loadExposeStatus(); return; }
+        return call('expose-apply', { name: stackName, fingerprint: fingerprint }).then(function (ar) {
+          if (!ar || !ar.ok) { failed('Proxy and DNS', (ar && ar.error) || 'Could not apply.'); return; }
+          var problems = [];
+          Object.keys(ar.services || {}).forEach(function (svc) {
+            var entry = ar.services[svc];
+            if (entry.refusal) { problems.push(svc + ': ' + entry.refusal); return; }
+            (entry.steps || []).forEach(function (st) {
+              if (st.done === false) problems.push(svc + ': ' + (st.error || st.text));
+            });
+          });
+          if (problems.length) failed('Proxy and DNS', problems.join('  '));
+          loadExposeStatus();
+        });
+      });
+    });
+  }
+
   // PLAN_176 B3/B3b — shared by the group's own "Remove from proxy and DNS"
   // button and by unticking Proxy and DNS in the Sections menu while a
   // domain is still set (see the data-flag change listener below): both mean
@@ -8913,21 +9219,42 @@
     return askConfirm({
       title: 'Remove from proxy and DNS?',
       bodyHtml: '<p>This clears the proxy and DNS settings stored for "' + esc(serviceName) +
-        '" in the compose file.</p>',
+        '" in the compose file, and deletes the entries StaXX made for it in Nginx Proxy ' +
+        'Manager and Pi-hole.</p>',
       goLabel: 'Remove'
     }).then(function (go) {
       if (!go) return false;
       closeConfirm();
+      // PLAN_176 B4/B5 — the server side: only what expose.json says THIS
+      // stack's THIS service made, deleted outright (never disable/keep —
+      // this is the explicit Remove button and the Sections-menu untick, not
+      // the softer choices save/archive offer). Best-effort against what the
+      // model edit below does: a stack that was never saved through StaXX
+      // (openedName empty) has nothing on the server to remove, and a
+      // server-side failure still leaves the file edit below to run, so the
+      // block is never left behind in the compose file just because NPM or
+      // Pi-hole could not be reached — but it is reported, since an orphaned
+      // entry there needs a human to know about it.
+      var removeCall = openedName
+        ? call('expose-remove', { name: openedName, service: serviceName, npm: 'delete', dns: 'delete' })
+            .then(function (r) {
+              if (!r || !r.ok) failed('Proxy and DNS', (r && r.error) ||
+                'Could not reach Nginx Proxy Manager or Pi-hole to remove this — the file is ' +
+                'still updated below, but check them by hand.');
+              else loadExposeStatus();
+            })
+        : Promise.resolve();
+
       flushPending();
       pushUndo('removing "' + serviceName + '" from proxy and DNS');
       var ok = YAML.removeKey(MODEL.doc, MODEL, serviceName, ['x-unraid', 'expose']);
       if (!ok) {
         undoStack.pop(); updateUndo();
         setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
-        return false;
+        return removeCall.then(function () { return false; });
       }
       structuralEdit(-1, 'Removed "' + serviceName + '" from proxy and DNS.');
-      return true;
+      return removeCall.then(function () { return true; });
     });
   }
 
@@ -8937,6 +9264,27 @@
     var exposeRemoveBtn = event.target.closest('[data-expose-remove]');
     if (exposeRemoveBtn) {
       confirmExposeRemove(exposeRemoveBtn.dataset.exposeRemove);
+      return;
+    }
+
+    // PLAN_176 B5 — the Status row's own Apply button, shown only once
+    // loadExposeCheck() found at least one ✗ line. Distinct from save()'s
+    // own confirm-and-apply flow: this one runs straight off what is already
+    // on disk (fingerprintAtOpen), with no confirm dialog of its own — the
+    // ✗ lines beside it already say what it is about to do.
+    var exposeApplyBtn = event.target.closest('[data-expose-apply]');
+    if (exposeApplyBtn && openedName) {
+      exposeApplyBtn.disabled = true;
+      call('expose-apply', { name: openedName, fingerprint: fingerprintAtOpen }).then(function (ar) {
+        if (!ar || !ar.ok) {
+          failed('Proxy and DNS', (ar && ar.error) || 'Could not apply.');
+          exposeApplyBtn.disabled = false;
+          return;
+        }
+        exposeCheckLoaded = false;
+        loadExposeCheck();
+        loadExposeStatus();
+      });
       return;
     }
 
@@ -15886,7 +16234,41 @@
     paintGutter();
     paintInk();
     syncGutter();
+
+    // PLAN_176 B5 — a red DNS mark opens the editor with focusField set to
+    // 'x-unraid.expose.domain', to land in the Proxy and DNS group; that
+    // group draws nothing to land on if a past collapse left it folded (the
+    // fold state is remembered globally per group kind, not per service —
+    // see collapsedGroups()' own comment), so it is expanded before reparse()
+    // draws the form rather than after.
+    if (focusField && focusField.indexOf('x-unraid.expose.') === 0) setGroupCollapsed('expose', false);
+
+    // Yesterday's expose-check answer is meaningless against today's stack —
+    // cleared before reparse() draws the form's first paint, or a second
+    // stack opened this session would briefly show the first one's Status
+    // lines. Re-asked below, once MODEL exists to draw "Checking…" into.
+    exposeCheckLoaded = false;
+    exposeCheckCache  = null;
     reparse();
+
+    // PLAN_176 B5 — what the editor's own save() compares against once it
+    // succeeds, to know whether anything under x-unraid.expose changed at
+    // all and the confirm-and-apply flow is worth running. Taken here,
+    // straight after the reparse() that just built MODEL from what this
+    // editor opened with — never recomputed, so a later reparse (typing,
+    // undo, a structural edit) has no effect on what "changed since open"
+    // means.
+    exposeAtOpen = exposeSnapshot();
+
+    // PLAN_176 B5 — "when it checks": every editor open re-asks NPM/Pi-hole
+    // for the whole list's marks, not only this stack's own status row, and
+    // separately asks expose-check for this stack's own Status lines
+    // (loadExposeCheck() fills them in once it answers — see
+    // exposeStatusHtml()'s own comment). Neither is awaited — the editor is
+    // usable before either answers, same as devLoad()/netLoad()/imgLoad()
+    // below.
+    loadExposeStatus();
+    loadExposeCheck();
 
     // Ask what hardware this server has, so device rows can be named after it
     // rather than showing a bare path. Not waited for — the form is usable at
@@ -18545,9 +18927,22 @@
         refreshPending();
 
         var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
-        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover, isNew); return; }
 
-        renameThenFinish(name, leaf, thenStart);
+        // PLAN_176 B5 — captured before finishSave()/renameThenFinish() below,
+        // which can closeEditor() and drop MODEL: exposeChanged()/exposeSnapshot()
+        // need the model exactly as this save left it, not whatever (or
+        // nothing) is open by the time the confirm dialog would show. The
+        // save itself is never blocked or undone by any of this — the flow
+        // only starts once the file is already safely on disk.
+        var exposeDirty = exposeChanged();
+        var exposeName  = name;
+        var exposeLabel = leaf;
+        var exposeFingerprint = res.fingerprint || fingerprintAtOpen;
+
+        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover, isNew); }
+        else { renameThenFinish(name, leaf, thenStart); }
+
+        if (exposeDirty) runExposeSaveFlow(exposeName, exposeLabel, exposeFingerprint);
       });
   }
 
@@ -20603,6 +20998,27 @@
     if (pill.dataset.updateState) {
       card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
         '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
+    } else if (pill.classList.contains('staxx-dnsmark')) {
+      // PLAN_176 B5 — grey (the service's Enabled switch is off) says so
+      // plainly and leaves it there, the same lead-only shape a bare data-tip
+      // card gets — there is nothing to check while it is off, so a table of
+      // ✓/✗ would be answering a question that does not apply. Green/red get
+      // the domain as the lead and one fact row per switch that is actually
+      // on, the Pi-hole row left out when data-dns is '' (the switch itself
+      // is off), same reasoning updCardFacts() gives for skipping a row that
+      // does not apply.
+      if (pill.dataset.tip) {
+        card.innerHTML = '<div class="staxx-updcard__lead">' + esc(pill.dataset.tip) + '</div>';
+      } else {
+        var facts = '<dt>Nginx Proxy Manager</dt><dd>' + (pill.dataset.npm === 'bad'
+          ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
+        if (pill.dataset.dns) {
+          facts += '<dt>Pi-hole</dt><dd>' + (pill.dataset.dns === 'bad'
+            ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
+        }
+        card.innerHTML = '<div class="staxx-updcard__lead">' + esc(pill.dataset.domain || '') + '</div>' +
+          '<dl class="staxx-updcard__facts">' + facts + '</dl>';
+      }
     } else {
       card.innerHTML = '<div class="staxx-updcard__lead">' +
         esc(pill.dataset.tip || '').replace(/\n/g, '<br>') + '</div>';
@@ -20635,7 +21051,11 @@
   // Matches the update pill (its own facts table) or any element carrying an
   // adopted title (data-tip, see adoptTitles() below) — one card mechanism
   // for both, branched on inside showUpdCard() itself.
-  var UPD_CARD_SEL = '.staxx-updatepill, [data-tip]';
+  // PLAN_176 B5 — .staxx-dnsmark carries its own data-domain/data-npm/data-dns
+  // rather than data-tip, so it needs naming here explicitly; showUpdCard()
+  // below branches on the class the same way it already branches on
+  // data-updateState vs a bare data-tip.
+  var UPD_CARD_SEL = '.staxx-updatepill, .staxx-dnsmark, [data-tip]';
   document.addEventListener('mouseenter', function (event) {
     var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && !pill.contains(event.relatedTarget)) updCardEnter(pill);
@@ -22281,6 +22701,15 @@
       // that was just added, for instance.
       fetchIcons();
 
+      // PLAN_176 B5 — the fresh markup's DNS mark placeholders are all blank
+      // (staxx_dnsmark_placeholder_html() never calls NPM/Pi-hole), so the
+      // last-known state this session already holds has to be painted back
+      // on, exactly as restoreFailures()/restoreBusy() above put their own
+      // page-only state back after the same swap. This is never itself a
+      // reason to go and ask NPM/Pi-hole again — see paintDnsMarks()'s own
+      // comment for why the periodic refresh must not do that.
+      paintDnsMarks();
+
       if (done) done();
       if (queued) refreshRows(function () { queued.forEach(function (d) { d(); }); });
     });
@@ -23054,6 +23483,11 @@
     confirmTitle.textContent = opts.title;
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
+    // The dialog's own markup carries --danger as its default (StacksPage.php,
+    // "Delete stack") since most questions this asks are destructive — PLAN_176
+    // B5's Apply is the first one that is not (it creates or updates rather
+    // than destroying), so it is the first caller to pass danger:false.
+    confirmGo.classList.toggle('staxx-btn--danger', opts.danger !== false);
     confirmCancel.textContent = opts.cancelLabel || confirmCancelDefault;
     // Both reset unconditionally: a question always has a Cancel and is
     // never drawn as bad news, so nothing showInfo() left set on the shared
@@ -23189,6 +23623,28 @@
   // those are files INSIDE the stack's own folder, going into the zip;
   // these are paths and volumes OUTSIDE it, which the archive never touches
   // and this dialog exists to say so plainly.
+  // PLAN_176 B5 — the archive dialog's own Proxy and DNS part, appended to
+  // confirmRemoveHtml()'s markup only when expose-records found anything
+  // (the section never appears for a stack that never had one). One <li>
+  // pair per exposed service, same exposeRemovalItemHtml() the save-time
+  // removal-choices flow uses — defaulting to Switch off/Delete rather than
+  // that flow's Switch off/Delete too (both default the same way; the ask
+  // is different, not the defaults). `records` is what expose-records
+  // answered: {service: {domain, npm_id, dns_ip}}.
+  function exposeArchiveHtml(records) {
+    var services = Object.keys(records);
+    var list = services.map(function (svc, i) {
+      var rec = records[svc] || {};
+      return exposeRemovalItemHtml(i, rec.domain || svc, (rec.npm_id || 0) > 0,
+        !!(rec.dns_ip || ''), 'disable');
+    }).join('');
+    return '<p><strong>Proxy and DNS.</strong> StaXX made these entries for this stack. Choose ' +
+      'what happens to each:</p>' +
+      '<ul class="staxx-confirm-list staxx-confirm-list--expose" data-expose-archive-list>' + list + '</ul>' +
+      '<p>Switched off, the proxy entry keeps its settings in Nginx Proxy Manager, so it can be ' +
+      'switched back on there later.</p>';
+  }
+
   function confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto) {
     var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
     var html = retiredInto
@@ -23272,8 +23728,17 @@
       return { binds: binds, named: YAML.namedVolumes(text) };
     });
 
-    Promise.all([call('archive', { name: name }), mountsPromise]).then(function (results) {
-      var plan = results[0], mounts = results[1];
+    // PLAN_176 B5 — read-only, alongside the archive dry-run and the mounts
+    // read: whether this stack has anything StaXX made in Nginx Proxy
+    // Manager/Pi-hole to ask about at all. Best-effort like mountsPromise
+    // above — a read that fails just means the section is left out, never a
+    // reason to refuse the whole removal.
+    var exposeRecordsPromise = call('expose-records', { name: name })
+      .then(function (r) { return (r && r.ok) ? (r.records || {}) : {}; })
+      .catch(function () { return {}; });
+
+    Promise.all([call('archive', { name: name }), mountsPromise, exposeRecordsPromise]).then(function (results) {
+      var plan = results[0], mounts = results[1], exposeRecords = results[2];
       if (!plan.ok && !plan.needsConfirm) {
         failed('Could not remove ' + label, plan.error);
         return;
@@ -23281,7 +23746,9 @@
 
       var dir = plan.dir || '';
       var entries = plan.entries || [];
-      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto);
+      var exposeServices = Object.keys(exposeRecords);
+      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto) +
+        (exposeServices.length ? exposeArchiveHtml(exposeRecords) : '');
 
       // Asks the one question, retrying in place on a failure so Go still
       // works as a retry — the same shape the old two-stage delete used,
@@ -23293,10 +23760,33 @@
             confirmSetBusy(true);
             confirmMsg.textContent = '';
 
+            // PLAN_176 B5 — read the chosen radios before anything below
+            // overwrites confirmBody, and run expose-remove for each
+            // service BEFORE archive — an archived stack's own compose file
+            // is no longer there for expose-remove to reason about
+            // afterwards (it only needs expose.json, in fact, but the order
+            // the plan settled on is remove-then-archive regardless).
+            var exposeRemovals = exposeServices.length ? Promise.all(exposeServices.map(function (svc, i) {
+              var npmSel = confirmBody.querySelector('input[name="expose-npm-' + i + '"]:checked');
+              var dnsSel = confirmBody.querySelector('input[name="expose-dns-' + i + '"]:checked');
+              return call('expose-remove', {
+                name: name, service: svc,
+                npm: npmSel ? npmSel.value : 'keep',
+                dns: dnsSel ? dnsSel.value : 'keep'
+              });
+            })) : Promise.resolve([]);
+
             // Generous timeout: the containers are stopped synchronously
             // before anything is zipped, and that alone can take up to the
             // two minutes staxx_sh() itself allows any single command.
-            call('archive', { name: name, confirm: '1' }, 120000).then(function (res) {
+            exposeRemovals.then(function (exposeResults) {
+              var exposeProblems = exposeResults.filter(function (r) { return !r || !r.ok; });
+              if (exposeProblems.length) {
+                confirmMsg.textContent = 'Some of the proxy and DNS entries could not be removed — ' +
+                  'check Nginx Proxy Manager and Pi-hole by hand. Continuing with the archive.';
+              }
+              return call('archive', { name: name, confirm: '1' }, 120000);
+            }).then(function (res) {
               confirmSetBusy(false);
 
               if (!res.ok) {
@@ -32568,6 +33058,13 @@
   // Not gated on CAN_RUN: icons are worth having whether or not docker and
   // compose are usable, and a stack that cannot start still deserves a face.
   fetchIcons();
+
+  // PLAN_176 B5 — "on page load": the one other moment (besides straight
+  // after an expose-apply and an editor opening) the per-service DNS mark is
+  // allowed to ask NPM/Pi-hole anything at all. Started here, once, same as
+  // fetchIcons() above — never re-armed on the periodic row refresh, which
+  // paintDnsMarks() alone (called from refreshRows()) has to answer for.
+  loadExposeStatus();
 
   // PLAN_86 — started once, here, after the rows first render. Unlike
   // fetchIcons() above this does not re-arm on every table refresh: it is a

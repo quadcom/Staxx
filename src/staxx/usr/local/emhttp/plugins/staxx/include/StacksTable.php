@@ -36,6 +36,12 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
 // reason as Devices.php above: the page renders rows without going through
 // action.php, which is the only other place UpdateRun.php was pulled in.
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
+// For staxx_expose_config() (PLAN_176 B5) — only the pure, no-network reading
+// of a service's own expose: block, to know whether to draw the empty DNS
+// mark placeholder JS fills in. Never staxx_expose_status()'s NPM/Pi-hole
+// calls, which the periodic row refresh must never make (see B5's "when it
+// checks").
+require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -1639,6 +1645,23 @@ function staxx_update_mark_html(): string {
 }
 
 /**
+ * PLAN_176 B5 — an empty placeholder for the per-service DNS mark, drawn
+ * only when this service's own expose.domain is set. Never carries a real
+ * green/red/grey state itself: NPM and Pi-hole are never asked from here,
+ * because this same markup is what every periodic row refresh re-draws, and
+ * B5 says that has to stay free of network calls. Filled in by stacks.js's
+ * own paintDnsMarks() at page load, after an expose-apply, when an editor
+ * opens, and again after every refresh repaint (see that function's own
+ * comment for why). $meta is this stack's own staxx_compose_meta() result,
+ * read once by the caller and passed in rather than re-read per service.
+ */
+function staxx_dnsmark_placeholder_html(string $stack, string $service, array $meta): string {
+  $x = $meta['services'][$service]['x'] ?? null;
+  if ($x === null || staxx_expose_config($x) === null) return '';
+  return '<span class="staxx-dnsmark" data-dnsmark="'.htmlspecialchars($stack.'/'.$service).'" hidden></span>';
+}
+
+/**
  * PLAN_104 — the mark for a stack with at least one service on a macvlan or
  * ipvlan network that still carries a live `ports:` key. A container with its
  * own address on the LAN cannot have a port published for it, so those ports
@@ -2417,8 +2440,16 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
             <? else: ?>
               <!-- The service keys, always — the row's name no longer stands in
                    for one of them, so there is nothing left to save a line by
-                   omitting. -->
-              <?= htmlspecialchars(implode(', ', $s['services'])) ?>
+                   omitting. Each name is its own text node (not one joined
+                   string) so the PLAN_176 B5 DNS mark placeholder can follow
+                   the one service it belongs to, comma-separated the same as
+                   before. -->
+              <?
+                $svcMeta = $s['parses'] ? staxx_compose_meta($s['file']) : ['services' => []];
+                $svcNames = $s['services'];
+              ?>
+              <? foreach ($svcNames as $svcI => $svcName): ?><?= htmlspecialchars($svcName) ?><?=
+                staxx_dnsmark_placeholder_html($s['name'], $svcName, $svcMeta) ?><?= $svcI < count($svcNames) - 1 ? ', ' : '' ?><? endforeach; ?>
               <? if (count($s['services']) === 1): ?>
                 <!-- The image goes on a sub-line, but only for a single-service
                      stack: printing every image under a five-service stack
