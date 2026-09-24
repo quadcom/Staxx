@@ -1086,10 +1086,20 @@ function staxx_update_short_id(string $id): string {
  * by (`linuxserver/plex`). Reading everything once and mapping each row's own
  * name through the same rule as the keep-set means both sides always agree.
  *
- * @return array{remove: string[], kept: int}
+ * `docker image ls --digests` prints one row per (repository, tag), and the
+ * digest repeats across every tag row of the same image — so a picked image
+ * is returned as one group per repository@digest, carrying every tag seen on
+ * its rows, rather than one entry per row. `docker rmi repo@digest` alone
+ * only drops that digest reference and leaves a tagged image on disk (see
+ * staxx_update_cleanup()), so the caller needs every tag to remove the image
+ * for real. A row with no fourth column (or an untagged `<none>` row) simply
+ * contributes no tag to its group.
+ *
+ * @return array{remove: array{ref: string, tags: string[]}[], kept: int}
  */
 function staxx_update_cleanup_pick(string $listOut, array $keep, array $used): array {
   $remove = [];
+  $index  = []; // repo@digest => position in $remove, so tags accumulate per image
   $kept   = 0;
 
   foreach (explode("\n", $listOut) as $line) {
@@ -1098,6 +1108,7 @@ function staxx_update_cleanup_pick(string $listOut, array $keep, array $used): a
     $repository = $cols[0];
     $digest     = $cols[1];
     $id         = $cols[2];
+    $tag        = $cols[3] ?? '<none>';
 
     $key = staxx_hub_repo_path($repository);
     if ($key === '') $key = preg_replace('/:[^\/]*$/', '', trim($repository));
@@ -1107,7 +1118,16 @@ function staxx_update_cleanup_pick(string $listOut, array $keep, array $used): a
     if (isset($used[staxx_update_short_id($id)])) { $kept++; continue; }
 
     $ref = $repository.'@'.$digest;
-    if (!in_array($ref, $remove, true)) $remove[] = $ref;
+    if (!isset($index[$ref])) {
+      $index[$ref] = count($remove);
+      $remove[]    = ['ref' => $ref, 'tags' => []];
+    }
+    if ($tag !== '<none>' && $tag !== '') {
+      $tagRef = $repository.':'.$tag;
+      if (!in_array($tagRef, $remove[$index[$ref]]['tags'], true)) {
+        $remove[$index[$ref]]['tags'][] = $tagRef;
+      }
+    }
   }
 
   return ['remove' => $remove, 'kept' => $kept];
@@ -1191,19 +1211,38 @@ function staxx_update_cleanup(bool $dry, string &$error): array {
   // always agree.
   $listOut = staxx_sh(
     staxx_docker_bin().' image ls --digests --format '
-      .escapeshellarg('{{.Repository}}'."\t".'{{.Digest}}'."\t".'{{.ID}}'),
+      .escapeshellarg('{{.Repository}}'."\t".'{{.Digest}}'."\t".'{{.ID}}'."\t".'{{.Tag}}'),
     20
   );
 
   $pick = staxx_update_cleanup_pick($listOut, $keep, $used);
   $kept += $pick['kept'];
 
-  foreach ($pick['remove'] as $ref) {
-    if ($dry) { $removed[] = $ref; continue; }
+  // Measured on the box 2026-09-24: `docker rmi repo@digest` on an image that
+  // also carries a tag (Plex's 1.42.2 etc.) only drops the digest reference —
+  // the tagged image itself stays on disk. So every tag is removed first and
+  // the digest reference last, never `-f`. If a tag removal already deleted
+  // the image, the digest `rmi` then fails with "No such image", which counts
+  // as removed rather than kept since the image is genuinely gone; any other
+  // failure stops that image's remaining references and counts it kept.
+  foreach ($pick['remove'] as $group) {
+    if ($dry) { $removed[] = $group['ref']; continue; }
+
+    $ok = true;
+    foreach ($group['tags'] as $tagRef) {
+      $rmCode = 1;
+      staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($tagRef).' 2>&1', 20, $rmCode);
+      if ($rmCode !== 0) { $ok = false; break; }
+    }
+    if (!$ok) { $kept++; continue; }
 
     $rmCode = 1;
-    staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($ref).' 2>&1', 20, $rmCode);
-    if ($rmCode === 0) $removed[] = $ref; else $kept++;
+    $out = staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($group['ref']).' 2>&1', 20, $rmCode);
+    if ($rmCode === 0 || stripos($out, 'No such image') !== false || stripos($out, 'not found') !== false) {
+      $removed[] = $group['ref'];
+    } else {
+      $kept++;
+    }
   }
 
   return ['removed' => $removed, 'kept' => $kept];
