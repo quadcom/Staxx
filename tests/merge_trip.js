@@ -218,6 +218,14 @@ console.log('\nR2-4. Disagreeing .env values behind the same variable are said, 
   var w = auditedBuild([a, b], { date: '2026-09-24', name: 'demoapp' });
   ok('both values survive in the merged .env, under distinct names',
      /^TAG=1\.26/m.test(w.env) && /^TAG_B=1\.30/m.test(w.env));
+  // T5 (found on the box): the rename into the .env is no good if svc2's
+  // own compose line still reads the OTHER source's ${TAG:-1.25} — a
+  // braced form with a default is exactly the shape rewriteEnvVarReferences()
+  // used to leave alone, so svc2 silently inherited svc's TAG (1.26)
+  // instead of its own (1.30). The default text itself must survive
+  // untouched — only the name changes.
+  ok('svc2\'s own line follows the rename, default text kept exactly as written',
+     /image: myapp:\$\{TAG_B:-1\.25\}/.test(w.text));
   assertRoundTrip('R2-4', w.text);
 })();
 

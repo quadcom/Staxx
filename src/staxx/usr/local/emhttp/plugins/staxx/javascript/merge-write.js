@@ -603,18 +603,25 @@
   // A settings-join rename (automatic suffix, or a name the wizard's own
   // "choose a name" box gave) followed through into this same source's own
   // compose lines — a value renamed in the joined .env is no good to a
-  // service that still reaches for it as "${OLD}" or bare "$OLD". Handles
-  // exactly those two interpolation shapes, since they are the only two
-  // compose itself reads; ${OLD:-default} and friends are left alone
-  // (rare enough here not to be worth the extra parsing).
+  // service that still reaches for it as "${OLD}", bare "$OLD", or one of
+  // compose's default/error forms ("${OLD:-x}", "${OLD-x}", "${OLD:?x}",
+  // "${OLD?x}", "${OLD:+x}", "${OLD+x}"). Found on the box (T5): a source
+  // merged with a settings clash left ${TAG:-1.25} untouched while the
+  // wizard's own rename went to TAG_B in the .env, so the service silently
+  // read the OTHER source's TAG instead of its own default. Only the name
+  // right after "${" is rewritten — the lookahead requires it be followed
+  // by "}" or one of those operators without consuming it, so the
+  // default/message text itself is left exactly as written. A lone
+  // lookbehind on both forms skips "$${OLD}"/"$$OLD" — compose's own way of
+  // writing a literal dollar sign, never a reference to rewrite.
   function rewriteEnvVarReferences(doc, oldName, newName) {
     var esc = escapeRegExp(oldName);
-    var reBraced = new RegExp('\\$\\{' + esc + '\\}', 'g');
-    var reBare = new RegExp('\\$' + esc + '(?![A-Za-z0-9_])', 'g');
+    var reBraced = new RegExp('(?<!\\$)\\$\\{' + esc + '(?=[}:?+-])', 'g');
+    var reBare = new RegExp('(?<!\\$)\\$' + esc + '(?![A-Za-z0-9_])', 'g');
     var changed = false;
     for (var i = 0; i < doc.lines.length; i++) {
       var line = doc.lines[i];
-      var next = line.replace(reBraced, '${' + newName + '}').replace(reBare, '$' + newName);
+      var next = line.replace(reBraced, '${' + newName).replace(reBare, '$' + newName);
       if (next !== line) { doc.lines[i] = next; changed = true; }
     }
     return changed;

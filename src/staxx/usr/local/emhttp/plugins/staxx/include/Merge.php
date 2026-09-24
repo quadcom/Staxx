@@ -603,7 +603,61 @@ function staxx_merge_restart_sources(array $rels, string $cmd): string {
  *   started (logged, not reported as a merge failure: everything the merge
  *   itself promises has already happened by that point).
  */
+const STAXX_MERGE_LOCK = '/tmp/staxx/merge.lock';
+
+/**
+ * Wraps staxx_merge_stacks_impl() in an exclusive, non-blocking file lock so
+ * two browser tabs pressing Merge on the same two sources at the same
+ * moment cannot both pass the fingerprint check before either has retired
+ * its sources (round-two box run, T2): the second call is refused outright,
+ * never queued, so nothing enters the lock only to fail deep inside it and
+ * leave a source stopped by one merge and re-read by another.
+ *
+ * The lock has to be held for the whole call, not just the fingerprint
+ * check, because everything from that check onward assumes the sources it
+ * just verified are still exactly what the next step will act on.
+ */
 function staxx_merge_stacks(
+  string $newRel,
+  array $sourceRels,
+  array $fingerprints,
+  string $body,
+  ?string $env,
+  array $files,
+  array $retired,
+  bool $stop,
+  bool $start,
+  string &$error,
+  ?array &$facts = null,
+  array $retiredOverride = []
+): bool {
+  @mkdir('/tmp/staxx', 0700, true);
+  $lock = @fopen(STAXX_MERGE_LOCK, 'c');
+  if ($lock === false) {
+    // Cannot even open the lock file — fail closed rather than run two
+    // merges unguarded, but this is a filesystem problem, not a busy lock.
+    $error = 'Could not start the merge (a lock file could not be opened).';
+    $facts = [];
+    return false;
+  }
+  if (!flock($lock, LOCK_EX | LOCK_NB)) {
+    fclose($lock);
+    $error = 'Another merge is being written right now. Wait for it to finish, then press Merge again.';
+    $facts = [];
+    return false;
+  }
+  try {
+    return staxx_merge_stacks_impl(
+      $newRel, $sourceRels, $fingerprints, $body, $env, $files, $retired,
+      $stop, $start, $error, $facts, $retiredOverride
+    );
+  } finally {
+    flock($lock, LOCK_UN);
+    fclose($lock);
+  }
+}
+
+function staxx_merge_stacks_impl(
   string $newRel,
   array $sourceRels,
   array $fingerprints,

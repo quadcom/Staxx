@@ -409,6 +409,28 @@ function configLevelAudit(sources, built, opts, problems) {
 
   var settingsJoin = findings.filter(function (f) { return f.kind === 'settings-join'; })[0];
 
+  // The same rewrite rewriteEnvVarReferences() (merge-write.js) makes to a
+  // source's own compose lines when a settings-join renames a variable —
+  // duplicated here (rather than required in) for the same reason this
+  // whole file is a second, independent read of the source text, not a
+  // wrapper round the real writer. Used wherever a plain string field
+  // might carry "${VAR}"/"$VAR" interpolation (T5: this used to be checked
+  // only for environment: values, so a rename that followed into svc2's
+  // own `image: myapp:${TAG:-1.25}` line went unaudited).
+  function settingsJoinRewrite(stack, val) {
+    if (!settingsJoin || typeof val !== 'string') return val;
+    var result = val;
+    settingsJoin.facts.renamed.forEach(function (r) {
+      if (r.stack !== stack) return;
+      var escFrom = r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var finalName = r.finalName || r.to;
+      var reBraced = new RegExp('\\$\\{' + escFrom + '(?=[}:?+-])', 'g');
+      var reBare = new RegExp('\\$' + escFrom + '(?![A-Za-z0-9_])', 'g');
+      result = result.replace(reBraced, '${' + finalName).replace(reBare, '$' + finalName);
+    });
+    return result;
+  }
+
   var srcConfigs = sources.map(function (s) { return buildConfig(s.text); });
   var mergedConfig = buildConfig(built.text);
 
@@ -423,7 +445,9 @@ function configLevelAudit(sources, built, opts, problems) {
         return;
       }
 
-      if (svc.image !== m.image) problems.push(stack + ' service ' + svcName + ': image changed from "' + svc.image + '" to "' + m.image + '" with no explaining record.');
+      if (svc.image !== m.image && settingsJoinRewrite(stack, svc.image) !== m.image) {
+        problems.push(stack + ' service ' + svcName + ': image changed from "' + svc.image + '" to "' + m.image + '" with no explaining record.');
+      }
       if (!deepEqual(svc.command, m.command)) problems.push(stack + ' service ' + svcName + ': command changed with no explaining record.');
       if (svc.restart !== m.restart) problems.push(stack + ' service ' + svcName + ': restart changed from "' + svc.restart + '" to "' + m.restart + '" with no explaining record.');
       if (svc.network_mode !== m.network_mode) {
@@ -504,19 +528,7 @@ function configLevelAudit(sources, built, opts, problems) {
         // A settings-join rename followed the ${VAR}/$VAR interpolation into this same source's
         // own compose lines (rewriteEnvVarReferences() in merge-write.js) — the only OTHER way
         // an environment: value's text legitimately changes.
-        if (settingsJoin) {
-          var explained = settingsJoin.facts.renamed.some(function (r) {
-            if (r.stack !== stack) return false;
-            var reBraced = new RegExp('\\$\\{' + r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\}');
-            var reBare = new RegExp('\\$' + r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_])');
-            if (!reBraced.test(oldVal) && !reBare.test(oldVal)) return false;
-            var finalName = r.finalName || r.to;
-            var want = oldVal.replace(new RegExp('\\$\\{' + r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\}', 'g'), '${' + finalName + '}')
-                              .replace(new RegExp('\\$' + r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_])', 'g'), '$' + finalName);
-            return want === newVal;
-          });
-          if (explained) return;
-        }
+        if (settingsJoinRewrite(stack, oldVal) === newVal) return;
 
         problems.push(stack + ' service ' + svcName + ' env ' + varName + ': changed from "' + oldVal + '" to "' + newVal + '" with no explaining record.');
       });
@@ -733,10 +745,14 @@ function audit(sources, built, opts) {
  * does not attempt a byte-for-byte compare of every field. It compares
  * what pick order can never legitimately change: which (source, service)
  * pairs exist in the merged file at all, and the handful of fields no
- * clash or rewire ever touches (image, restart, network_mode, profiles,
+ * clash or rewire ever touches (restart, network_mode, profiles,
  * healthcheck, command, and the SET of environment variable names — not
  * their values, which an address-rewire may point at a differently-named
- * target depending on which side of a clash that target landed on).
+ * target depending on which side of a clash that target landed on). image
+ * is the one exception (T5): a settings-join can rename a variable it
+ * interpolates, and which suffix that rename lands on is itself pick-order
+ * dependent, so it is compared through deSettingsJoin() rather than
+ * byte-for-byte.
  * ========================================================================= */
 
 function originIndex(sources) {
@@ -755,6 +771,28 @@ function finalNameOf(built, stack, svcName) {
   return rename ? rename.facts.to : svcName;
 }
 
+// Reverses a settings-join's own interpolation rewrite (see
+// settingsJoinRewrite() above) so a value carrying "${NEWNAME...}"/
+// "$NEWNAME" can be compared against the other pick order's version of the
+// same value under ITS OWN rename — the suffixed name a clash lands on can
+// differ by pick order exactly the way an address-rewire's target name can
+// (this function's own header comment), and T5's fix means an interpolated
+// reference now legitimately follows that rename too.
+function deSettingsJoin(built, stack, val) {
+  var sj = (built.findings || []).filter(function (f) { return f.kind === 'settings-join'; })[0];
+  if (!sj || typeof val !== 'string') return val;
+  var result = val;
+  sj.facts.renamed.forEach(function (r) {
+    if (r.stack !== stack) return;
+    var finalName = r.finalName || r.to;
+    var escTo = finalName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var reBraced = new RegExp('\\$\\{' + escTo + '(?=[}:?+-])', 'g');
+    var reBare = new RegExp('\\$' + escTo + '(?![A-Za-z0-9_])', 'g');
+    result = result.replace(reBraced, '${' + r.from).replace(reBare, '$' + r.from);
+  });
+  return result;
+}
+
 function compareOrders(sources, builtA, builtB) {
   var problems = [];
   if (builtA.text === null || builtB.text === null) return { ok: true, problems: problems };   // nothing written either way
@@ -767,7 +805,9 @@ function compareOrders(sources, builtA, builtB) {
     var a = cfgA.services[aName], b = cfgB.services[bName];
     if (!a || !b) { problems.push(id + ': present in one pick order\'s merged file but not the other.'); return; }
 
-    if (a.image !== b.image) problems.push(id + ': image differs between pick orders ("' + a.image + '" vs "' + b.image + '").');
+    if (a.image !== b.image && deSettingsJoin(builtA, stack, a.image) !== deSettingsJoin(builtB, stack, b.image)) {
+      problems.push(id + ': image differs between pick orders in a way a settings-join rename cannot explain ("' + a.image + '" vs "' + b.image + '").');
+    }
     if (a.restart !== b.restart) problems.push(id + ': restart differs between pick orders.');
     // A "service:<name>"/"container:<name>" reference is followed through by CM.renameService()
     // (see configLevelAudit()'s own comment on this), so its TEXT can legitimately differ between

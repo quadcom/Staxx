@@ -34375,6 +34375,15 @@
 
   if (mergeModal) {
     mergeModal.addEventListener('close', function () {
+      // Round-two box run T4: a hidden tab delays its own 'close' event, so
+      // this can fire AFTER mergeOpen() has already opened a fresh wizard
+      // for a second merge — the stale event then nulled the new state out
+      // from under it (Cannot read properties of null (reading 'step')/
+      // 'newFolder')). The dialog is the one thing this handler can check
+      // that reflects "now", not "when this event was queued" — if it is
+      // open again, some later mergeOpen() has already happened and this
+      // close is not describing the current wizard, so it does nothing.
+      if (mergeModal.open) return;
       // Narrow-width no longer closes this dialog at all (C17: it stays
       // open, backdrop and all, and shows a notice instead — see
       // mergeOnNarrowChange() below). This guard only still matters for the
@@ -36978,6 +36987,23 @@
     return !!(own && own.pairs['healthcheck']);
   }
 
+  // Round-two box run T3: a service can carry a `healthcheck:` block whose
+  // only content is `disable: true` — the author switching a check OFF, not
+  // one written in. mergeSuggestHasHealthcheck() alone cannot tell the two
+  // apart, and calling a switched-off check "built in" is simply false, so
+  // this is read separately and only asked when the block exists at all.
+  function mergeSuggestHealthIsDisabled(doc, service) {
+    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
+    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var pair = map ? map.pairs[service] : null;
+    var own = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
+    var hc = own ? own.pairs['healthcheck'] : null;
+    var hcMap = hc && hc.value && hc.value.kind === 'map' ? hc.value : null;
+    var dis = hcMap ? hcMap.pairs['disable'] : null;
+    var scalar = dis && dis.value && dis.value.kind === 'scalar' ? dis.value.value : null;
+    return typeof scalar === 'string' && /^true$/i.test(scalar);
+  }
+
   function mergeSuggestServiceImage(form, service) {
     for (var i = 0; i < form.fields.length; i++) {
       var f = form.fields[i];
@@ -36997,7 +37023,9 @@
   // can be `covered`, read separately in mergeEnterStep5() below since it
   // needs an async round trip this synchronous half cannot make.
   function mergeSuggestSyncHealth(doc, form, service) {
-    if (mergeSuggestHasHealthcheck(doc, service)) return { covered: true };
+    if (mergeSuggestHasHealthcheck(doc, service)) {
+      return { covered: true, disabled: mergeSuggestHealthIsDisabled(doc, service) };
+    }
     return { on: false, source: 'later' };
   }
 
@@ -37550,7 +37578,14 @@
   // explanation shown before the switch is even turned on. What the
   // switch and the button beneath it do is unchanged; only the words are.
   function mergeHealthSourceSentence(h) {
-    if (h.covered) return 'Its image has a health check built in.';
+    // A covered row can be covered two different ways — a real check
+    // already written (by the file or the image) or the author switching
+    // one off (`healthcheck: {disable: true}`) — and those are opposite
+    // facts, not the same one worded differently (round-two box run T3).
+    if (h.covered) {
+      return h.disabled ? 'Its health check is switched off in the file.'
+                         : 'Its image has a health check built in.';
+    }
     if (h.on) return 'StaXX will work a check out once the stack is running.';
     return '';
   }
