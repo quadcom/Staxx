@@ -34144,7 +34144,14 @@
           if (!res || !res.ok) return;
           mergeState.portUsers[key] = res.stacks || [];
           mergeRebuild();
-          if (mergeState.step === 4) mergeRenderStep4(); else mergeRenderMergedPane();
+          // PLAN_169 F17 — the evidence line lives on step 3's own cards,
+          // not the merged pane, so a reply landing while step 3 is open has
+          // to redraw step 3 itself (the same call the Decline handler
+          // above makes) or the card only picks it up after leaving the
+          // step and coming back.
+          if (mergeState.step === 3) mergeRenderStep3();
+          else if (mergeState.step === 4) mergeRenderStep4();
+          else mergeRenderMergedPane();
         });
     });
   }

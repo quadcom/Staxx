@@ -428,10 +428,18 @@
     var svcMap = servicesMapOf(doc);
     if (!svcMap) return [];
     var out = [];
+    var escaped = volName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var shortRe = new RegExp('^\\s*-\\s*["\']?' + escaped + ':');
+    // PLAN_169 F18 — the long form writes the volume's name on its own
+    // `source:` line rather than as the head of a "name:path" scalar; a
+    // mark on a long-form mount has to find that line too, or the source
+    // pane would show the declaration renamed with none of its uses
+    // marked alongside it.
+    var longRe = new RegExp('^\\s*source:\\s*["\']?' + escaped + '["\']?\\s*(#.*)?$');
     svcMap.keys.forEach(function (svcName) {
       var p = svcMap.pairs[svcName];
       for (var i = p.start; i < p.end; i++) {
-        if (new RegExp('^\\s*-\\s*["\']?' + volName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':').test(doc.lines[i])) out.push(i);
+        if (shortRe.test(doc.lines[i]) || longRe.test(doc.lines[i])) out.push(i);
       }
     });
     return out;

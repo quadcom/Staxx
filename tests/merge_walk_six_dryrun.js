@@ -367,6 +367,34 @@ if (!CHECK) {
   if (!/type:\s*bind[\s\S]{0,80}read_only:\s*true/.test(text)) fail(10, 'order ' + o.label + ': the long-syntax read_only bind did not survive');
   if (!/type:\s*volume[\s\S]{0,60}source:\s*data/.test(text)) fail(10, 'order ' + o.label + ': the long-syntax named-volume mount did not survive');
 
+  // Trap 10 (PLAN_169 F18) — t169-store and t169-bus both call their own volume "data";
+  // t169-store's db mounts it LONG-syntax, t169-bus's mqtt mounts it SHORT-syntax. Before the
+  // fix, a long-syntax mount was invisible to the examiner: t169-store's own declaration read
+  // as unused, was never carried and never clash-renamed, and one pick order left db pointed
+  // at t169-bus's volume outright. Both real names must appear, each under its own merged key,
+  // and each service's own mount (long or short) must follow that same key.
+  function keyForRealName(realName) {
+    var idx = text.indexOf('name: ' + realName);
+    if (idx === -1) return null;
+    var before = text.slice(0, idx).split('\n');
+    for (var i = before.length - 1; i >= 0; i--) {
+      var km = /^  ([A-Za-z0-9_.-]+):\s*$/.exec(before[i]);
+      if (km) return km[1];
+    }
+    return null;
+  }
+  var storeVolKey = keyForRealName('t169-store_data');
+  var busVolKey = keyForRealName('t169-bus_data');
+  if (!storeVolKey) fail(10, 'order ' + o.label + ': no declared volume carries "name: t169-store_data" — t169-store\'s own long-syntax mount was never carried');
+  if (!busVolKey) fail(10, 'order ' + o.label + ': no declared volume carries "name: t169-bus_data" — t169-bus\'s own short-syntax mount was never carried');
+  if (storeVolKey && busVolKey && storeVolKey === busVolKey) fail(10, 'order ' + o.label + ': t169-store and t169-bus\'s own "data" volumes were merged under the SAME key (' + storeVolKey + ') — one would start on the other\'s storage');
+  if (storeVolKey && !new RegExp('source:\\s*' + storeVolKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(text)) {
+    fail(10, 'order ' + o.label + ': t169-store\'s own db service no longer mounts its own volume key "' + storeVolKey + '" long-syntax');
+  }
+  if (busVolKey && text.indexOf('- ' + busVolKey + ':/mosquitto/data') === -1) {
+    fail(10, 'order ' + o.label + ': t169-bus\'s own mqtt service no longer mounts its own volume key "' + busVolKey + '" short-syntax');
+  }
+
   // Trap 11 — top-level configs: (t169-bus).
   if (!/^configs:\s*$/m.test(text) || text.indexOf('bus_banner') === -1) fail(11, 'order ' + o.label + ': the top-level "configs:" block (bus_banner) did not survive');
 

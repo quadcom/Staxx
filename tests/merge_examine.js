@@ -455,6 +455,83 @@ console.log('\nE. Storage Docker manages — carried, never copied');
   assertMergedIsValid('storage-carry (same key twice)', w.text, ['svcA', 'svcB']);
 })();
 
+(function () {
+  // PLAN_169 F18 — the exact reproduction: two sources both declare a
+  // volume called "data", but one of them mounts it in the LONG form
+  // (type:/source:/target:) rather than the short "data:/path" a compose
+  // author usually writes. Before the fix, a long-form mount was invisible
+  // to findStorageFindings(): the store's own declaration read as unused,
+  // was never carried and never clash-renamed, and in one pick order its
+  // database was left pointing at the OTHER source's volume outright.
+  var store = {
+    name: 't169-store', text: [
+      'services:', '  db:', '    image: postgres:16', '    volumes:',
+      '      - type: volume', '        source: data', '        target: /var/lib/postgresql/data',
+      'volumes:', '  data: {}', ''
+    ].join('\n')
+  };
+  var bus = {
+    name: 't169-bus', text: [
+      'services:', '  mqtt:', '    image: eclipse-mosquitto:2', '    volumes:',
+      '      - data:/mosquitto/data',
+      'volumes:', '  data: {}', ''
+    ].join('\n')
+  };
+
+  function checkBothOrders(order) {
+    var label = order.map(function (s) { return s.name; }).join(' then ');
+    var descs = order.map(function (s) { return descOf(s); });
+    var r = M.examine(descs);
+    var storage = findingsOf(r, 'storage-carry');
+    ok('F18 [' + label + ']: both sources\' long- and short-form "data" volumes are each found',
+       storage.length === 2, JSON.stringify(storage));
+
+    var w = MW.buildMergedText(order, { date: '2026-09-24', name: 't169app' });
+    ok('F18 [' + label + ']: the merged file declares two distinct volume keys, each with its own real name:',
+       /name: t169-store_data/.test(w.text) && /name: t169-bus_data/.test(w.text));
+    ok('F18 [' + label + ']: the long-form mount follows its source: to whichever key t169-store kept',
+       /source: data(_T169_STORE|_T169_BUS)?\s*\n\s*target: \/var\/lib\/postgresql\/data/.test(w.text));
+    ok('F18 [' + label + ']: the short-form mount follows its own key too',
+       /- data(_T169_STORE|_T169_BUS)?:\/mosquitto\/data/.test(w.text));
+    assertMergedIsValid('storage-carry (long+short syntax, ' + label + ')', w.text, ['db', 'mqtt']);
+    return w;
+  }
+
+  // Whichever source is picked first keeps the plain "data" key and the
+  // other is disambiguated — same rule an existing test above already
+  // exercises for two short-form sources — so what has to hold in BOTH
+  // orders is not identical text but the same shape: two declarations, two
+  // correct real names, every use following its own source. checkBothOrders()
+  // asserts exactly that for each pick in turn.
+  checkBothOrders([store, bus]);
+  checkBothOrders([bus, store]);
+})();
+
+(function () {
+  // PLAN_169 F18 — a long-form BIND mount ("type: bind") names a host path,
+  // never a declared volume; it must never be offered a storage-carry
+  // decision or have its source: rewritten as though it were one.
+  var a = {
+    name: 'appA', text: [
+      'services:', '  web:', '    image: nginx:alpine', '    volumes:',
+      '      - type: bind', '        source: ./data', '        target: /data',
+      '      - type: volume', '        source: cache', '        target: /cache',
+      'volumes:', '  cache: {}', ''
+    ].join('\n')
+  };
+  var b = { name: 'appB', text: 'services:\n  web2:\n    image: nginx:alpine\n    volumes:\n      - cache:/cache\nvolumes:\n  cache: {}\n' };
+
+  var r = M.examine([descOf(a), descOf(b)]);
+  var storage = findingsOf(r, 'storage-carry');
+  ok('F18: a long-form bind mount is never mistaken for a volume use',
+     storage.length === 2 && storage.every(function (f) { return f.facts.volume === 'cache'; }));
+
+  var w = MW.buildMergedText([a, b], { date: '2026-09-24', name: 'demoapp' });
+  ok('F18: the bind mount\'s own source: is left exactly as written',
+     /source: \.\/data\s*\n\s*target: \/data/.test(w.text));
+  assertMergedIsValid('storage-carry (bind long-syntax untouched)', w.text, ['web', 'web2']);
+})();
+
 /* =========================================================================
  * F. Companion files — the whole new plan.
  * ========================================================================= */

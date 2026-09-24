@@ -1383,12 +1383,35 @@
     var services = {};
     Object.keys(plain.services || {}).forEach(function (svcName) {
       var raw = plain.services[svcName] || {};
+      // PLAN_169 F18 — a mount written in the long form (`type:`/`source:`/
+      // `target:`, a map rather than a single "host:container" string) used
+      // to come back null here and vanish from this list entirely, so
+      // findStorageFindings() (merge-examine.js) never saw it as using a
+      // declared volume: the volume read as unused, was never carried and
+      // never clash-renamed, and a service mounting it long-form was left
+      // pointing at whichever OTHER source's volume the merge kept under
+      // that same key. Read both shapes into the same {type, source,
+      // target, ro} the short form already produces. Only `type: volume`
+      // names a declared volume the way this examines things; `type: bind`
+      // is a host path (kept apart the same way a short "./x:/y" mount is);
+      // anything else (`tmpfs`, `npipe`, `cluster`) has no declared block
+      // to carry or rename, so it is dropped, same as before.
       var volumes = asStringArray(raw.volumes).map(function (entry) {
-        if (typeof entry !== 'string') return null;
-        var parts = entry.split(':');
-        var source = parts[0], target = parts[1] || '';
-        var type = (source.charAt(0) === '.' || source.charAt(0) === '/') ? 'bind' : 'named';
-        return { type: type, source: source, target: target, ro: parts[2] === 'ro' };
+        if (typeof entry === 'string') {
+          var parts = entry.split(':');
+          var source = parts[0], target = parts[1] || '';
+          var type = (source.charAt(0) === '.' || source.charAt(0) === '/') ? 'bind' : 'named';
+          return { type: type, source: source, target: target, ro: parts[2] === 'ro' };
+        }
+        if (entry && typeof entry === 'object') {
+          if (entry.type === 'volume') {
+            return { type: 'named', source: entry.source || '', target: entry.target || '', ro: !!entry.read_only };
+          }
+          if (entry.type === 'bind') {
+            return { type: 'bind', source: entry.source || '', target: entry.target || '', ro: !!entry.read_only };
+          }
+        }
+        return null;
       }).filter(Boolean);
 
       var environment = {};
