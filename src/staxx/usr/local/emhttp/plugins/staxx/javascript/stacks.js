@@ -26412,6 +26412,16 @@
             'as a safety net for anything it missed while it was down.'
     },
     {
+      // PLAN_180 Part 1 — nothing here is a saved setting (see the
+      // row.control === 'action' guards in settingsDirty()/saveSettings(),
+      // which EXPOSE_TEST already shares); the button opens the images
+      // window instead of writing anything.
+      key: 'IMAGES_CLEANUP', control: 'action', label: 'Unused images', tab: 'storage',
+      help: 'See every Docker image no container uses, with its size, and remove the ones you pick. ' +
+            'Anything a stopped stack still needs, or that was built on this server, is left ' +
+            'unticked, and versions kept for rolling back an update are never offered.'
+    },
+    {
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu', tab: 'general',
       choices: [
         ['false', 'Leave the Docker menu alone'],
@@ -26876,6 +26886,12 @@
       return '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
                      'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL + numAttrs +
                      placeholderAttr + ' value="' + esc(value) + '">';
+    } else if (row.control === 'action' && row.key === 'IMAGES_CLEANUP') {
+      // PLAN_180 Part 1 — opens the "Clean up images" window instead of
+      // filling a result area in place, so all this needs is the button.
+      return '<div class="staxx-settings-action" id="' + row.id + '">' +
+               '<button type="button" class="staxx-btn" data-images-cleanup>Clean up images</button>' +
+             '</div>';
     } else if (row.control === 'action') {
       // PLAN_176 — the Integrations tab's "Check the connection" button.
       // Nothing here is a saved setting (see the row.control === 'readout'
@@ -28207,6 +28223,10 @@
         runExposeTest();
         return;
       }
+      if (event.target.closest('[data-images-cleanup]')) {
+        openImagesDialog();
+        return;
+      }
       /* Opened on top of Settings rather than instead of it: nothing here is
        * being edited, so there is nothing to lose and no reason to ask about
        * discarding — unlike the storage chooser just below, which replaces
@@ -28655,6 +28675,184 @@
      * throttle timers in background tabs, so the timer alone is not enough. */
     window.addEventListener('focus', function () {
       if (backupModal.open) backupPoll(backupLastOld, Date.now() + 300000);
+    });
+  }
+
+  /* --------------------------------------------------------- images -- */
+  /* PLAN_180 Part 1 — "Clean up images", opened from the Storage tab of
+   * Settings. The server (include/Images.php) decides everything: which
+   * group an image falls into, its note, whether it can be ticked at all.
+   * This code only ever draws what it is sent and totals up what is
+   * ticked — it invents no rule of its own about what is safe to remove. */
+
+  var imagesModal  = document.getElementById('staxx-images-dlg');
+  var imagesBody   = document.getElementById('staxx-images-body');
+  var imagesMsg    = document.getElementById('staxx-images-msg');
+  var imagesCancel = document.getElementById('staxx-images-cancel');
+  var imagesRemove = document.getElementById('staxx-images-remove');
+  var imagesData   = null;   // the last { groups, totals } the server sent
+  var imagesWatch  = null;   // the running job's poll timer, while removal is in progress
+
+  // In the order the window shows them. 'checkable' matches the table in
+  // PLAN_180: the "Kept so you can roll back" group has no checkbox at all,
+  // never merely an unticked one. 'defaultOn' is which of the checkable
+  // groups start ticked.
+  var IMAGES_GROUP_DEFS = [
+    { key: 'keep',     heading: 'Kept so you can roll back', checkable: false },
+    { key: 'dangling', heading: 'Left behind by updates',     checkable: true,  defaultOn: true },
+    { key: 'older',    heading: 'Older versions',             checkable: true,  defaultOn: true },
+    { key: 'unused',   heading: 'Not used by any stack',      checkable: true,  defaultOn: true },
+    { key: 'wanted',   heading: 'Still wanted',                checkable: true,  defaultOn: false }
+  ];
+
+  function imagesHumanBytes(bytes) {
+    if (!bytes || bytes <= 0) return '0 MB';
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0, n = bytes;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i >= 2 ? n.toFixed(1) : Math.round(n)) + ' ' + units[i];
+  }
+
+  function imagesRowHtml(def, row, idx) {
+    var tags = row.tags.length ? esc(row.tags.join(', ')) : '<em>(no tag)</em>';
+    var note = row.note ? '<div class="staxx-hint">' + esc(row.note) + '</div>' : '';
+    var box = def.checkable
+      ? '<input type="checkbox" class="staxx-images-check" data-images-id="' + esc(row.id) +
+        '" data-images-size="' + row.size + '"' + (def.defaultOn ? ' checked' : '') + '>'
+      : '<span class="staxx-images-nocheck" aria-hidden="true"></span>';
+    return '<label class="staxx-images-row">' + box +
+             '<span class="staxx-images-rowtext"><span>' + tags + '</span>' +
+             '<span class="staxx-images-rowsize">' + imagesHumanBytes(row.size) + '</span>' + note +
+             '</span></label>';
+  }
+
+  function imagesGroupHtml(def, rows) {
+    if (!rows.length) return '';
+    var extra = def.key === 'keep'
+      ? ' To keep fewer, change <strong>Previous image releases to keep</strong> in ' +
+        '<strong>Settings → Updates</strong>.'
+      : '';
+    return '<div class="staxx-images-group">' +
+             '<h4 class="staxx-images-group-title">' + esc(def.heading) + '</h4>' +
+             (extra ? '<p class="staxx-hint">' + extra + '</p>' : '') +
+             rows.map(function (row, i) { return imagesRowHtml(def, row, i); }).join('') +
+           '</div>';
+  }
+
+  function imagesUpdateRemoveButton() {
+    if (!imagesBody) return;
+    var count = 0, bytes = 0;
+    imagesBody.querySelectorAll('.staxx-images-check:checked').forEach(function (box) {
+      count++;
+      bytes += parseInt(box.dataset.imagesSize, 10) || 0;
+    });
+    imagesRemove.hidden = false;
+    imagesRemove.disabled = count === 0;
+    imagesRemove.textContent = count === 0
+      ? 'Remove selected'
+      : 'Remove ' + count + ' image' + (count === 1 ? '' : 's') + ', ' + imagesHumanBytes(bytes);
+  }
+
+  function renderImagesList() {
+    if (!imagesData) return;
+    var totals = imagesData.totals;
+    var summary = totals.removableCount
+      ? totals.removableCount + ' image' + (totals.removableCount === 1 ? '' : 's') + ', ' +
+        imagesHumanBytes(totals.removableBytes) + ', can be cleaned up.'
+      : 'Nothing to clean up right now.';
+    if (totals.keptCount) {
+      summary += ' ' + totals.keptCount + ' more, ' + imagesHumanBytes(totals.keptBytes) +
+        ', ' + (totals.keptCount === 1 ? 'is' : 'are') + ' kept for rolling back.';
+    }
+
+    var html = '<p class="staxx-images-summary">' + esc(summary) + '</p>';
+    IMAGES_GROUP_DEFS.forEach(function (def) {
+      html += imagesGroupHtml(def, imagesData.groups[def.key] || []);
+    });
+    if (!totals.removableCount && !totals.keptCount) {
+      html += '<p class="staxx-hint">No image on this server is going unused right now.</p>';
+    }
+    imagesBody.innerHTML = html;
+    imagesCancel.textContent = 'Cancel';
+    imagesUpdateRemoveButton();
+  }
+
+  function imagesJobPoll(job, offset, deadline) {
+    call('job', { job: job, offset: offset }, 15000).then(function (res) {
+      if (!imagesModal.open || !res.ok) return;
+      var pre = document.getElementById('staxx-images-joblog');
+      if (pre && res.text) pre.textContent += res.text;
+      if (res.done) {
+        imagesMsg.textContent = '';
+        imagesCancel.textContent = 'Close';
+        imagesRemove.hidden = true;
+        return;
+      }
+      if (Date.now() > deadline) { imagesMsg.textContent = 'Still running — check the job log.'; return; }
+      imagesWatch = setTimeout(function () { imagesJobPoll(job, res.offset, deadline); }, 1000);
+    });
+  }
+
+  function runImagesRemove() {
+    var ids = [];
+    imagesBody.querySelectorAll('.staxx-images-check:checked').forEach(function (box) {
+      ids.push(box.dataset.imagesId);
+    });
+    if (!ids.length) return;
+
+    imagesRemove.disabled = true;
+    imagesMsg.textContent = 'Removing…';
+    call('images_remove', { ids: ids.join(',') }, 15000).then(function (res) {
+      if (!res.ok || !res.job) {
+        imagesMsg.textContent = res.error || 'Could not start.';
+        imagesRemove.disabled = false;
+        return;
+      }
+      imagesBody.innerHTML = '<pre class="staxx-images-joblog" id="staxx-images-joblog"></pre>';
+      imagesCancel.textContent = 'Close';
+      imagesJobPoll(res.job, 0, Date.now() + 900000);
+    });
+  }
+
+  function imagesStopWatch() {
+    if (imagesWatch) { clearTimeout(imagesWatch); imagesWatch = null; }
+  }
+
+  function openImagesDialog() {
+    if (!imagesModal) return;
+    imagesData = null;
+    imagesMsg.textContent = '';
+    imagesCancel.textContent = 'Cancel';
+    imagesRemove.hidden = true;
+    imagesBody.innerHTML = '<p class="staxx-hint">Checking…</p>';
+    if (!imagesModal.open) imagesModal.showModal();
+    call('images_unused', {}, 30000).then(function (res) {
+      if (!imagesModal.open) return;
+      if (!res.ok) {
+        imagesBody.innerHTML = '<p class="staxx-notice staxx-notice--bad">' +
+          esc(res.error || 'Could not read the images.') + '</p>';
+        return;
+      }
+      imagesData = { groups: res.groups, totals: res.totals };
+      renderImagesList();
+    });
+  }
+
+  if (imagesModal) {
+    imagesBody.addEventListener('change', function (event) {
+      if (event.target.classList.contains('staxx-images-check')) imagesUpdateRemoveButton();
+    });
+
+    if (imagesCancel) imagesCancel.addEventListener('click', function () { imagesModal.close(); });
+    if (imagesRemove) imagesRemove.addEventListener('click', runImagesRemove);
+    imagesModal.addEventListener('close', imagesStopWatch);
+
+    // Same hit-test every dialog here uses: <dialog> fires no backdrop click
+    // of its own, because a click on the backdrop targets the dialog element.
+    imagesModal.addEventListener('click', function (event) {
+      if (event.target !== imagesModal) return;
+      var r = imagesModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) imagesModal.close();
     });
   }
 

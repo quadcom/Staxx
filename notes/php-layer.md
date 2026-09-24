@@ -13,6 +13,7 @@ early return, and each `require_once`s by absolute path.
 | `StacksTable.php` | Renders table rows; `staxx_state_snapshot()` for cheap refreshes |
 | `StacksPage.php` | Page shell, asset tags, CSRF handoff to the client |
 | `Icons.php` | Icon resolution — selfh.st index, caching, initials fallback |
+| `Images.php` | The "Clean up images" window (Storage tab): grouping unused images, the removal job — sits beside `UpdateRun.php`'s weekly cleanup and calls its keep-set, never edits it |
 | `Stats.php` | Reads what the background collector wrote; GPU/CPU/mem/net |
 | `action.php` | The single JSON endpoint |
 

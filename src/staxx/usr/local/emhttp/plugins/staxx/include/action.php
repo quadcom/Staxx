@@ -63,6 +63,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Merge.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
 
@@ -1943,6 +1944,27 @@ switch ($action) {
     $result = staxx_update_cleanup($dry, $error);
     if ($error !== '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'removed' => $result['removed'] ?? [], 'kept' => $result['kept'] ?? 0]);
+
+  // ---- PLAN_180 Part 1 — "Clean up images" on the Storage tab ----
+  //
+  // The list, grouped and already carrying every note the window shows.
+  // See include/Images.php for the rules; the server decides everything
+  // here, the page only ever displays what it is sent.
+  case 'images_unused':
+    $listing = staxx_images_unused($error);
+    if (!$listing['ok']) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'groups' => $listing['groups'], 'totals' => $listing['totals']]);
+
+  // ---- removing the ticked images — a detached job, same shape as every other one ----
+  case 'images_remove':
+    $ids = [];
+    foreach (explode(',', (string)($_POST['ids'] ?? '')) as $id) {
+      $id = trim($id);
+      if ($id !== '') $ids[] = $id;
+    }
+    $job = staxx_images_remove_job($ids, $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
 
   // ---- the browser saying an editor on this stack still has unsaved changes --
   //

@@ -278,6 +278,78 @@
   user-select: all;
 }
 
+/* PLAN_180 Part 1 — the "Clean up images" window. Plain rows in a plain
+   label, the same recipe .staxx-checkline already uses for a native
+   checkbox: the box is left to render however the browser draws it, and
+   only the layout around it is ours to style. */
+.staxx-images-summary {
+  margin: 0 0 1rem;
+  font-size: 1.2rem;
+}
+
+.staxx-images-group {
+  margin: 0 0 1.2rem;
+}
+
+.staxx-images-group-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.staxx-images-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 0.1rem solid var(--sm-line);
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.staxx-images-row:last-child {
+  border-bottom: 0;
+}
+
+.staxx-images-nocheck {
+  display: inline-block;
+  width: 1.3rem;
+  flex: 0 0 auto;
+}
+
+.staxx-images-rowtext {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 1rem;
+}
+
+.staxx-images-rowsize {
+  color: var(--sm-muted);
+  white-space: nowrap;
+}
+
+.staxx-images-rowtext .staxx-hint {
+  flex: 1 0 100%;
+  margin: 0.2rem 0 0;
+}
+
+.staxx-images-joblog {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  background: var(--sm-fill-0);
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+  white-space: pre-wrap;
+  max-height: 40rem;
+  overflow-y: auto;
+}
+
 /* A <button> made to read as inline link text inside a sentence — used where
    a click must be owned outright by our own script rather than an <a href>,
    which Unraid's own page scripts intercept on plugin pages. */

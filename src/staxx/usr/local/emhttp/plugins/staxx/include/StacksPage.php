@@ -1587,6 +1587,31 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   </dialog>
 
+  <!-- --------------------------------------------------------- images -- -->
+
+  <!-- PLAN_180 Part 1 — "Clean up images", opened from the Storage tab of
+       Settings. Same recipe as .staxx-backup-dlg: a head, a body the script
+       fills in (the grouped list, or the job's own log once removal has
+       started), and a foot whose buttons change meaning between the two —
+       see renderImagesList()/openImagesDialog() in stacks.js. -->
+  <dialog class="staxx-settings staxx-settings--wide" id="staxx-images-dlg" aria-labelledby="staxx-images-title">
+
+    <div class="staxx-settings-head">
+      <h3 class="staxx-settings-title" id="staxx-images-title"><?= _('Clean up images') ?></h3>
+    </div>
+
+    <div class="staxx-settings-body" id="staxx-images-body"></div>
+
+    <div class="staxx-settings-foot">
+      <p class="staxx-settings-msg" id="staxx-images-msg" role="status" aria-live="polite"></p>
+      <div class="staxx-buttons staxx-buttons--inline">
+        <button type="button" class="staxx-btn" id="staxx-images-cancel"><?= _('Cancel') ?></button>
+        <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-images-remove" disabled></button>
+      </div>
+    </div>
+
+  </dialog>
+
   <!-- ------------------------------------------------------------- log -- -->
 
   <!-- The ninth dialog: a job's output on demand — a failed command, Logs,
