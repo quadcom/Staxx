@@ -1,5 +1,5 @@
 <?PHP
-/* StaXX — the "Clean up images" window on the Storage tab: finding every
+/* StaXX — the "Scan stored images" window on the Storage tab: finding every
  * Docker image no container uses, sorting it into the groups the window
  * shows, and removing only what was ticked. PLAN_180 Part 1.
  * Copyright 2026, StaXX contributors.

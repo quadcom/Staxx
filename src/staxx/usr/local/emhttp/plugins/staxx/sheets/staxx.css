@@ -278,7 +278,7 @@
   user-select: all;
 }
 
-/* PLAN_180 Part 1 — the "Clean up images" window. Plain rows in a plain
+/* PLAN_180 Part 1 — the "Scan stored images" window. Plain rows in a plain
    label, the same recipe .staxx-checkline already uses for a native
    checkbox: the box is left to render however the browser draws it, and
    only the layout around it is ours to style. */

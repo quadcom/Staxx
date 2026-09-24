@@ -1589,7 +1589,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   <!-- --------------------------------------------------------- images -- -->
 
-  <!-- PLAN_180 Part 1 — "Clean up images", opened from the Storage tab of
+  <!-- PLAN_180 Part 1 — "Scan stored images", opened from the Storage tab of
        Settings. Same recipe as .staxx-backup-dlg: a head, a body the script
        fills in (the grouped list, or the job's own log once removal has
        started), and a foot whose buttons change meaning between the two —
@@ -1597,7 +1597,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
   <dialog class="staxx-settings staxx-settings--wide" id="staxx-images-dlg" aria-labelledby="staxx-images-title">
 
     <div class="staxx-settings-head">
-      <h3 class="staxx-settings-title" id="staxx-images-title"><?= _('Clean up images') ?></h3>
+      <h3 class="staxx-settings-title" id="staxx-images-title"><?= _('Scan stored images') ?></h3>
     </div>
 
     <div class="staxx-settings-body" id="staxx-images-body"></div>

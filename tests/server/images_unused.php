@@ -1,5 +1,5 @@
 <?php
-/* PLAN_180 Part 1 — include/Images.php: the "Clean up images" window's
+/* PLAN_180 Part 1 — include/Images.php: the "Scan stored images" window's
  * grouping, rule 2's refusal of an ID not on the server's own current list,
  * and rule 4c's exclusion of StaXX's own images by label.
  *

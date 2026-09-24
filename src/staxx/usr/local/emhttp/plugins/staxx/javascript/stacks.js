@@ -26887,10 +26887,10 @@
                      'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL + numAttrs +
                      placeholderAttr + ' value="' + esc(value) + '">';
     } else if (row.control === 'action' && row.key === 'IMAGES_CLEANUP') {
-      // PLAN_180 Part 1 — opens the "Clean up images" window instead of
+      // PLAN_180 Part 1 — opens the "Scan stored images" window instead of
       // filling a result area in place, so all this needs is the button.
       return '<div class="staxx-settings-action" id="' + row.id + '">' +
-               '<button type="button" class="staxx-btn" data-images-cleanup>Clean up images</button>' +
+               '<button type="button" class="staxx-btn" data-images-cleanup>Scan stored images</button>' +
              '</div>';
     } else if (row.control === 'action') {
       // PLAN_176 — the Integrations tab's "Check the connection" button.
@@ -28679,7 +28679,7 @@
   }
 
   /* --------------------------------------------------------- images -- */
-  /* PLAN_180 Part 1 — "Clean up images", opened from the Storage tab of
+  /* PLAN_180 Part 1 — "Scan stored images", opened from the Storage tab of
    * Settings. The server (include/Images.php) decides everything: which
    * group an image falls into, its note, whether it can be ticked at all.
    * This code only ever draws what it is sent and totals up what is

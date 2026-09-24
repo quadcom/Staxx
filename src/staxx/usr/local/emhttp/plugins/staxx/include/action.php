@@ -1945,7 +1945,7 @@ switch ($action) {
     if ($error !== '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'removed' => $result['removed'] ?? [], 'kept' => $result['kept'] ?? 0]);
 
-  // ---- PLAN_180 Part 1 — "Clean up images" on the Storage tab ----
+  // ---- PLAN_180 Part 1 — "Scan stored images" on the Storage tab ----
   //
   // The list, grouped and already carrying every note the window shows.
   // See include/Images.php for the rules; the server decides everything

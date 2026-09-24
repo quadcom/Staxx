@@ -104,7 +104,7 @@ Four rules run through the whole set:
 | `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
 | `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
 | `imagehistory` | Per-stack image history, and the keep-list image cleanup builds from it | `STORE_ROOT` |
-| `images_unused` | The "Clean up images" window's grouping (include/Images.php): dangling vs. built-here vs. rollback-protected, the crypt-image label exclusion, and rule 2's refusal of an id not on the server's own current list. Builds and removes only its own labelled throwaway images | — |
+| `images_unused` | The "Scan stored images" window's grouping (include/Images.php): dangling vs. built-here vs. rollback-protected, the crypt-image label exclusion, and rule 2's refusal of an id not on the server's own current list. Builds and removes only its own labelled throwaway images | — |
 | `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |
 | `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
 | `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |

@@ -66,7 +66,7 @@ What changed in StaXX, newest first.
 - Fixed in 00.04.01: A blank line in an .env file, or any other settings file opened in the editor, keeps its height. It used to collapse to nothing in the coloured overlay, so every line after it sat one row out of step with the line numbers and with where a click landed.
 - Removing old images automatically now clears old releases of linuxserver apps such as Plex, which it had been missing, and removing an old release now frees its space even when it still has a version label.
 - Rolling back an update to a linuxserver app such as Plex works again. It used to say the old version was no longer on the server even when it was.
-- Clean up images, on the Storage tab of StaXX's settings: see every image no container uses, with its size, and remove the ones you pick. Anything a stopped stack still needs, or that was built on your server, is left unticked, and versions kept for rolling back an update are never offered.
+- Scan stored images, on the Storage tab of StaXX's settings: see every image no container uses, with its size, and remove the ones you pick. Anything a stopped stack still needs, or that was built on your server, is left unticked, and versions kept for rolling back an update are never offered.
 
 ## 00.04.00 — released 2026-09-14
 
