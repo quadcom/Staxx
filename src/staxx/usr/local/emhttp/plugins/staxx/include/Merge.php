@@ -87,6 +87,15 @@ function staxx_merge_check_stack(string $rel): string {
   $file = staxx_find_compose_file($dir);
   if ($file === '') return '"'.$rel.'" has no compose file, so it cannot take part in a merge.';
 
+  // Checked before the review lock: retiring a source into another stack also
+  // drops a NEEDS-REVIEW.md there, so without this check first a re-merge
+  // attempt was refused with the review-lock sentence — the wrong reason.
+  $into = staxx_retired_into($rel);
+  if ($into !== '') {
+    return '"'.$rel.'" was already merged into "'.$into.'", so it cannot take part in another '
+         . 'merge. Close the wizard and start again.';
+  }
+
   if (staxx_review_locked($rel)) {
     return '"'.$rel.'" is still waiting to be reviewed after an import, so it cannot take part '
          . 'in a merge yet.';
