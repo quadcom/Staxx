@@ -967,7 +967,7 @@ console.log('\nK1b. port-unneeded — the evidence line, and both branches\' rec
      reasonFor(undefined, false) ===
        'Inside the new stack, web now reaches it by name, so it does not need this published port. ' +
        'Anything else that connects from outside still does: another stack, a tool on your network, a script. ' +
-       'Kept published. Approve to stop publishing it.');
+       'Kept published. Decline to stop publishing it.');
 
   ok('found — one stack, singular "also connects", and names it',
      reasonFor(['homeassistant'], false).indexOf(
@@ -981,8 +981,8 @@ console.log('\nK1b. port-unneeded — the evidence line, and both branches\' rec
      reasonFor([], false).indexOf(
        'No other stack on this server connects to this address. StaXX cannot see anything off this server.') >= 0);
 
-  ok('declined branch ends "Kept published. Approve to stop publishing it."',
-     / Kept published\. Approve to stop publishing it\.$/.test(reasonFor(['homeassistant'], false)));
+  ok('declined branch ends "Kept published. Decline to stop publishing it."',
+     / Kept published. Decline to stop publishing it.$/.test(reasonFor(['homeassistant'], false)));
 
   ok('approved branch ends "Stops being published."',
      / Stops being published\.$/.test(reasonFor(['homeassistant'], true)));
@@ -1363,7 +1363,7 @@ console.log('\nO. Full-rel source names — the leaf, not the rel, is what gets 
   })[0];
   ok('...and produces its own change record, declined by default, with a source line too',
      !!unneeded && unneeded.declined === true &&
-     / Kept published\. Approve to stop publishing it\.$/.test(unneeded.reason) &&
+     / Kept published. Decline to stop publishing it.$/.test(unneeded.reason) &&
      typeof unneeded.sourceLine === 'number');
   assertMergedIsValid('full-rel (falsified comment + port-unneeded, kept by default)', w.text, ['mariadb', 'web']);
 })();

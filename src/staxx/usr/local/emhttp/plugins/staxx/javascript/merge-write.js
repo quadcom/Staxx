@@ -2067,7 +2067,7 @@
           changes.push({
             key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declPortLine],
             title: title,
-            reason: reason + ' Kept published. Approve to stop publishing it.',
+            reason: reason + ' Kept published. Decline to stop publishing it.',
             struckComment: null
           });
           return;

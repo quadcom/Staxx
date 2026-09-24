@@ -89,7 +89,7 @@ The kinds of change you can meet:
 |---|---|
 | Now reaches *service* inside the stack | A setting pointed at another container by your server's address. It now names the service directly. |
 | Now uses *service*'s own port | The same, for a port: the container's own port replaces the one that was published on your server. |
-| Is anything outside this merge using *service* on port *N*? | The merged services no longer need this port to reach each other. It stays open on your server. Approve stops publishing it. The card names any other stack on your server that connects to it. |
+| Is anything outside this merge using *service* on port *N*? | The merged services no longer need this port to reach each other. It stays open on your server. Decline stops publishing it. The card names any other stack on your server that connects to it. |
 | Two services publish port *N* | Both stacks open the same port. Approve moves one to a free port. Decline keeps both, and you choose which one keeps it. |
 | Moved off a clashing port | The port that was moved to make room. |
 | Web address follows the moved port | The service's web page button now opens on the moved port. |
