@@ -15465,3 +15465,12 @@ dialog::backdrop {
   padding-left: 0;
   list-style: none;
 }
+
+/* PLAN_176: until a domain is typed the group's controls are disabled (a
+   switch flipped with no domain would write a block the schema rejects), and
+   they have to look it, since the switch styling otherwise ignores :disabled. */
+.staxx-scaffold .staxx-formgroup--expose .staxx-switch:has(input:disabled),
+.staxx-scaffold .staxx-formgroup--expose select:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}

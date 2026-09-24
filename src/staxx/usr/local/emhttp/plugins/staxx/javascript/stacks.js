@@ -4392,6 +4392,11 @@
       // this one NPM), so that is the only part of each one kept here.
       if (r && r.ok && Array.isArray(r.certificates)) {
         exposeCertsCache = r.certificates.map(function (c) { return c.nice_name; });
+        // The group was drawn before this answered, so fill any box already
+        // on screen rather than waiting for the next redraw to show the list.
+        document.querySelectorAll('select[data-expose-cert]').forEach(function (sel) {
+          sel.innerHTML = exposeCertOptionsHtml(sel.value);
+        });
       }
     }).catch(function () { /* stays empty — the row still has its fallback */ });
   }
@@ -4414,13 +4419,14 @@
   // exactly right (label, box, Notes) — this is only needed for Certificate,
   // whose control is a <select> the generic boxHtml()/choiceFor() pairing
   // was not worth teaching a whole new vocabulary entry for one field.
-  function exposeCertRowHtml(f, idx) {
+  function exposeCertRowHtml(f, idx, inert) {
     var current = f.parts.value ? f.parts.value.value : '';
     return '<div class="staxx-fieldrow" data-row="' + idx + '" data-field-row="' + esc(f.id) + '"' +
            ' data-from="' + (f.range ? f.range.start : -1) + '" data-to="' + (f.range ? f.range.end : -1) + '"' +
            ' tabindex="0">' +
            '<span class="staxx-fieldlabel">Certificate</span>' +
-           '<select class="staxx-input" data-row="' + idx + '" data-part="value"' +
+           '<select class="staxx-input" data-row="' + idx + '" data-part="value" data-expose-cert' +
+           (inert ? ' disabled' : '') +
            ' aria-label="Certificate" title="the NPM certificate this domain should use">' +
              exposeCertOptionsHtml(current) +
            '</select>' +
@@ -4496,7 +4502,7 @@
     );
     out.push(captionRow({ key: 'expose', cls: 'staxx-formgroup--container' }));
     out.push(fieldHtml(domain.f, domain.idx));
-    if (cert) out.push(exposeCertRowHtml(cert.f, cert.idx));
+    if (cert) out.push(exposeCertRowHtml(cert.f, cert.idx, inert));
     if (ws) out.push(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert));
     // PIHOLE_CONFIGURED (read off the scaffold near the top of this file) —
     // a Pi-hole entry means nothing without Nginx Proxy Manager, but NPM
