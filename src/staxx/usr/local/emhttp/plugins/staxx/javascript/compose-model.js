@@ -1982,6 +1982,13 @@
 
     harvestLeaves(out, serviceMap, lines);
 
+    // PLAN_176 — the Proxy and DNS group's five fields, straight after the
+    // other fixed-slot leaves for the same reason they are fixed: the
+    // group's shape must not depend on whether the file already has an
+    // expose: block.
+    var exposeFields = harvestExpose(serviceMap, lines);
+    for (var xi = 0; xi < exposeFields.length; xi++) out.push(exposeFields[xi]);
+
     for (i = 0; i < serviceMap.keys.length; i++) {
       var key = serviceMap.keys[i];
       if (KEYS[key] && KEYS[key].always) continue;      // already emitted above
@@ -2145,6 +2152,15 @@
     // PLAN_155's Notifications row — one field for all three switches now,
     // so there is one title rather than a per-event lookup.
     if (t.target === 'x-unraid.update.notify') return 'Notifications';
+    // The Proxy and DNS group's own five fields (PLAN_176) — same reason as
+    // webui/update above, and EXPOSE_LEAVES itself is not consulted here
+    // because it is keyed by the bare leaf name, not the dotted target this
+    // lookup is given.
+    if (t.target === 'x-unraid.expose.domain')      return 'Domain name';
+    if (t.target === 'x-unraid.expose.certificate')  return 'Certificate';
+    if (t.target === 'x-unraid.expose.websockets')   return 'WebSockets';
+    if (t.target === 'x-unraid.expose.dns')          return 'DNS name';
+    if (t.target === 'x-unraid.expose.enabled')      return 'Enabled';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
     if (t.binder === 'port') return 'Port ' + t.target.split('/')[0];
     // depends_on's long form: 'depends_on.<name>' titles as the dependency's
@@ -2221,6 +2237,12 @@
   function inferType(t) {
     if (t.binder === 'port') return 'port';
     if (t.target === 'x-unraid.webui') return 'port';
+    // Real YAML booleans (PLAN_176), named explicitly the same way webui's
+    // port is: booleanTail() below cannot see these, since neither ends in
+    // a tail word it knows, and the value-sniffing fallback further down
+    // would miss an absent one entirely (there is no value yet to sniff).
+    if (t.target === 'x-unraid.expose.websockets' || t.target === 'x-unraid.expose.dns' ||
+        t.target === 'x-unraid.expose.enabled') return 'boolean';
     if (t.binder === 'volume' || t.binder === 'device') return 'path';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].type) return KEYS[t.target].type;
     if (t.binder === 'list') return (KEYS[t.listKey] && KEYS[t.listKey].type) || 'text';
@@ -2814,6 +2836,56 @@
     // already carried, and the displayed value alone cannot tell those apart.
     wt.webuiToken = !!bits.token;
     return wt;
+  }
+
+  // x-unraid.expose (PLAN_176) — the Nginx Proxy Manager / Pi-hole block a
+  // domain name asks for. Every leaf offered whether or not the file has
+  // one, the same promise LEAVES makes for healthcheck/deploy — but this
+  // cannot be a LEAVES entry itself, because those are read as a direct
+  // child of the service (serviceMap.pairs[blockKey]) and expose sits two
+  // levels down, inside x-unraid. Modelled on harvestBlock()'s own walk,
+  // rooted at x-unraid.expose instead. Each leaf's `path` is
+  // ['x-unraid', 'expose', <key>] — the same depth-3 shape update.mode and
+  // update.delay already write through addNested()/removeKey(), so no
+  // change to either was needed to read or write these.
+  // Titles and boolean-ness for these five live in inferTitle()/inferType()
+  // (named explicitly by target, the same way x-unraid.webui and
+  // x-unraid.update.* are) — this table only drives which keys are walked.
+  var EXPOSE_LEAVES = ['domain', 'certificate', 'websockets', 'dns', 'enabled'];
+
+  function harvestExpose(serviceMap, lines) {
+    var out = [];
+    var xu = serviceMap.pairs['x-unraid'];
+    var xmap = xu && xu.value && xu.value.kind === 'map' ? xu.value : null;
+    var exPair = xmap ? xmap.pairs['expose'] : null;
+    // A present but non-map expose (sealed, or a bare key) is left alone —
+    // the same rule harvestLeaves() follows for a block key it cannot read:
+    // saying nothing here leaves it to the Advanced catch-all rather than
+    // offering a "create" box into something this cannot safely edit.
+    if (exPair && exPair.value && exPair.value.kind !== 'map') return out;
+    var exMap = exPair && exPair.value && exPair.value.kind === 'map' ? exPair.value : null;
+
+    for (var ki = 0; ki < EXPOSE_LEAVES.length; ki++) {
+      var key = EXPOSE_LEAVES[ki];
+      var pair = exMap ? exMap.pairs[key] : null;
+      var fullTarget = 'x-unraid.expose.' + key;
+      var fullPath = ['x-unraid', 'expose', key];
+      var t;
+
+      if (pair && pair.value && pair.value.kind === 'scalar') {
+        t = settingTarget(pair, fullTarget, lines);
+        t.path = fullPath;
+      } else if (!pair) {
+        t = target('setting', fullTarget, {
+          parts: { value: part('', null) }, range: null, absent: true, path: fullPath
+        });
+      } else {
+        continue;   // present but not a plain scalar — left alone, as above
+      }
+
+      out.push(t);
+    }
+    return out;
   }
 
   /* =====================================================================
@@ -3589,6 +3661,23 @@
       return insertChild(doc, netEntry, which, value, null, false) >= 0;
     }
     if (!p) return false;
+
+    // x-unraid.expose.websockets / .enabled (PLAN_176) — the one pair in
+    // this file where ABSENT is the "on" state: nothing said already means
+    // WebSockets allowed / the proxy host on, so switching either back on
+    // removes the line rather than writing true, and only off is ever
+    // spelled out — otherwise adopting an existing proxy host would rewrite
+    // it on the very next save for no reason. Checked ahead of the generic
+    // f.path branches below, which only remove a line on a BLANK value;
+    // 'true' here means the same thing a blank value means everywhere else
+    // in this block, so it has to be caught first. 'false' falls through to
+    // the ordinary paths beneath, which already know f.type === 'boolean'
+    // writes bare.
+    if (f.path && which === 'value' &&
+        (f.target === 'x-unraid.expose.websockets' || f.target === 'x-unraid.expose.enabled') &&
+        String(value) === 'true') {
+      return p.spot ? removeKey(doc, form, f.service, f.path) : true;
+    }
 
     // The web-address port (PLAN_51) — the one field that reaches inside
     // x-unraid. Named explicitly rather than routed through the path-based

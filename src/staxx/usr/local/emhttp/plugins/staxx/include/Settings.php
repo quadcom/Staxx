@@ -27,6 +27,11 @@ define('STAXX_SETTINGS_LOADED', true);
 // staxx_settings_save() below for why that second half matters.
 const STAXX_HUB_TOKEN_MASK = '********';
 
+// Every setting that holds a password or a token: masked on read-back, left
+// alone on save when the posted value is still the mask, and masked again in
+// the save reply. One list, so a new secret cannot miss one of the three.
+const STAXX_SECRET_KEYS = ['HUB_TOKEN', 'NPM_PASS', 'PIHOLE_PASS'];
+
 /**
  * The allowlist, and the single source of truth for what a setting is.
  *
@@ -105,6 +110,15 @@ function staxx_settings_keys(): array {
     // is read here for reload purposes — see the $reload list further down.
     'HUB_USER'            => ['type' => 'text', 'default' => ''],
     'HUB_TOKEN'           => ['type' => 'text', 'default' => ''],
+    // PLAN_176 — Nginx Proxy Manager and Pi-hole. NPM_PASS/PIHOLE_PASS are
+    // in STAXX_SECRET_KEYS above, so they get the same mask-on-read,
+    // leave-alone-on-mask-repost treatment as HUB_TOKEN.
+    'NPM_URL'              => ['type' => 'text', 'default' => ''],
+    'NPM_USER'             => ['type' => 'text', 'default' => ''],
+    'NPM_PASS'             => ['type' => 'text', 'default' => ''],
+    'PIHOLE_URL'           => ['type' => 'text', 'default' => ''],
+    'PIHOLE_PASS'          => ['type' => 'text', 'default' => ''],
+    'EXPOSE_ALLOW_INSECURE' => ['type' => 'choice', 'default' => 'no', 'choices' => ['no', 'yes']],
     // PLAN_92a Part A — registries this server's owner runs and vouches for.
     // Not read at page load, so not in $reload below.
     'REGISTRY_TRUST'      => ['type' => 'hosts', 'default' => ''],
@@ -184,9 +198,9 @@ function staxx_settings_read(): array {
     // read it as its modern equivalent so the panel never has to offer a
     // choice that no longer exists.
     if ($key === 'UPDATE_MODE' && ($v === 'off' || $v === 'notify')) $v = 'manual';
-    // The token itself never leaves the server once saved — the panel only
-    // needs to know whether one is set, not what it is.
-    if ($key === 'HUB_TOKEN') $v = $v !== '' ? STAXX_HUB_TOKEN_MASK : '';
+    // A secret never leaves the server once saved — the panel only needs to
+    // know whether one is set, not what it is.
+    if (in_array($key, STAXX_SECRET_KEYS, true)) $v = $v !== '' ? STAXX_HUB_TOKEN_MASK : '';
     $out[$key] = $v;
   }
   return $out;
@@ -540,11 +554,12 @@ function staxx_settings_save(
     $raw = $posted[$key];
     if (!is_string($raw)) { $error = 'The value for "'.$key.'" must be plain text.'; return false; }
 
-    // The browser only ever sees the placeholder for a saved token, never the
-    // token itself (staxx_settings_read() above). A form that posts it back
-    // unchanged must not overwrite the real one with eight literal asterisks
-    // — so this is read as "leave HUB_TOKEN alone", not as a value to store.
-    if ($key === 'HUB_TOKEN' && $raw === STAXX_HUB_TOKEN_MASK) continue;
+    // The browser only ever sees the placeholder for a saved secret, never
+    // the secret itself (staxx_settings_read() above). A form that posts it
+    // back unchanged must not overwrite the real one with eight literal
+    // asterisks — so this is read as "leave it alone", not as a value to
+    // store.
+    if (in_array($key, STAXX_SECRET_KEYS, true) && $raw === STAXX_HUB_TOKEN_MASK) continue;
 
     // Not trimmed first: a leading or trailing newline is exactly the kind of
     // thing the character check below exists to catch, and trimming it away
@@ -612,10 +627,15 @@ function staxx_settings_save(
   $saved = $before;
   foreach ($flashOverlay as $key => $value) $saved[$key] = $value;
   foreach ($storeOverlay as $key => $value) $saved[$key] = $value;
-  // $storeOverlay['HUB_TOKEN'], when present, is the real new token in the
+  // $storeOverlay[<secret>], when present, is the real new value in the
   // clear — it has to be, to be written above. It must not reach the browser
-  // that way, so mask it again here exactly as staxx_settings_read() does.
-  if (isset($saved['HUB_TOKEN'])) $saved['HUB_TOKEN'] = $saved['HUB_TOKEN'] !== '' ? STAXX_HUB_TOKEN_MASK : '';
+  // that way, so mask every secret again here exactly as
+  // staxx_settings_read() does.
+  foreach (STAXX_SECRET_KEYS as $secretKey) {
+    if (isset($saved[$secretKey])) {
+      $saved[$secretKey] = $saved[$secretKey] !== '' ? STAXX_HUB_TOKEN_MASK : '';
+    }
+  }
 
   foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT'] as $key) {
     if ($saved[$key] !== $before[$key]) { $reload = true; break; }

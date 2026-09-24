@@ -64,6 +64,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Merge.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -2391,6 +2392,99 @@ switch ($action) {
     }
 
     staxx_reply(['ok' => true, 'url' => $url, 'answered' => $answered, 'code' => $code, 'message' => $message]);
+
+  /* ---------------------------------------------------- PLAN_176: expose -- */
+
+  // ---- settings-page button: sign in to whichever of NPM/Pi-hole has an
+  // address set, report what each says, then sign back out. Never reports a
+  // service that has no address at all — leaving both blank is not a failure.
+  case 'expose-test':
+    $cfg   = staxx_cfg();
+    $lines = [];
+
+    $npmUrl = trim((string)($cfg['NPM_URL'] ?? ''));
+    if ($npmUrl !== '') {
+      $npmErr = '';
+      $token  = staxx_npm_login($npmErr);
+      if ($token === '') {
+        $lines[] = ['ok' => false, 'text' => 'Nginx Proxy Manager: '.$npmErr];
+      } else {
+        $verErr = '';
+        $version = staxx_npm_version($npmUrl, $verErr);
+        $certErr = '';
+        $certs   = $verErr === '' ? staxx_npm_certificates($npmUrl, $token, $certErr) : [];
+        if ($verErr !== '' || $certErr !== '') {
+          $lines[] = ['ok' => false, 'text' => 'Nginx Proxy Manager: '.($verErr ?: $certErr)];
+        } else {
+          $n = count($certs);
+          $lines[] = [
+            'ok'   => true,
+            'text' => 'Nginx Proxy Manager '.$version.': signed in, '.$n
+                    . ($n === 1 ? ' certificate' : ' certificates').' found.',
+          ];
+        }
+      }
+    }
+
+    $piUrl = staxx_pihole_url();
+    if ($piUrl !== '') {
+      $piErr   = '';
+      $headers = staxx_pihole_login($piErr);
+      if ($piErr !== '') {
+        $lines[] = ['ok' => false, 'text' => 'Pi-hole: '.$piErr];
+      } else {
+        $verErr = '';
+        $version = staxx_pihole_version($piUrl, $headers, $verErr);
+        if ($verErr !== '') {
+          $lines[] = ['ok' => false, 'text' => 'Pi-hole: '.$verErr];
+        } elseif (!staxx_pihole_is_v6($version)) {
+          $lines[] = ['ok' => false, 'text' => 'Pi-hole: this is version '.$version
+                                              . ', but StaXX needs Pi-hole 6 or newer.'];
+        } else {
+          $clean = ltrim($version, 'v');
+          $text  = 'Pi-hole '.$clean.': reachable.';
+          // Phase 0 (2026-09-24): [] means "no admin password set" — see
+          // staxx_pihole_login()'s own comment for why that is not a refusal.
+          if ($headers === []) {
+            $text = 'Pi-hole '.$clean.': reachable. It has no admin password, so StaXX can change '
+                  . 'it without one.';
+          }
+          $lines[] = ['ok' => true, 'text' => $text];
+        }
+        staxx_pihole_logout($piUrl, $headers);
+      }
+    }
+
+    if ($lines === []) {
+      staxx_reply([
+        'ok'    => false,
+        'error' => 'Fill in an address for Nginx Proxy Manager or Pi-hole above, then try again.',
+      ]);
+    }
+    staxx_reply(['ok' => true, 'lines' => $lines]);
+
+  // ---- read-only: the editor's certificate dropdown ----
+  case 'expose-certs':
+    $cfg    = staxx_cfg();
+    $npmUrl = trim((string)($cfg['NPM_URL'] ?? ''));
+    if ($npmUrl === '') {
+      staxx_reply([
+        'ok'    => false,
+        'error' => 'Nginx Proxy Manager is not set up yet — fill in its address in the '
+                 . 'Integrations settings.',
+      ]);
+    }
+    $err   = '';
+    $token = staxx_npm_login($err);
+    if ($token === '') staxx_reply(['ok' => false, 'error' => $err]);
+    $certs = staxx_npm_certificates($npmUrl, $token, $err);
+    if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
+    staxx_reply([
+      'ok'           => true,
+      'certificates' => array_map(function ($c) {
+        return ['nice_name' => $c['nice_name'], 'domain_names' => $c['domain_names']];
+      }, $certs),
+    ]);
 
   /* ------------------------------------------------------------ folders -- */
 

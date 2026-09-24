@@ -235,6 +235,10 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
      data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
      data-server-timezone="<?= htmlspecialchars($serverTimeZone) ?>"
+     <?php /* PLAN_176: whether the editor's Proxy and DNS group and its DNS row
+        appear. Only the yes/no crosses to the browser, never the address. */ ?>
+     data-npm-configured="<?= trim((string)(staxx_cfg()['NPM_URL'] ?? '')) !== '' ? '1' : '0' ?>"
+     data-pihole-configured="<?= trim((string)(staxx_cfg()['PIHOLE_URL'] ?? '')) !== '' ? '1' : '0' ?>"
      <?php /* PLAN_165 §5/§6 — rendered here rather than waited for on a
         refresh, for exactly the reason the clash facts below are: refreshState()
         only ever runs after something has been started or stopped, so a fresh
@@ -1508,7 +1512,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="storage"><?= _('Storage') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="icons"><?= _('Icons and images') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="updates"><?= _('Updates') ?></button>
-      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Registries and security') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Integrations') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="selftest"><?= _('Self-test') ?></button>
     </div>
 

@@ -420,6 +420,49 @@ Do not read this as a precedent for keeping a second copy of ordinary compose se
 leaves nothing else standing: the network list has to leave the file the moment a mode is chosen,
 and this is the only place left for it to go.
 
+### `expose`
+
+```yaml
+services:
+  sonarr:
+    x-unraid:
+      expose:
+        domain: sonarr.home.lan        # present = an NPM proxy host for this service
+        certificate: "*.home.lan"      # NPM certificate nice_name; absent = plain http
+        websockets: false               # absent = true; NPM's own "Websockets Support"
+        enabled: false                  # absent = true; false = proxy host switched off in NPM
+        dns: true                       # Pi-hole A record for domain, pointed at NPM's address
+```
+
+Asks StaXX to keep a [Nginx Proxy Manager](https://nginxproxymanager.com/) entry — and, if you also
+run [Pi-hole](https://pi-hole.net/), a matching local DNS name — pointed at this service, so the
+address you type in a browser does not have to be `http://server:port`. Only `domain` is required;
+every other key is optional.
+
+- `domain` — the address a browser would be typed to reach this service. Writing this is what asks
+  for the proxy entry in the first place; there is no separate on/off key for the entry itself.
+- `certificate` — a Nginx Proxy Manager certificate, named by its own *nice name* rather than its
+  numeric id, because the id means nothing outside that one NPM and the file has to stay portable.
+  Absent means the proxy host answers on plain `http`.
+- `websockets` — Nginx Proxy Manager's own "Websockets Support" switch. **Absent means on** — the
+  same as most apps want, and the same as a host StaXX finds already there keeps meaning, so
+  adopting an existing entry changes nothing. Only `false` is ever written; turning this back on
+  removes the line rather than writing `true`.
+- `enabled` — whether the proxy host itself is switched on in Nginx Proxy Manager. **Absent means
+  on**, for the same reason `websockets` is, and is written the same way: only `false` ever appears
+  in the file. Switching this off does not touch a Pi-hole name written alongside it.
+- `dns` — whether StaXX also keeps a Pi-hole A record for `domain`, pointed at Nginx Proxy
+  Manager's own address rather than at this container directly. Unlike `websockets`/`enabled`,
+  absent here simply means no DNS name — there is no separate default to fall back to.
+
+Where the proxy should actually point is answered the same way `webui` (above) already answers it:
+the host-facing side of the service's first port on a bridge network, or the container's own side
+on host networking or macvlan/ipvlan, where nothing is published.
+
+`expose` reaches Nginx Proxy Manager and Pi-hole through server-wide settings (their address, and
+the account StaXX signs in with) rather than anything written per-service — a stack's own compose
+file never carries a password for either.
+
 ---
 
 ## Icons

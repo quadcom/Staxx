@@ -6094,6 +6094,43 @@ div.title.staxx-has-titlebar {
   --sm-fieldcols: 12rem minmax(0, 1fr) minmax(0, 1fr) 2.4rem;
 }
 
+/* PLAN_176 B3 — the Proxy and DNS group rides on --container's own grid
+   (its own --sm-fieldcols above already fits: setting/value/Notes/blank),
+   this only adds what is specific to it: the Enabled switch turns the rows
+   below it into a suggestion rather than a fact when it is off, and the
+   Remove button sits clear of the last row rather than touching it.
+   .staxx-grouphead is already display:flex; justify-content:space-between,
+   so the switch this group's own head markup adds lands at the right edge
+   on its own — no extra rule needed for that part. */
+.staxx-formgroup--exposedim .staxx-fieldrow { opacity: 0.45; }
+
+/* A switch is visually shorter than a text box, so without this its row
+   would be the one line in the group that reads as smaller — measured
+   against .staxx-input's own padding/font-size (first guess, to be checked
+   on screen). The label and Notes cell still centre against it via
+   .staxx-fieldrow's own align-items: center, so nothing else changes. */
+.staxx-fieldrow--exposeswitch { min-height: 3.2rem; }
+
+.staxx-expose-remove {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.6rem 1rem 0;
+}
+
+/* The Status row's content grows with however many lines it has (one per
+   switch that is on, plus an Apply button — B4/B5), unlike every row above
+   it which is exactly one line tall — so it aligns to the top of its own
+   row instead of centring, and the label follows it there. */
+.staxx-fieldrow--exposestatus {
+  align-items: start;
+}
+.staxx-fieldrow--exposestatus .staxx-fieldlabel {
+  padding-top: 0.6rem;
+}
+.staxx-expose-status:empty {
+  min-height: 1px;   /* B4/B5 fill this; keeps the row from collapsing while it is */
+}
+
 /* --declared is a declaration in the Stack section — name, its one primary
    setting, note, × — which is the same four-track shape as a mapped pair, so
    the two share a rule rather than repeating one. */

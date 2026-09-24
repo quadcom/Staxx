@@ -35,6 +35,15 @@
     var updSettingsRaw = JSON.parse(scaffold.dataset.updateSettings || '');
     if (updSettingsRaw) UPDATE_SETTINGS = updSettingsRaw;
   } catch (e) { /* keep the fallback above */ }
+  // PLAN_176 B3 — whether Nginx Proxy Manager / Pi-hole are configured at
+  // all (Settings.php's NPM_URL/PIHOLE_URL, PLAN_176 B2), read the same
+  // minimal way SERVER_TZ is: a flag on the scaffold, never the address
+  // itself, which is nobody's business but the settings page. Gates the
+  // Proxy and DNS group's own visibility, and within it, the DNS name row.
+  // '1' or absent/anything else — not yet wired on the PHP side as this was
+  // written, so both default false until StacksPage.php sets them.
+  var NPM_CONFIGURED    = scaffold.dataset.npmConfigured === '1';
+  var PIHOLE_CONFIGURED = scaffold.dataset.piholeConfigured === '1';
 
   var modal       = document.getElementById('staxx-modal');
   var modalTitle  = document.getElementById('staxx-modal-title');
@@ -875,6 +884,14 @@
   // class.
   var GROUPS = [
     { key: 'container', heading: 'Container', cls: 'staxx-formgroup--container', note: '(required)' },
+    // PLAN_176 B3 — straight after Container, which holds the web page port
+    // this group's proxy entry forwards to. No `flag`: shown or hidden by
+    // whether Nginx Proxy Manager is configured at all (NPM_CONFIGURED,
+    // read off the scaffold below), never by a per-service tick, and drawn
+    // by its own function (exposeGroupHtml()) for the same reason Updates
+    // is — the Enabled switch in the group head and the Remove button at
+    // the foot do not fit the generic caption/fieldHtml() loop.
+    { key: 'expose', heading: 'Proxy and DNS', cls: 'staxx-formgroup--container staxx-formgroup--expose' },
     // PLAN_150 phase 4b — always drawn, right after Container, on every
     // service: no flag and no add, the same reason Container and Advanced
     // have neither. Its own two fields (harvestUpdatePolicy(), compose-
@@ -994,7 +1011,11 @@
     // for the long form's name/condition pair, which does not exist yet.
     depends:   ['service', 'Notes'],
     logging:   ['setting', 'value', 'Notes'],
-    advanced:  ['setting', 'value', 'Notes']
+    advanced:  ['setting', 'value', 'Notes'],
+    // PLAN_176 — the Proxy and DNS group reuses Container's own three
+    // headings; its own head carries the Enabled switch instead of a
+    // fourth column.
+    expose:    ['setting', 'value', 'Notes']
   };
 
   // Where a field lands. `fixed` wins outright, even over `locked` — that is
@@ -1016,6 +1037,11 @@
     // harvestUpdatePolicy() (compose-model.js) leaves f.fixed false for all
     // four, since none is one of Container's four fixed rows either.
     if (f.binder === 'policy') return 'updates';
+    // The Proxy and DNS group's five fields (PLAN_176) reach inside
+    // x-unraid the same way webui/policy do above, for the same reason: none
+    // is one of Container's own fixed rows, so nothing else here would route
+    // them anywhere but Advanced.
+    if (/^x-unraid\.expose\./.test(f.target)) return 'expose';
     // A declaration belongs to no service, so it gets its own bucket per
     // kind rather than falling in with Advanced. A fold field carries this
     // same binder — it is bucketed here too if a caller does not filter it
@@ -4338,6 +4364,161 @@
            '</fieldset>';
   }
 
+  /* =====================================================================
+   * PLAN_176 B3 — the Proxy and DNS group. One block per service, drawn by
+   * its own function like Updates above: the Enabled switch lives in the
+   * group head rather than as a row, WebSockets and DNS name are real
+   * toggle switches rather than the dropdown every other boolean leaf gets
+   * (see the "expose.websockets/.dns/.enabled" special case in
+   * inferType()), and a Remove button sits under everything. B4/B5 wire up
+   * the certificate list, the Status row and the server side of Remove —
+   * this only has to read and write the file correctly and look right.
+   * ===================================================================== */
+
+  // The certificate list for the Certificate dropdown — a NPM nice_name per
+  // entry, fetched once per page load and cached here. A stack that already
+  // names a certificate shows that name even before this answers (see
+  // exposeCertOptionsHtml()), so the row never looks cleared while the real
+  // list loads or (before B4 exists) never arrives at all.
+  var exposeCertsLoaded = false;
+  var exposeCertsCache  = [];
+  function loadExposeCerts() {
+    if (exposeCertsLoaded) return;
+    exposeCertsLoaded = true;
+    call('expose-certs', {}).then(function (r) {
+      // action.php's 'expose-certs' case answers one {nice_name, domain_names}
+      // object per certificate — the file only ever stores nice_name (see the
+      // schema's own comment on why: the numeric id means nothing outside
+      // this one NPM), so that is the only part of each one kept here.
+      if (r && r.ok && Array.isArray(r.certificates)) {
+        exposeCertsCache = r.certificates.map(function (c) { return c.nice_name; });
+      }
+    }).catch(function () { /* stays empty — the row still has its fallback */ });
+  }
+
+  function exposeCertOptionsHtml(current) {
+    var opts = '<option value="">None (plain http)</option>';
+    var seen = false;
+    exposeCertsCache.forEach(function (c) {
+      if (c === current) seen = true;
+      opts += '<option value="' + esc(c) + '"' + (c === current ? ' selected' : '') + '>' + esc(c) + '</option>';
+    });
+    // The file's own value, even when the fetched list has not answered yet
+    // or does not (any longer) contain it — never silently dropped from the
+    // box just because this page cannot currently confirm it exists.
+    if (current && !seen) opts += '<option value="' + esc(current) + '" selected>' + esc(current) + '</option>';
+    return opts;
+  }
+
+  // Domain name is an ordinary text leaf, so fieldHtml() already draws it
+  // exactly right (label, box, Notes) — this is only needed for Certificate,
+  // whose control is a <select> the generic boxHtml()/choiceFor() pairing
+  // was not worth teaching a whole new vocabulary entry for one field.
+  function exposeCertRowHtml(f, idx) {
+    var current = f.parts.value ? f.parts.value.value : '';
+    return '<div class="staxx-fieldrow" data-row="' + idx + '" data-field-row="' + esc(f.id) + '"' +
+           ' data-from="' + (f.range ? f.range.start : -1) + '" data-to="' + (f.range ? f.range.end : -1) + '"' +
+           ' tabindex="0">' +
+           '<span class="staxx-fieldlabel">Certificate</span>' +
+           '<select class="staxx-input" data-row="' + idx + '" data-part="value"' +
+           ' aria-label="Certificate" title="the NPM certificate this domain should use">' +
+             exposeCertOptionsHtml(current) +
+           '</select>' +
+           noteBoxHtml(f, idx) +
+           '</div>';
+  }
+
+  // WebSockets and DNS name: a real toggle rather than the dropdown every
+  // other boolean leaf gets (Adrian, 2026-09-24 — see PLAN_176 B3). No Notes
+  // box on either (Adrian: a switch needs no note); the empty cell stays so
+  // the grid does not shift against the rows above and below it.
+  function exposeSwitchRowHtml(f, idx, label, switchText, on, inert) {
+    return '<div class="staxx-fieldrow staxx-fieldrow--exposeswitch" data-row="' + idx + '"' +
+           ' data-field-row="' + esc(f.id) + '"' +
+           ' data-from="' + (f.range ? f.range.start : -1) + '" data-to="' + (f.range ? f.range.end : -1) + '"' +
+           ' tabindex="0">' +
+           '<span class="staxx-fieldlabel">' + esc(label) + '</span>' +
+           '<label class="staxx-switch">' +
+             '<input type="checkbox" data-row="' + idx + '" data-part="value"' + (on ? ' checked' : '') +
+               (inert ? ' disabled' : '') + '>' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(switchText) + '</span>' +
+           '</label>' +
+           '<span class="staxx-boxgap" aria-hidden="true"></span>' +
+           '</div>';
+  }
+
+  // Filled in by B4/B5 once there is something to check the file against —
+  // a named, empty hook rather than a row that is simply missing, so it is
+  // obvious in the markup that this is meant to hold something later.
+  function exposeStatusHtml() { return ''; }
+
+  function exposeGroupHtml(svc, rows, fields) {
+    var by = {};
+    rows.forEach(function (idx) {
+      var f = fields[idx];
+      by[f.target.split('.').pop()] = { f: f, idx: idx };
+    });
+    var domain = by.domain, cert = by.certificate, ws = by.websockets,
+        dns = by.dns, enabled = by.enabled;
+    // harvestExpose() (compose-model.js) always offers all five, so this
+    // only trips if that ever changes underneath this — refuse to draw a
+    // half-wired group rather than throw reading .idx off undefined.
+    if (!domain || !enabled) return '';
+
+    // Absent means true for websockets/enabled (PLAN_176 — see setPart()'s
+    // own comment in compose-model.js); dns has no such default, so absent
+    // there means off.
+    var wsOn      = ws ? ws.f.parts.value.value !== 'false' : true;
+    var enabledOn = enabled.f.parts.value.value !== 'false';
+    var dnsOn     = !!(dns && dns.f.parts.value.value === 'true');
+    // The schema requires a domain whenever expose exists, so a switch
+    // flipped before one is typed would write a block that fails to
+    // validate. Until there is a domain the switches are inert and there is
+    // nothing to remove.
+    var inert = String(domain.f.parts.value.value || '').trim() === '';
+
+    loadExposeCerts();
+
+    var out = [];
+    out.push('<div class="staxx-formgroup staxx-formgroup--container staxx-formgroup--expose' +
+              (enabledOn ? '' : ' staxx-formgroup--exposedim') + '" data-group="expose">');
+    out.push(
+      '<div class="staxx-grouphead">' +
+        '<h5 class="staxx-fieldgroup">Proxy and DNS <span class="staxx-groupnote">(optional)</span></h5>' +
+        '<label class="staxx-switch staxx-expose-enabled">' +
+          '<input type="checkbox" data-row="' + enabled.idx + '" data-part="value"' +
+          (enabledOn ? ' checked' : '') + (inert ? ' disabled' : '') + '>' +
+          '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+          '<span class="staxx-switch-text">Enabled</span>' +
+        '</label>' +
+      '</div>'
+    );
+    out.push(captionRow({ key: 'expose', cls: 'staxx-formgroup--container' }));
+    out.push(fieldHtml(domain.f, domain.idx));
+    if (cert) out.push(exposeCertRowHtml(cert.f, cert.idx));
+    if (ws) out.push(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert));
+    // PIHOLE_CONFIGURED (read off the scaffold near the top of this file) —
+    // a Pi-hole entry means nothing without Nginx Proxy Manager, but NPM
+    // works perfectly well with no Pi-hole at all, so this row alone is
+    // gated on the second server-wide setting.
+    if (dns && PIHOLE_CONFIGURED) out.push(exposeSwitchRowHtml(dns.f, dns.idx, 'DNS name', 'Add to Pi-hole', dnsOn, inert));
+    out.push(
+      '<div class="staxx-fieldrow staxx-fieldrow--exposestatus">' +
+        '<span class="staxx-fieldlabel">Status</span>' +
+        '<div class="staxx-expose-status" data-expose-status="' + esc(svc.name) + '">' + exposeStatusHtml() + '</div>' +
+      '</div>'
+    );
+    if (!inert) out.push(
+      '<div class="staxx-expose-remove">' +
+        '<button type="button" class="staxx-btn" data-expose-remove="' + esc(svc.name) + '">' +
+          'Remove from proxy and DNS</button>' +
+      '</div>'
+    );
+    out.push('</div>');
+    return out.join('');
+  }
+
   // Finds this same row again by what it MEANS (service + which of the two
   // fields), not by index — the index a click fired from can go stale across
   // an `await` (a rename, an undo, anything else that reparses while the
@@ -5564,6 +5745,17 @@
           // order it pushes them (mode, then the single notify block).
           if (grp.key === 'updates') {
             out.push(updatesFieldsetHtml(svc, rows, form.fields));
+            continue;
+          }
+          // PLAN_176 B3 — Proxy and DNS. Gated on NPM being configured at
+          // all (a server-wide setting, not a per-service tick), so it is
+          // checked here rather than through grp.flag/serviceFlags() the
+          // way health/resources/depends are — the group's shape does not
+          // depend on this file's own content, only on whether the server
+          // has anywhere to send a proxy entry.
+          if (grp.key === 'expose') {
+            if (!NPM_CONFIGURED) continue;
+            out.push(exposeGroupHtml(svc, rows, form.fields));
             continue;
           }
           // A flagged group (health/resources/depends) shows exactly when its
@@ -8285,7 +8477,15 @@
     // edit — exactly the moment a rename box (never debounced, see the input
     // listener above) is meant to commit, so it is let through here rather
     // than gaining a keydown/focusout handler of its own.
-    if (el.tagName !== 'SELECT' && el.dataset.rename === undefined) return;
+    // A checkbox (PLAN_176's WebSockets/DNS name/Enabled switches — the
+    // Proxy and DNS group is the only place a real toggle stands for a
+    // boolean field; every other one still picks true/false from a
+    // dropdown) is the same kind of decision a SELECT is: it fires only on
+    // an actual click, never mid-typing, so it commits at once too. .value
+    // is set from .checked first, since a checkbox's own value attribute
+    // never changes on its own — see the switch markup itself.
+    if (el.type === 'checkbox') el.value = el.checked ? 'true' : 'false';
+    if (el.tagName !== 'SELECT' && el.type !== 'checkbox' && el.dataset.rename === undefined) return;
     // Not every dropdown in a row IS the row. An advice note can carry
     // pickers of its own — "which of this service's own boxes is its
     // password" (PLAN_70 stage 5), answered by its own button — and those
@@ -8295,7 +8495,7 @@
     // cannot be written" and would have written to the wrong box had the
     // parts lined up. Every genuine field control has data-part; the pickers
     // have none, which is the whole distinction.
-    if (el.tagName === 'SELECT' && el.dataset.part === undefined) return;
+    if ((el.tagName === 'SELECT' || el.type === 'checkbox') && el.dataset.part === undefined) return;
     if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; pendingEl = null; }
     commit(el);
   });
@@ -8545,6 +8745,35 @@
 
   formHost.addEventListener('click', function (event) {
     if (sanitised || !MODEL) return;
+
+    // PLAN_176 B3 — "Remove from proxy and DNS". For now this only clears
+    // the expose: block from the compose file after the standard confirm;
+    // B4/B5 add the server-side half (deleting the matching Nginx Proxy
+    // Manager host and Pi-hole name first, from what expose.json says StaXX
+    // itself made) ahead of this same write.
+    var exposeRemoveBtn = event.target.closest('[data-expose-remove]');
+    if (exposeRemoveBtn) {
+      var exposeSvcName = exposeRemoveBtn.dataset.exposeRemove;
+      askConfirm({
+        title: 'Remove from proxy and DNS?',
+        bodyHtml: '<p>This clears the proxy and DNS settings stored for "' + esc(exposeSvcName) +
+          '" in the compose file.</p>',
+        goLabel: 'Remove'
+      }).then(function (go) {
+        if (!go) return;
+        closeConfirm();
+        flushPending();
+        pushUndo('removing "' + exposeSvcName + '" from proxy and DNS');
+        var ok = YAML.removeKey(MODEL.doc, MODEL, exposeSvcName, ['x-unraid', 'expose']);
+        if (!ok) {
+          undoStack.pop(); updateUndo();
+          setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
+          return;
+        }
+        structuralEdit(-1, 'Removed "' + exposeSvcName + '" from proxy and DNS.');
+      });
+      return;
+    }
 
     // "These are linked" / "Not related" beside an unconfirmed connection's
     // own sentence, or "Break link" inside a confirmed one's popover (PLAN_70
@@ -25687,6 +25916,46 @@
             'Unraid\'s PHP cannot make every kind. This chooses whether that container stays ' +
             'stopped between uses (each hash then starts and stops it, a couple of seconds) or ' +
             'keeps idling, which costs almost nothing and hashes instantly.'
+    },
+    // PLAN_176 — Nginx Proxy Manager and Pi-hole, at the end of this tab
+    // (settled with Adrian in a live mock, 2026-09-24). Four blocks: NPM's
+    // own sign-in, Pi-hole's, the one insecure-connections switch that
+    // covers both, and the test button.
+    {
+      key: 'NPM_URL', control: 'text', label: 'Nginx Proxy Manager address', tab: 'registries',
+      block: 'npm-access', sublabel: 'Address', placeholder: 'http://192.168.1.20:81'
+    },
+    {
+      key: 'NPM_USER', control: 'text', label: 'Nginx Proxy Manager email', tab: 'registries',
+      block: 'npm-access', sublabel: 'Email', placeholder: 'you@example.com'
+    },
+    {
+      key: 'NPM_PASS', control: 'password', label: 'Nginx Proxy Manager password', tab: 'registries',
+      block: 'npm-access', sublabel: 'Password'
+    },
+    {
+      key: 'PIHOLE_URL', control: 'text', label: 'Pi-hole address', tab: 'registries',
+      block: 'pihole-access', sublabel: 'Address', placeholder: 'http://192.168.1.30'
+    },
+    {
+      key: 'PIHOLE_PASS', control: 'password', label: 'Pi-hole app password', tab: 'registries',
+      block: 'pihole-access', sublabel: 'App password'
+    },
+    {
+      key: 'EXPOSE_ALLOW_INSECURE', control: 'toggle', label: 'Allow insecure connections', tab: 'registries',
+      on: 'yes', off: 'no',
+      help: 'Allow insecure connections to Nginx Proxy Manager and Pi-hole: plain http, and https ' +
+            'without checking the certificate. With plain http their passwords cross your network ' +
+            'unencrypted, so anyone able to watch that traffic could read them. Without the ' +
+            'certificate check, another device could pretend to be one of them. Only turn this on ' +
+            'if you trust every device on your network.'
+    },
+    {
+      // Nothing here is saved — see the row.control === 'action' guards
+      // beside the 'readout' ones above.
+      key: 'EXPOSE_TEST', control: 'action', label: 'Check the connection', tab: 'registries',
+      help: 'Signs in to Nginx Proxy Manager and Pi-hole with the saved addresses and passwords, and ' +
+            'reports what each one says.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {
@@ -25732,6 +26001,20 @@
             'with the read-only, public repositories permission — that is all checking needs, so ' +
             'a leaked token could look but never change anything. It is kept in StaXX’s own ' +
             'settings file, readable only by the administrator. Leave both blank to stay signed out.'
+    },
+    // PLAN_176 — the four Integrations-tab blocks settled 2026-09-24.
+    'npm-access': {
+      tab: 'registries', label: 'Nginx Proxy Manager',
+      help: 'Lets StaXX add a proxy entry for an app when you give it a domain name in the ' +
+            'editor. Use the address of Nginx Proxy Manager’s admin page, the one on port 81, ' +
+            'and the email and password you sign in with.'
+    },
+    'pihole-access': {
+      tab: 'registries', label: 'Pi-hole',
+      help: 'Lets StaXX add a local DNS name for an app, pointing at Nginx Proxy Manager. If ' +
+            'your Pi-hole has no admin password, leave the app password blank. If it has one, ' +
+            'make an app password in Pi-hole’s Settings → Web interface / API, then press ' +
+            'Enable new app password and Save & Apply.'
     }
   };
 
@@ -25846,9 +26129,19 @@
       // is what actually rejects anything that is not a whole number in range.
       var numAttrs = row.control === 'number'
         ? ' min="' + row.min + '" max="' + row.max + '" step="1"' : '';
+      var placeholderAttr = row.placeholder ? ' placeholder="' + esc(row.placeholder) + '"' : '';
       return '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
                      'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL + numAttrs +
-                     ' value="' + esc(value) + '">';
+                     placeholderAttr + ' value="' + esc(value) + '">';
+    } else if (row.control === 'action') {
+      // PLAN_176 — the Integrations tab's "Check the connection" button.
+      // Nothing here is a saved setting (see the row.control === 'readout'
+      // guards in settingsDirty()/saveSettings(), which this control shares),
+      // just a button and a result area runExposeTest() fills in.
+      return '<div class="staxx-settings-action" id="' + row.id + '">' +
+               '<button type="button" class="staxx-btn" data-expose-test>Test connection</button>' +
+               '<div class="staxx-crypt-formats" id="staxx-expose-test-result"></div>' +
+             '</div>';
     } else if (row.control === 'list') {
       // The saved value stays a plain comma-separated string in a hidden
       // input — nothing downstream (settingsControlValue, save, dirty
@@ -26440,10 +26733,40 @@
     renderCryptSettings();   // paint whatever is already cached immediately, do not wait on the fetch
   }
 
+  // PLAN_176 — the Integrations tab's "Test connection" button. Signs in to
+  // whichever of NPM/Pi-hole has an address set (the server decides which,
+  // from the settings actually on disk — not from whatever is unsaved in
+  // the form) and reports one line each, reusing the crypt panel's own
+  // pass/fail line styling rather than inventing a second one.
+  function runExposeTest() {
+    var box = document.getElementById('staxx-expose-test-result');
+    if (!box) return;
+    // The server tests what is saved, not what is typed, so an unsaved edit
+    // would be silently ignored and the result would describe the old values.
+    if (settingsDirty()) {
+      box.innerHTML = '<div class="staxx-crypt-format staxx-crypt-format--bad">' +
+        'Save your changes first, then test the connection.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="staxx-crypt-format staxx-crypt-format--unknown">Checking…</div>';
+    call('expose-test', {}, 20000).then(function (r) {
+      if (!r.ok) {
+        box.innerHTML = '<div class="staxx-crypt-format staxx-crypt-format--bad">' +
+          esc(r.error || 'Could not check the connection.') + '</div>';
+        return;
+      }
+      box.innerHTML = (r.lines || []).map(function (line) {
+        var cls = line.ok ? 'staxx-crypt-format--ok' : 'staxx-crypt-format--bad';
+        var mark = line.ok ? '✓ ' : '✗ ';
+        return '<div class="staxx-crypt-format ' + cls + '">' + esc(mark + line.text) + '</div>';
+      }).join('');
+    });
+  }
+
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
-      if (row.control === 'readout') return false;   // nothing to save, so never dirty
+      if (row.control === 'readout' || row.control === 'action') return false;   // nothing to save, so never dirty
       return settingsControlValue(row) !== settingsOpenValues[row.key];
     });
   }
@@ -26954,7 +27277,7 @@
 
     var fields = {};
     SETTINGS_ROWS.forEach(function (row) {
-      if (row.control === 'readout') return;   // a report, not a setting
+      if (row.control === 'readout' || row.control === 'action') return;   // a report, not a setting
       fields[row.key] = settingsControlValue(row);
     });
 
@@ -27135,6 +27458,10 @@
       }
       if (event.target.closest('#staxx-crypt-recipe-toggle')) {
         toggleCryptRecipe();
+        return;
+      }
+      if (event.target.closest('[data-expose-test]')) {
+        runExposeTest();
         return;
       }
       /* Opened on top of Settings rather than instead of it: nothing here is

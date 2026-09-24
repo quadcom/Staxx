@@ -171,6 +171,42 @@
         "network_stash": {
           "type": "string",
           "description": "A clipboard, not a description of anything: written only by the network-mode picker, and read only when that same control is asked to restore it. Holds this service's own networks: block exactly as it stood before network_mode replaced it — a JSON object holding the block's own lines verbatim (comments, fixed addresses and all) rather than read into values and rebuilt, plus the name of the key it followed so it goes back in the same place. Both halves matter: a restore that rebuilt the lines would lose the comments, and one that ignored the position would reorder the file. Together they make a set-aside and a restore byte-for-byte. Not validated as YAML here for the same reason sections' own stash is not: it is one opaque string to this schema, not a second copy of the compose structure. Meaningless, and ignored, on a service that is not currently using network_mode."
+        },
+        "expose": {
+          "$ref": "#/$defs/expose",
+          "description": "A Nginx Proxy Manager entry (and, optionally, a Pi-hole DNS name) for this service (PLAN_176). Absent means this service has neither."
+        }
+      }
+    },
+
+    "expose": {
+      "type": "object",
+      "description": "A domain name asks StaXX to keep a Nginx Proxy Manager proxy host, and optionally a Pi-hole DNS name, pointed at this service. Written by the editor's 'Proxy and DNS' group, one block per service.",
+      "additionalProperties": false,
+      "required": ["domain"],
+      "properties": {
+        "domain": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$",
+          "description": "The address a browser would be typed to reach this service, e.g. sonarr.home.lan. Present at all is what asks StaXX to keep a proxy host for it; there is no separate on/off key for the proxy entry itself."
+        },
+        "certificate": {
+          "type": "string",
+          "description": "A Nginx Proxy Manager certificate, named by its own nice_name rather than its numeric id — the id means nothing outside that one NPM, and the file must stay readable and portable. Absent means the proxy host is plain http."
+        },
+        "dns": {
+          "type": "boolean",
+          "description": "Whether StaXX also keeps a Pi-hole A record for domain, pointed at Nginx Proxy Manager's own address. Absent means no DNS name — there is no separate default for this one."
+        },
+        "websockets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Nginx Proxy Manager's 'Websockets Support' switch. Absent means on, the same as a freshly-adopted host that already had it on keeps meaning on without a line being written for it — so turning this back on removes the key rather than writing true, and only off is ever spelled out."
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the Nginx Proxy Manager proxy host itself is switched on. Absent means on, for the same reason websockets is: turning it back on removes the key, and only off is ever spelled out. Turning this off does not touch the Pi-hole name."
         }
       }
     },

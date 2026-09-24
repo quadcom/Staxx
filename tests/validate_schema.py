@@ -336,6 +336,27 @@ NEGATIVE = [
                         {"service": "db"}],
         }]}},
     ),
+    # PLAN_176 — the expose block (a Nginx Proxy Manager / Pi-hole entry).
+    (
+        "expose with an unknown key",
+        service_doc(expose={"domain": "app.example.com", "proxy": True}),
+    ),
+    (
+        "expose dns given as a string rather than a boolean",
+        service_doc(expose={"domain": "app.example.com", "dns": "proxy"}),
+    ),
+    (
+        "expose domain not a valid hostname",
+        service_doc(expose={"domain": "not a domain"}),
+    ),
+    (
+        "expose with dns but no domain (a proxy entry must name a domain)",
+        service_doc(expose={"dns": True}),
+    ),
+    (
+        "expose with no domain at all",
+        service_doc(expose={"certificate": "*.example.com"}),
+    ),
 ]
 
 # (description, document) — each must PASS validation.
@@ -472,6 +493,12 @@ POSITIVE = [
         "between": [{"service": "app", "environment": "TZ"},
                     {"service": "db", "environment": "PUID"}],
     }]}}),
+    # PLAN_176 — the expose block.
+    ("expose with just a domain", service_doc(expose={"domain": "sonarr.home.lan"})),
+    ("expose with every key at once", service_doc(expose={
+        "domain": "sonarr.home.lan", "certificate": "*.home.lan",
+        "dns": True, "websockets": False, "enabled": False,
+    })),
 ]
 
 

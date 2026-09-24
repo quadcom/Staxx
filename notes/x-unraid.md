@@ -5,5 +5,5 @@
 `schema/x-unraid.schema.json` (JSON Schema Draft 2020-12) with prose in `docs/x-unraid-schema.md`.
 Metadata lives *inside* the compose file — comment blocks and a companion file were both considered
 and rejected. `staxx_compose_meta()` parses `x-unraid` blocks, and the form renderer built on top of
-it — 22 field groups, covering everything from ports and volumes to update policy — is the largest
+it — 23 field groups, covering everything from ports and volumes to update policy — is the largest
 piece of engineering in the repository, and the reason the rest of this exists.

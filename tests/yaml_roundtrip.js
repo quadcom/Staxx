@@ -1279,14 +1279,18 @@ console.log('\nJ. The always-present Container settings');
   // deploy:/logging:/build: at all, healthcheck.test counts as two of them
   // (PLAN_8 phase 4 — the mode and the command, see harvestHealthTest()), and
   // build (PLAN_21) added its three scalars (context, dockerfile, target) at
-  // the end of the fixed pass.
+  // the end of the fixed pass. PLAN_176 then added the Proxy and DNS group's
+  // own five (domain, certificate, websockets, dns, enabled), straight after
+  // those sixteen — harvestExpose() offers all five whether or not the file
+  // has an expose: block, the same promise the sixteen ahead of them make.
   var src = 'services:\n  a:\n    image: alpine\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
   ok('a service with no other settings yields three fixed fields, a web page port, ' +
-     'two update-policy rows (When and PLAN_155\'s single Notifications row), and sixteen blank leaves',
-     svcFields.length === 22 &&
+     'two update-policy rows (When and PLAN_155\'s single Notifications row), sixteen blank leaves ' +
+     'and five blank expose fields',
+     svcFields.length === 27 &&
      svcFields.slice(0, 3).every(function (f) { return f.fixed; }) &&
      svcFields[3].target === 'x-unraid.webui' && svcFields[3].absent && !svcFields[3].path &&
      svcFields[4].target === 'x-unraid.update.mode' && svcFields[4].absent && !svcFields[4].path &&
@@ -1555,6 +1559,11 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/build.context',
     'web/setting/build.dockerfile',
     'web/setting/build.target',
+    'web/setting/x-unraid.expose.domain',
+    'web/setting/x-unraid.expose.certificate',
+    'web/setting/x-unraid.expose.websockets',
+    'web/setting/x-unraid.expose.dns',
+    'web/setting/x-unraid.expose.enabled',
     'web/port#0/80/tcp',
     'web/env#0/NGINX_PORT',
     'web/list.networks#0/frontend_net',
@@ -1563,7 +1572,7 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-nine fields, in file order',
+  ok('web yields exactly these thirty-four fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
