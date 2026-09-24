@@ -2486,6 +2486,60 @@ switch ($action) {
       }, $certs),
     ]);
 
+  /* ---- read-only: what StaXX would create or change in NPM/Pi-hole for
+   * this stack, service by service. Never writes anything; expose-apply
+   * recomputes this same plan itself rather than trusting what is handed
+   * back here — see staxx_expose_run()'s own comment. ---- */
+  case 'expose-check':
+    $err = '';
+    $services = staxx_expose_run($name, false, $err);
+    if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
+    staxx_reply(['ok' => true, 'services' => $services]);
+
+  /* ---- makes NPM and Pi-hole match this stack's expose blocks. Refuses on
+   * the same "changed since it was opened" race 'save' guards against —
+   * here the file could have been saved again, in another tab, between the
+   * save this confirm dialog followed and the Apply button being pressed. ---- */
+  case 'expose-apply':
+    $fingerprint = (string)($_POST['fingerprint'] ?? '');
+    $onDisk = staxx_stack_fingerprint($name);
+    if ($fingerprint === '' || ($onDisk !== '' && $onDisk !== $fingerprint)) {
+      staxx_reply([
+        'ok'       => false,
+        'conflict' => true,
+        'error'    => 'This file has changed since it was opened — by another tab, an image '
+                    . 'update, or a hand edit on the server. Close the editor and open the '
+                    . 'stack again to see the current version, then try again.',
+      ]);
+    }
+    $err = '';
+    $services = staxx_expose_run($name, true, $err);
+    if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
+    staxx_reply(['ok' => true, 'services' => $services]);
+
+  /* ---- read-only, every stack: drives the per-service DNS mark (B5) ---- */
+  case 'expose-status':
+    $err = '';
+    $rows = staxx_expose_status($err);
+    if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
+    staxx_reply(['ok' => true, 'rows' => $rows]);
+
+  /* ---- switching one service's tick off, or archiving a stack: acts only
+   * on what expose.json says StaXX made, never on anything else. 'service'
+   * is optional — omitted, every service the stack's expose.json lists is
+   * acted on (the archive dialog). ---- */
+  case 'expose-remove':
+    $service   = (string)($_POST['service'] ?? '');
+    $npmChoice = (string)($_POST['npm'] ?? 'keep');
+    $dnsChoice = (string)($_POST['dns'] ?? 'keep');
+    if (!in_array($npmChoice, ['disable', 'delete', 'keep'], true)) $npmChoice = 'keep';
+    if (!in_array($dnsChoice, ['delete', 'keep'], true)) $dnsChoice = 'keep';
+
+    $err = '';
+    $result = staxx_expose_remove($name, $service, $npmChoice, $dnsChoice, $err);
+    if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
+    staxx_reply(['ok' => true, 'result' => $result]);
+
   /* ------------------------------------------------------------ folders -- */
 
   case 'folder-list':

@@ -5935,6 +5935,76 @@ div.title.staxx-has-titlebar {
   margin-bottom: 0.8rem;
 }
 
+/* PLAN_176 B3b — the chevron and the heading text (staxx-collapsebtn,
+   staxx-fieldgroup-toggle) share this wrapper so the pair reads as .staxx-
+   grouphead's one left-hand child; see groupHeadHtml()'s own comment for
+   why that matters to the space-between rule above. baseline keeps the
+   chevron's icon level with the heading's own text rather than its box. */
+.staxx-scaffold .staxx-groupheading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+/* Icon-only — its accessible name is the aria-label groupHeadHtml()/
+   exposeGroupHtml() write ("Collapse X"/"Expand X"), not this text. Reset to
+   plain, borderless and inheriting colour/size so it reads as part of the
+   heading line rather than as a button; :focus-visible is the only state
+   that needs to look pressable, same treatment as .staxx-svcrename nearby. */
+.staxx-scaffold .staxx-collapsebtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-muted);
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-collapsebtn:hover,
+.staxx-scaffold .staxx-collapsebtn:focus-visible {
+  color: inherit;
+  outline: none;
+  background: var(--sm-fill);
+}
+
+/* Expanded points down; collapsed rotates a quarter turn to point right —
+   one icon, not a glyph swap, so the turn animates rather than jumping. */
+.staxx-scaffold .staxx-collapsebtn i {
+  transition: transform 0.15s ease;
+}
+
+.staxx-scaffold .staxx-collapsebtn[aria-expanded="false"] i {
+  transform: rotate(-90deg);
+}
+
+/* The heading text itself is also a button (clicking it toggles the same as
+   the chevron), but it has to read as the plain uppercase heading .staxx-
+   fieldgroup already sets on its <h5> parent — plain buttons default to
+   their own font and a system look, so every one of those has to be undone
+   explicitly rather than relying on inheritance. */
+.staxx-scaffold .staxx-fieldgroup-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-fieldgroup-toggle:hover,
+.staxx-scaffold .staxx-fieldgroup-toggle:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+
 /* Container's Sections button and the panel of tick boxes it opens — one
    control standing in for what used to be three separate tick boxes on the
    same header, now that every switchable section (not just Health check,

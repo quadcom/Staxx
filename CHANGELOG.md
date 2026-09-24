@@ -7,7 +7,8 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - Settings has a new Integrations tab (it used to be called Registries and security) where you can enter the address and login for Nginx Proxy Manager and Pi-hole, and test that StaXX can reach them.
-- The stack editor has a Proxy and DNS section for each app once Nginx Proxy Manager is set up: a domain name, a certificate, WebSockets and a Pi-hole switch. It is saved in the compose file; StaXX does not yet create the entries for you.
+- The stack editor has a Proxy and DNS section you can add to any app from the Sections menu once Nginx Proxy Manager is set up: a domain name, a certificate, WebSockets and a Pi-hole switch. It is saved in the compose file; StaXX does not yet create the entries for you.
+- Every section of the stack editor can now be folded away with the arrow beside its heading. StaXX remembers which kinds you folded, in this browser.
 - The column headings on the stack list now line up with what sits under them, instead of starting a little to the left of it.
 - A stack's menu now has a legend you can open without leaving the page, explaining every mark and colour used on the stack list.
 - The legend is also reachable from a button of its own at the top of the list, beside Select.

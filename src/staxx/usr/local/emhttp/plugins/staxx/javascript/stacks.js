@@ -884,14 +884,6 @@
   // class.
   var GROUPS = [
     { key: 'container', heading: 'Container', cls: 'staxx-formgroup--container', note: '(required)' },
-    // PLAN_176 B3 — straight after Container, which holds the web page port
-    // this group's proxy entry forwards to. No `flag`: shown or hidden by
-    // whether Nginx Proxy Manager is configured at all (NPM_CONFIGURED,
-    // read off the scaffold below), never by a per-service tick, and drawn
-    // by its own function (exposeGroupHtml()) for the same reason Updates
-    // is — the Enabled switch in the group head and the Remove button at
-    // the foot do not fit the generic caption/fieldHtml() loop.
-    { key: 'expose', heading: 'Proxy and DNS', cls: 'staxx-formgroup--container staxx-formgroup--expose' },
     // PLAN_150 phase 4b — always drawn, right after Container, on every
     // service: no flag and no add, the same reason Container and Advanced
     // have neither. Its own two fields (harvestUpdatePolicy(), compose-
@@ -902,6 +894,20 @@
     // sub-line) does not fit the label/value/note grid every other group
     // shares.
     { key: 'updates', heading: 'Updates', cls: 'staxx-formgroup--updates' },
+    // PLAN_176 B3b — between the container and the networks (Adrian,
+    // 2026-09-24), a switchable section like Networks/Ports/Volumes below
+    // rather than a fixture bolted straight after Container. `flag: 'expose'`
+    // wires it into serviceFlags() the same way as every other section — on
+    // when the file already holds x-unraid.expose, or ticked on for this
+    // service in this editor. It is also gated on NPM_CONFIGURED (checked in
+    // the render loop below and in the Sections menu), a server-wide setting
+    // no per-service tick can override: with no Nginx Proxy Manager there is
+    // nowhere to send a proxy entry, so the group and its Sections entry are
+    // both left out entirely rather than shown disabled. Drawn by its own
+    // function (exposeGroupHtml()) rather than the generic caption/
+    // fieldHtml() loop, same reason Updates is — the Enabled switch in the
+    // group head and the Remove button at the foot do not fit that grid.
+    { key: 'expose', heading: 'Proxy and DNS', cls: 'staxx-formgroup--container staxx-formgroup--expose', flag: 'expose' },
     // --mapped, not --pair: a port and a mount carry a third small box (the
     // protocol, the read/write mode) that a variable and a label do not, so
     // they take a five-track template while the other two keep the four.
@@ -959,6 +965,15 @@
   // catch-all for anything with no better home, so hiding it could hide
   // something the file genuinely has.
   var SECTIONS = [
+    // PLAN_176 B3b — path is inside x-unraid, not a plain compose key, since
+    // expose is StaXX's own metadata rather than something Docker reads —
+    // every other entry's path names a key stashSection/restoreSection move
+    // at the top of the compose file; this one names where inside x-unraid
+    // they move it. Left out of the Sections menu entirely when
+    // NPM_CONFIGURED is false (the loop that draws the menu, below) — there
+    // is nowhere to send a proxy entry, so offering the tick would be a
+    // false promise.
+    { key: 'expose',        label: 'Proxy and DNS',       path: ['x-unraid', 'expose'],  on: false },
     { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
     { key: 'port',          label: 'Ports',               path: ['ports'],               on: true },
     { key: 'volume',        label: 'Volumes',             path: ['volumes'],             on: true },
@@ -1191,6 +1206,76 @@
    * and it is hidden again — having lost nothing, because there was nothing in
    * it. Cleared whenever the editor opens a stack, beside sectionsOpen. */
   var sectionOn = {};
+
+  /* PLAN_176 B3b — which GROUPS heads are collapsed, a page preference like
+   * sectionOn just above but persisted (localStorage, not cleared per
+   * stack/service): collapsing Ports stays collapsed for every service until
+   * expanded again. Never written to the compose file — a UI fold is not
+   * configuration (rule 1). Same try/catch-everywhere shape as
+   * noticesDismissedMap (:209) so a private window or blocked site data just
+   * means nothing starts collapsed, rather than breaking the page. Loaded
+   * once, lazily, the first time anything asks. */
+  var collapsedGroupsMap = null;
+  function collapsedGroups() {
+    if (collapsedGroupsMap) return collapsedGroupsMap;
+    collapsedGroupsMap = {};
+    try {
+      var raw = window.localStorage.getItem('staxx.collapsed');
+      var arr = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(arr)) arr.forEach(function (k) { collapsedGroupsMap[k] = true; });
+    } catch (e) { /* storage unavailable — nothing starts collapsed */ }
+    return collapsedGroupsMap;
+  }
+  function isGroupCollapsed(key) { return !!collapsedGroups()[key]; }
+  function setGroupCollapsed(key, collapsed) {
+    var map = collapsedGroups();
+    if (collapsed) map[key] = true; else delete map[key];
+    try { window.localStorage.setItem('staxx.collapsed', JSON.stringify(Object.keys(map))); }
+    catch (e) { /* nothing to do if storage refuses the write */ }
+  }
+
+  // A group holding a field the form has already marked as a gap (see
+  // requiredGaps() below) is never drawn collapsed — collapsing it would hide
+  // the very row that needs attention. `rows` is the bucket of field indexes
+  // a render already built for this group/service; `gaps` is one call to
+  // requiredGaps() shared across a whole renderForm() pass rather than
+  // recomputed per group.
+  function rowsHaveGap(rows, gaps) {
+    if (!rows || !rows.length || !gaps || !gaps.length) return false;
+    for (var i = 0; i < rows.length; i++) {
+      for (var j = 0; j < gaps.length; j++) if (gaps[j].index === rows[i]) return true;
+    }
+    return false;
+  }
+
+  // The chevron beside a group heading, and the id it points at via
+  // aria-controls — shared by groupHeadHtml() and exposeGroupHtml(), which
+  // draws its own head rather than going through groupHeadHtml (see the
+  // comment on GROUPS' 'expose' entry). Icon-only, so the accessible name is
+  // the aria-label rather than any visible text — "Collapse X"/"Expand X",
+  // per PLAN_176 B3b.
+  function groupBodyId(serviceName, key) { return 'staxx-groupbody-' + serviceName + '-' + key; }
+  function collapseButtonHtml(serviceName, key, heading, collapsed) {
+    return '<button type="button" class="staxx-collapsebtn" data-collapse="' + esc(key) + '"' +
+           ' aria-expanded="' + (collapsed ? 'false' : 'true') + '"' +
+           ' aria-controls="' + esc(groupBodyId(serviceName, key)) + '"' +
+           ' aria-label="' + esc((collapsed ? 'Expand ' : 'Collapse ') + heading) + '">' +
+           '<i class="fa fa-chevron-down" aria-hidden="true"></i></button>';
+  }
+  // The heading text is a real button too (not just the chevron) so clicking
+  // it toggles the same way — its own visible text is already its accessible
+  // name, so this carries no aria-label of its own.
+  function headingToggleHtml(key, heading) {
+    return '<button type="button" class="staxx-fieldgroup-toggle" data-collapse="' + esc(key) + '">' +
+           esc(heading) + '</button>';
+  }
+  // Wraps a group's rows so they can be hidden as one block without removing
+  // them from the DOM — `hidden`, not a redraw, is what keeps a collapsed
+  // group's fields in save/undo/validation (PLAN_176 B3b).
+  function groupBodyOpenHtml(serviceName, key, collapsed) {
+    return '<div id="' + esc(groupBodyId(serviceName, key)) + '" class="staxx-groupbody"' +
+           (collapsed ? ' hidden' : '') + '>';
+  }
 
   // Whether each switchable section shows for a service: on when the file
   // genuinely holds it; else off when x-unraid.sections marks it hidden
@@ -4324,7 +4409,7 @@
   // order — but matched here by what each one MEANS (f.policy.field) rather
   // than by position, so a stray reordering upstream could never silently
   // swap the two.
-  function updatesFieldsetHtml(svc, rows, fields) {
+  function updatesFieldsetHtml(svc, rows, fields, grp, collapsed) {
     var info = serviceImageAndBuild(fields, svc.name);
     var pinned = info.pinned;
     var builtOnly = !pinned && info.hasBuild;
@@ -4353,15 +4438,26 @@
     var updatesHtml = (modeEntry ? updatePolicyRowHtml(modeEntry.f, modeEntry.idx) : '');
     var notifyHtml = notifyEntry ? updateNotifyGroupHtml(notifyEntry.f, notifyEntry.idx) : '';
 
-    return '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
-             '<legend>Updates</legend>' +
-             notice +
-             updatesHtml +
-           '</fieldset>' +
-           '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
-             '<legend>Notifications</legend>' +
-             notifyHtml +
-           '</fieldset>';
+    // PLAN_176 B3b — wrapped in the same .staxx-formgroup/.staxx-groupbody
+    // shape every other section uses, so Updates gets the same collapse
+    // chevron as everything else (Adrian, 2026-09-24: "You can't really
+    // collapse sections down"). The fieldsets keep their own legends —
+    // Updates and Notifications stay two visually distinct blocks, one
+    // collapse toggle for both, since GROUPS carries them as a single entry.
+    return '<div class="staxx-formgroup ' + grp.cls + '" data-group="updates">' +
+             groupHeadHtml(grp, svc.name, null, collapsed) +
+             groupBodyOpenHtml(svc.name, 'updates', collapsed) +
+               '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
+                 '<legend>Updates</legend>' +
+                 notice +
+                 updatesHtml +
+               '</fieldset>' +
+               '<fieldset class="staxx-updates' + (dim ? ' staxx-updates--dim' : '') + '">' +
+                 '<legend>Notifications</legend>' +
+                 notifyHtml +
+               '</fieldset>' +
+             '</div>' +
+           '</div>';
   }
 
   /* =====================================================================
@@ -4459,7 +4555,7 @@
   // obvious in the markup that this is meant to hold something later.
   function exposeStatusHtml() { return ''; }
 
-  function exposeGroupHtml(svc, rows, fields) {
+  function exposeGroupHtml(svc, rows, fields, collapsed) {
     var by = {};
     rows.forEach(function (idx) {
       var f = fields[idx];
@@ -4491,7 +4587,11 @@
               (enabledOn ? '' : ' staxx-formgroup--exposedim') + '" data-group="expose">');
     out.push(
       '<div class="staxx-grouphead">' +
-        '<h5 class="staxx-fieldgroup">Proxy and DNS <span class="staxx-groupnote">(optional)</span></h5>' +
+        '<div class="staxx-groupheading">' +
+          collapseButtonHtml(svc.name, 'expose', 'Proxy and DNS', collapsed) +
+          '<h5 class="staxx-fieldgroup">' + headingToggleHtml('expose', 'Proxy and DNS') +
+            ' <span class="staxx-groupnote">(optional)</span></h5>' +
+        '</div>' +
         '<label class="staxx-switch staxx-expose-enabled">' +
           '<input type="checkbox" data-row="' + enabled.idx + '" data-part="value"' +
           (enabledOn ? ' checked' : '') + (inert ? ' disabled' : '') + '>' +
@@ -4500,6 +4600,7 @@
         '</label>' +
       '</div>'
     );
+    out.push(groupBodyOpenHtml(svc.name, 'expose', collapsed));
     out.push(captionRow({ key: 'expose', cls: 'staxx-formgroup--container' }));
     out.push(fieldHtml(domain.f, domain.idx));
     if (cert) out.push(exposeCertRowHtml(cert.f, cert.idx, inert));
@@ -4521,7 +4622,8 @@
           'Remove from proxy and DNS</button>' +
       '</div>'
     );
-    out.push('</div>');
+    out.push('</div>');  // .staxx-groupbody
+    out.push('</div>');  // .staxx-formgroup
     return out.join('');
   }
 
@@ -5447,16 +5549,26 @@
     return key ? safeKeyInfo(key, 'service') : null;
   }
 
-  function groupHeadHtml(g, serviceName, flags) {
+  function groupHeadHtml(g, serviceName, flags, collapsed) {
     var help = groupHelpInfo(g);
     // Raw, not esc()'d: helpBtnHtml/helpParaHtml escape it as they emit it,
     // and escaping here as well would put "&amp;amp;" in the id of a service
     // whose name holds an "&".
     var helpId = 'staxx-grouphelp-' + serviceName + '-' + g.key;
-    var bits = ['<div class="staxx-grouphead"><h5 class="staxx-fieldgroup">' + esc(g.heading)];
+    // PLAN_176 B3b — the chevron and the heading text share one wrapper
+    // (.staxx-groupheading) so the pair counts as a single flex child of
+    // .staxx-grouphead: that div is display:flex; justify-content:space-
+    // between, with (at most) one other child — the Sections button or an
+    // Add button — that has to land at the opposite end, not have the
+    // chevron pull away from the heading it belongs to.
+    var bits = ['<div class="staxx-grouphead">',
+                '<div class="staxx-groupheading">',
+                collapseButtonHtml(serviceName, g.key, g.heading, collapsed),
+                '<h5 class="staxx-fieldgroup">' + headingToggleHtml(g.key, g.heading)];
     if (g.note) bits.push(' <span class="staxx-groupnote">' + esc(g.note) + '</span>');
     bits.push(helpBtnHtml(help, helpId));
     bits.push('</h5>');
+    bits.push('</div>');
     if (flags) {
       var open = !!sectionsOpen[serviceName];
       bits.push('<div class="staxx-sections">');
@@ -5467,6 +5579,10 @@
         bits.push('<div class="staxx-sectionpick">');
         for (var si = 0; si < SECTIONS.length; si++) {
           var s = SECTIONS[si];
+          // PLAN_176 B3b — left off the menu with nowhere to send a proxy
+          // entry, same reason the group itself is skipped in the render
+          // loop below (grp.key === 'expose').
+          if (s.key === 'expose' && !NPM_CONFIGURED) continue;
           bits.push('<label class="staxx-sectionrow"><input type="checkbox" data-flag="' + s.key +
                     '" data-service="' + esc(serviceName) + '"' + (flags[s.key] ? ' checked' : '') + '> ' +
                     esc(s.label) + '</label>');
@@ -5558,15 +5674,19 @@
       buckets[gk].push(i);
     }
 
+    var gaps = requiredGaps();
     var out = ['<section class="staxx-svc staxx-svc--stack">',
                '<details class="staxx-stackfold"' + (stackOpen ? ' open' : '') + '>',
                '<summary class="staxx-svchead">Stack</summary>'];
     for (var g = 0; g < DECL_GROUPS.length; g++) {
       var grp = DECL_GROUPS[g], rows = buckets[grp.key] || [];
+      var collapsed = isGroupCollapsed(grp.key) && !rowsHaveGap(rows, gaps);
       out.push('<div class="staxx-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
-      out.push(groupHeadHtml(grp, ''));
+      out.push(groupHeadHtml(grp, '', null, collapsed));
+      out.push(groupBodyOpenHtml('', grp.key, collapsed));
       if (rows.length) out.push(captionRow(grp));
       for (var r = 0; r < rows.length; r++) out.push(fieldHtml(form.fields[rows[r]], rows[r]));
+      out.push('</div>');
       out.push('</div>');
     }
     out.push('</details>');
@@ -5683,6 +5803,7 @@
       return '<p class="staxx-form-empty">' + esc(why) + '</p>';
     }
 
+    var gaps = requiredGaps();
     var out = [stackSectionHtml(form)];
     for (var s = 0; s < form.services.length; s++) {
       var svc = form.services[s];
@@ -5750,18 +5871,21 @@
           // here is always the two harvestUpdatePolicy() fields, in the
           // order it pushes them (mode, then the single notify block).
           if (grp.key === 'updates') {
-            out.push(updatesFieldsetHtml(svc, rows, form.fields));
+            var updCollapsed = isGroupCollapsed('updates') && !rowsHaveGap(rows, gaps);
+            out.push(updatesFieldsetHtml(svc, rows, form.fields, grp, updCollapsed));
             continue;
           }
-          // PLAN_176 B3 — Proxy and DNS. Gated on NPM being configured at
-          // all (a server-wide setting, not a per-service tick), so it is
-          // checked here rather than through grp.flag/serviceFlags() the
-          // way health/resources/depends are — the group's shape does not
-          // depend on this file's own content, only on whether the server
-          // has anywhere to send a proxy entry.
+          // PLAN_176 B3b — Proxy and DNS, a switchable section like any
+          // other (grp.flag === 'expose', wired through serviceFlags()
+          // below), but still gated on NPM being configured at all — a
+          // server-wide setting no per-service tick can override, checked
+          // first since flags.expose can be true (ticked, or the file
+          // already holds x-unraid.expose) while NPM itself has since been
+          // switched off in Settings.
           if (grp.key === 'expose') {
-            if (!NPM_CONFIGURED) continue;
-            out.push(exposeGroupHtml(svc, rows, form.fields));
+            if (!NPM_CONFIGURED || !flags.expose) continue;
+            var expCollapsed = isGroupCollapsed('expose') && !rowsHaveGap(rows, gaps);
+            out.push(exposeGroupHtml(svc, rows, form.fields, expCollapsed));
             continue;
           }
           // A flagged group (health/resources/depends) shows exactly when its
@@ -5772,8 +5896,10 @@
           // with none has nothing left to show for an empty bucket.
           if (grp.flag) { if (!flags[grp.flag]) continue; }
           else if (!rows.length && !grp.add) continue;
+          var collapsed = isGroupCollapsed(grp.key) && !rowsHaveGap(rows, gaps);
           out.push('<div class="staxx-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
-          out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
+          out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null, collapsed));
+          out.push(groupBodyOpenHtml(svc.name, grp.key, collapsed));
           // PLAN_104: the Ports group is the one place svc.netKind changes
           // what gets shown rather than just how a row looks — a live
           // ports: setting on this kind of network is a broken file (fixed
@@ -5802,7 +5928,8 @@
           for (var r = 0; r < rows.length; r++) {
             out.push(fieldHtml(form.fields[rows[r]], rows[r]));
           }
-          out.push('</div>');
+          out.push('</div>');  // .staxx-groupbody
+          out.push('</div>');  // .staxx-formgroup
         }
       }
 
@@ -8550,6 +8677,26 @@
     var label = sect.label.toLowerCase();
     var say, ok;
 
+    // PLAN_176 B3b — unticking Proxy and DNS while it still holds a domain
+    // is not an ordinary stash: it runs the same confirm-and-remove the
+    // section's own Remove button does (confirmExposeRemove, below), and
+    // the expose path never stashes. An empty section (no domain typed) has
+    // nothing to lose, so it falls straight through to the ordinary
+    // tick/untick logic below like any other section.
+    if (flagKey === 'expose' && !box.checked) {
+      var domField = null;
+      for (var dfi = 0; dfi < MODEL.fields.length; dfi++) {
+        var df = MODEL.fields[dfi];
+        if (df.service === svc && df.target === 'x-unraid.expose.domain') { domField = df; break; }
+      }
+      var domVal = domField && domField.parts && domField.parts.value ? domField.parts.value.value : '';
+      if (domField && !domField.absent && String(domVal || '').trim() !== '') {
+        box.checked = true;   // stays ticked unless the confirm below says yes
+        confirmExposeRemove(svc);
+        return;
+      }
+    }
+
     flushPending();
 
     if (box.checked) {
@@ -8749,35 +8896,45 @@
     if (box) { box.focus(); box.select(); }
   }
 
+  // PLAN_176 B3/B3b — shared by the group's own "Remove from proxy and DNS"
+  // button and by unticking Proxy and DNS in the Sections menu while a
+  // domain is still set (see the data-flag change listener below): both mean
+  // the same thing — the ordinary stash would take the expose: block out of
+  // the file and leave whatever StaXX made in Nginx Proxy Manager/Pi-hole
+  // behind unaccounted for — so both go through one confirm-and-remove.
+  // Server-side removal (deleting the NPM host and Pi-hole name first, from
+  // what expose.json says StaXX itself made) is B4/B5; this only clears the
+  // expose: block from the compose file once confirmed. Resolves true if the
+  // block was removed, false if the confirm was declined or the write
+  // failed — callers use that to decide whether a tick box should go back.
+  function confirmExposeRemove(serviceName) {
+    return askConfirm({
+      title: 'Remove from proxy and DNS?',
+      bodyHtml: '<p>This clears the proxy and DNS settings stored for "' + esc(serviceName) +
+        '" in the compose file.</p>',
+      goLabel: 'Remove'
+    }).then(function (go) {
+      if (!go) return false;
+      closeConfirm();
+      flushPending();
+      pushUndo('removing "' + serviceName + '" from proxy and DNS');
+      var ok = YAML.removeKey(MODEL.doc, MODEL, serviceName, ['x-unraid', 'expose']);
+      if (!ok) {
+        undoStack.pop(); updateUndo();
+        setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
+        return false;
+      }
+      structuralEdit(-1, 'Removed "' + serviceName + '" from proxy and DNS.');
+      return true;
+    });
+  }
+
   formHost.addEventListener('click', function (event) {
     if (sanitised || !MODEL) return;
 
-    // PLAN_176 B3 — "Remove from proxy and DNS". For now this only clears
-    // the expose: block from the compose file after the standard confirm;
-    // B4/B5 add the server-side half (deleting the matching Nginx Proxy
-    // Manager host and Pi-hole name first, from what expose.json says StaXX
-    // itself made) ahead of this same write.
     var exposeRemoveBtn = event.target.closest('[data-expose-remove]');
     if (exposeRemoveBtn) {
-      var exposeSvcName = exposeRemoveBtn.dataset.exposeRemove;
-      askConfirm({
-        title: 'Remove from proxy and DNS?',
-        bodyHtml: '<p>This clears the proxy and DNS settings stored for "' + esc(exposeSvcName) +
-          '" in the compose file.</p>',
-        goLabel: 'Remove'
-      }).then(function (go) {
-        if (!go) return;
-        closeConfirm();
-        flushPending();
-        pushUndo('removing "' + exposeSvcName + '" from proxy and DNS');
-        var ok = YAML.removeKey(MODEL.doc, MODEL, exposeSvcName, ['x-unraid', 'expose']);
-        if (!ok) {
-          undoStack.pop(); updateUndo();
-          setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
-          return;
-        }
-        structuralEdit(-1, 'Removed "' + exposeSvcName + '" from proxy and DNS.');
-      });
+      confirmExposeRemove(exposeRemoveBtn.dataset.exposeRemove);
       return;
     }
 
@@ -8828,6 +8985,39 @@
     var healthOfferBtn = event.target.closest('[data-health-offer]');
     if (healthOfferBtn) {
       offerHealthCheck(openedName, healthOfferBtn.dataset.healthOffer);
+      return;
+    }
+
+    // PLAN_176 B3b — a group's collapse chevron, or its heading text (both
+    // carry data-collapse, see collapseButtonHtml()/headingToggleHtml()). A
+    // direct DOM toggle, not a reparse() — collapsing is page state only, so
+    // nothing about the file or the model has changed, and the same pattern
+    // already used for an Import group's own fold (:14515-ish,
+    // data-import-collapse) applies here just as well: cheaper than a
+    // redraw, and there is no scroll position to lose since nothing moves.
+    var collapseBtn = event.target.closest('[data-collapse]');
+    if (collapseBtn) {
+      var cKey  = collapseBtn.dataset.collapse;
+      var cHead = collapseBtn.closest('.staxx-grouphead');
+      var cChevron = cHead ? cHead.querySelector('.staxx-collapsebtn') : null;
+      // Found by id (aria-controls), not by DOM position — a group with real
+      // help text has helpParaHtml()'s paragraph sitting between the head and
+      // the body (see groupHeadHtml()), so "the next sibling" is not always
+      // the body.
+      var cBody = cChevron ? document.getElementById(cChevron.getAttribute('aria-controls')) : null;
+      if (!cChevron || !cBody) return;
+      var willOpen = cChevron.getAttribute('aria-expanded') !== 'true';
+      // A group holding a field already marked as a gap is never let
+      // collapse — collapsing it would hide the row that needs fixing. The
+      // live DOM already carries that mark (updateRequired()'s
+      // staxx-fieldrow--gap), so this only has to look, not recompute it.
+      if (!willOpen && cBody.querySelector('.staxx-fieldrow--gap')) return;
+      setGroupCollapsed(cKey, !willOpen);
+      cChevron.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      var cHeading = cHead.querySelector('.staxx-fieldgroup-toggle');
+      cChevron.setAttribute('aria-label', (willOpen ? 'Collapse ' : 'Expand ') +
+        (cHeading ? cHeading.textContent : cKey));
+      cBody.hidden = !willOpen;
       return;
     }
 
