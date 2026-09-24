@@ -37,3 +37,6 @@ src/**/event/*    text eol=lf
 # without them would be normalised and the fixture would silently stop testing
 # what it was built to test.
 *.der    binary
+
+# PLAN_169 R2-10: this fixture exists to be CRLF with a byte-order mark; never normalise it.
+tests/fixtures/merge-pairs/r2-crlf-bom/** -text
