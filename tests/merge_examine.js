@@ -2138,9 +2138,17 @@ console.log('\nK2b. PLAN_178 F2 — a comment is struck only when it names the v
   var clash = findingsOf(r, 'port-clash');
   ok('F3: a host-port RANGE overlapping a single port is found as a clash',
      clash.some(function (f) { return f.facts.port === '19100-19102' || f.facts.port === '19101'; }));
-  var rangeClash = clash.filter(function (f) { return f.facts.rangeInvolved; })[0];
-  ok('F3: a clash involving a range is never offered an automatic move — "leave" is the only choice',
-     rangeClash && rangeClash.choices.length === 1 && rangeClash.choices[0].id === 'leave');
+  // T6, Adrian 2026-09-24: a range clashing with a single port is no longer
+  // leave-only — the single port is the one that moves, exactly like an
+  // ordinary single-port clash, since the range side can never be the mover.
+  var mixedClash = clash.filter(function (f) { return !f.facts.rangeInvolved; })[0];
+  ok('F3/T6: a range clashing with a single port moves the single port automatically',
+     mixedClash && mixedClash.facts.port === '19101' && typeof mixedClash.facts.freePort === 'number');
+  ok('F3/T6: the free port lies outside the whole range, not just the two endpoints',
+     mixedClash && (mixedClash.facts.freePort < 19100 || mixedClash.facts.freePort > 19102));
+  ok('F3/T6: the recommended choice is the free port, same shape as an ordinary clash',
+     mixedClash.choices.length === 2 && mixedClash.choices[0].id === mixedClash.facts.freePort &&
+     mixedClash.choices[0].recommended === true && mixedClash.choices[1].id === 'leave');
   ok('F3: the same port number on TCP and UDP is not a clash (different protocols)',
      !clash.some(function (f) { return f.facts.port === '19200'; }));
 
@@ -2152,6 +2160,21 @@ console.log('\nK2b. PLAN_178 F2 — a comment is struck only when it names the v
   var plainClash = findingsOf(r2, 'port-clash')[0];
   ok('F3: an ordinary single-port clash (no range) still offers a numbered free port to move to',
      plainClash && !plainClash.facts.rangeInvolved && typeof plainClash.facts.freePort === 'number');
+})();
+
+(function () {
+  // T6, Adrian 2026-09-24: only when BOTH sides of a port clash are ranges
+  // does the finding stay leave-only — neither side has a single free port
+  // it could slide onto.
+  var descE = MW.descriptorFromText('e', 'services:\n  x:\n    image: alpine:3.20\n    ports:\n      - "19100-19102:80-82"\n', null, []);
+  var descF = MW.descriptorFromText('f', 'services:\n  y:\n    image: alpine:3.20\n    ports:\n      - "19101-19103:8080-8082"\n', null, []);
+  var r = M.examine([descE, descF]);
+  var rangeClash = findingsOf(r, 'port-clash')[0];
+  ok('T6: two overlapping ranges still find a clash',
+     !!rangeClash);
+  ok('T6: two ranges clashing stays leave-only — neither side can move automatically',
+     rangeClash && rangeClash.facts.rangeInvolved === true &&
+     rangeClash.choices.length === 1 && rangeClash.choices[0].id === 'leave');
 })();
 
 (function () {

@@ -1033,21 +1033,30 @@
 
   // The lowest free port at or above 20000 — high enough that it is never
   // one a person chose on purpose, so a service landing there always reads
-  // as "StaXX moved this", never as a coincidence. `usedPorts` is a plain
-  // set the caller keeps extending (see findPortClashes() below), so two
-  // clashes in the same merge are never handed the same free port twice.
-  function pickFreePort(usedPorts) {
+  // as "StaXX moved this", never as a coincidence. `usedRanges` is a list of
+  // { lo, hi } bounds the caller keeps extending (see findPortClashes()
+  // below), so two clashes in the same merge are never handed the same free
+  // port twice, and a published RANGE blocks every port inside it, not just
+  // its own two endpoint numbers (T6, 2026-09-24 — a range clash's single
+  // side now needs a real free port outside the whole range).
+  function pickFreePort(usedRanges) {
     var n = 20000;
-    while (usedPorts[String(n)]) n++;
+    while (usedRanges.some(function (r) { return n >= r.lo && n <= r.hi; })) n++;
     return n;
   }
 
+  // Every already-published host port, as bounds — a plain port is its own
+  // { lo, hi } pair, and a range occupies every number in between, so a
+  // pickFreePort() search never lands inside one (T6).
   function allPublishedPorts(sources) {
-    var used = {};
+    var used = [];
     sources.forEach(function (s) {
       Object.keys(servicesOf(s)).forEach(function (svcName) {
         (servicesOf(s)[svcName].ports || []).forEach(function (p) {
-          if (p.host) used[String(p.host)] = true;
+          if (!p.host) return;
+          var bounds = hostBounds(p.host);
+          if (isNaN(bounds.lo) || isNaN(bounds.hi)) return;
+          used.push({ lo: bounds.lo, hi: bounds.hi });
         });
       });
     });
@@ -1067,13 +1076,18 @@
   // rewrite already uses, just naming two different stacks instead of two
   // lines in one.
   // F3 — a clash needs the SAME address (or either side unbound), the SAME
-  // protocol, and overlapping host ports; a bare "-" range on either side is
-  // never moved automatically, since there is no single free port a whole
-  // range can slide onto — the finding offers only "leave", i.e. "pick which
-  // one keeps it and change the other by hand" (PLAN_169 F3). `seen` is a
-  // plain list rather than the old taken[p.host] dict, because two
-  // overlapping entries need not share the exact same written text any more
-  // (a range and a single port inside it, say).
+  // protocol, and overlapping host ports. A bare "-" range clashing with
+  // another range is never moved automatically, since there is no single
+  // free port a whole range can slide onto — that finding offers only
+  // "leave", i.e. "pick which one keeps it and change the other by hand"
+  // (PLAN_169 F3). But a range clashing with a SINGLE port moves the single
+  // port, exactly like an ordinary single-port clash — the range side is
+  // never a candidate mover, whichever source it came from (T6, Adrian
+  // 2026-09-24; this reverses F3's original "never automatic near a range"
+  // rule for the mixed case). `seen` is a plain list rather than the old
+  // taken[p.host] dict, because two overlapping entries need not share the
+  // exact same written text any more (a range and a single port inside it,
+  // say).
   function findPortClashes(sources, docCache) {
     var out = [];
     var seen = [];
@@ -1101,6 +1115,15 @@
             var moverIsLater = true;
             if (held.profiled !== profiled) moverIsLater = profiled;
 
+            // T6 — when exactly one side is a range, that side can never be
+            // the mover (a whole range cannot slide onto one free port), so
+            // the single-port side moves regardless of pick order or
+            // profiles:. Only when BOTH sides are ranges does neither one
+            // have anywhere to go, and the clash stays leave-only below.
+            var bothRanges = bounds.isRange && held.isRange;
+            var oneRange = bounds.isRange !== held.isRange;
+            if (oneRange) moverIsLater = !bounds.isRange;
+
             var moverStack = moverIsLater ? s.name : held.stack;
             var moverSvc = moverIsLater ? svcName : held.svc;
             var moverHost = moverIsLater ? p.host : held.hostText;
@@ -1108,7 +1131,7 @@
             var staySvc = moverIsLater ? held.svc : svcName;
             var stayHost = moverIsLater ? held.hostText : p.host;
 
-            var rangeInvolved = bounds.isRange || held.isRange;
+            var rangeInvolved = bothRanges;
 
             var moverDoc = docCache[moverStack];
             var stayDoc = docCache[stayStack];
@@ -1118,13 +1141,20 @@
 
             var choices, freePort = null;
             if (rangeInvolved) {
-              // No automatic move: "leave" is the only choice, so approving
-              // and declining come to the same thing — both sides are left
-              // exactly as written, and a person has to change one by hand.
+              // Both sides are ranges: no automatic move, so "leave" is the
+              // only choice, and approving and declining come to the same
+              // thing — both sides are left exactly as written, and a
+              // person has to change one by hand.
               choices = [{ id: 'leave', recommended: true }];
             } else {
+              // Either an ordinary single-port clash, or one side is a range
+              // and the other single (T6) — either way the mover picked
+              // above is a single port, and it gets the same free-port offer
+              // an ordinary clash always has. The search treats the range
+              // (if any) as occupying every port inside it, so the free port
+              // never lands where it would still clash.
               freePort = pickFreePort(usedPorts);
-              usedPorts[String(freePort)] = true;
+              usedPorts.push({ lo: freePort, hi: freePort });
               // The recommended choice's own id IS the free port number —
               // merge-write.js's decisionValue() falls back to whichever
               // choice is recommended when nothing was clicked, and its

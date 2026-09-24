@@ -296,6 +296,21 @@ console.log('\nR2-7. Port ranges, protocol and address are read correctly for a 
      'ports actually read: ' + JSON.stringify(clash.map(function (f) { return f.facts.port; })));
   ok('19200 on TCP and UDP is NOT flagged as a clash (different protocols)',
      !clash.some(function (f) { return f.facts.port === '19200'; }));
+
+  // T6, Adrian 2026-09-24: a range clashing with a single port moves the
+  // single port automatically — never the range, whichever pick order the
+  // single port's own source came from. Checked both ways round.
+  [[a, b], [b, a]].forEach(function (pair) {
+    var w = auditedBuild(pair, { date: '2026-09-24', name: 'demoapp' });
+    ok('R2-7/T6 (' + pair[0].name + ' then ' + pair[1].name + '): the range is kept exactly as written',
+       w.text.indexOf('19100-19102:80-82') >= 0, w.text);
+    ok('R2-7/T6 (' + pair[0].name + ' then ' + pair[1].name + '): the single port 19101 is gone, moved off',
+       w.text.indexOf('19101:8080') === -1, w.text);
+    var moved = /- "(\d+):8080"/.exec(w.text);
+    ok('R2-7/T6 (' + pair[0].name + ' then ' + pair[1].name + '): b\'s port moved to a free port outside the whole range',
+       !!moved && (Number(moved[1]) < 19100 || Number(moved[1]) > 19102), w.text);
+    assertRoundTrip('R2-7/T6 (' + pair[0].name + ' then ' + pair[1].name + ')', w.text);
+  });
 })();
 
 /* =========================================================================
