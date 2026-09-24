@@ -554,6 +554,16 @@
     return parts.join('/');
   }
 
+  // A stack-level x-unraid key named the way a person reads it on a "not carried" card; the raw key
+  // ("imported", "overview") means nothing to someone who never opened the file. An unknown key is
+  // shown as written, in quotes.
+  var XU_LABELS = {
+    overview: 'description', imported: 'record of where it came from', category: 'category',
+    project: 'project link', support: 'support link', readme: 'readme link', author: 'author',
+    sections: 'folded sections', update: 'update settings', links: 'list of linked services'
+  };
+  function xuLabel(sk) { return XU_LABELS.hasOwnProperty(sk) ? XU_LABELS[sk] : '"' + sk + '"'; }
+
   function decisionValue(decisions, f) {
     var stored = decisions[f.key];
     if (f.severity === 'wiring') {
@@ -2509,16 +2519,16 @@
               if (decisions[fieldKey] === 'leave') {
                 changes.push({
                   key: fieldKey, declined: true, topLevel: true, stack: sd.name, sourceLine: fieldSourceLine, line: null,
-                  title: 'This stack’s own "' + sk + '" is not carried',
-                  reason: 'Left as written: kept in the merge summary, not the file. A merged stack has one "' + sk +
-                    '", and ' + firstXUnraidLeaf + '’s is kept.',
+                  title: 'This stack’s own ' + xuLabel(sk) + ' is not carried',
+                  reason: 'Left as written: kept in the merge summary, not the file. A merged stack has one ' + xuLabel(sk) +
+                    ', and ' + firstXUnraidLeaf + '’s is kept.',
                   declinedValue: skText, struckComment: null
                 });
               } else {
                 changes.push({
                   key: fieldKey, topLevel: true, stack: sd.name, sourceLine: fieldSourceLine, line: null,
-                  title: 'This stack’s own "' + sk + '" is not carried',
-                  reason: 'A merged stack has one "' + sk + '", and ' + firstXUnraidLeaf + '’s is kept. This one is left out.',
+                  title: 'This stack’s own ' + xuLabel(sk) + ' is not carried',
+                  reason: 'A merged stack has one ' + xuLabel(sk) + ', and ' + firstXUnraidLeaf + '’s is kept. This one is left out.',
                   struckComment: null
                 });
               }

@@ -1,0 +1,55 @@
+# Demo-TubeArchivist — the app container from Community Applications' "TubeArchivist" template
+# (PLAN_178, the third merge walkthrough). Installed the way a real Unraid user has it: talking
+# to its own Elasticsearch and Redis over the server's own address and their published ports,
+# because that is the only way three separate CA templates can find each other. The merge's job
+# is to let the three talk by name instead, once they share one stack.
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    name: "TubeArchivist"
+  category: MediaApp:Video
+  overview: |
+    Your self hosted YouTube media server, full text search, and video download tool.
+
+services:
+  tubearchivist:
+    image: bbilly1/tubearchivist:latest
+    container_name: Demo-TubeArchivist
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "17800:8000"
+    volumes:
+      - /mnt/user/appdata/Demo-TubeArchivist/youtube:/youtube
+      - /mnt/user/appdata/Demo-TubeArchivist/cache:/cache
+    environment:
+      # The address this stack answers on, filled in by install.sh — never a real address in
+      # the repository. -!S
+      TA_HOST: __BOX_IP__
+      TA_USERNAME: tubearchivist
+      # Throwaway test password, never a real one. -!R -!S
+      TA_PASSWORD: t178-test-only
+      # Reaches Redis over the server's own address before the merge; the merge should rewrite
+      # this to the Redis service's own name. -!S
+      REDIS_CON: redis://__BOX_IP__:17637
+      # Must match archivist-es's own ELASTIC_PASSWORD. -!R -!S
+      ELASTIC_PASSWORD: t178-test-only
+      # Reaches Elasticsearch over the server's own address before the merge; the merge should
+      # rewrite this to the Elasticsearch service's own name. -!S
+      ES_URL: http://__BOX_IP__:17920
+      TZ: America/Toronto
+      HOST_UID: "99"
+      HOST_GID: "100"
+    healthcheck:
+      # Matches Tube Archivist's own image — curl is already installed there for this.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+      interval: 2m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    x-unraid:
+      icon: https://i.imgur.com/6n4ljjQ.png
+      webui: http://[IP]:17800/

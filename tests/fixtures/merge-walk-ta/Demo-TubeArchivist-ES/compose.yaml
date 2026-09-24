@@ -1,0 +1,35 @@
+# Demo-TubeArchivist-ES — the Elasticsearch container from Community Applications' own
+# "TubeArchivist-ES" template (PLAN_178). Community Applications gives this container no health
+# check of its own, so none is added here either.
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    name: "TubeArchivist-ES"
+  category: MediaApp:Video
+  overview: |
+    The Elasticsearch instance that powers Tube Archivist's full text search.
+
+services:
+  archivist-es:
+    image: bbilly1/tubearchivist-es:latest
+    container_name: Demo-TubeArchivist-ES
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "17920:9200"
+    volumes:
+      - /mnt/user/appdata/Demo-TubeArchivist/es:/usr/share/elasticsearch/data
+    environment:
+      # Must match tubearchivist's own ELASTIC_PASSWORD. -!R -!S
+      ELASTIC_PASSWORD: t178-test-only
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # Switches off Elasticsearch's own bootstrap checks, which is also how Tube Archivist's
+      # own docker-compose runs it — the box's vm.max_map_count is left exactly as it is.
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      path.repo: /usr/share/elasticsearch/data/snapshot
+    x-unraid:
+      icon: https://i.imgur.com/ftggG6O.jpg

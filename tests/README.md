@@ -39,6 +39,7 @@ node tests/pull_progress.js         # the row overlay's parser — layer/contain
 node tests/merge_walk_dryrun.js     # the merge walkthrough's dry run: examine()/buildMergedText()/apply() against the four-stack fixture, off the box; --check asserts the phase 4 shape
                                     # the walk itself — four running stacks merged into one, the same page checked before and after — is tests/fixtures/merge-walk/README.md
 node tests/merge_walk_six_dryrun.js # the second walkthrough's dry run: six stacks behind a Traefik front door, thirteen planted traps, two pick orders; --check asserts every trap (PLAN_169)
+node tests/merge_walk_ta_dryrun.js  # the third walkthrough's dry run: three Community Applications templates (Tube Archivist, its Elasticsearch and its Redis), no traps planted, two pick orders; --check asserts the two address rewires, the surviving ports and mounts, and a clean parse (PLAN_178)
 node tests/merge_trip.js            # round two: small source pairs under merge-pairs/r2-*, each a way to trip the merge (sidecars, CRLF, port ranges, proxy labels, unreadable files…); SKIP lines are proven on the box
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js

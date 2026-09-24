@@ -1,0 +1,26 @@
+# Demo-TubeArchivist-Redis — the Redis container from Community Applications' own
+# "TubeArchivist-Redis" template (PLAN_178). Community Applications gives this container no
+# health check and no settings of its own.
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    name: "TubeArchivist-Redis"
+  category: MediaApp:Video
+  overview: |
+    The Redis cache Tube Archivist uses for its task queue.
+
+services:
+  archivist-redis:
+    image: redis
+    container_name: Demo-TubeArchivist-Redis
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "17637:6379"
+    volumes:
+      - /mnt/user/appdata/Demo-TubeArchivist/redis:/data
+    x-unraid:
+      icon: https://i.imgur.com/dtGJa5y.jpeg
