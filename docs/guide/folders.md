@@ -9,10 +9,10 @@ Folders are one level deep. You cannot put a folder inside a folder.
 
 ## Making a folder
 
-![The New folder button replaced by a naming box with the placeholder "Media", sitting in the row of buttons](../images/guide/folders-new.png)
+![The row of buttons after choosing New folder from the Add menu: the Add button has become a naming box with the placeholder "Media"](../images/guide/folders-new.png)
 
-1. Press **New folder** above the list, or **New folder…** on a stack's own menu to file that stack
-   straight into it.
+1. Open **Add** and choose **New folder**, or press **New folder…** on a stack's own menu to file
+   that stack straight into it.
 2. Type a name.
 
 A folder is [a real directory](where-things-live.md) in your data store. The name must:

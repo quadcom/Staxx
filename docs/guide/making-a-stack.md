@@ -6,9 +6,9 @@ Use this when there is no catalogue entry for what you want: an image you alread
 
 ## Steps
 
-1. Press **Add stack**, top right of the [stack list](the-stack-list.md).
+1. Open **Add** and choose **Add a blank stack**.
 
-   ![The top button row with Add stack outlined](../images/guide/making-a-stack-button.png)
+   ![The top button row with the Add menu open and Add a blank stack outlined](../images/guide/making-a-stack-button.png)
 
 2. [The stack editor](the-stack-editor.md) opens straight away, titled **New stack**.
 3. Type a name in the **Stack name** box. This is the only thing you are asked for. It becomes the folder's name, so renaming it later moves the folder.
@@ -19,7 +19,7 @@ Use this when there is no catalogue entry for what you want: an image you alread
 
    ![The editor footer: Tidy this file, Undo, Save and Save and start](../images/guide/making-a-stack-save.png)
 
-A new stack always lands at the top level. To file it in a folder afterwards, use **Move to folder** on the stack's own menu (see [folders](folders.md)). Every new stack starts from the same skeleton. For a ready-made app instead, use the **Apps** button (see [installing an app](installing-an-app.md)).
+A new stack always lands at the top level. To file it in a folder afterwards, use **Move to folder** on the stack's own menu (see [folders](folders.md)). Every new stack starts from the same skeleton. For a ready-made app instead, use **From Apps** (see [installing an app](installing-an-app.md)).
 
 ## Starting file
 
@@ -91,7 +91,7 @@ A stack's folder can end up with no compose file: deleted, renamed, or lost with
 
 ![The same row with the warning triangle outlined where the icon would be](../images/guide/making-a-stack-broken-icon.png)
 
-It works like **Add stack**, with one difference: the name is filled in and cannot be changed.
+It works like **Add a blank stack**, with one difference: the name is filled in and cannot be changed.
 
 If StaXX kept an earlier version of the file, you are offered your last working copy instead of the blank one (see [recovery and redundancy](recovery-and-redundancy.md)). If an override file is still sitting in the folder, it says so.
 

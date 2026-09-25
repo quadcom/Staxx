@@ -2,7 +2,8 @@
 
 <!-- index: 6 | a walk round the window that opens when you open a stack: the three ways to see the same file, the tabs, the form's sections, and the buttons along the bottom. -->
 
-Open it by clicking [a stack's picture](the-stack-list.md) on the list, or by pressing **Add stack**.
+Open it by clicking [a stack's picture](the-stack-list.md) on the list, or by opening **Add** and
+choosing **Add a blank stack**.
 Clicking one service's own icon, rather than the stack's, opens the same window in Split view,
 scrolled straight to that service.
 
