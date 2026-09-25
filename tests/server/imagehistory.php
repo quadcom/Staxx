@@ -9,13 +9,15 @@
  * plan step added.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
- * pointed at /tmp/b3-store and UPDATE_RETAIN at "3" (so the retention cases
- * below assert on a small, exact number rather than the real default), the
- * same way tests/server/record.php points STORE_ROOT at /tmp/b2-store —
- * never the real stack root. staxx_cfg() memoises the first time it is
- * read, so both keys are seeded into the config file BEFORE php runs, not
- * changed from inside this script — by the time this file's first line
- * executes it is already too late to move the root out from under it.
+ * pointed at /tmp/b3-store, the same way tests/server/record.php points
+ * STORE_ROOT at /tmp/b2-store — never the real stack root. STORE_ROOT is one
+ * of the only three keys the flash pointer file may hold (STAXX_FLASH_KEYS
+ * in Defines.php), so it is seeded there before php runs, the same as ever.
+ * UPDATE_RETAIN is not one of those three — every other setting lives in the
+ * store's own config file — so this script seeds UPDATE_RETAIN="3" into
+ * /tmp/b3-store/config/staxx.cfg itself, before ImageHistory.php's first
+ * require (see there): staxx_cfg() memoises the first time it is read, so
+ * seeding it any later would already be too late.
  *
  *     pscp tests/server/imagehistory.php root@<box>:/tmp/
  *     plink … '
@@ -24,8 +26,6 @@
  *       grep -q "^STORE_ROOT=" $CFG \
  *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b3-store\"#" $CFG \
  *         || echo "STORE_ROOT=\"/tmp/b3-store\"" >> $CFG
- *       sed -i "s#^UPDATE_RETAIN=.*#UPDATE_RETAIN=\"3\"#" $CFG
- *       grep -q "^UPDATE_RETAIN=" $CFG || echo "UPDATE_RETAIN=\"3\"" >> $CFG
  *       php /tmp/imagehistory.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       exit $RC
@@ -51,10 +51,18 @@ $scratch = '/tmp/staxx-imagehistory-test.json';
 @unlink($scratch);
 putenv('STAXX_UPDATE_STATE='.$scratch);
 
-register_shutdown_function(function () use ($scratch) {
+// UPDATE_RETAIN is not a flash key (see this file's header) — seeded here,
+// into the scratch store's own config file, before UpdateRun.php's first
+// require just below, which is the earliest staxx_cfg() could be called.
+$b3CfgFile = '/tmp/b3-store/config/staxx.cfg';
+@mkdir('/tmp/b3-store/config', 0755, true);
+file_put_contents($b3CfgFile, "UPDATE_RETAIN=\"3\"\n");
+
+register_shutdown_function(function () use ($scratch, $b3CfgFile) {
   @unlink($scratch);
   $lock = (defined('STAXX_UPDATE_DIR') ? STAXX_UPDATE_DIR : '/tmp/staxx/updates').'/lock';
   if (is_dir($lock)) @rmdir($lock);
+  @unlink($b3CfgFile);
 });
 
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
