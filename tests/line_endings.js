@@ -36,6 +36,10 @@ var TEXT = ['.js', '.css', '.php', '.page', '.plg', '.sh', '.cfg', '.md',
 // called "local" wherever it appears silently excludes the whole of the thing
 // being checked. That is exactly what the first version of this file did.
 var SKIP_ROOT = ['.git', 'node_modules', 'plans', 'summaries', 'local', '.preview', 'build'];
+// Whole directories skipped wherever they sit, matched by their path relative
+// to the repository root: this mirrors the `-text` line in .gitattributes for
+// the same directory, whose fixture exists to be CRLF with a byte-order mark.
+var SKIP_DIRS = ['tests/fixtures/merge-pairs/r2-crlf-bom'];
 
 var offenders = [];
 var checked = 0;
@@ -45,6 +49,7 @@ function walk(dir, atRoot) {
     var full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (atRoot && SKIP_ROOT.indexOf(entry.name) >= 0) return;
+      if (SKIP_DIRS.indexOf(path.relative('.', full).split(path.sep).join('/')) >= 0) return;
       walk(full, false);
       return;
     }
