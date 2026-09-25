@@ -92,14 +92,16 @@ The kinds of change you can meet:
 | Now reaches *service* inside the stack | A setting pointed at another container by your server's address. It now names the service directly. |
 | Now uses *service*'s own port | The same, for a port: the container's own port replaces the one that was published on your server. |
 | Is anything outside this merge using *service* on port *N*? | The merged services no longer need this port to reach each other. It stays open on your server. Decline stops publishing it. The card names any other stack on your server that connects to it. |
-| Two services publish port *N* | Both stacks open the same port. Approve moves one to a free port. Decline keeps both, and you choose which one keeps it. |
+| Two services publish port *N* | Both stacks open the same port. Approve moves one to a free port. Decline keeps both, and you choose which one keeps it. A single port caught inside the other's range moves the same way; two overlapping ranges have no free port to move to, so change one of them yourself. |
 | Moved off a clashing port | The port that was moved to make room. |
 | Web address follows the moved port | The service's web page button now opens on the moved port. |
 | Points at *stack*'s own storage | A database's storage is kept under the old stack's name. See below. |
 | Path adjusted for the new stack's folder | A folder path written relative to the old stack now points at the same place from the new folder. |
 | Joined the *network* network | The service joined a network the other service is on, and the two can now reach each other. |
+| Now joins *service*'s network inside the stack | A service used another service's network connection, such as a download app behind a VPN. It now joins that service by name inside the new stack. |
 | Left on its own network | The two services share no network. Nothing changed. |
 | Renamed to keep it distinct | Two stacks used the same name for a service, a network, a volume or a reusable block. One was renamed. |
+| Two services use the proxy name *name* | Two services used the same name in their web proxy settings. One is renamed so both keep working. |
 | From the override file | A stack had a second compose file laid over the first. Its lines are folded in and marked. |
 | The `version:` line is not carried | An old, ignored line is dropped. |
 | This stack's own description is not carried | Two stacks each gave the stack its own description, category or link with different values. The first is kept. Decline and the other value is kept in the merge summary rather than the file. A detail only one stack carried comes across without asking. |
@@ -133,7 +135,8 @@ Anything sitting in a stack's folder beside the compose file, such as an icon, a
 settings file, travels across into the new stack's folder. Each one says what will happen to it:
 **Copied as …** for an icon renamed after its service, **not copied — points outside the stack** for
 a link that leaves the folder, and a note that a copied key or certificate **will exist in two
-places**. A folder over 10 MB is copied in full, with a warning. Two file cards can appear:
+places**. If a service's icon file is missing, its icon line is kept exactly as written and a note
+says none was copied. A folder over 10 MB is copied in full, with a warning. Two file cards can appear:
 
 | Card title | Buttons |
 |---|---|
@@ -193,6 +196,13 @@ original stacks**. The sentence under the switches states what your choice means
 Press **Merge** and the new stack is written and opened in the editor, started only if you asked for
 that. The stacks you merged are retired, not deleted: they stay on your server until you press the
 **Remove** button on their row, and keep running unless you stopped them on this step.
+
+**Merge** can be refused instead:
+
+| If this happens | What to do |
+|---|---|
+| Another merge is being written right now | Wait for it to finish, then press **Merge** again. |
+| A stack has changed on the server since the wizard read it | Nothing was written. Press **Start again** to reopen the wizard and read everything fresh. |
 
 ## Terms used here
 

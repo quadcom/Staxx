@@ -177,6 +177,11 @@ underneath shows again, with its own controls back.
 
 A folder has the same two actions for just what is inside it; see [folders](the-stack-list.md#folders).
 
+While **Update all** is running, a progress line sits above the list, counting how many stacks are
+done and naming the one it is updating now. Press **Stop** to end the run once that one stack has finished.
+
+![The Update all progress line under the toolbar, reading 1 of 3 updated, updating demo-web now, 1 waiting, with the Stop button at its right](../images/guide/updates-queue.png)
+
 ## Docker Hub's limit
 
 ![A running pill beside a grey could not check pill, with its hover card open explaining the registry could not be reached, and rows for last asked, next check, how often and why](../images/guide/updates-could-not-check.png)

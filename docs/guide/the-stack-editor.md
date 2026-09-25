@@ -3,6 +3,8 @@
 <!-- index: 6 | a walk round the window that opens when you open a stack: the three ways to see the same file, the tabs, the form's sections, and the buttons along the bottom. -->
 
 Open it by clicking [a stack's picture](the-stack-list.md) on the list, or by pressing **Add stack**.
+Clicking one service's own icon, rather than the stack's, opens the same window in Split view,
+scrolled straight to that service.
 
 ![The whole editor window in Split view: the header with the stack name and tools, the four tabs, the form on the left showing the Container and Ports sections, the compose file on the right, and the buttons along the bottom](../images/guide/the-stack-editor-whole.png)
 
@@ -41,6 +43,12 @@ left it.
 A file other than the compose file itself, such as a `.env` file, opens beside the form. With the
 `.env` tab open, click a setting whose value uses one of its variables and the line that defines
 that variable lights up, the same way the compose file's lines do.
+
+Two orange buttons sit at the left of the file tab strip: **New file** adds a new, empty file to
+the stack, and the upload button beside it adds a file from your computer. Every file's tab also
+carries its own menu arrow. Press it to rename, download or delete that file.
+
+![The file tab strip in the editor: the orange New file and upload buttons at the left, the compose.yaml and .env tabs, and the .env tab's menu open with Rename, Delete and Download](../images/guide/the-stack-editor-file-menu.png)
 
 ## The four tabs
 

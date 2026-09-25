@@ -67,6 +67,19 @@ way as in the editor.
 
 A choice made this way takes effect straight away. Nothing needs saving.
 
+## From Select
+
+![The stack list with Select turned on and one stack chosen, and the row of buttons beneath the toolbar: Start, Stop, Restart, Check for updates, Update, and Updates… and Notifications… outlined](../images/guide/update-policy-select-buttons.png)
+
+Turn on **Select** and tick the stacks you want to change, then press **Updates…** or
+**Notifications…** in the button row that appears.
+
+- **Updates…** offers the same **When** choice as a container's own page — **Default**, **Manual**
+  or **Automatic**, with **Immediate** or **Delayed** underneath once you choose **Automatic**. Press
+  **Apply to N stacks** to set every service in every ticked stack at once.
+- **Notifications…** offers the same three switches as a container's own page. Press
+  **Apply to N stacks** to set them for every service in every ticked stack.
+
 ## Containers this cannot change
 
 **Pinned to one exact build.** The rows still show, but pressing them does nothing until you unpin

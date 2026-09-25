@@ -10,10 +10,10 @@ notice: **No data store has been chosen yet.** Choose a folder to continue.
 ## Choosing the folder
 
 1. Press **Choose a data store**.
-2. Pick the place StaXX suggests, or type a path of your own.
-3. Press **Move the data store**.
+2. Pick the place StaXX suggests, or type a path of your own, then press **Use this location**.
+3. Check the confirm screen, then press **Use this store**.
 
-![The Where should stacks live dialog: the current location, a Move it to box with Browse, the Move the data store button, and a Not offered list explaining why two pools are not suggested](../images/guide/settings-move-dialog.png)
+![The first-run confirm screen, Where should StaXX keep its data?, reading This folder does not exist yet, it will be created, with Back and the Use this store button outlined](../images/guide/first-run-confirm.png)
 
 StaXX suggests a folder inside appdata on one of your fast storage pools. Any place it will not
 offer is listed underneath, with the reason next to it. If your server has no pool it can use, it
@@ -25,6 +25,9 @@ picker will not let you choose a place that could lose your data; see [settings]
 for what that covers.
 
 **Go to Settings** opens the settings panel instead, where the same choice sits in the Storage tab.
+
+The confirm screen shows what is already in that folder, including any stacks StaXX found. Press
+**Back** to choose another folder, or **Use this store** to carry on.
 
 Once the folder exists, the stack list opens and becomes your landing page. You can move the data
 store later from the Storage tab in settings; StaXX copies everything and checks the copy before

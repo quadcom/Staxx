@@ -7,9 +7,9 @@ one catalogue entry into an ordinary compose file, ready for you to check before
 
 ## Walkthrough
 
-1. Press **Apps**, next to **Add stack**.
+1. Open **Add** and choose **From Apps**.
 
-   ![The top button row with Apps outlined](../images/guide/installing-an-app-button.png)
+   ![The top button row with the Add menu open and From Apps outlined](../images/guide/installing-an-app-button.png)
 
 2. Read the window that opens. It shows a curated home page, **Spotlight**, **Recently Added** and
    **Top Trending**, with a search box and a category list above them.

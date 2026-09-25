@@ -9,17 +9,26 @@ bottom, part by part.
 
 ## The buttons along the top
 
-![The row of buttons across the top: the Find a stack box, then Select, Settings, New folder, Apps, Import, Add stack, Merge, Check for updates, Update all and Pause updates, with Add stack ringed](../images/guide/the-stack-list-button-row.png)
+![The row of buttons across the top: the Find a stack box, then the legend button, Select, Settings, Add, Check for updates, Update all and Pause updates, with Add ringed](../images/guide/the-stack-list-button-row.png)
 | Button | What it does |
 |---|---|
+| The icon-only button beside **Select** | Opens the key to every mark and icon on the page. See [row marks and icons](marks.md). |
+| Select | Switches the list into selection mode, to act on several stacks at once. |
 | Settings | Opens the StaXX settings page. |
-| New folder | Creates a folder to group stacks in. |
-| Apps | Opens the catalogue of ready-made apps. |
-| Import | Brings in a container or project StaXX does not manage yet. |
-| Add stack | Starts a new, empty stack. |
+| Add | Opens a menu: **Add a blank stack**, **From Apps**, **Import**, **New folder** and **Merge stacks…**. See the table below. |
 | Check for updates | Checks every image against its registry, right now. |
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say **Resume updates**. |
+
+**Add** opens one menu for everything that ends in a new stack or folder:
+
+| Item | What it does |
+|---|---|
+| Add a blank stack | Starts a new, empty stack. |
+| From Apps | Opens the catalogue of ready-made apps. |
+| Import | Brings in a container or project StaXX does not manage yet. |
+| New folder | Creates a folder to group stacks in. |
+| Merge stacks… | Combines two or more stacks into one. Needs at least two stacks and a desktop browser. |
 
 ## Notifications
 

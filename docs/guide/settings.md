@@ -45,7 +45,7 @@ reloads for you and says so.
 
 ## Storage tab
 
-![The Storage tab in full: the Data store box holding the folder's path and its folder button, the Protect me from myself switch turned on with its one-line explanation, the three folders derived from the path and the Move the data store and Check these are in your backup links; then Copies on the flash drive with its dropdown, and beneath it the Keeping the copies current choice between On a schedule and Live; then the Archived stacks list of zips with dates and sizes](../images/guide/settings-storage-tab.png)
+![The Storage tab in full: the Data store box holding the folder's path and its folder button, the Protect me from myself switch turned on with its one-line explanation, the three folders derived from the path and the Move the data store and Check these are in your backup links; then Copies on the flash drive with its dropdown, and beneath it the Keeping the copies current choice between On a schedule and Live; then the Archived stacks list of zips with dates and sizes; and the Unused images box with its Scan stored images button](../images/guide/settings-storage-tab.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
@@ -54,6 +54,7 @@ reloads for you and says so.
 | Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save, start or update a stack here a copy of its file is also written to the flash drive, which Unraid already backs up. If the data store were ever lost, StaXX offers to bring every stack back from these copies — see [if the data store is lost](recovery-and-redundancy.md). With it off, no copies are written. |
 | Keeping the copies current | On a schedule / Live | On a schedule | How a change made outside StaXX — the file edited by hand and the container recreated at a command line — still reaches the copy above. **On a schedule** compares every stack with its copy once an hour and rewrites the ones that differ; a change made this way can be up to an hour behind. **Live** keeps a small process running that refreshes a stack's copy the moment its container is recreated, however that was done, at the cost of one process that runs all the time; a daily sweep still runs as a backstop. Only means anything while the setting above is on. |
 | Archived stacks | — | — | Shows the zip of every stack you have removed, with its date and size. Nothing here can be changed. See [removing a stack](removing-a-stack.md). |
+| Unused images | — | — | Pressing **Scan stored images** opens a list of every Docker image nothing on this server is using, grouped by why it is there, each with its size. Most groups start ticked ready to remove, except **Still wanted**, which starts unticked. Tick the ones you want gone and remove them from there. |
 
 Two links sit under the Data store box:
 

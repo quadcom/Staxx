@@ -202,7 +202,8 @@ What it actually does depends on where the container came from:
 
 - From a **template**, the running container is stopped and set aside under another name, and the
   new stack starts in its place. Reversible — nothing is deleted, and a failed start puts the
-  original back.
+  original back. The template itself is also moved out of Unraid's own template folder, and answering
+  "It does not work" afterwards puts it back along with the container.
 - From a **Compose Manager project**, the new stack is given the same name Docker already knows
   those containers by, so taking over rebuilds the containers you already run, in place, rather than
   starting a second copy. There is no going back to a stopped original — going back means starting

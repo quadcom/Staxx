@@ -14,9 +14,9 @@ stack. Nothing switches off, starts or changes while it runs.
 
 ## Open Import
 
-![The top button row with Import outlined](../images/guide/bringing-in-a-container-button.png)
+![The top button row with the Add menu open and Import outlined](../images/guide/bringing-in-a-container-button.png)
 
-Press **Import**, in the row of buttons at the top right, between **Apps** and **Add stack**.
+Open **Add** and choose **Import**.
 
 ## The list
 
@@ -91,7 +91,10 @@ Right-click the row to open its menu. Two items appear because it is locked.
 **Take over and start** is the normal choice. Clear the lock through this menu, not by deleting
 `NEEDS-REVIEW.md` by hand.
 
-The stack now runs in place of the container it replaced.
+The stack now runs in place of the container it replaced. When the container came from an Unraid
+template, taking it over also moves that template out of Unraid's own template folder and off its
+**Auto Update Applications** list. Answering **It does not work** on the question that follows puts
+both back. The settings page lists and moves any templates left behind by an earlier takeover.
 
 ## The import lock
 
