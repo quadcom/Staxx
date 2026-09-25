@@ -262,9 +262,21 @@ $folderTwo = staxx_updates_aggregate([$folderUpdateA, $folderUpdateB, $folderCur
 ok('folder aggregate: two updating stacks are both named in children',
    count($folderTwo['children']) === 2, json_encode($folderTwo['children']));
 ok('folder aggregate: each child carries its own name and label',
-   $folderTwo['children'][0] === ['name' => 'sonarr', 'label' => 'update ready']
-   && $folderTwo['children'][1] === ['name' => 'radarr', 'label' => 'new build of 1.2'],
+   $folderTwo['children'][0] === ['name' => 'sonarr', 'label' => 'update ready', 'was' => '', 'version' => '']
+   && $folderTwo['children'][1] === ['name' => 'radarr', 'label' => 'new build of 1.2', 'was' => '', 'version' => ''],
    json_encode($folderTwo['children']));
+
+/* 'was'/'version' ride along on each child so the folder's hover card can say
+ * what a stack is running and what is waiting (commit f5c74cd, 2026-09-10). */
+$folderUpdateC = ['state' => 'update', 'label' => 'update ready', 'source' => '', 'tip' => 't',
+                  'name' => 'sonarr', 'was' => '1.0', 'version' => '1.1'];
+$folderUpdateD = ['state' => 'update', 'label' => 'new build of 1.2', 'source' => '', 'tip' => 't',
+                  'name' => 'radarr', 'was' => '1.1', 'version' => '1.2'];
+$folderVersioned = staxx_updates_aggregate([$folderUpdateC, $folderUpdateD, $folderCurrent]);
+ok('folder aggregate: each child carries its own was and version',
+   $folderVersioned['children'][0] === ['name' => 'sonarr', 'label' => 'update ready', 'was' => '1.0', 'version' => '1.1']
+   && $folderVersioned['children'][1] === ['name' => 'radarr', 'label' => 'new build of 1.2', 'was' => '1.1', 'version' => '1.2'],
+   json_encode($folderVersioned['children']));
 ok('folder aggregate: the tip counts stacks, not services',
    strpos($folderTwo['tip'], 'stacks here have an update available') !== false, $folderTwo['tip']);
 ok('folder aggregate: the tip points at the folder, not "the stack"',
@@ -276,7 +288,7 @@ $folderOne = staxx_updates_aggregate([$folderUpdateA, $folderCurrent]);
 ok('folder aggregate: a single updating stack still gets its own label',
    $folderOne['label'] === 'update ready', $folderOne['label']);
 ok('folder aggregate: a single updating stack still lists in children too',
-   $folderOne['children'] === [['name' => 'sonarr', 'label' => 'update ready']],
+   $folderOne['children'] === [['name' => 'sonarr', 'label' => 'update ready', 'was' => '', 'version' => '']],
    json_encode($folderOne['children']));
 
 /* A plain stack row (no 'name' on any pill) must carry no children at all —
