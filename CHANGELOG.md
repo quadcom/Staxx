@@ -16,6 +16,7 @@ What changed in StaXX, newest first.
 - Removing a stack now asks what to do with its proxy entry and Pi-hole name: switch off, delete or keep.
 - Every section of the stack editor can now be folded away with the arrow beside its heading. StaXX remembers which kinds you folded, in this browser.
 - The column headings on the stack list now line up with what sits under them, instead of starting a little to the left of it.
+- The arrow that opens and closes a folder no longer shows a tooltip, which used to say "Expand" whether the folder was open or not.
 - A stack's menu now has a legend you can open without leaving the page, explaining every mark and colour used on the stack list.
 - The legend is also reachable from a button of its own at the top of the list, beside Select.
 - A container that checks its own health now looks different from one that nothing checks: the green chip breathes slowly while its check is passing. Both used to look identical.

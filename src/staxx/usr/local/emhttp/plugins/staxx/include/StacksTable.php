@@ -1971,7 +1971,7 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
               <button type="button" class="staxx-chevron"
                       data-toggle-folder="<?= htmlspecialchars($row['id']) ?>"
                       aria-expanded="<?= $row['collapsed'] ? 'false' : 'true' ?>"
-                      title="<?= $row['collapsed'] ? _('Expand') : _('Collapse') ?>">
+                      aria-label="<?= _('Show or hide this folder') ?>">
                 <i class="fa fa-chevron-<?= $row['collapsed'] ? 'right' : 'down' ?>"></i>
               </button>
 
