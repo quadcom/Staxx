@@ -3638,7 +3638,7 @@ function staxx_selftest(): array {
                                ? 'yes' : 'NO — nothing can be run',
                                (function_exists('exec') && !in_array('exec', $disabled, true)) ? 'good' : 'bad'),
     'job folder'          => $entry(STAXX_JOB_DIR),
-    'compose files in a backup' => $entry($backupReport),
+    'data store in a backup' => $entry($backupReport),
     'published health checks turned away' => $entry($turnedAwayDetail),
   ];
 }
