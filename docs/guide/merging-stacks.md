@@ -6,11 +6,13 @@ Merging joins two or more stacks that belong to the same application into one ne
 their compose files and writes a new stack that holds every container together. The originals are
 retired, not deleted, and only stop running if you ask for it.
 
-Press **Merge**, in the top button row beside **Add stack**, to open it. The tool is a six-step
+Open **Add** at the top of the stack list and choose **Merge stacks…**. The tool is a six-step
 window. Nothing is written to your server until you press **Merge** on the last step, so you can go
 back, change an answer, or cancel at any point. Every answer you give is kept when you go back.
 
 The merge tool works on a desktop browser only. It is not available on a phone or tablet.
+
+For a worked example with three real apps, see [Example: merging Tube Archivist](merging-tube-archivist.md).
 
 ## The short version
 
