@@ -873,6 +873,26 @@ ok('rollback presence: absent + "keep the images" on is the familiar refusal',
 ok('rollback presence: absent + "keep the images" off is NOT a refusal — the caller pulls instead',
    staxx_update_rollback_presence_error(false, false, 'web') === null);
 
+// staxx_update_rollback_source_error() — the manifest-inspect verdict, again
+// proved with a fixed exit code and message rather than a real registry
+// round trip. Only the two phrases Docker itself uses for "this digest is
+// gone" refuse; a network failure, a timeout or anything else unrecognised
+// goes ahead and lets the pull itself report the real problem.
+$sourceRefusal = 'This version is no longer available at the source, so it cannot be rolled back to.';
+
+ok('rollback source: exit 0 (source has it) is never a refusal',
+   staxx_update_rollback_source_error(0, '', 'web') === null);
+ok('rollback source: "no such manifest" refuses with the fixed sentence',
+   staxx_update_rollback_source_error(1, 'no such manifest: docker.io/library/nginx@sha256:' . str_repeat('0', 64), 'web') === $sourceRefusal);
+ok('rollback source: "manifest unknown" refuses with the same sentence',
+   staxx_update_rollback_source_error(1, 'manifest unknown', 'web') === $sourceRefusal);
+ok('rollback source: a mixed-case match still refuses',
+   staxx_update_rollback_source_error(1, 'Manifest Unknown', 'web') === $sourceRefusal);
+ok('rollback source: a DNS failure cannot tell, so it goes ahead',
+   staxx_update_rollback_source_error(1, 'Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io: no such host', 'web') === null);
+ok('rollback source: a timeout (exit 124, no output) cannot tell either',
+   staxx_update_rollback_source_error(124, '', 'web') === null);
+
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);
 exit($fails ? 1 : 0);

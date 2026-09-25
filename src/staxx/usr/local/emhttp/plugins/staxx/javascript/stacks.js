@@ -26499,8 +26499,8 @@
       ],
       help: 'With this on, earlier versions stay on the server so a roll-back is instant. With it ' +
             'off, only their version numbers are kept, and a roll-back downloads that version ' +
-            'again. How many versions are remembered either way is "Previous image releases to ' +
-            'keep" on the Updates tab.'
+            'again, which only works while the source still has it. How many versions are ' +
+            'remembered either way is "Previous image releases to keep" on the Updates tab.'
     },
     {
       // PLAN_181 Part D — replaces the removed weekly cleanup (decision 1,

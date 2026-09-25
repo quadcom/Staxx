@@ -803,6 +803,30 @@ function staxx_update_rollback_presence_error(bool $present, bool $keepImages, s
   return 'The previous version for the "'.$service.'" service is no longer present on this server, so it cannot be rolled back to.';
 }
 
+/**
+ * PLAN_181 Part C — when the image is not on this server and a pull will be
+ * needed, `docker manifest inspect` asks the registry whether the digest
+ * still exists there, without downloading anything. Its exit code alone
+ * cannot be trusted: non-zero also covers a registry that is merely
+ * unreachable (network down, timeout, login expired), and refusing a
+ * rollback over that would block on a guess StaXX has no way to check. Only
+ * the two phrases Docker itself uses for "this digest is gone" are treated
+ * as a real refusal; every other non-zero exit goes ahead and lets the
+ * actual pull, a few seconds later, report whatever really went wrong.
+ *
+ * @param int    $code    exit status from the manifest inspect
+ * @param string $out     its combined stdout/stderr
+ * @param string $service the service this target belongs to, for the message
+ * @return string|null the refusal sentence, or null to proceed with the pull
+ */
+function staxx_update_rollback_source_error(int $code, string $out, string $service): ?string {
+  if ($code === 0) return null;
+  if (stripos($out, 'no such manifest') !== false || stripos($out, 'manifest unknown') !== false) {
+    return 'This version is no longer available at the source, so it cannot be rolled back to.';
+  }
+  return null;
+}
+
 function staxx_update_rollback(string $stack, array $targets, string &$error, string $yaml = '', ?string &$note = null): string {
   $error = '';
 
@@ -911,6 +935,14 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   // can be proved directly — the docker call above it can only ever confirm
   // "not present" against a digest this server was never handed, which
   // proves nothing about which of the two settings is in force.
+  //
+  // When a pull will actually be needed, `docker manifest inspect` is asked
+  // first, ahead of anything being saved — it is Docker's own no-download
+  // check, so it can tell "the source no longer has this version" apart from
+  // "not on this server yet" without pulling it to find out. The decision is
+  // staxx_update_rollback_source_error() below, kept separate from the
+  // presence check for the same reason: it can only be proved with a fixed
+  // exit code and message, never with a real registry round trip.
   $needsPull = false;
   foreach ($targets as $service => $target) {
     $repo = staxx_update_local_repo($images[$service]);
@@ -925,7 +957,18 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
       $checkCode === 0, staxx_update_settings()['keepImages'], $service
     );
     if ($presenceError !== null) { $error = $presenceError; return ''; }
-    if ($checkCode !== 0) $needsPull = true;
+
+    if ($checkCode !== 0) {
+      $needsPull = true;
+
+      $manifestCode = 1;
+      $manifestOut = staxx_sh(
+        staxx_docker_bin().' manifest inspect '.escapeshellarg($repo.'@'.$target).' 2>&1',
+        20, $manifestCode
+      );
+      $sourceError = staxx_update_rollback_source_error($manifestCode, $manifestOut, $service);
+      if ($sourceError !== null) { $error = $sourceError; return ''; }
+    }
   }
 
   // The file is the authority, so this is a save like any other — it lands in
