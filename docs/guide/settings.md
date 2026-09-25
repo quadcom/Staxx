@@ -40,10 +40,22 @@ reloads for you and says so.
 | Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save, start or update a stack here a copy of its file is also written to the flash drive, which Unraid already backs up. If the data store were ever lost, StaXX offers to bring every stack back from these copies — see [if the data store is lost](recovery-and-redundancy.md). With it off, no copies are written. |
 | Keeping the copies current | On a schedule / Live | On a schedule | How a change made outside StaXX — the file edited by hand and the container recreated at a command line — still reaches the copy above. **On a schedule** compares every stack with its copy once an hour and rewrites the ones that differ; a change made this way can be up to an hour behind. **Live** keeps a small process running that refreshes a stack's copy the moment its container is recreated, however that was done, at the cost of one process that runs all the time; a daily sweep still runs as a backstop. Only means anything while the setting above is on. |
 | Scan stored images | — | — | Pressing **Scan stored images** shows a bar of **Docker's image storage**, split into **In use**, **Kept for rolling back**, **Clutter** and **Free**. Under the bar is the clutter, grouped by where it came from, with the space each image takes. Every image in the list starts ticked. Untick any you want to keep, then press the **Remove** button. The copies kept for rolling back sit under **Kept so you can roll back**; press it to open that list. If a container can no longer be read, its details appear at the top with a **Remove this broken container** button. It asks you to confirm, and leaves the container's data folder where it is. |
-| Keep the images | Yes / No — remember the version numbers only | Yes | With this on, earlier versions stay on the server, so rolling back is instant. With it off, only their version numbers are kept, and rolling back downloads that version again. |
-| Warn when image storage is this full | 50 to 99% | 85% | When there is clutter to clear and Docker's image storage is this full, the storage notice appears. |
-| Or when clutter is this old | 1 to 365 days | 30 days | When any clutter has gone unused for this many days, the storage notice appears, however much space is free. |
+| Keep the images | Yes / No — remember the version numbers only | Yes | With this on, earlier versions stay on the server, so rolling back is instant. With it off, only their version numbers are kept, and rolling back downloads that version again, which only works while the source still has it. |
+| Warn when image storage is this full | 50 to 99% | 85% | When there is clutter to clear and Docker's image storage is this full, a notice appears on the stack list. |
+| Or when clutter is this old | 1 to 365 days | 30 days | When any clutter has gone unused for this many days, a notice appears on the stack list, however much space is free. |
 | Archived stacks | — | — | Shows the zip of every stack you have removed, with its date and size. Nothing here can be changed. See [removing a stack](removing-a-stack.md). |
+
+### Data store links
+
+Two links sit under the Data store box:
+
+- **Move the data store** opens *Where should stacks live?*. It suggests a good place and explains any place it will not offer. The move copies everything to the new location, checks the copy is complete, and only then removes the original.
+
+  ![The Where should stacks live dialog: the current location, a Move it to box with Browse, the Move the data store button, and a Not offered list explaining why two pools are not suggested](../images/guide/settings-move-dialog.png)
+
+- **Check these are in your backup** opens *Add these folders to your backup*, which tells you whether the Appdata Backup plugin is set to include these folders. Being included is not the same as a backup having run; see the self-test below.
+
+  ![The Add these folders to your backup dialog, reporting that the stacks and archives folders were found in the backup plugin's list](../images/guide/settings-backup-dialog.png)
 
 ### Scan stored images
 
@@ -68,30 +80,6 @@ up, whether it ever ran, its image, its data folder, its network address and its
 Confirm to remove it. Its data folder and its Unraid template stay where they are.
 
 ![The confirmation: Remove the broken container "old-database"?, saying its data folder and its Unraid template are kept, with Cancel and a red Remove container button](../images/guide/settings-scan-images-confirm.png)
-
-### The storage notice
-
-When there is clutter to clear and one of the two storage settings above is reached, a notice
-appears at the top of the stack list.
-
-![The stack list with the storage notice in the line at the top left: Docker's image storage has 1.8 GB of clutter. It is 87% full.](../images/guide/settings-storage-notice.png)
-
-![A close-up of the notice line at the top of the stack list](../images/guide/settings-storage-notice-bar.png)
-
-Press the notice to open it, then press **Review stored images** to open **Scan stored images**. If
-you dismiss it, it stays hidden until the clutter changes.
-
-![The Notifications panel with the storage notice, how long ago it arrived, a Review stored images button and the dismiss cross](../images/guide/settings-storage-notice-panel.png)
-
-Two links sit under the Data store box:
-
-- **Move the data store** opens *Where should stacks live?*. It suggests a good place and explains any place it will not offer. The move copies everything to the new location, checks the copy is complete, and only then removes the original.
-
-  ![The Where should stacks live dialog: the current location, a Move it to box with Browse, the Move the data store button, and a Not offered list explaining why two pools are not suggested](../images/guide/settings-move-dialog.png)
-
-- **Check these are in your backup** opens *Add these folders to your backup*, which tells you whether the Appdata Backup plugin is set to include these folders. Being included is not the same as a backup having run; see the self-test below.
-
-  ![The Add these folders to your backup dialog, reporting that the stacks and archives folders were found in the backup plugin's list](../images/guide/settings-backup-dialog.png)
 
 ## Icons and images tab
 

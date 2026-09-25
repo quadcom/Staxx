@@ -121,11 +121,13 @@ Only a build StaXX itself recorded for a service can be restored to.
 | Message | What it means |
 |---|---|
 | *"There is no earlier version recorded for this service, so it cannot be rolled back."* | Nothing has been recorded for it yet. |
-| *"The previous version is no longer present on this server, so it cannot be rolled back to."* | Recorded, but the image has since been removed from the server. |
+| *"The previous version is no longer present on this server, so it cannot be rolled back to."* | Recorded, but the image has since been removed from the server while **Keep the images** is on. |
+| *"This version is no longer available at the source, so it cannot be rolled back to."* | **Keep the images** is off, and the place the image came from no longer has that version. |
 | *"This service is not pinned to a version, so there is nothing to release."* | You asked to release a pin on a file that names no exact build. |
 
 Two [settings](settings.md) decide how much is available: how many previous versions of each image
-are kept, and whether images left behind by updating are removed automatically.
+are remembered, and whether **Keep the images** keeps them on the server or downloads them again when
+you roll back.
 
 ## If the data store is lost
 

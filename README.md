@@ -184,7 +184,7 @@ before the array starts — see [where StaXX keeps its things](docs/guide/where-
 | `UPDATE_WINDOW` + `_START` / `_END` | `true`, `03:00`–`05:00` | Only install automatically inside a quiet window. |
 | `UPDATE_NOTIFY` | `off` | Unraid notifications: `found`, or `applied` as well. |
 | `UPDATE_RETAIN` | `2` | How many previous builds of each image to keep for a rollback. |
-| `UPDATE_KEEP_IMAGES` | `yes` | `no` still remembers the version numbers but no longer keeps the image files on disk; a rollback downloads that version again. |
+| `UPDATE_KEEP_IMAGES` | `yes` | `no` still remembers the version numbers but no longer keeps the image files on disk; a rollback downloads that version again, which only works while the source still has it. |
 | `STORAGE_ALERT_PERCENT` / `STORAGE_ALERT_DAYS` | `85` / `30` | When to show a notice pointing at Scan stored images: storage this full, or clutter sitting unused this many days. Nothing is ever removed on a schedule. |
 | `HUB_USER` / `HUB_TOKEN` | *(blank)* | A Docker Hub read-only token. Without one, checks are limited to roughly ten images an hour. |
 
