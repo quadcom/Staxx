@@ -31,9 +31,9 @@ fi
 # words, so this is hygiene rather than a live vulnerability — but the order
 # still matters.
 case "${1:-}" in
-  check|full|apply|cleanup) ;;
+  check|full|apply|storage) ;;
   *)
-    echo "Usage: update-check {check|full|apply|cleanup}" >&2
+    echo "Usage: update-check {check|full|apply|storage}" >&2
     exit 1
     ;;
 esac
@@ -154,23 +154,25 @@ run_apply() {
   log "apply pass finished."
 }
 
-run_cleanup() {
+run_storage() {
+  # PLAN_181 Part D — replaces the old weekly cleanup pass. This never
+  # removes anything itself; it only refreshes the figures the page's
+  # storage-alert notice reads (Images.php: staxx_storage_alert_refresh()).
   if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
     log "Docker is not available; skipping this pass."
     exit 0
   fi
 
-  log "starting cleanup pass."
+  log "starting storage-alert pass."
   "${php_bin}" -r "
-    require '${PLUGIN_DIR}/include/UpdateRun.php';
+    require '${PLUGIN_DIR}/include/Images.php';
     \$err = '';
-    \$r = staxx_update_cleanup(false, \$err);
-    if (\$err !== '') echo 'cleanup refused: '.\$err.PHP_EOL;
-    echo count(\$r['removed']).' image'.(count(\$r['removed']) === 1 ? '' : 's').' removed, '
-       . \$r['kept'].' kept.'.PHP_EOL;
-    foreach (\$r['removed'] as \$ref) echo '  removed '.\$ref.PHP_EOL;
+    \$r = staxx_storage_alert_refresh(\$err);
+    if (\$err !== '') { echo 'storage alert refused: '.\$err.PHP_EOL; exit; }
+    echo (\$r['alert'] ? 'alert on' : 'alert off').', '.\$r['clutterBytes'].' clutter bytes, '
+       . \$r['oldestDays'].' days oldest.'.PHP_EOL;
   " >> "${LOG}" 2>&1
-  log "cleanup pass finished."
+  log "storage-alert pass finished."
 }
 
 case "${1:-}" in
@@ -180,11 +182,11 @@ case "${1:-}" in
   apply)
     run_apply
     ;;
-  cleanup)
-    run_cleanup
+  storage)
+    run_storage
     ;;
   *)
-    echo "Usage: update-check {check|full|apply|cleanup}" >&2
+    echo "Usage: update-check {check|full|apply|storage}" >&2
     exit 1
     ;;
 esac

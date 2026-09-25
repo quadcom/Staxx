@@ -3,16 +3,18 @@
  * Docker image no container uses, sorting it into the groups the window
  * shows (clutter only — PLAN_181 item 9), removing only what was ticked,
  * the capacity bar's figures (item 9), and the facts and removal for a
- * container `docker inspect` cannot read (item 10). PLAN_180 Part 1.
+ * container `docker inspect` cannot read (item 10). PLAN_180 Part 1. Also
+ * the daily storage-alert pass (PLAN_181 Part D) that reads this same
+ * listing and tells the page's notice bar when clutter is worth a look —
+ * nothing here is ever removed on a schedule; only a person ticking a box
+ * in this window removes anything.
  * Copyright 2026, StaXX contributors.
  *
- * This is a second, by-hand door onto the same protection the weekly
- * cleanup already enforces (staxx_update_cleanup() in UpdateRun.php) — never
- * a looser one. Every image this file will ever offer for removal is first
- * checked against staxx_update_keep_digests(), the one definition of "wanted
- * for a rollback", so a digest that function protects is protected here too,
- * by the same key. This file never edits UpdateRun.php's keep-set logic; it
- * only calls it.
+ * Every image this file will ever offer for removal is first checked
+ * against staxx_update_keep_digests() (UpdateRun.php), the one definition
+ * of "wanted for a rollback", so a digest that function protects is
+ * protected here too, by the same key. This file never edits that
+ * function's keep-set logic; it only calls it.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -415,12 +417,84 @@ function staxx_images_broken_entry(array $ps, bool $imagePresent, array $running
  * repository key the keep-set happens to file it under, so the repository
  * grouping that function returns is deliberately thrown away here.
  */
-function staxx_images_keep_digest_set(): array {
+function staxx_images_keep_digest_set(string $excludeStack = ''): array {
   $flat = [];
-  foreach (staxx_update_keep_digests() as $digests) {
+  foreach (staxx_update_keep_digests($excludeStack) as $digests) {
     foreach ($digests as $d) $flat[$d] = true;
   }
   return $flat;
+}
+
+/**
+ * PLAN_181 Part B — the images an archived stack's own version history held,
+ * still on disk, that nothing else on this server now needs: given the
+ * (repository, digest) pairs its history recorded — gathered by the caller
+ * BEFORE the stack's folder is touched, since that history lives inside it
+ * (see staxx_archive_stack_history_pairs() in Stacks.php) — resolves each to
+ * a local image, drops anything a current stack's keep-set (Part A) still
+ * protects or any container still uses, and returns the rest in the same
+ * {id, tags, size} shape staxx_images_do_remove() already accepts.
+ *
+ * $excludeStack is the stack whose own archive this is — passed straight
+ * through to the keep-set so the DRY RUN, asked before anything is actually
+ * removed, agrees with what the real removal (asked after) finds: this
+ * stack's own compose file and history are still on disk at dry-run time and
+ * must not protect its own images from themselves.
+ *
+ * Unlike staxx_images_unused(), which can lean on `docker rmi` (never `-f`)
+ * as its own last-resort safety net for a container it could not fully
+ * account for, this function acts entirely on its own — nothing here asks
+ * before removing. So staxx_images_used_scan()'s tolerant retry is treated
+ * strictly for the one case that actually matters: if `docker ps` itself
+ * could not be asked, or a container `docker ps` could not even name an
+ * image for, nothing is offered for removal at all, rather than trusting a
+ * used-set that might be missing exactly the container that matters.
+ * 'unresolved' alone is NOT treated as a reason to refuse, deliberately —
+ * see below.
+ */
+function staxx_archive_removable_images(array $pairs, string $excludeStack): array {
+  $pairs = array_values(array_filter($pairs, function ($p) {
+    return is_array($p) && !empty($p['repo']) && !empty($p['digest']);
+  }));
+  if (!$pairs || !staxx_docker_running()) return [];
+
+  $keepFlat = staxx_images_keep_digest_set($excludeStack);
+
+  // scan['unresolved'] means some container's own image was NAMED by
+  // `docker ps` but nothing local answers to it — the box's postgresql15
+  // case. That image is not on disk at all, so there is nothing here for it
+  // to protect: refusing over it would mean this half of the archive never
+  // removes anything for as long as that one broken container exists.
+  $scan = staxx_images_used_scan();
+  if (!$scan['ok']) return [];
+  $used = $scan['used'];
+
+  $rows = []; // keyed by image id, so two services (or two versions) resolving
+              // to the same local image are only ever offered once
+  foreach ($pairs as $p) {
+    if (isset($keepFlat[$p['digest']])) continue;
+
+    $code = 1;
+    $out  = staxx_sh(
+      staxx_docker_bin().' image inspect --format '.escapeshellarg('{{json .}}')
+        .' '.escapeshellarg($p['repo'].'@'.$p['digest']),
+      10, $code
+    );
+    if ($code !== 0) continue; // no longer present locally — nothing to remove
+
+    $info = json_decode(trim($out), true);
+    if (!is_array($info)) continue;
+    $id = (string)($info['Id'] ?? '');
+    if ($id === '' || isset($used[staxx_update_short_id($id)]) || isset($rows[$id])) continue;
+
+    $tags = [];
+    foreach ((array)($info['RepoTags'] ?? []) as $rt) {
+      if ($rt !== '<none>:<none>') $tags[] = $rt;
+    }
+    $rows[$id] = ['id' => $id, 'tags' => $tags, 'size' => (int)($info['Size'] ?? 0)];
+  }
+
+  return array_values($rows);
 }
 
 /**
@@ -486,6 +560,137 @@ function staxx_images_stack_refs(): array {
 }
 
 /**
+ * Every container's own image, read tolerantly of the one Docker itself
+ * cannot inspect (rule 3 — see staxx_images_unused()'s own docblock): a
+ * batch call first, and only when that cannot account for every container
+ * does this fall back to asking about each one on its own, naming an
+ * unreadable container's image via `docker ps` instead (which still answers
+ * for a container in a broken state) rather than giving up on it outright.
+ *
+ * Shared by staxx_images_unused() (the scan window, which still shows its
+ * list around a container it cannot fully account for — `docker rmi`
+ * without `-f` is its own safety net there, so a candidate the check below
+ * cannot resolve is only ever a warning) and staxx_archive_removable_images()
+ * (which removes without ever asking, so cannot lean on that same net — see
+ * its own caller for how it treats 'unresolved').
+ *
+ * @return array{
+ *   ok: bool,                 // false only when nothing below can be trusted at all
+ *   reason: string,           // '' | 'ps-failed' | 'no-image-named' | 'stale-batch' — which refusal fired
+ *   name: string, cid: string,// only set for 'no-image-named'
+ *   used: array<string,bool>, // short image id => true; meaningful even when a retry was needed
+ *   unresolved: bool,         // true if some container's own image could not be resolved at all,
+ *                             // even though `docker ps` could name it — still not a hard failure,
+ *                             // since it is exactly what "protected by name instead" (rule 3) means
+ *   brokenRaw: array,         // ['row' => ps row, 'imagePresent' => bool][] — PLAN_181 item 10's
+ *                             // raw material for staxx_images_unused()'s own "broken" entries
+ *   psAll: array,             // cid => ps row, only populated when a retry happened
+ * }
+ */
+function staxx_images_used_scan(): array {
+  $none = ['ok' => true, 'reason' => '', 'name' => '', 'cid' => '',
+           'used' => [], 'unresolved' => false, 'brokenRaw' => [], 'psAll' => []];
+
+  $psCode = 1;
+  $psOut  = staxx_sh(staxx_docker_bin().' ps -aq --no-trunc', 10, $psCode);
+  if ($psCode !== 0) return ['ok' => false, 'reason' => 'ps-failed'] + $none;
+
+  $cids = array_values(array_filter(array_map('trim', explode("\n", $psOut))));
+  if (!$cids) return $none;
+
+  // --no-trunc so a broken entry's own id is the full 64 hex the page needs
+  // to send back.
+  $idsArg = implode(' ', array_map('escapeshellarg', $cids));
+  $inCode = 1;
+  $inOut  = staxx_sh(
+    staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.$idsArg,
+    20, $inCode
+  );
+  $inLines = array_values(array_filter(explode("\n", $inOut), function ($l) { return trim($l) !== ''; }));
+
+  $used = [];
+  if ($inCode === 0 && count($inLines) === count($cids)) {
+    foreach ($inLines as $line) $used[staxx_update_short_id(trim($line))] = true;
+    return ['used' => $used] + $none;
+  }
+
+  // The batch could not account for every container. Rather than refuse
+  // over one unreadable container, inspect each on its own: a container that
+  // reads fine still counts as using its image; one that does not is
+  // protected by name instead, via `docker ps`. Only a container `docker ps`
+  // itself cannot name an image for is still worth refusing everything over.
+  //
+  // --size left out deliberately: measured on the box at 10.2s over 81
+  // containers, past this call's own 10s timeout, which made $psAll come
+  // back empty and every broken container fall through to the refusal
+  // below. Without it the same call takes 0.03s; a broken container's own
+  // size is fetched on its own, filtered to one id, in
+  // staxx_images_broken_entry().
+  $psAllOut = staxx_sh(
+    staxx_docker_bin().' ps -a --no-trunc --format '.escapeshellarg(
+      '{{.ID}}'."\t".'{{.Names}}'."\t".'{{.CreatedAt}}'."\t".'{{.State}}'."\t".'{{.Image}}'
+    ), 10
+  );
+  $psAll = [];
+  foreach (explode("\n", $psAllOut) as $line) {
+    $cols = explode("\t", $line);
+    if (count($cols) < 5) continue;
+    $psAll[$cols[0]] = [
+      'id' => $cols[0], 'name' => $cols[1], 'created' => $cols[2],
+      'state' => $cols[3], 'image' => $cols[4],
+    ];
+  }
+
+  $sawFailure = false;
+  $unresolved = false;
+  $brokenRaw  = []; // ['row' => psAll row, 'imagePresent' => bool]
+  foreach ($cids as $cid) {
+    $oneCode = 1;
+    $oneOut  = staxx_sh(staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.escapeshellarg($cid), 8, $oneCode);
+    if ($oneCode === 0) {
+      $used[staxx_update_short_id(trim($oneOut))] = true;
+      continue;
+    }
+    $sawFailure = true;
+    $row  = $psAll[$cid] ?? null;
+    $name = $row['name'] ?? $cid;
+    $ref  = trim((string)($row['image'] ?? ''));
+
+    if ($row === null || $ref === '') {
+      // `docker ps` cannot even name an image for it — nothing to protect
+      // on disk, so this is the one case still worth refusing everything
+      // over.
+      return ['ok' => false, 'reason' => 'no-image-named', 'name' => $name, 'cid' => $cid] + $none;
+    }
+
+    $resolveCode = 1;
+    $resolvedId  = trim(staxx_sh(
+      staxx_docker_bin().' image inspect --format '.escapeshellarg('{{.Id}}').' '.escapeshellarg($ref),
+      8, $resolveCode
+    ));
+    $imagePresent = $resolveCode === 0 && $resolvedId !== '';
+    // Whether or not the container itself could be read, its image is
+    // protected either way — by being added to $used when it resolves.
+    if ($imagePresent) $used[staxx_update_short_id($resolvedId)] = true;
+    else $unresolved = true;
+
+    $brokenRaw[] = ['row' => $row, 'imagePresent' => $imagePresent];
+  }
+
+  if (!$sawFailure) {
+    // Could not reproduce the failure a second time — still refuse, since
+    // the count genuinely disagreed once and a stale answer is worse than a
+    // repeated check.
+    return ['ok' => false, 'reason' => 'stale-batch'] + $none;
+  }
+
+  return [
+    'ok' => true, 'reason' => '', 'name' => '', 'cid' => '',
+    'used' => $used, 'unresolved' => $unresolved, 'brokenRaw' => $brokenRaw, 'psAll' => $psAll,
+  ];
+}
+
+/**
  * The grouped list the window shows. Every rule in PLAN_180 lives here:
  *
  *  3.  a container `docker inspect` cannot read no longer refuses the whole
@@ -494,7 +699,9 @@ function staxx_images_stack_refs(): array {
  *      Only a container `docker ps` itself cannot name an image for still
  *      fails the list closed.
  *  4a. a roll-back image is matched by digest alone.
- *  4b. fails closed on the same three conditions staxx_update_cleanup() does.
+ *  4b. fails closed on three conditions that would otherwise make an
+ *      in-use or roll-back image read as unused (see the three guards
+ *      immediately below).
  *  4c. StaXX's own images (the crypt container) are excluded by their own
  *      label, never by guessing at a name.
  *  6.  a stack's images are its compose file's resolved "image:" values.
@@ -509,9 +716,10 @@ function staxx_images_stack_refs(): array {
 function staxx_images_unused(string &$error): array {
   $error = '';
 
-  // 4b, first third: the same "an update is running or queued" guard
-  // staxx_update_cleanup() opens with, word for word, because the keep-set
-  // below is exactly as stale here as it is there while a pull is underway.
+  // 4b, first third: an "an update is running or queued" guard — the
+  // keep-set below is built from the state file, which only catches up
+  // once a job finishes, so a pull just started or about to start is
+  // invisible to it while it runs.
   foreach ((array)(staxx_update_queue_state()['items'] ?? []) as $item) {
     if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) {
       $error = 'An update is running or queued, so cleanup was skipped. Try again once it finishes.';
@@ -527,127 +735,44 @@ function staxx_images_unused(string &$error): array {
   }
 
   // 4b, last third: without the stacks the keep-set is empty and every
-  // roll-back image would read as unused — the same reasoning
-  // staxx_update_cleanup() already carries for its own dry run.
+  // roll-back image would read as unused, which a dry listing must not
+  // claim any more confidently than a real removal would act on.
   if (!staxx_stacks_visible()) {
     $error = 'StaXX cannot see the stacks right now, so nothing was worked out or removed. '
            . 'Check the array is started, then try again.';
     return ['ok' => false];
   }
 
-  $docker = escapeshellarg(staxx_docker_bin());
-
-  // Rule 3 — every container, read in one batch, not one call each. If the
-  // batch as a whole fails, only THEN is each container asked about on its
-  // own, purely to name which one Docker could not read for the refusal, or
-  // to gather its facts for a "broken" entry (item 10). --no-trunc so a
-  // broken entry's own id is the full 64 hex the page needs to send back.
-  $psCode = 1;
-  $psOut  = staxx_sh(staxx_docker_bin().' ps -aq --no-trunc', 10, $psCode);
-  if ($psCode !== 0) {
-    $error = 'Docker could not be asked which containers exist, so nothing was worked out.';
+  // Rule 3 — every container's own image, tolerant of one Docker itself
+  // cannot inspect; see staxx_images_used_scan()'s own docblock for the
+  // batch-then-retry shape and why only a container `docker ps` cannot even
+  // name an image for still refuses the whole listing.
+  $scan = staxx_images_used_scan();
+  if (!$scan['ok']) {
+    if ($scan['reason'] === 'ps-failed') {
+      $error = 'Docker could not be asked which containers exist, so nothing was worked out.';
+    } elseif ($scan['reason'] === 'no-image-named') {
+      $error = 'Docker could not read the container "'.$scan['name'].'" ('.$scan['cid'].'), so StaXX '
+             . 'cannot tell which images are in use. Nothing will be removed until that container '
+             . 'is fixed or deleted.';
+    } else { // 'stale-batch'
+      $error = 'Docker could not be asked about every container, so StaXX cannot tell which images '
+             . 'are in use. Nothing will be removed — try again in a moment.';
+    }
     return ['ok' => false];
   }
-  $cids = array_values(array_filter(array_map('trim', explode("\n", $psOut))));
+  $used = $scan['used'];
 
-  $used   = [];   // short image id => true
-  $broken = [];   // PLAN_181 item 10 — one entry per container docker inspect cannot read
-  if ($cids) {
-    $idsArg = implode(' ', array_map('escapeshellarg', $cids));
-    $inCode = 1;
-    $inOut  = staxx_sh(
-      staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.$idsArg,
-      20, $inCode
-    );
-    $inLines = array_values(array_filter(explode("\n", $inOut), function ($l) { return trim($l) !== ''; }));
-
-    if ($inCode !== 0 || count($inLines) !== count($cids)) {
-      // The batch could not account for every container. Rather than refuse
-      // the whole list over one unreadable container, inspect each on its
-      // own: a container that reads fine still counts as using its image;
-      // one that does not is protected by name instead, via `docker ps`,
-      // which (unlike `docker inspect`) still answers for a container in a
-      // broken state, and gets its own "broken" entry (item 10). Only a
-      // container `docker ps` itself cannot name an image for still refuses
-      // the whole listing.
-      // --size left out deliberately: measured on the box at 10.2s over 81
-      // containers, past this call's own 10s timeout, which made $psAll
-      // come back empty and every broken container fall through to the
-      // refusal below. Without it the same call takes 0.03s; a broken
-      // container's own size is fetched on its own, filtered to one id,
-      // in staxx_images_broken_entry().
-      $psAllOut = staxx_sh(
-        staxx_docker_bin().' ps -a --no-trunc --format '.escapeshellarg(
-          '{{.ID}}'."\t".'{{.Names}}'."\t".'{{.CreatedAt}}'."\t".'{{.State}}'."\t".'{{.Image}}'
-        ), 10
-      );
-      $psAll = [];
-      foreach (explode("\n", $psAllOut) as $line) {
-        $cols = explode("\t", $line);
-        if (count($cols) < 5) continue;
-        $psAll[$cols[0]] = [
-          'id' => $cols[0], 'name' => $cols[1], 'created' => $cols[2],
-          'state' => $cols[3], 'image' => $cols[4],
-        ];
-      }
-
-      $sawFailure = false;
-      $brokenRaw  = []; // ['row' => psAll row, 'imagePresent' => bool]
-      foreach ($cids as $cid) {
-        $oneCode = 1;
-        $oneOut  = staxx_sh(staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.escapeshellarg($cid), 8, $oneCode);
-        if ($oneCode === 0) {
-          $used[staxx_update_short_id(trim($oneOut))] = true;
-          continue;
-        }
-        $sawFailure = true;
-        $row  = $psAll[$cid] ?? null;
-        $name = $row['name'] ?? $cid;
-        $ref  = trim((string)($row['image'] ?? ''));
-
-        if ($row === null || $ref === '') {
-          // `docker ps` cannot even name an image for it — nothing to
-          // protect on disk, so this is the one case still worth refusing
-          // the whole listing over.
-          $error = 'Docker could not read the container "'.$name.'" ('.$cid.'), so StaXX '
-                 . 'cannot tell which images are in use. Nothing will be removed until that container '
-                 . 'is fixed or deleted.';
-          return ['ok' => false];
-        }
-
-        $resolveCode = 1;
-        $resolvedId  = trim(staxx_sh(
-          staxx_docker_bin().' image inspect --format '.escapeshellarg('{{.Id}}').' '.escapeshellarg($ref),
-          8, $resolveCode
-        ));
-        $imagePresent = $resolveCode === 0 && $resolvedId !== '';
-        // Whether or not the container itself could be read, its image is
-        // protected either way — by being added to $used when it resolves.
-        if ($imagePresent) $used[staxx_update_short_id($resolvedId)] = true;
-
-        $brokenRaw[] = ['row' => $row, 'imagePresent' => $imagePresent];
-      }
-      if (!$sawFailure) {
-        // Could not reproduce the failure a second time — still refuse,
-        // since the count genuinely disagreed once and a stale answer is
-        // worse than a repeated check.
-        $error = 'Docker could not be asked about every container, so StaXX cannot tell which images '
-               . 'are in use. Nothing will be removed — try again in a moment.';
-        return ['ok' => false];
-      }
-
-      // Item 10's facts, gathered once for every running container and
-      // reused for each broken entry's "who else uses this" comparisons.
-      $runningIds = [];
-      foreach ($psAll as $r) { if (($r['state'] ?? '') === 'running') $runningIds[] = $r['id']; }
-      $runningFacts = staxx_images_running_facts($runningIds);
-      foreach ($brokenRaw as $b) {
-        $broken[] = staxx_images_broken_entry($b['row'], $b['imagePresent'], $runningFacts);
-      }
-    } else {
-      foreach ($inLines as $line) {
-        $used[staxx_update_short_id(trim($line))] = true;
-      }
+  // Item 10's facts, gathered once for every running container and reused
+  // for each broken entry's "who else uses this" comparisons — only needed
+  // when the scan above actually had to fall back to a per-container retry.
+  $broken = [];
+  if ($scan['brokenRaw']) {
+    $runningIds = [];
+    foreach ($scan['psAll'] as $r) { if (($r['state'] ?? '') === 'running') $runningIds[] = $r['id']; }
+    $runningFacts = staxx_images_running_facts($runningIds);
+    foreach ($scan['brokenRaw'] as $b) {
+      $broken[] = staxx_images_broken_entry($b['row'], $b['imagePresent'], $runningFacts);
     }
   }
 
@@ -1206,4 +1331,168 @@ function staxx_images_human_bytes(int $bytes): string {
   $i = 0; $n = (float)$bytes;
   while ($n >= 1024 && $i < count($units) - 1) { $n /= 1024; $i++; }
   return ($i >= 2 ? number_format($n, 1) : number_format($n, 0)).' '.$units[$i];
+}
+
+/* ---------------------------------------------------------- storage alert -- */
+
+/**
+ * PLAN_181 Part D — where the alert's two small state files live, same
+ * reasoning as staxx_update_state_file(): a function rather than a constant
+ * so a missing store never becomes a real-looking path at the root of the
+ * filesystem, and each one is a NEW file (no shape carried over from the
+ * removed weekly cleanup).
+ *
+ * clutter-since.json remembers the first day each image was seen sitting in
+ * a clutter group, keyed by id, so the alert can fire on age as well as on
+ * how full the storage is; storage-alert.json is what the page's notice
+ * actually reads, refreshed by staxx_storage_alert_refresh() below.
+ */
+function staxx_clutter_since_file(): string {
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/clutter-since.json';
+}
+
+function staxx_storage_alert_file(): string {
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/storage-alert.json';
+}
+
+/**
+ * The merge rule as a pure function, proved directly rather than through a
+ * real scan: an id already remembered keeps its date; a new id is stamped
+ * with today; an id no longer in the clutter is dropped. $existing and
+ * $currentIds never touch a file here, so a test can hand both in by hand.
+ *
+ * @param array<string,string> $existing    id => ISO date, as read from disk
+ * @param string[]              $currentIds every id in this scan's clutter groups
+ */
+function staxx_clutter_since_merge(array $existing, array $currentIds, string $today): array {
+  $out = [];
+  foreach ($currentIds as $id) {
+    $out[$id] = $existing[$id] ?? $today;
+  }
+  return $out;
+}
+
+/**
+ * Adrian's rule, 2026-09-25: an alert that fires just because a fixed-size
+ * image store is naturally most-full is worthless noise, so it is gated on
+ * there being clutter at all, not on fullness alone — a server that never
+ * has any never sees this, however full its image store normally runs.
+ */
+function staxx_storage_alert_rule(
+  float $percent, int $clutterBytes, int $oldestDays, int $pctLimit, int $dayLimit
+): bool {
+  return $clutterBytes > 0 && ($percent >= $pctLimit || $oldestDays >= $dayLimit);
+}
+
+/**
+ * The daily pass (scripts/update-check storage): runs the same listing the
+ * Scan stored images window shows, keeps clutter-since.json current, and
+ * writes storage-alert.json for StacksPage.php to read. Never removes
+ * anything itself — that is what replacing the weekly cleanup with an alert
+ * means (PLAN_181 decision 1).
+ *
+ * If staxx_images_unused() refuses (Docker down, stacks unreachable, an
+ * update running), nothing new is written — the page keeps showing whatever
+ * the last successful pass found, rather than an alert built on a blank
+ * slate.
+ *
+ * @return array{ok:bool, alert?:bool, percent?:float, clutterBytes?:int, oldestDays?:int}
+ */
+function staxx_storage_alert_refresh(string &$error): array {
+  $error = '';
+
+  $listing = staxx_images_unused($error);
+  if (!$listing['ok']) return ['ok' => false];
+
+  $today = date('Y-m-d');
+
+  $currentIds = [];
+  foreach (['dangling', 'rebuilt', 'older', 'unused'] as $g) {
+    foreach ($listing['groups'][$g] as $row) $currentIds[] = $row['id'];
+  }
+
+  $sinceFile = staxx_clutter_since_file();
+  $existing  = [];
+  if ($sinceFile !== '') {
+    $raw  = @file_get_contents($sinceFile);
+    $data = $raw === false ? null : json_decode($raw, true);
+    if (is_array($data)) $existing = $data;
+  }
+  $since = staxx_clutter_since_merge($existing, $currentIds, $today);
+
+  $oldestDays = 0;
+  foreach ($since as $date) {
+    $days = (int)floor((strtotime($today) - strtotime($date)) / 86400);
+    if ($days > $oldestDays) $oldestDays = $days;
+  }
+
+  $storage = $listing['storage'];
+  $percent = 0.0;
+  if (is_array($storage) && ($storage['total'] ?? 0) > 0) {
+    $used    = max(0, (int)$storage['total'] - (int)$storage['free']);
+    $percent = $used / (int)$storage['total'] * 100;
+  }
+
+  $clutterBytes = (int)$listing['totals']['removableBytes'];
+
+  $cfg      = staxx_cfg();
+  $pctLimit = (int)($cfg['STORAGE_ALERT_PERCENT'] ?? 85);
+  if ($pctLimit < 50 || $pctLimit > 99) $pctLimit = 85;
+  $dayLimit = (int)($cfg['STORAGE_ALERT_DAYS'] ?? 30);
+  if ($dayLimit < 1 || $dayLimit > 365) $dayLimit = 30;
+
+  $alert = staxx_storage_alert_rule($percent, $clutterBytes, $oldestDays, $pctLimit, $dayLimit);
+
+  // The hash keys the page's dismiss button — a different clutter set
+  // (something removed, something new left behind) gets a different hash,
+  // so a dismissal from before that change never silently hides a new one.
+  sort($currentIds);
+  $hash = substr(sha1(implode(',', $currentIds)), 0, 12);
+
+  $result = [
+    'alert' => $alert, 'percent' => round($percent, 1), 'clutterBytes' => $clutterBytes,
+    'oldestDays' => $oldestDays, 'hash' => $hash,
+  ];
+
+  if ($sinceFile !== '') {
+    $dir = dirname($sinceFile);
+    if (is_dir($dir) || @mkdir($dir, 0755, true)) {
+      $tmp = $dir.'/.'.basename($sinceFile).'.'.getmypid().'.tmp';
+      if (@file_put_contents($tmp, json_encode($since, JSON_PRETTY_PRINT)) !== false) {
+        @rename($tmp, $sinceFile);
+        @chmod($sinceFile, 0600);
+      }
+    }
+  }
+
+  $alertFile = staxx_storage_alert_file();
+  if ($alertFile !== '') {
+    $dir = dirname($alertFile);
+    if (is_dir($dir) || @mkdir($dir, 0755, true)) {
+      $tmp = $dir.'/.'.basename($alertFile).'.'.getmypid().'.tmp';
+      if (@file_put_contents($tmp, json_encode($result, JSON_PRETTY_PRINT)) !== false) {
+        @rename($tmp, $alertFile);
+        @chmod($alertFile, 0600);
+      }
+    }
+  }
+
+  return ['ok' => true] + $result;
+}
+
+/**
+ * What StacksPage.php reads to decide whether to show the notice — the file
+ * staxx_storage_alert_refresh() last wrote, or a quiet default when nothing
+ * has run yet (a fresh install, or a store just chosen with no daily pass
+ * behind it) so the page never treats "no file yet" as "alert".
+ */
+function staxx_storage_alert_state(): array {
+  $default = ['alert' => false, 'percent' => 0.0, 'clutterBytes' => 0, 'oldestDays' => 0, 'hash' => ''];
+  $file = staxx_storage_alert_file();
+  if ($file === '') return $default;
+  $raw  = @file_get_contents($file);
+  $data = $raw === false ? null : json_decode($raw, true);
+  return is_array($data) ? array_merge($default, $data) : $default;
 }

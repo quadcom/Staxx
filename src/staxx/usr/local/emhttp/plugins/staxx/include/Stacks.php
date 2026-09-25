@@ -4038,6 +4038,43 @@ function staxx_share_perms(string $path, bool $isDir): void {
 }
 
 /**
+ * PLAN_181 Part B — the (repository, digest) pairs a stack's own version
+ * history holds, read while its folder still exists. The history lives in
+ * the stack's own ".staxx" folder (staxx_record_read()), which the archive
+ * step zips up and then deletes, so this has to be called BEFORE that
+ * happens — both for the archive confirmation's dry run (asked before
+ * anything is touched) and again, from the same values, for the real
+ * removal once the archive has actually succeeded.
+ *
+ * function_exists() guards staxx_update_local_repo(): Stacks.php does not
+ * require UpdateRun.php (that file requires this one, so the other
+ * direction would be circular) — every caller that can reach an archive at
+ * all goes through action.php, which requires both, but this stays honest
+ * about the dependency rather than assuming it.
+ */
+function staxx_archive_stack_history_pairs(string $name): array {
+  if (!staxx_valid_path($name) || !function_exists('staxx_update_local_repo')) return [];
+
+  $file = staxx_find_compose_file(staxx_stack_dir($name));
+  if ($file === '') return [];
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return [];
+
+  $images = staxx_record_read($name)['images'] ?? [];
+  $pairs  = [];
+  foreach ($images as $service => $list) {
+    $ref = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($ref === '') continue;
+    $repo = staxx_update_local_repo($ref);
+    foreach ((array)$list as $entry) {
+      $digest = (string)($entry['digest'] ?? '');
+      if ($digest !== '') $pairs[] = ['repo' => $repo, 'digest' => $digest];
+    }
+  }
+  return $pairs;
+}
+
+/**
  * Archive a stack's directory and take it out of the stacks tree.
  *
  * Removing a stack used to delete its folder outright, refusing outright if
@@ -4106,6 +4143,13 @@ function staxx_archive_stack(
   // user says yes, but nothing below this point may run before that "yes" —
   // see the docblock above.
   if (!$confirmed) return false;
+
+  // PLAN_181 Part B — this stack's own version history, read now while its
+  // ".staxx" folder still exists (the zip-and-delete below takes it with the
+  // rest of the folder). Used after a successful archive to remove whatever
+  // roll-back copies only this stack still needed; see the note near the end
+  // of this function for why removal happens there and not here.
+  $historyPairs = staxx_archive_stack_history_pairs($name);
 
   // Where the zip goes. Nothing has been touched yet, so a folder that
   // cannot be created or written refuses the whole thing up front.
@@ -4277,6 +4321,46 @@ function staxx_archive_stack(
 
   staxx_scan_stacks_reset(); // the stack's directory is gone; see the function's own comment
   $archive = $final;
+
+  // PLAN_181 Part B (decision 2, 2026-09-25) — the roll-back copies this
+  // stack's own history held, now that it is the one thing that could ever
+  // need them. staxx_archive_removable_images() re-checks against every
+  // OTHER current stack's keep-set and against what is actually running, so
+  // an image a sibling stack still names or still keeps for its own
+  // roll-back is never touched. A removal failure here must never fail the
+  // archive that already succeeded — it is reported in $note, appended to
+  // whatever the "down" step above already put there, never returned as an
+  // error. function_exists() guards the same way as the pairs read above.
+  if ($historyPairs && function_exists('staxx_archive_removable_images')) {
+    $rows = staxx_archive_removable_images($historyPairs, $name);
+    if ($rows) {
+      ob_start();
+      staxx_images_do_remove($rows); // never docker rmi -f — see that function
+      $log = (string)ob_get_clean();
+
+      $removed = 0;
+      if (preg_match('/^Removed (\d+) image/m', $log, $m)) $removed = (int)$m[1];
+      $stayed = [];
+      foreach (explode("\n", $log) as $line) {
+        if (strncmp($line, 'Kept ', 5) === 0) $stayed[] = trim(substr($line, 5));
+      }
+
+      $imagesNote = '';
+      if ($removed > 0) {
+        $bytes = 0;
+        foreach ($rows as $row) $bytes += (int)$row['size'];
+        $imagesNote = 'Its saved earlier versions ('.$removed.' image'.($removed === 1 ? '' : 's')
+                    . ', '.staxx_images_human_bytes($bytes).') were removed too.';
+      }
+      if ($stayed) {
+        $imagesNote .= ($imagesNote !== '' ? ' ' : '')
+          . (count($stayed) === 1 ? 'One saved version could not be removed: ' : count($stayed).' saved versions could not be removed: ')
+          . implode('; ', $stayed);
+      }
+      if ($imagesNote !== '') $note = trim($note.' '.$imagesNote);
+    }
+  }
+
   return true;
 }
 
@@ -7285,6 +7369,14 @@ function staxx_job_verbs(): array {
                    'svc'  => ['pull', 'up -d'],                                      'label' => 'Update'],
     'rebuild'  => ['args' => ['build --pull', 'up -d --remove-orphans'],
                    'svc'  => ['build --pull', 'up -d'],                              'label' => 'Rebuild'],
+    // PLAN_181 Part C — a roll-back whose target version is not on disk any
+    // more (UPDATE_KEEP_IMAGES set to "no"). Service scope only: rollback
+    // always names the services it is pointing back at, never the whole
+    // stack. An explicit `pull` ahead of the recreate, rather than trusting
+    // `up`'s own default "pull if missing" policy, so a registry that no
+    // longer has this exact digest fails on the step named for it in the
+    // job's own log, before anything is recreated.
+    'rollback-pull' => ['svc' => ['pull', 'up -d --force-recreate'],                  'label' => 'Roll back'],
   ];
 }
 

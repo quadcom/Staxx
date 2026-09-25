@@ -1,7 +1,8 @@
 <?php
 /* PLAN_82 Part 1 — per-stack image history (include/ImageHistory.php), the
  * migration out of the old server-wide history file, and the safety-critical
- * keep-list that image cleanup builds from both. Also covers the Part 2
+ * keep-list the Scan stored images window and the storage alert both build
+ * from both sources. Also covers the Part 2
  * step 3 round trip of the three optional release-notes keys through the
  * real push/read functions — the pure shape rules for those keys live in
  * tests/server/releasenotes.php instead, alongside everything else that
@@ -44,11 +45,7 @@
  * interrupted run cannot affect this one.
  *
  * Every case here is read-only or writes to files under /tmp — nothing in
- * this file starts, stops, pulls or removes a container or an image. The
- * one call to staxx_update_cleanup() is a dry run against image references
- * that do not exist on this box, so it can only ever find nothing to
- * remove; see the note above that section for exactly what it does and does
- * not prove. */
+ * this file starts, stops, pulls or removes a container or an image. */
 
 $scratch = '/tmp/staxx-imagehistory-test.json';
 @unlink($scratch);
@@ -377,35 +374,16 @@ ok('...and nothing was ever created under the old, now-gone name',
 
 /* --------------------------------------------------- the cleanup keep-list -- */
 //
-// staxx_update_cleanup() is the safety-critical consumer: its keep-list is
-// what decides which images `docker rmi` is allowed to touch, and a digest
-// missing from it is an image deleted while a rollback still needs it.
+// staxx_update_keep_digests() (UpdateRun.php) is the safety-critical
+// consumer: its keep-list is what decides which images the Scan stored
+// images window (and, since PLAN_181 Part D, the daily storage alert) is
+// allowed to treat as clutter, and a digest missing from it is an image
+// that could be offered for removal while a rollback still needs it.
 //
-// Reading include/UpdateRun.php as it stood when this file was written, the
-// keep-set it builds comes from two sources: staxx_update_state()['images']
-// (the live pointer for each tracked image) and staxx_update_state()
-// ['history'] (the OLD central history, matched back to whichever stack
-// currently uses that image). This test file's whole point is the
-// migration OFF that second source and onto each stack's own record — so
-// whichever agent wires staxx_update_cleanup() to also read
-// staxx_image_history_all() (or the per-stack functions directly) changes
-// exactly the code this section is about. Since that wiring is being done
-// in parallel with this file rather than before it, this section cannot
-// safely assert cleanup() actually consults the migrated data by calling
-// cleanup() itself and inspecting what it decided to keep — that would
-// either pass for the wrong reason (against the OLD, central-only reading)
-// or need to hardcode assumptions about a shape not yet written.
-//
-// What IS proven here: a digest that exists only in the central file, and a
-// digest that exists only in a stack's own record, both surface — with no
-// duplicate — from the two primitives any correct merge has to be built
-// from. Once staxx_update_cleanup() is wired to combine them, re-running
-// this file after that lands and calling staxx_update_cleanup(true, $err)
-// against these same fixtures (fake, non-existent image references, so a
-// dry run can only ever find nothing installed to remove) is a smoke test
-// that the wiring did not fatal — done below — but is NOT proof the merge
-// itself is correct. That proof belongs in tests/server/updaterun.php,
-// against whatever shape the merge actually takes.
+// What is proven here: a digest that exists only in the old central file,
+// and a digest that exists only in a stack's own record, both surface —
+// with no duplicate — from the two primitives any correct merge has to be
+// built from.
 
 b3_make_stack('zzb3keepcentral', 'web');
 b3_make_stack('zzb3keeprecord', 'web');
@@ -476,15 +454,6 @@ ok('a stale entry for a stack that no longer exists is skipped, not fatal',
    !in_array(dg('stalecentral'), $flat, true));
 ok('...and the live stack alongside it is unaffected',
    in_array(dg('c1old'), $flat, true));
-
-// Smoke test only — see the long comment above. Fake references that exist
-// on no registry and are installed on no box, so a dry run can only ever
-// find nothing to remove; this proves the call does not fatal, nothing more.
-$cleanupErr = '';
-$cleanupResult = staxx_update_cleanup(true, $cleanupErr);
-ok('a dry-run cleanup after this fixture data does not fatal',
-   is_array($cleanupResult) && array_key_exists('removed', $cleanupResult) && array_key_exists('kept', $cleanupResult),
-   $cleanupErr);
 
 /* ---------------------------------------------------------------------- */
 

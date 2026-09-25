@@ -152,7 +152,18 @@ function staxx_settings_keys(): array {
     'UPDATE_NOTIFY_INSTALLED' => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
     'UPDATE_NOTIFY_FAILED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
-    'UPDATE_CLEANUP'      => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'weekly']],
+    // PLAN_181 Part C — whether an earlier release UPDATE_RETAIN remembers
+    // also stays on disk (today's behaviour, and the default) or only its
+    // version number does, with a roll-back downloading it again by digest.
+    // Read by staxx_update_keep_digests() indirectly, through the history
+    // half's own image-history entries — see staxx_update_rollback() for the
+    // pull-when-absent path this enables.
+    'UPDATE_KEEP_IMAGES'  => ['type' => 'choice', 'default' => 'yes', 'choices' => ['yes', 'no']],
+    // PLAN_181 Part D — the storage alert that replaced the weekly cleanup
+    // (decision 1, 2026-09-25). Read by staxx_storage_alert_refresh()
+    // (Images.php), not at page load, so neither belongs in $reload below.
+    'STORAGE_ALERT_PERCENT' => ['type' => 'number', 'default' => '85', 'min' => 50, 'max' => 99],
+    'STORAGE_ALERT_DAYS'    => ['type' => 'number', 'default' => '30', 'min' => 1, 'max' => 365],
     // The password generator's own choices (PLAN_74 Part A) — a preference
     // that should follow the person to any browser, not a secret, and set
     // from the generator panel in the editor rather than the settings page.

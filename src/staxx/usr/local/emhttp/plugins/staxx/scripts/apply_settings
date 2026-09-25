@@ -196,23 +196,20 @@ fi
 # write cycles and this script runs on every settings save AND every boot —
 # only gets rewritten when its content actually changes.
 #
-# UPDATE_CHECK/UPDATE_CHECK_TIME/UPDATE_CLEANUP now live in the store. A store
-# that has been chosen but cannot be read right now (pool not mounted yet)
-# must not rewrite this file to shipped defaults — that would silently drop
-# back to "daily at 04:00" every reboot until the pool catches up. Only a
-# genuinely unchosen store (store_root blank) falls through to the defaults
-# below, which matches today: there are no stacks to check either way.
+# UPDATE_CHECK/UPDATE_CHECK_TIME now live in the store. A store that has been
+# chosen but cannot be read right now (pool not mounted yet) must not rewrite
+# this file to shipped defaults — that would silently drop back to "daily at
+# 04:00" every reboot until the pool catches up. Only a genuinely unchosen
+# store (store_root blank) falls through to the defaults below, which matches
+# today: there are no stacks to check either way.
 skip_cron_rewrite="false"
 update_check="daily"
 update_check_time="04:00"
-update_cleanup="off"
 if [[ "${store_cfg_readable}" == "true" ]]; then
   update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
   update_check="${update_check:-daily}"
   update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
   update_check_time="${update_check_time:-04:00}"
-  update_cleanup=$(sed -n 's/^[[:space:]]*UPDATE_CLEANUP[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
-  update_cleanup="${update_cleanup:-off}"
 elif [[ -n "${store_root}" ]]; then
   skip_cron_rewrite="true"
   echo "The data store is not reachable yet, so the existing image-update schedule was left as it is."
@@ -304,12 +301,12 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
     echo "Image-update checking will run hourly (at :$(printf '%02d' "${jitter_minute}") past), with a full look at every image ${when}."
   fi
 
-  if [[ "${update_cleanup}" == "weekly" ]]; then
-    # A fixed, quiet time — this is not user-configurable the way the check
-    # time is, so there is no value to read and validate here.
-    cron_lines+=("30 3 * * 0 ${PLUGIN_DIR}/scripts/update-check cleanup &> /dev/null")
-    echo "Image cleanup will run weekly, Sunday at 03:30."
-  fi
+  # PLAN_181 Part D — the storage alert that replaced the weekly cleanup
+  # (decision 1, 2026-09-25). Unconditional, like the apply pass above:
+  # it only refreshes figures for the page's own notice, never removes
+  # anything, so there is no on/off setting to gate it on. A fixed, quiet
+  # time — not user-configurable the way the check time is.
+  cron_lines+=("45 3 * * * ${PLUGIN_DIR}/scripts/update-check storage &> /dev/null")
 
   # PLAN_103 addendum: BOOT_COPY_MODE's own line. "scheduled" gets a
   # dedicated hourly sweep — offset from the top of the hour, and

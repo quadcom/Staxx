@@ -90,6 +90,7 @@ Four rules run through the whole set:
 | Suite | What it covers | Needs |
 |---|---|---|
 | `adopt` | Whether a compose file may be written into a folder that already exists, when the caller claims adoption of a fileless one | `STORE_ROOT` |
+| `archive_images` | PLAN_181 Part B — an archived stack's own (repo, digest) pairs, read from its record before its folder is touched, and the keep-set screen that runs before any Docker call | `STORE_ROOT` at `/tmp` |
 | `autostart` | The bridge to Unraid's boot-start list | `STAXX_AUTOSTART_FILE` at `/tmp` |
 | `backup` | Whether the store is named in the Appdata Backup plugin's extras list, against the real installed file | `STORE_ROOT` |
 | `bootcopy` | The shelf of compose copies on the flash drive: the copy after every save, the case-clash refusal, removal and restore | `STORE_ROOT` |
@@ -106,7 +107,7 @@ Four rules run through the whole set:
 | `handover_unraid` | The Unraid-template half of a handover: finding a template by name, holding and releasing it and its Auto Update entry, the `Unraid-N` note line's round trip, and which targets a foreign rebuild leaves unsafe to answer | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
 | `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
-| `imagehistory` | Per-stack image history, and the keep-list image cleanup builds from it | `STORE_ROOT` |
+| `imagehistory` | Per-stack image history, and the keep-list the Scan stored images window and the storage alert build from it | `STORE_ROOT` |
 | `images_unused` | The "Scan stored images" window's grouping (include/Images.php): dangling vs. built-here vs. rollback-protected, the crypt-image label exclusion, and rule 2's refusal of an id not on the server's own current list. Builds and removes only its own labelled throwaway images | — |
 | `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |
 | `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
@@ -131,13 +132,14 @@ Four rules run through the whole set:
 | `settings` | The settings allowlist, validator and atomic writer, and how the two halves of the config layer together | backs up both config files |
 | `startorder` | The top level's own order — folders and loose stacks interleaved by `root`, both directly and through the layout — plus the refusals on save and what a folder rename or removal does to it | `STORE_ROOT` |
 | `storage` | What locations the store could move to | — |
+| `storage_alert` | PLAN_181 Part D — the pure alert rule over (percent, clutter bytes, oldest days, thresholds), and the clutter-since merge (an id keeps its remembered date, a new one is stamped today, one no longer in the clutter is dropped), over in-memory lists only | — |
 | `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |
 | `takeover` | The route an imported Compose Manager project takes instead of a handover. Every case is a refusal, on purpose | `STORE_ROOT` |
 | `unpin` | Releasing a pin, and what an automatic pass may act on afterwards | `STORE_ROOT` |
 | `unraid_templates` | The sweep for stacks taken over before this plan: classifying every Unraid template still naming a StaXX stack's container (`ours`/`absent`/`unraid`), and reclaiming only the first two | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `update_mode_convert` | The one-pass rewrite of old `update.mode` spellings (`off`, `notify`) to `manual`, run once at install, and its undo | `STORE_ROOT` at `/tmp` |
 | `updateeconomy` | Reference parsing, the `Accept` list, the whole cadence table, and the failed-image notice's wording | `STORE_ROOT` (row-notice cases) |
-| `updaterun` | The doing side of updates — the clock, the queue, rollback, cleanup, the build-base reader | `STORE_ROOT` |
+| `updaterun` | The doing side of updates — the clock, the queue, rollback, the build-base reader, plus PLAN_181 Part A (keep-digests' local half only protecting a ref a current stack still names) and Part C (the pure refuse-vs-pull decision for an absent roll-back target) | `STORE_ROOT` |
 | `updates` | The detection core — the state file, the digest probes, the per-image ask, the scope collector | **opt-in**, `STAXX_UPDATE_*` |
 | `watch` | Watching what an image's own publisher publishes | — |
 | `webui` | Resolving the address a service's web-page button opens, across every port and network arrangement | — |

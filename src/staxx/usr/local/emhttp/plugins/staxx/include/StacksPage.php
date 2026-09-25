@@ -26,6 +26,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // header for why there is now one copy read by both sides.
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';   // staxx_import_taken_facts(), for the first clash check
+require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';   // staxx_storage_alert_state(), for the notice below (PLAN_181 Part D)
 
 // PLAN_97 Phase 1: nothing below this point may run with an unchosen data
 // store — staxx_list_stacks(), staxx_autostart_sync() and staxx_folder_layout()
@@ -333,6 +334,43 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         <?= _('Anything it was not asked about still shows the answer it gave last time. The next check will ask again.') ?>
         <? endif; ?>
         <button type="button" id="staxx-open-spend-readout" class="staxx-link-btn"><?= _('See what each registry was asked') ?></button>
+      </div>
+    </div>
+  <? endif; ?>
+
+  <?
+  // PLAN_181 Part D — replaces the removed weekly image cleanup (Adrian,
+  // 2026-09-25: nothing is removed on a schedule any more; a full image
+  // store is instead pointed at the Scan stored images window). Refreshed
+  // daily by scripts/update-check storage; staxx_storage_alert_state()
+  // never touches Docker itself, so this notice costs nothing on the page
+  // whether or not the alert is on.
+  //
+  // Deliberately excluded from the generic sticky-notice lift a few lines
+  // above this one (see stacks.js's stickyBlocks loop and its :not()
+  // selector) rather than folded into it: that lift marks every notice
+  // `sticky: true`, which the ticker never lets a person dismiss — right
+  // for "Docker is not running" (it should keep coming back on its own),
+  // wrong here, where Adrian's own build note asks for a dismissal that
+  // persists "until the clutter set changes". So this block is picked up
+  // by its own small script instead, keyed on data-hash, which is exactly
+  // what changes when the clutter does.
+  $storageAlert = staxx_storage_alert_state();
+  if ($storageAlert['alert']):
+    $clutterText = _('Docker\'s image storage has').' '.htmlspecialchars(staxx_images_human_bytes((int)$storageAlert['clutterBytes'])).' '._('of clutter.');
+    if ((float)$storageAlert['percent'] >= (float)(staxx_cfg()['STORAGE_ALERT_PERCENT'] ?? 85)) {
+      $whyText = _('It is').' '.htmlspecialchars((string)round($storageAlert['percent'])).'% '._('full.');
+    } else {
+      $whyText = _('Some of it has been unused for').' '.htmlspecialchars((string)$storageAlert['oldestDays']).' '._('days.');
+    }
+  ?>
+    <div class="staxx-notice" data-notice-kind="warn" id="staxx-storage-alert-notice"
+         data-hash="<?= htmlspecialchars($storageAlert['hash'], ENT_QUOTES) ?>">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= $clutterText ?></strong>
+        <?= $whyText ?>
+        <button type="button" id="staxx-storage-alert-review" class="staxx-link-btn"><?= _('Review stored images') ?></button>
       </div>
     </div>
   <? endif; ?>

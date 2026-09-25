@@ -6,6 +6,10 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- Removing (archiving) a stack now also removes any roll-back copies of its images that no other stack still needs, and says so before you confirm. A roll-back copy still kept for a stack that no longer exists is no longer protected for ever.
+- The Storage tab has a new "Keep the images" switch beside Scan stored images. Switched off, StaXX still remembers which versions of an image you have run, but no longer keeps their files on disk — a roll-back downloads that version again instead.
+- Images are no longer removed on a schedule. If your server had "Remove old images automatically" set to weekly, that no longer happens — the setting is simply not read any more.
+- In its place, a notice appears on the page when Docker's stored images are getting full of clutter, with a link straight to Scan stored images so you can look and decide for yourself. Two new settings on the Storage tab control when it appears: how full storage has to be, and how many days a clutter image can sit before it is mentioned on its age alone.
 - Settings has a new Integrations tab (it used to be called Registries and security) where you can enter the address and login for Nginx Proxy Manager and Pi-hole, and test that StaXX can reach them.
 - The stack editor has a Proxy and DNS section you can add to any app from the Sections menu once Nginx Proxy Manager is set up: a domain name, a certificate, WebSockets and a Pi-hole switch. When you save, StaXX shows what it will change in Nginx Proxy Manager and Pi-hole and does it when you press Apply. An entry you already made for that name can be taken over as it is.
 - A small DNS mark beside a service's name on the stack list shows green when its proxy and Pi-hole entries match, red when they have drifted (click it to fix), and grey when switched off. Hover it for the domain and each entry's state.

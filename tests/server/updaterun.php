@@ -2,7 +2,14 @@
 /* The doing side of PLAN_45 phases 4-8 — include/UpdateRun.php — checked
  * against the real installed plugin. Updates.php's own tests stay in
  * tests/server/updates.php; this file is only the clock, the queue, roll
- * back, cleanup and the build-base reader.
+ * back, the keep-set and the build-base reader. The storage alert has its
+ * own suite, tests/server/storage_alert.php.
+ *
+ * Also PLAN_181 Part A (staxx_update_keep_digests()'s local half only
+ * protecting a ref some CURRENT stack still names, and its $excludeStack
+ * parameter) and Part C (staxx_update_rollback_presence_error(), the pure
+ * decision behind "pull it back down" vs. "refuse" for an absent roll-back
+ * target) — both proved with in-memory state only, no Docker call either way.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
@@ -193,8 +200,7 @@ ok('settings: notifyFound is a bool', is_bool($settings['notifyFound'] ?? null))
 ok('settings: notifyInstalled is a bool', is_bool($settings['notifyInstalled'] ?? null));
 ok('settings: notifyFailed is a bool', is_bool($settings['notifyFailed'] ?? null));
 ok('settings: retain is an int', is_int($settings['retain'] ?? null));
-ok('settings: cleanup is one of off/weekly',
-   in_array($settings['cleanup'] ?? '', ['off', 'weekly'], true), $settings['cleanup'] ?? '');
+ok('settings: keepImages is a bool', is_bool($settings['keepImages'] ?? null));
 
 /* ---------------------------------------------------------- 2. policy -- */
 
@@ -494,140 +500,6 @@ staxx_update_state_save($state);
 $rbJob2 = staxx_update_rollback($fixtureName, ['built-ok' => 'sha256:' . str_repeat('1', 64)], $err);
 ok('rollback: refuses when there is no history at all for the service, with a sentence',
    $rbJob2 === '' && $err !== '', $err);
-
-/* ----------------------------------------------------------- 10. cleanup -- */
-
-// Only ever called with dry=true here — this box's real images must never
-// be at risk from a test run, dry or not, so a live delete path is simply
-// never exercised.
-$err = '';
-$cleanup1 = staxx_update_cleanup(true, $err);
-ok('cleanup: dry run returns the documented shape',
-   is_array($cleanup1) && is_array($cleanup1['removed'] ?? null) && is_int($cleanup1['kept'] ?? null), json_encode($cleanup1));
-
-// Find a real image this box actually has pulled, and prove that recording
-// it in ANY history list is enough to protect it, even though nothing here
-// checks whether it is genuinely superseded — cleanup only ever consults
-// "is it in some history list", not "is it the newest entry there".
-$stacks = function_exists('staxx_list_stacks') ? staxx_list_stacks() : [];
-$protectedDigest = null;
-$protectedImage  = null;
-foreach ($stacks as $s) {
-  if (!($s['parses'] ?? false) || $s['file'] === '') continue;
-  $meta = staxx_compose_meta($s['file']);
-  if (!$meta['ok']) continue;
-  foreach ($meta['services'] as $svc => $svcMeta) {
-    $img = trim((string)($svcMeta['image'] ?? ''));
-    if ($img === '') continue;
-    $local = staxx_image_local($img);
-    if (($local['digest'] ?? '') !== '') { $protectedImage = $img; $protectedDigest = $local['digest']; break 2; }
-  }
-}
-
-if ($protectedDigest === null) {
-  skip('cleanup: an image recorded in history is never proposed for removal',
-       'no real stack on this box has an installed, digest-bearing image to test with');
-} else {
-  $state = staxx_update_state();
-  $state['history']['zzb1updrun-protect::svc'] = [$protectedDigest];
-  staxx_update_state_save($state);
-
-  $err = '';
-  $cleanup2 = staxx_update_cleanup(true, $err);
-  $removedHasIt = false;
-  foreach ((array)($cleanup2['removed'] ?? []) as $ref) {
-    if (strpos((string)$ref, $protectedDigest) !== false) { $removedHasIt = true; break; }
-  }
-  ok('cleanup: an image present in a history list is never among those proposed for removal',
-     !$removedHasIt, $protectedImage . ' ' . $protectedDigest);
-}
-
-/* --------------------------------------------- 10b. cleanup: the matcher -- */
-
-// staxx_update_cleanup_pick() proved directly against fabricated `docker
-// image ls --digests` text, so the fault this replaced — asking docker for a
-// repository by the hub-path key the keep-set is stored under, which lists
-// nothing for an image docker itself stores under a longer local name such
-// as lscr.io/linuxserver/plex — cannot creep back in unnoticed. No real
-// image, container or docker call is involved.
-// `remove` is now one group per repo@digest, carrying every tag docker listed
-// against it (docker rmi'ing the digest alone leaves a tagged image on disk —
-// see staxx_update_cleanup()), so the assertions below look a group up by its
-// ref rather than treating $pick['remove'] as a flat list of strings.
-function pick_group(array $remove, string $ref): ?array {
-  foreach ($remove as $group) if ($group['ref'] === $ref) return $group;
-  return null;
-}
-
-$digestKept   = 'sha256:' . str_repeat('a', 64);
-$digestRemove = 'sha256:' . str_repeat('b', 64);
-$digestUsed   = 'sha256:' . str_repeat('c', 64);
-$digestLib    = 'sha256:' . str_repeat('e', 64);
-$digestIgnore = 'sha256:' . str_repeat('f', 64);
-$digestDedup  = 'sha256:' . str_repeat('7', 64);
-$digestNoTag  = 'sha256:' . str_repeat('d', 64);
-
-$idUsed = 'c3c3c3c3c3c3';
-
-// The key a docker.io row is expected to fall under is computed via the
-// function under test rather than hard-coded, so a change to how it folds
-// Docker Hub's own host name into a key is caught here rather than silently
-// agreed with.
-$libraryKey = staxx_hub_repo_path('docker.io/library/x');
-
-$pickKeep = [
-  'linuxserver/x'     => [$digestKept],
-  'linuxserver/y'     => ['sha256:' . str_repeat('9', 64)],
-  'linuxserver/used'  => ['sha256:' . str_repeat('9', 64)],
-  $libraryKey         => [$digestLib],
-  'linuxserver/z'     => ['sha256:' . str_repeat('0', 64)],
-  'linuxserver/notag' => ['sha256:' . str_repeat('0', 64)],
-];
-
-$pickUsed = [$idUsed => true];
-
-$pickListing = implode("\n", [
-  "lscr.io/linuxserver/x\t$digestKept\ta1a1a1a1a1a1\tlatest",
-  "lscr.io/linuxserver/y\t$digestRemove\tb2b2b2b2b2b2\t1.0",
-  "lscr.io/linuxserver/used\t$digestUsed\t$idUsed\tlatest",
-  "lscr.io/linuxserver/x\t<none>\td5d5d5d5d5d5\t<none>",
-  "docker.io/library/x\t$digestLib\te6e6e6e6e6e6\tlatest",
-  "ghcr.io/someoneelse/y\t$digestIgnore\tf7f7f7f7f7f7\tlatest",
-  "lscr.io/linuxserver/z\t$digestDedup\t8888888888aa\t1.0",
-  "lscr.io/linuxserver/z\t$digestDedup\t8888888888aa\t1.1",
-  "lscr.io/linuxserver/z\t$digestDedup\t8888888888aa\t<none>",
-  "lscr.io/linuxserver/notag\t$digestNoTag\t999999999999",
-]);
-
-$pick = staxx_update_cleanup_pick($pickListing, $pickKeep, $pickUsed);
-
-ok('cleanup pick: a digest already in the keep-set is kept, not proposed for removal',
-   pick_group($pick['remove'], "lscr.io/linuxserver/x@$digestKept") === null, json_encode($pick['remove']));
-ok('cleanup pick: a row not kept and not used is proposed for removal under its OWN repository name',
-   pick_group($pick['remove'], "lscr.io/linuxserver/y@$digestRemove") !== null, json_encode($pick['remove']));
-ok('cleanup pick: a row not kept but in use by a container is kept, not removed',
-   pick_group($pick['remove'], "lscr.io/linuxserver/used@$digestUsed") === null, json_encode($pick['remove']));
-ok('cleanup pick: a <none> digest row is skipped, counted neither kept nor removed',
-   pick_group($pick['remove'], 'lscr.io/linuxserver/x@<none>') === null, '');
-ok('cleanup pick: a docker.io/library row is matched under staxx_hub_repo_path()\'s own key',
-   $libraryKey !== '' && pick_group($pick['remove'], "docker.io/library/x@$digestLib") === null, $libraryKey);
-ok('cleanup pick: a repository absent from the keep-set entirely is ignored, not removed',
-   pick_group($pick['remove'], "ghcr.io/someoneelse/y@$digestIgnore") === null, json_encode($pick['remove']));
-ok('cleanup pick: two tag rows of one removable image become one group carrying both tags',
-   (function () use ($pick, $digestDedup) {
-     $g = pick_group($pick['remove'], "lscr.io/linuxserver/z@$digestDedup");
-     return $g !== null
-       && in_array("lscr.io/linuxserver/z:1.0", $g['tags'], true)
-       && in_array("lscr.io/linuxserver/z:1.1", $g['tags'], true)
-       && count($g['tags']) === 2; // the <none> row contributes no third tag
-   })(), json_encode($pick['remove']));
-$noTagGroup = pick_group($pick['remove'], "lscr.io/linuxserver/notag@$digestNoTag");
-ok('cleanup pick: a 3-column row (no tag field at all) still works, with an empty tag list',
-   $noTagGroup !== null && $noTagGroup['tags'] === [], json_encode($pick['remove']));
-ok('cleanup pick: exactly the three removable images are proposed, nothing else',
-   count($pick['remove']) === 3, json_encode($pick['remove']));
-ok('cleanup pick: kept counts the three kept rows (by digest, by digest, by use)',
-   $pick['kept'] === 3, (string)$pick['kept']);
 
 /* --------------------------------------------------- 11. build base -- */
 
@@ -939,6 +811,67 @@ $queueUnknown = staxx_update_queue_notify_names(
 ok('queue-notify-names: an unknown stack falls back to the global default, not dropped or assumed',
    (in_array('staxx-no-such-stack', $queueUnknown['done'], true)) === $globalWants,
    json_encode($queueUnknown) . ' / global=' . ($globalWants ? 'true' : 'false'));
+
+/* ---------------------------------- 18. PLAN_181 Part A — keep-digests -- */
+
+// staxx_update_keep_digests()'s "local" half must protect a ref's current
+// pointer only while some CURRENT stack's compose still names it — see the
+// function's own comment for why an orphaned pointer used to be kept for
+// ever. Proved with in-memory state only (the scratch STAXX_UPDATE_STATE
+// file already in place) and one throwaway stack; nothing here touches
+// Docker or a real image.
+$keepFixture = 'zzb1updrun-keep';
+$keepDir     = $root . '/' . $keepFixture;
+@exec('rm -rf ' . escapeshellarg($keepDir));
+mkdir($keepDir, 0755, true);
+file_put_contents($keepDir . '/compose.yaml',
+  "services:\n  svc:\n    image: ghcr.io/example/keepme:latest\n");
+staxx_scan_stacks_reset();
+register_shutdown_function(function () use ($keepDir) {
+  @exec('rm -rf ' . escapeshellarg($keepDir));
+});
+
+staxx_update_state_save(['images' => [
+  // Named by this fixture's own compose file right now — its local pointer
+  // must be protected.
+  'ghcr.io/example/keepme:latest' => ['local' => 'sha256:' . str_repeat('a', 64), 'remote' => ''],
+  // Named by nothing any current stack's compose resolves to — a leftover
+  // from a stack that has since been archived, renamed or edited away.
+  'ghcr.io/example/longgone:latest' => ['local' => 'sha256:' . str_repeat('b', 64), 'remote' => ''],
+]]);
+
+$keepFlat = [];
+foreach (staxx_update_keep_digests() as $digests) foreach ($digests as $d) $keepFlat[$d] = true;
+
+ok('keep-digests: the local pointer for a ref a CURRENT stack still names is protected',
+   isset($keepFlat['sha256:' . str_repeat('a', 64)]));
+ok('keep-digests: the local pointer for a ref no current stack names any more is NOT protected',
+   !isset($keepFlat['sha256:' . str_repeat('b', 64)]));
+
+// $excludeStack (PLAN_181 Part B's own use of this function, ahead of an
+// archive that has not happened yet) must drop that stack's own ref too —
+// otherwise an archive's dry-run confirmation would see its own images as
+// still protected by itself.
+$keepFlatExcluded = [];
+foreach (staxx_update_keep_digests($keepFixture) as $digests) {
+  foreach ($digests as $d) $keepFlatExcluded[$d] = true;
+}
+ok('keep-digests: excluding a stack drops its own ref from the local half too',
+   !isset($keepFlatExcluded['sha256:' . str_repeat('a', 64)]));
+
+/* -------------------------------- 19. PLAN_181 Part C — rollback pull -- */
+
+// staxx_update_rollback_presence_error() is the whole branch: refuse when
+// "keep the images" is on and the version is absent, otherwise let the
+// caller proceed (and, when absent, ask for a pull) — proved directly, with
+// no digest, no stack and no call to Docker at all.
+ok('rollback presence: present is never a refusal, whichever way the setting is set',
+   staxx_update_rollback_presence_error(true, true, 'web') === null
+   && staxx_update_rollback_presence_error(true, false, 'web') === null);
+ok('rollback presence: absent + "keep the images" on is the familiar refusal',
+   staxx_update_rollback_presence_error(false, true, 'web') !== null);
+ok('rollback presence: absent + "keep the images" off is NOT a refusal — the caller pulls instead',
+   staxx_update_rollback_presence_error(false, false, 'web') === null);
 
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);

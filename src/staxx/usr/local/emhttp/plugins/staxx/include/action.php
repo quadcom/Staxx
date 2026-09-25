@@ -515,11 +515,30 @@ switch ($action) {
     if (!$confirmed) {
       $extras = staxx_stack_extras($name, $error);
       if ($extras === null) staxx_reply(['ok' => false, 'error' => $error]);
+
+      // PLAN_181 Part B — the confirmation names the roll-back copies this
+      // stack's own history holds that removing it will also remove, worked
+      // out the same way the real removal (staxx_archive_stack()) will, so
+      // the number shown here is the number that actually happens.
+      // Read-only, best-effort: a problem here must never block the
+      // confirmation itself, only leave the sentence out.
+      $imagesPreview = null;
+      if (function_exists('staxx_archive_removable_images')) {
+        $pairs = staxx_archive_stack_history_pairs($name);
+        $rows  = $pairs ? staxx_archive_removable_images($pairs, $name) : [];
+        if ($rows) {
+          $bytes = 0;
+          foreach ($rows as $row) $bytes += (int)$row['size'];
+          $imagesPreview = ['count' => count($rows), 'bytes' => $bytes, 'bytesHuman' => staxx_images_human_bytes($bytes)];
+        }
+      }
+
       staxx_reply([
         'ok'           => false,
         'needsConfirm' => true,
         'entries'      => $extras,
         'dir'          => staxx_archive_root(),
+        'images'       => $imagesPreview,
       ]);
     }
     if (!staxx_archive_stack($name, $error, $confirmed, $archive, $note)) {
@@ -1924,26 +1943,6 @@ switch ($action) {
   case 'update-queue-stop':
     staxx_update_queue_stop();
     staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state()]);
-
-  /* ---- remove images nothing is using and no history still points to ----
-   *
-   * This one deletes things, so a dry run is the form the page can call
-   * freely — it is refused only when it would actually remove something and
-   * the cleanup setting is still off. Turning that setting on is the only
-   * way past this, never a flag on the request.
-   */
-  case 'update-cleanup':
-    $dry = ($_POST['dry'] ?? '') === '1';
-    if (!$dry && staxx_update_settings()['cleanup'] === 'off') {
-      staxx_reply([
-        'ok'    => false,
-        'error' => 'Turn on image cleanup in the update settings first. A dry run can '
-                 . 'still be checked at any time without changing that.',
-      ]);
-    }
-    $result = staxx_update_cleanup($dry, $error);
-    if ($error !== '') staxx_reply(['ok' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'removed' => $result['removed'] ?? [], 'kept' => $result['kept'] ?? 0]);
 
   // ---- PLAN_180 Part 1 — "Scan stored images" on the Storage tab ----
   //

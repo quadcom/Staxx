@@ -575,7 +575,14 @@
     // grid area on purpose, so they are left where they are rather than
     // folded into the ticker — folded, a five-paragraph card became one
     // truncated line in the corner (seen 2026-09-11).
-    var stickyBlocks = scaffold.querySelectorAll('.staxx-notice[data-notice-kind]:not(.staxx-notice--card)');
+    // PLAN_181 Part D — the storage alert (#staxx-storage-alert-notice) is
+    // excluded here and wired up separately, just below: unlike every other
+    // block this loop lifts, it has to stay dismissible, with the dismissal
+    // keyed on its data-hash rather than cleared the moment the block
+    // itself next renders absent.
+    var stickyBlocks = scaffold.querySelectorAll(
+      '.staxx-notice[data-notice-kind]:not(.staxx-notice--card):not(#staxx-storage-alert-notice)'
+    );
     for (var sb = 0; sb < stickyBlocks.length; sb++) {
       (function (block) {
         var kind = block.dataset.noticeKind || 'warn';
@@ -589,6 +596,36 @@
         block.hidden = true;
         notices.add({ kind: kind, text: text, action: action, sticky: true });
       })(stickyBlocks[sb]);
+    }
+
+    // PLAN_181 Part D — the storage alert, lifted the same way (text and
+    // action read straight off the PHP-rendered block) but added as a
+    // dismissible entry: its id carries the block's own data-hash, so a
+    // dismissal only ever silences the clutter set that earned it — a
+    // later scan with a different hash gets a fresh id and shows again,
+    // exactly the "returns only when the clutter set changes" rule this
+    // was built to.
+    var storageAlertBlock = document.getElementById('staxx-storage-alert-notice');
+    if (storageAlertBlock) {
+      var saButtons = storageAlertBlock.querySelectorAll('button');
+      var saAction = null;
+      if (saButtons.length) {
+        var saBtn = saButtons[saButtons.length - 1];
+        saAction = { label: saBtn.textContent.trim(), run: function () { saBtn.click(); } };
+      }
+      // The button's own label must not also end up in the notice text —
+      // clone the block and strip its buttons before reading textContent,
+      // so the ticker/panel read the sentence alone and the label only
+      // ever appears once, on the action button itself.
+      var saTextClone = storageAlertBlock.cloneNode(true);
+      var saTextButtons = saTextClone.querySelectorAll('button');
+      for (var sbi = 0; sbi < saTextButtons.length; sbi++) saTextButtons[sbi].remove();
+      var saText = saTextClone.textContent.replace(/\s+/g, ' ').trim();
+      storageAlertBlock.hidden = true;
+      notices.add({
+        id: 'storage-alert-' + (storageAlertBlock.dataset.hash || ''),
+        kind: 'warn', text: saText, action: saAction, sticky: false
+      });
     }
   }
 
@@ -23260,6 +23297,17 @@
     openSettings('staxx-setting-spend-readout');
   });
 
+  // PLAN_181 Part D — the storage alert's "Review stored images" link opens
+  // both halves of what it is pointing at: the Storage tab (where the two
+  // alert thresholds and the Scan stored images button live) behind it, and
+  // the scan window itself on top, the same layering openBackupDialog() uses
+  // over Settings.
+  var storageAlertReviewBtn = document.getElementById('staxx-storage-alert-review');
+  if (storageAlertReviewBtn) storageAlertReviewBtn.addEventListener('click', function () {
+    openSettings('staxx-setting-images-cleanup');
+    openImagesDialog();
+  });
+
   // Add a blank stack, From Apps and Import now live inside buildAddMenu()
   // (PLAN_173) — the toolbar's own #staxx-add-btn opens that through the
   // shared #staxx-menu rather than each keeping its own click listener.
@@ -23700,7 +23748,7 @@
       'switched back on there later.</p>';
   }
 
-  function confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto) {
+  function confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto, images) {
     var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
     var html = retiredInto
       // A merge already stopped this stack and locked it — there is nothing
@@ -23709,10 +23757,17 @@
       ? '<p>This stack was ' + esc(retiredInto) + ' and cannot be started.' + where + '</p>'
       : '<p>Its containers are stopped and removed.' + where + '</p>';
     html +=
-      '<p>Nothing is deleted: the whole folder is zipped up and kept in <code>' + esc(dir) +
+      '<p>Nothing in the folder is deleted: the whole folder is zipped up and kept in <code>' + esc(dir) +
       '</code>, named after the stack and the time it was archived.</p>' +
       '<p>The container’s own data in appdata is not part of the stack folder, so it is ' +
       'untouched and stays exactly where it is.</p>';
+    // PLAN_181 Part B (decision 2, 2026-09-25) — roll-back copies only this
+    // stack was keeping are removed as part of archiving it; named here
+    // since it is what "yes" is agreeing to. Omitted when there are none.
+    if (images && images.count) {
+      html += '<p>Its saved earlier versions (' + images.count + ' image' + (images.count === 1 ? '' : 's') +
+        ', ' + esc(images.bytesHuman || '') + ') are removed too.</p>';
+    }
     if (entries && entries.length) {
       html += '<p>The whole folder goes into the zip, including the compose file. ' +
         'Besides that, it also holds:</p>' +
@@ -23802,7 +23857,7 @@
       var dir = plan.dir || '';
       var entries = plan.entries || [];
       var exposeServices = Object.keys(exposeRecords);
-      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto) +
+      var bodyHtml = confirmRemoveHtml(name, label, dir, entries, mounts, retiredInto, plan.images) +
         (exposeServices.length ? exposeArchiveHtml(exposeRecords) : '');
 
       // Asks the one question, retrying in place on a failure so Go still
@@ -26417,9 +26472,43 @@
       // which EXPOSE_TEST already shares); the button opens the images
       // window instead of writing anything.
       key: 'IMAGES_CLEANUP', control: 'action', label: 'Unused images', tab: 'storage',
-      help: 'See every Docker image no container uses, with its size, and remove the ones you pick. ' +
-            'Anything a stopped stack still needs, or that was built on this server, is left ' +
-            'unticked, and versions kept for rolling back an update are never offered.'
+      help: 'Shows how Docker’s image storage is used and lists the clutter: images nothing on ' +
+            'this server needs. Remove the ones you pick. Copies kept for rolling back are listed ' +
+            'separately.'
+    },
+    {
+      // PLAN_181 Part C — a version is always remembered up to "Previous image
+      // releases to keep" on the Updates tab; this decides only whether its
+      // image file also stays on disk. Shown here, beside "Scan stored
+      // images" (Adrian, 2026-09-24: "I think the setting toggle should go on
+      // the storage tab"), rather than beside the count it works alongside —
+      // the help text names that row so the two can still be found together.
+      key: 'UPDATE_KEEP_IMAGES', control: 'choice', label: 'Keep the images', tab: 'storage',
+      choices: [
+        ['yes', 'Yes'],
+        ['no',  'No — remember the version numbers only']
+      ],
+      help: 'With this on, earlier versions stay on the server so a roll-back is instant. With it ' +
+            'off, only their version numbers are kept, and a roll-back downloads that version ' +
+            'again. How many versions are remembered either way is "Previous image releases to ' +
+            'keep" on the Updates tab.'
+    },
+    {
+      // PLAN_181 Part D — replaces the removed weekly cleanup (decision 1,
+      // 2026-09-25: "due to the sensitivity of the content with these
+      // items", nothing is removed on a schedule any more). A daily pass
+      // (scripts/update-check storage) writes the figures this alert reads;
+      // the notice itself is rendered in StacksPage.php.
+      key: 'STORAGE_ALERT_PERCENT', control: 'number', min: 50, max: 99,
+      label: 'Warn when image storage is this full', tab: 'storage',
+      help: 'A percentage, 50 to 99. Once Docker’s image storage reaches it, and there is ' +
+            'clutter to clear, a notice appears on the page with a link to Scan stored images.'
+    },
+    {
+      key: 'STORAGE_ALERT_DAYS', control: 'number', min: 1, max: 365,
+      label: 'Or when clutter is this old', tab: 'storage',
+      help: 'How many days a removable image can sit unused before the same notice appears on ' +
+            'its age alone, even with plenty of storage still free. 1 to 365.'
     },
     {
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu', tab: 'general',
@@ -26610,15 +26699,6 @@
       key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous image releases to keep', tab: 'updates',
       help: 'How many older releases of each image this server keeps on disk, so an update can ' +
             'be rolled back afterwards. 0 to 5.'
-    },
-    {
-      key: 'UPDATE_CLEANUP', control: 'choice', label: 'Remove old images automatically', tab: 'updates',
-      choices: [
-        ['off',    'No — leave old images where they are'],
-        ['weekly', 'Yes, once a week']
-      ],
-      help: 'Only ever removes an image that nothing is running and that no roll-back needs ' +
-            'any more — never a general clean-up of everything unused.'
     },
     {
       // Moved to the end of the tab (second live-tuned round, 2026-09-03) so
@@ -28968,8 +29048,11 @@
       kept.push('its data folder, ' + esc(f.source) + ' (' + esc(size) + ')');
     });
     if (item.templateFile) kept.push('its Unraid template');
+    var keptJoined = kept.length <= 1 ? kept.join('')
+      : kept.length === 2 ? kept.join(', and ')
+      : kept.slice(0, -1).join(', ') + ', and ' + kept[kept.length - 1];
     var keptHtml = kept.length
-      ? '<p><strong>Kept:</strong> ' + kept.join(', ') + '. Nothing else is touched.</p>'
+      ? '<p><strong>Kept:</strong> ' + keptJoined + '. Nothing else is touched.</p>'
       : '';
 
     askConfirm({

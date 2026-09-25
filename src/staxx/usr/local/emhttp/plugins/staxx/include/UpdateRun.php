@@ -1,6 +1,7 @@
 <?PHP
 /* StaXX — image update detection: the doing side. Settings, the clock,
- * holding and skipping, the queue, roll back and clean-up.
+ * holding and skipping, the queue, roll back and the keep-set the Scan
+ * stored images window builds its own removals from.
  * Copyright 2026, StaXX contributors.
  *
  * include/Updates.php is the finding-out side: it asks the registry and
@@ -20,8 +21,8 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // The per-stack record that PLAN_82 Part 1 moves image history into. The
 // central file below (staxx_update_history_push()/staxx_update_history())
 // stays as a second, un-migrated source for as long as anything is still
-// only recorded there — see staxx_update_cleanup()'s keep-set for why both
-// are read together rather than one replacing the other.
+// only recorded there — see staxx_update_keep_digests() for why both are
+// read together rather than one replacing the other.
 require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
 // staxx_update_record_before_pull() looks up a project link so the release
 // notes it fetches (PLAN_82 Part 2) come from the right place. action.php
@@ -65,7 +66,7 @@ unset($staxx_update_tz);
 /**
  * @return array{mode:string, delay:int, window:bool, wstart:string, wend:string,
  *               notifyFound:bool, notifyInstalled:bool, notifyFailed:bool,
- *               retain:int, cleanup:string}
+ *               retain:int, cleanup:string, keepImages:bool}
  *
  * mode is always returned as 'manual' or 'auto' — the config key may still
  * hold the older 'off'/'notify' spelling, normalised here rather than at
@@ -103,12 +104,14 @@ function staxx_update_settings(): array {
   $retain = (is_numeric($retain) && (int)$retain == $retain) ? (int)$retain : 2;
   if ($retain < 0 || $retain > 5) $retain = 2;
 
-  $cleanup = (string)($cfg['UPDATE_CLEANUP'] ?? 'off');
-  if ($cleanup !== 'weekly') $cleanup = 'off';
+  // PLAN_181 Part C — default 'yes' keeps today's behaviour for every config
+  // that predates this setting.
+  $keepImages = (string)($cfg['UPDATE_KEEP_IMAGES'] ?? 'yes') !== 'no';
 
   return ['mode' => $mode, 'delay' => $delay, 'window' => $window, 'wstart' => $wstart,
           'wend' => $wend, 'notifyFound' => $notify['found'], 'notifyInstalled' => $notify['installed'],
-          'notifyFailed' => $notify['failed'], 'retain' => $retain, 'cleanup' => $cleanup];
+          'notifyFailed' => $notify['failed'], 'retain' => $retain,
+          'keepImages' => $keepImages];
 }
 
 /**
@@ -781,6 +784,25 @@ function staxx_update_local_repo(string $ref): string {
  * @param array<string,string> $targets service name => digest to roll it back to
  * @return string a job id, or '' with $error set on refusal
  */
+
+/**
+ * PLAN_181 Part C — what one rollback target's presence check decides, pulled
+ * out as a pure function of its answer so the branch itself can be proved
+ * directly (tests/server/updaterun.php) without ever asking Docker anything —
+ * every digest a test can hand it is one this server was never given to
+ * begin with, so the docker call above this in staxx_update_rollback() can
+ * only ever prove "absent", never "present", and so can never tell the two
+ * settings apart on its own.
+ *
+ * @return string|null the refusal sentence, or null to proceed (whether or
+ *   not the image is actually present — the caller tells those two apart
+ *   itself, to decide whether a pull is needed)
+ */
+function staxx_update_rollback_presence_error(bool $present, bool $keepImages, string $service): ?string {
+  if ($present || !$keepImages) return null;
+  return 'The previous version for the "'.$service.'" service is no longer present on this server, so it cannot be rolled back to.';
+}
+
 function staxx_update_rollback(string $stack, array $targets, string &$error, string $yaml = '', ?string &$note = null): string {
   $error = '';
 
@@ -877,6 +899,19 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   // real matching image pulled — untestable from fixtures alone, and any
   // test that arranged one would then fall through into the save and the job
   // below, which a test run must never do.
+  //
+  // PLAN_181 Part C — with "keep the images" switched off, an absent image is
+  // no longer a refusal: $needsPull is set instead, and staxx_start_job()
+  // below is asked to pull the exact digest back down as part of the same
+  // job, rather than trusting `up`'s own default "pull if missing" policy —
+  // that way a registry that no longer has this digest fails on the step
+  // named for it in the job's own log, before anything is recreated, with
+  // nothing already touched (the compose file is not even saved yet). The
+  // decision itself is staxx_update_rollback_presence_error() below, so it
+  // can be proved directly — the docker call above it can only ever confirm
+  // "not present" against a digest this server was never handed, which
+  // proves nothing about which of the two settings is in force.
+  $needsPull = false;
   foreach ($targets as $service => $target) {
     $repo = staxx_update_local_repo($images[$service]);
 
@@ -886,10 +921,11 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
         .' --format '.escapeshellarg('{{.Id}}').' 2>&1',
       10, $checkCode
     );
-    if ($checkCode !== 0) {
-      $error = 'The previous version for the "'.$service.'" service is no longer present on this server, so it cannot be rolled back to.';
-      return '';
-    }
+    $presenceError = staxx_update_rollback_presence_error(
+      $checkCode === 0, staxx_update_settings()['keepImages'], $service
+    );
+    if ($presenceError !== null) { $error = $presenceError; return ''; }
+    if ($checkCode !== 0) $needsPull = true;
   }
 
   // The file is the authority, so this is a save like any other — it lands in
@@ -920,7 +956,7 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   }
   if ($changed) staxx_update_state_save(['images' => $stImages]);
 
-  return staxx_start_job($stack, 'recreate', $error, array_keys($targets));
+  return staxx_start_job($stack, $needsPull ? 'rollback-pull' : 'recreate', $error, array_keys($targets));
 }
 
 /**
@@ -1018,29 +1054,45 @@ function staxx_update_unpin(string $stack, string $service, string $yaml, string
   return true;
 }
 
-/* -------------------------------------------------------------------- cleanup -- */
+/* ------------------------------------------------------------- keep-set -- */
 
 /**
- * Remove an old image version, but only ever one that is BOTH unused by any
- * container right now AND absent from every service's history list — never a
- * general prune, which would be a foot-gun on a server carrying hand-built
- * images the way this one's own risk note describes.
+ * Every "image:" reference a current stack's compose file actually resolves
+ * to, as a lookup set keyed by that exact string — the same shape
+ * staxx_update_state()['images'] is keyed by, so the two can be compared
+ * directly. Deliberately a small walk of its own rather than a call into
+ * Images.php's staxx_images_stack_refs(): that file requires this one, so
+ * the other direction would be circular.
  *
- * Reads every image docker knows about once, then keeps only the rows whose
- * own repository name matches a key in the keep-set (staxx_update_cleanup_pick()
- * does the matching), so a repository this plugin knows nothing about is
- * never touched.
- *
- * @return array{removed: string[], kept: int}
+ * @param string $excludeStack PLAN_181 Part B — a stack's own compose file is
+ *   still on disk while its archive confirmation is being worked out (nothing
+ *   has been zipped or removed yet), so a stack named here is left out as if
+ *   it were already gone, and the dry run agrees with what actually happens
+ *   once the archive really has removed it.
  */
+function staxx_update_current_refs(string $excludeStack = ''): array {
+  $refs = [];
+  foreach (staxx_list_stacks() as $s) {
+    if ($excludeStack !== '' && $s['name'] === $excludeStack) continue;
+    if ($s['file'] === '') continue;
+    $meta = staxx_compose_meta($s['file']);
+    foreach ((array)($meta['services'] ?? []) as $service) {
+      $ref = trim((string)($service['image'] ?? ''));
+      if ($ref !== '') $refs[$ref] = true;
+    }
+  }
+  return $refs;
+}
+
 /**
  * Every digest worth keeping, grouped by repository: the live pointer for
  * each known image, plus whatever any service's history still remembers.
  *
- * Pulled out of staxx_update_cleanup() so it can be proved directly rather
- * than re-implemented in a test and asserted about. This is the list that
- * decides what `docker rmi` is allowed to touch, so "the test builds the
- * same union by hand and it matches" proves the test, not the code.
+ * Its own function so it can be proved directly rather than re-implemented
+ * in a test and asserted about. This is the list that decides what the
+ * Scan stored images window (include/Images.php) is allowed to offer for
+ * removal, so "the test builds the same union by hand and it matches"
+ * proves the test, not the code.
  *
  * The history half is the UNION of the per-stack records and whatever the
  * old central file still holds. Reading only one of the two would mean a
@@ -1048,17 +1100,42 @@ function staxx_update_unpin(string $stack, string $service, string $yaml, string
  * unused and gets removed. That exact bug has been found in this codebase
  * once already; do not "tidy away" either half while anything is still
  * recorded only there.
+ *
+ * The "local" half (PLAN_181 item 8/A) only protects a ref some CURRENT
+ * stack's compose still names — otherwise the current-pointer digest for a
+ * service whose stack has since been archived or edited away is kept for
+ * ever, with nothing left that can ever roll back to it. The history half
+ * above is untouched: it is what a roll-back actually reads from.
+ *
+ * @param string $excludeStack PLAN_181 Part B — see staxx_update_current_refs();
+ *   the same name is left out of the history half here too, so an archive's
+ *   dry-run confirmation (asked before anything is actually removed) agrees
+ *   with what is left once that stack really is gone.
+ *
+ * PLAN_181 Part C — with UPDATE_KEEP_IMAGES set to "no", the history half is
+ * left out entirely: the version numbers stay recorded (image history is
+ * unaffected — see ImageHistory.php), but nothing here protects the image
+ * files any more, so the weekly-cleanup blind spot they used to be safe from
+ * now applies to them too. staxx_update_rollback() pulls the exact digest
+ * back down instead of refusing when it finds one gone. The local half is a
+ * different thing — the currently-pulled pointer for a ref still in active
+ * use — and is untouched by this setting.
  */
-function staxx_update_keep_digests(): array {
+function staxx_update_keep_digests(string $excludeStack = ''): array {
   $state  = staxx_update_state();
   $images = (array)$state['images'];
 
+  $currentRefs = staxx_update_current_refs($excludeStack);
+
   $keep = [];
   foreach ($images as $ref => $entry) {
+    if (!isset($currentRefs[$ref])) continue;
     $repo = staxx_hub_repo_path($ref);
     if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
     if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
   }
+
+  if (!staxx_update_settings()['keepImages']) return $keep;
 
   $historyKeys = array_unique(array_merge(
     array_keys(staxx_image_history_all()),
@@ -1066,6 +1143,7 @@ function staxx_update_keep_digests(): array {
   ));
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
+    if ($excludeStack !== '' && $stack === $excludeStack) continue;
     $file = '';
     foreach (staxx_list_stacks() as $s) {
       if ($s['name'] === $stack) { $file = $s['file']; break; }
@@ -1092,183 +1170,6 @@ function staxx_update_short_id(string $id): string {
   $id = trim($id);
   if (strncmp($id, 'sha256:', 7) === 0) $id = substr($id, 7);
   return substr($id, 0, 12);
-}
-
-/**
- * Sorts one `docker image ls --digests` listing into what to remove and what
- * to keep, against the keep-set and the in-use id list built elsewhere.
- *
- * Pulled out of staxx_update_cleanup() so it can be proved directly with
- * fabricated listing text rather than re-implemented in a test and asserted
- * about. A row's own Repository is normalised the same way
- * staxx_update_keep_digests() normalises a ref, rather than asking docker for
- * the key's own repository — docker was never asked by key in the first
- * place; that per-repository `docker image ls <repo>` call is exactly the
- * fault this replaced, since it fails for any image whose local name (e.g.
- * `lscr.io/linuxserver/plex`) differs from the hub path the keep-set is keyed
- * by (`linuxserver/plex`). Reading everything once and mapping each row's own
- * name through the same rule as the keep-set means both sides always agree.
- *
- * `docker image ls --digests` prints one row per (repository, tag), and the
- * digest repeats across every tag row of the same image — so a picked image
- * is returned as one group per repository@digest, carrying every tag seen on
- * its rows, rather than one entry per row. `docker rmi repo@digest` alone
- * only drops that digest reference and leaves a tagged image on disk (see
- * staxx_update_cleanup()), so the caller needs every tag to remove the image
- * for real. A row with no fourth column (or an untagged `<none>` row) simply
- * contributes no tag to its group.
- *
- * @return array{remove: array{ref: string, tags: string[]}[], kept: int}
- */
-function staxx_update_cleanup_pick(string $listOut, array $keep, array $used): array {
-  $remove = [];
-  $index  = []; // repo@digest => position in $remove, so tags accumulate per image
-  $kept   = 0;
-
-  foreach (explode("\n", $listOut) as $line) {
-    $cols = explode("\t", $line);
-    if (count($cols) < 3 || $cols[1] === '<none>' || $cols[1] === '') continue;
-    $repository = $cols[0];
-    $digest     = $cols[1];
-    $id         = $cols[2];
-    $tag        = $cols[3] ?? '<none>';
-
-    $key = staxx_hub_repo_path($repository);
-    if ($key === '') $key = preg_replace('/:[^\/]*$/', '', trim($repository));
-    if (!array_key_exists($key, $keep)) continue;
-
-    if (in_array($digest, $keep[$key], true)) { $kept++; continue; }
-    if (isset($used[staxx_update_short_id($id)])) { $kept++; continue; }
-
-    $ref = $repository.'@'.$digest;
-    if (!isset($index[$ref])) {
-      $index[$ref] = count($remove);
-      $remove[]    = ['ref' => $ref, 'tags' => []];
-    }
-    if ($tag !== '<none>' && $tag !== '') {
-      $tagRef = $repository.':'.$tag;
-      if (!in_array($tagRef, $remove[$index[$ref]]['tags'], true)) {
-        $remove[$index[$ref]]['tags'][] = $tagRef;
-      }
-    }
-  }
-
-  return ['remove' => $remove, 'kept' => $kept];
-}
-
-function staxx_update_cleanup(bool $dry, string &$error): array {
-  $error   = '';
-  $removed = [];
-  $kept    = 0;
-
-  // The keep-set below is built from the state file, which only catches up
-  // once a job finishes — so a pull the queue has just started, or is about
-  // to start, is invisible to it. The window is narrow, but skipping cleanup
-  // entirely while anything is running or waiting costs nothing and rules
-  // out deleting an image that pull just fetched.
-  foreach ((array)(staxx_update_queue_state()['items'] ?? []) as $item) {
-    if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) {
-      $error = 'An update is running or queued, so cleanup was skipped. Try again once it finishes.';
-      return ['removed' => [], 'kept' => 0];
-    }
-  }
-
-  // Fails closed outright when Docker cannot even be asked what is running —
-  // an empty "in use" list here would look identical to "nothing is using
-  // any of these images" and delete things it never actually checked.
-  if (!$dry && !staxx_docker_running()) {
-    $error = 'The Docker service is not running, so nothing was removed.';
-    return ['removed' => [], 'kept' => 0];
-  }
-
-  // PLAN_68 Part C: the history-based half of the keep-set below matches each
-  // remembered digest back to a live stack by walking staxx_list_stacks() —
-  // and when the stack root cannot be seen, that list is empty, so every
-  // digest kept for a rollback reads as belonging to no stack at all and
-  // would be handed to `docker rmi` as if genuinely unused. Failing closed
-  // here is the same principle as the Docker check just above, for a root
-  // that is unmounted or unreadable rather than a daemon that is down.
-  // A dry run is guarded too, and deliberately. Its whole job is to tell
-  // somebody what WOULD be removed, and with the root unseen that list names
-  // rollback images as unused when they are not — a preview that is confidently
-  // wrong is worse than one that declines to answer, because the answer is
-  // what somebody decides on.
-  if (!staxx_stacks_visible()) {
-    $error = 'StaXX cannot see the stacks right now, so nothing was worked out or removed. '
-           . 'Check the array is started, then try again.';
-    return ['removed' => [], 'kept' => 0];
-  }
-
-  // The keep-set, built by its own function so it can be proved directly
-  // rather than re-derived by a test that would then be proving itself.
-  $keep = staxx_update_keep_digests();
-
-  // Every image a container is actually using, by id, running or stopped —
-  // never removed regardless of what the bookkeeping above says.
-  // `docker ps --format '{{.Image}}'` prints the REFERENCE a container was
-  // started with (usually repo:tag), never a digest and rarely an id, so
-  // comparing that against a repo@digest or an id never matched — the guard
-  // was doing nothing. `docker inspect` on each container's own id reports
-  // its actual Image field, which IS the image id, and that is what
-  // `docker image ls`'s own id column can honestly be compared against —
-  // after normalising both, since one may print the long sha256:... form and
-  // the other the short twelve-character one.
-  $docker = escapeshellarg(staxx_docker_bin());
-  $used   = [];
-  $psOut  = staxx_sh(
-    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg('{{.Image}}').' 2>&1',
-    15
-  );
-  foreach (explode("\n", $psOut) as $line) {
-    $line = trim($line);
-    if ($line !== '') $used[staxx_update_short_id($line)] = true;
-  }
-
-  // One listing over every image, not one `docker image ls <repo>` call per
-  // keep-set key — the local name docker lists under (e.g.
-  // `lscr.io/linuxserver/plex`) often differs from the hub path the keep-set
-  // is keyed by (`linuxserver/plex`), so asking docker by that key found
-  // nothing and old releases of every such image were never removed. Reading
-  // everything once and letting staxx_update_cleanup_pick() normalise each
-  // row's own Repository the same way the keep-set is keyed means both sides
-  // always agree.
-  $listOut = staxx_sh(
-    staxx_docker_bin().' image ls --digests --format '
-      .escapeshellarg('{{.Repository}}'."\t".'{{.Digest}}'."\t".'{{.ID}}'."\t".'{{.Tag}}'),
-    20
-  );
-
-  $pick = staxx_update_cleanup_pick($listOut, $keep, $used);
-  $kept += $pick['kept'];
-
-  // Measured on the box 2026-09-24: `docker rmi repo@digest` on an image that
-  // also carries a tag (Plex's 1.42.2 etc.) only drops the digest reference —
-  // the tagged image itself stays on disk. So every tag is removed first and
-  // the digest reference last, never `-f`. If a tag removal already deleted
-  // the image, the digest `rmi` then fails with "No such image", which counts
-  // as removed rather than kept since the image is genuinely gone; any other
-  // failure stops that image's remaining references and counts it kept.
-  foreach ($pick['remove'] as $group) {
-    if ($dry) { $removed[] = $group['ref']; continue; }
-
-    $ok = true;
-    foreach ($group['tags'] as $tagRef) {
-      $rmCode = 1;
-      staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($tagRef).' 2>&1', 20, $rmCode);
-      if ($rmCode !== 0) { $ok = false; break; }
-    }
-    if (!$ok) { $kept++; continue; }
-
-    $rmCode = 1;
-    $out = staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($group['ref']).' 2>&1', 20, $rmCode);
-    if ($rmCode === 0 || stripos($out, 'No such image') !== false || stripos($out, 'not found') !== false) {
-      $removed[] = $group['ref'];
-    } else {
-      $kept++;
-    }
-  }
-
-  return ['removed' => $removed, 'kept' => $kept];
 }
 
 /* ---------------------------------------------------------------------- queue -- */
