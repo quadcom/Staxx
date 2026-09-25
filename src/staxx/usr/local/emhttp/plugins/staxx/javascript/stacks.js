@@ -26471,7 +26471,15 @@
       // row.control === 'action' guards in settingsDirty()/saveSettings(),
       // which EXPOSE_TEST already shares); the button opens the images
       // window instead of writing anything.
+      // PLAN_181 settings layout (2026-09-25): grouped into the "Unused
+      // image management" box with the three rows below — Adrian: "can we
+      // combine some parts of the settings page … they should all be
+      // grouped together in one field set … call this unused image
+      // management." noSubheading drops its own sub-heading (decided
+      // afterwards: "get rid of the subheading 'unused images', move the
+      // scan stored images up") so the cell opens straight with the button.
       key: 'IMAGES_CLEANUP', control: 'action', label: 'Unused images', tab: 'storage',
+      block: 'unused-images', noSubheading: true,
       help: 'Shows how Docker’s image storage is used and lists the clutter: images nothing on ' +
             'this server needs. Remove the ones you pick. Copies kept for rolling back are listed ' +
             'separately.'
@@ -26484,6 +26492,7 @@
       // the storage tab"), rather than beside the count it works alongside —
       // the help text names that row so the two can still be found together.
       key: 'UPDATE_KEEP_IMAGES', control: 'choice', label: 'Keep the images', tab: 'storage',
+      block: 'unused-images',
       choices: [
         ['yes', 'Yes'],
         ['no',  'No — remember the version numbers only']
@@ -26498,15 +26507,19 @@
       // 2026-09-25: "due to the sensitivity of the content with these
       // items", nothing is removed on a schedule any more). A daily pass
       // (scripts/update-check storage) writes the figures this alert reads;
-      // the notice itself is rendered in StacksPage.php.
+      // the notice itself is rendered in StacksPage.php. blockRule draws the
+      // faint line ahead of this row, marking it as the grid's second row
+      // (Warn… | Or when…) under the scan/keep pair above.
       key: 'STORAGE_ALERT_PERCENT', control: 'number', min: 50, max: 99,
       label: 'Warn when image storage is this full', tab: 'storage',
+      block: 'unused-images', blockRule: true,
       help: 'A percentage, 50 to 99. Once Docker’s image storage reaches it, and there is ' +
             'clutter to clear, a notice appears on the page with a link to Scan stored images.'
     },
     {
       key: 'STORAGE_ALERT_DAYS', control: 'number', min: 1, max: 365,
       label: 'Or when clutter is this old', tab: 'storage',
+      block: 'unused-images',
       help: 'How many days a removable image can sit unused before the same notice appears on ' +
             'its age alone, even with plenty of storage still free. 1 to 365.'
     },
@@ -26848,6 +26861,20 @@
             'your Pi-hole has no admin password, leave the app password blank. If it has one, ' +
             'make an app password in Pi-hole’s Settings → Web interface / API, then press ' +
             'Enable new app password and Save & Apply.'
+    },
+    // PLAN_181 settings layout, mocked live with Adrian 2026-09-25: the four
+    // rows that used to be their own boxes on the Storage tab (Unused
+    // images, Keep the images, and the two storage-alert numbers) share one
+    // titled box instead. rowHints is this block's own opt-in to drawing
+    // each row's `help` text under its control — the other blocks above
+    // never asked for that (their per-row `help`/`group` fields are unused
+    // once a row carries `block`), and turning it on for all of them was
+    // never asked for, so it stays scoped to this one block. No block-level
+    // `help` — the title and the four rows' own hints already say
+    // everything; a summary here was never asked for and read oddly once
+    // the box held nothing else.
+    'unused-images': {
+      tab: 'storage', label: 'Unused image management', rowHints: true
     }
   };
 
@@ -27130,6 +27157,27 @@
     var attributionHtml = row.attribution
       ? '<span class="staxx-hint staxx-attribution">' + row.attribution + '</span>'
       : '';
+    // PLAN_181 settings layout (2026-09-25), Adrian: "can we utilize columns
+    // inside of this area … apply the same columnizing … for other
+    // sections". The flash-copy row is the one row.within pair that reads
+    // better beside its host than under it, so it borrows the block
+    // subgrid rather than a bespoke grid of its own — the field's own
+    // title stays a direct child of the box (the border's cut-in title
+    // relies on that), only the control-and-hint pair and the within block
+    // move into the two columns.
+    if (row.key === 'BOOT_COPY' && withinHtml) {
+      return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
+               '<span>' + esc(row.label) + '</span>' +
+               '<div class="staxx-subgrid">' +
+                 '<div class="staxx-subfield">' +
+                   control + shotsHtml +
+                   '<span class="staxx-hint">' + row.help + '</span>' +
+                   samplesHtml + attributionHtml +
+                 '</div>' +
+                 withinHtml +
+               '</div>' +
+             '</div>';
+    }
     return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
@@ -27146,8 +27194,10 @@
 
   // The titled box a block renders as — SETTINGS_BLOCKS' own label and help,
   // then one small labelled control per row that claims this block. Called
-  // once, at the block's first row; settingsFieldHtml() is never used here
-  // since a subfield carries no help text or shots of its own.
+  // once, at the block's first row; settingsFieldHtml() is never used here.
+  // A subfield carries no help text of its own unless the block opts in with
+  // rowHints (so far only "Unused image management") — every other block's
+  // per-row `help` stays the dead leftover it already was before this one.
   function settingsBlockHtml(blockId, values) {
     var def = SETTINGS_BLOCKS[blockId];
     if (!def) return '';
@@ -27179,12 +27229,28 @@
                halfFields + '</div>';
       }
 
-      return '<label class="staxx-subfield"><span class="staxx-sublabel">' + esc(row.sublabel) + '</span>' +
-             settingsControlHtml(row, values[row.key] || '') + '</label>';
+      // PLAN_181: a faint rule ahead of a row.blockRule field marks it as
+      // the start of the grid's next logical row (so far only "Unused
+      // image management", between the scan/keep pair and the two alert
+      // settings) — a flag on the row rather than a second table, since
+      // nothing else about the block changes. A row.noSubheading field (so
+      // far only "Scan stored images") opens its cell with the control
+      // straight away rather than a heading that would just repeat the
+      // block's own title back.
+      var ruleHtml = row.blockRule ? '<div class="staxx-subgrid-rule"></div>' : '';
+      var headingHtml = row.noSubheading ? ''
+        : '<span class="staxx-sublabel">' + esc(row.sublabel || row.label) + '</span>';
+      var rowHintHtml = (def.rowHints && row.help) ? '<span class="staxx-hint">' + row.help + '</span>' : '';
+      var tag = row.noSubheading ? 'div' : 'label';
+      return ruleHtml + '<' + tag + ' class="staxx-subfield">' + headingHtml +
+             settingsControlHtml(row, values[row.key] || '') + rowHintHtml + '</' + tag + '>';
     }).join('');
+    // def.help is optional — "Unused image management" carries none, since
+    // its title and the four rows' own hints already say everything.
+    var blockHintHtml = def.help ? '<span class="staxx-hint">' + def.help + '</span>' : '';
     return '<div class="staxx-field" data-key="' + esc(blockId) + '">' +
              '<span>' + esc(def.label) + '</span>' +
-             '<span class="staxx-hint">' + def.help + '</span>' +
+             blockHintHtml +
              '<div class="' + (allFlags ? 'staxx-tickrow' : 'staxx-subgrid') + '">' + subfields + '</div>' +
            '</div>';
   }

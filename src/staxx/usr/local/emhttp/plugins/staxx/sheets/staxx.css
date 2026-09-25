@@ -11240,6 +11240,17 @@ dialog::backdrop {
   .staxx-settings .staxx-settings-body,
   .staxx-settings .staxx-settings-pane { min-width: 0; }
   .staxx-settings .staxx-field > * { min-width: 0; }
+  /* PLAN_181 settings layout: every block's two-column grid (Docker Hub
+   * access, Nginx Proxy Manager, Pi-hole, When to install, and now Unused
+   * image management and the flash-copy row) drops to one column at the
+   * same width the panel itself goes full-screen, rather than squeezing two
+   * narrow columns onto a phone. Nothing collapsed this before — the gap
+   * was already there for the four existing blocks, found while giving the
+   * new ones the same layout. */
+  .staxx-settings .staxx-subgrid { grid-template-columns: 1fr; }
+  /* Follows the collapse above — with only one column left, "sit under the
+   * dropdown in column 2" has no column 2 to sit in. */
+  .staxx-settings .staxx-field[data-key="install-timing"] .staxx-subfield-halfrow { grid-column: 1; }
 }
 
 .staxx-settings-head {
@@ -11311,13 +11322,17 @@ dialog::backdrop {
   background-color: var(--background-color, #1c1c1c);
 }
 
-/* The explanation reads first, then the control it explains — the label
- * span is positioned absolutely above, so this order has no effect on it.
- * span, not any .staxx-hint: the data store's link line is a <p> with the
- * same class and belongs after the control, not before it. */
+/* PLAN_181 settings layout, Adrian 2026-09-25: "all settings can move above
+ * their describing text" — the control now reads first and the explanation
+ * follows it; order: 1 only has to beat the control's own default (0), not
+ * push the hint ahead of it as the old order: -1 did. span, not any
+ * .staxx-hint: the data store's link line is a <p> with the same class and
+ * already belonged after the control, so it is untouched by this. The label
+ * span itself is positioned absolutely above, so this order has no effect
+ * on it either way. */
 .staxx-settings-pane > .staxx-field[data-key] > span.staxx-hint {
-  order: -1;
-  margin: 0 0 1rem;
+  order: 1;
+  margin: 0.6rem 0 0;
 }
 
 /* The gap above the first box on a tab matches the gap between boxes,
@@ -11363,19 +11378,19 @@ dialog::backdrop {
  * not a choice, so none of the outline/hover affordance that marks a
  * clickable picture applies, and six small icons sit closer together than
  * the two large before/after pictures the shots row was built for. */
-/* Sits with the help text rather than under the control: order: -1 puts it
- * in the same flex-order group as the help paragraph, and since it is
- * written out after that paragraph in settingsFieldHtml() (ties within one
- * order value fall back to document order), it lands directly beneath it,
- * ahead of the dropdown. */
-.staxx-shots--samples { gap: 1.6rem; justify-content: center; padding: 0.6rem 0 0.4rem; order: -1; }
+/* Sits with the help text rather than off on its own: order: 1 puts it in
+ * the same flex-order group as the help paragraph (PLAN_181: both now come
+ * after the control, not before it), and since it is written out after
+ * that paragraph in settingsFieldHtml() (ties within one order value fall
+ * back to document order), it lands directly beneath it. */
+.staxx-shots--samples { gap: 1.6rem; justify-content: center; padding: 0.6rem 0 0.4rem; order: 1; }
 .staxx-shot--sample { cursor: default; }
 .staxx-shot--sample img { width: 40px; height: 40px; object-fit: contain; border: 0; outline: 0; box-shadow: none; background: transparent; }
 .staxx-shot--sample:hover img { border: 0; outline: 0; box-shadow: none; }
 
 /* Reads as its own line under the sample row, not run on from the help
  * paragraph above it — this span also matches the general
- * `span.staxx-hint { order: -1 }` rule above, which is what keeps it above
+ * `span.staxx-hint { order: 1 }` rule above, which is what keeps it below
  * the control alongside the help text and the samples. */
 .staxx-attribution { display: block; margin-top: 0.6rem; }
 
@@ -11441,11 +11456,16 @@ dialog::backdrop {
 .staxx-field--locked .staxx-shot { pointer-events: none; }
 
 /* Second live-tuned round, 2026-09-03: a block's own two-column grid of
- * small controls — see SETTINGS_BLOCKS in stacks.js. */
+ * small controls — see SETTINGS_BLOCKS in stacks.js. PLAN_181 settings
+ * layout (2026-09-25): align-items: start replaces the taller of two cells
+ * stretching the shorter one to match — "Decided, Adrian 2026-09-25":
+ * cells line up on top now that controls read before their hint, rather
+ * than being pinned to a shared bottom edge. */
 .staxx-subgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.2rem 2.4rem;
+  align-items: start;
 }
 .staxx-subfield {
   display: flex;
@@ -11454,6 +11474,28 @@ dialog::backdrop {
 }
 .staxx-sublabel { font-weight: 700; }
 .staxx-subfield select, .staxx-subfield input { width: 100%; box-sizing: border-box; }
+
+/* PLAN_181: the faint line between "Unused image management"'s two grid
+ * rows — see the row.blockRule field in stacks.js. Spanning both columns
+ * gives it a row of the auto-placement grid entirely to itself, ahead of
+ * the row it introduces, without naming rows or columns explicitly. */
+.staxx-subgrid-rule {
+  grid-column: 1 / -1;
+  border-top: 1px solid rgba(139, 148, 158, .22);
+}
+
+/* Adrian, 2026-09-25: "get rid of the subheading 'unused images'" and give
+ * the remaining three their own weight, lighter than the 700 the other
+ * blocks' sub-labels (Docker Hub, Nginx Proxy Manager, Pi-hole) use, since
+ * nobody asked for those to change. Scoped to this one block rather than
+ * to .staxx-sublabel itself. */
+.staxx-field[data-key="unused-images"] .staxx-sublabel { font-weight: 600; }
+
+/* PLAN_181: the flash-copy row's within block sits as a grid column beside
+ * its host control instead of stacked under it (settingsFieldHtml()'s
+ * BOOT_COPY branch) — the top margin .staxx-within normally carries to
+ * clear the control above it would just misalign the two columns here. */
+.staxx-subgrid > .staxx-within { margin-top: 0; }
 
 /* The "When to install" block only means anything once updates install
  * themselves — see settingsLockTiming() in stacks.js. The grid collapses
@@ -12419,11 +12461,15 @@ dialog::backdrop {
  * .staxx-cell rows (see .staxx-status above) directly inside these two
  * boxes rather than through a table wrapper — there is only ever one column
  * pair here, never nested rows, so the subgrid machinery those two classes
- * carry is enough on its own. */
+ * carry is enough on its own.
+ *
+ * PLAN_181 settings layout, Adrian 2026-09-25: "multiple scroll windows
+ * within scroll windows … can we concatenate all of those different things
+ * together so that they are on one scrolling page." Dropped the max-height
+ * and its own scrollbar, so the report and the environment facts are just
+ * two boxes in the tab's own scroll, the same as every other tab's boxes. */
 .staxx-scaffold .staxx-selftest-out,
 .staxx-scaffold .staxx-selftest-env {
-  max-height: 40vh;
-  overflow: auto;
   margin-bottom: 1rem;
 }
 
