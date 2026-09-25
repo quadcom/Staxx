@@ -4,9 +4,10 @@
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. It needs
  * STORE_ROOT pointed at a scratch path under /tmp, because
- * staxx_backup_owned_paths() derives both folders from it and the fixtures
- * below are written against those values. staxx_cfg() memoises on first
- * read, so it has to be seeded into the config file BEFORE php runs:
+ * staxx_backup_owned_paths() (PLAN_186: one path, the store itself) and
+ * staxx_backup_covers_store()'s subfolder fallback both derive from it, and
+ * the fixtures below are written against those values. staxx_cfg() memoises
+ * on first read, so it has to be seeded into the config file BEFORE php runs:
  *
  *     pscp tests/server/backup.php root@<box>:/tmp/
  *
@@ -108,20 +109,20 @@ ok('an empty list is a real answer, not silence',
    staxx_backup_entries($empty) === []);
 
 $cov = staxx_backup_coverage($empty);
-ok('with nothing listed, both owned paths are missing',
-   $cov !== null && $cov['listed'] === [] && count($cov['missing']) === 2,
+ok('with nothing listed, the store is missing',
+   $cov !== null && $cov['listed'] === [] && $cov['missing'] === ['/tmp/bk-store'],
    $cov === null ? 'null' : implode(' + ', $cov['missing']));
 
 // Their settings page stores this list with Windows line endings and trailing
 // slashes, so the real file's shape has to be understood, not just a tidy one.
-$crlf = fixture('crlf', json_encode(['includeFiles' => ["/tmp/bk-store/stacks/\r", "/tmp/bk-store/archives/\r"]]));
-$cov  = staxx_backup_coverage($crlf);
-ok('CRLF and trailing slashes are still a match',
+$direct = fixture('direct', json_encode(['includeFiles' => ["/tmp/bk-store/\r"]]));
+$cov = staxx_backup_coverage($direct);
+ok('the store named directly (CRLF and a trailing slash tolerated) is covered',
    $cov !== null && $cov['missing'] === [],
    $cov === null ? 'null' : implode(' + ', $cov['missing']));
 
-// The same list handed over as one textarea-shaped string rather than a list.
-$asString = fixture('asstring', json_encode(['includeFiles' => "/tmp/bk-store/stacks/\r\n/tmp/bk-store/archives/"]));
+// The same, handed over as one textarea-shaped string rather than a list.
+$asString = fixture('asstring', json_encode(['includeFiles' => "/tmp/bk-store/\r\n"]));
 $cov = staxx_backup_coverage($asString);
 ok('a single CRLF-separated string is read the same way',
    $cov !== null && $cov['missing'] === [],
@@ -129,19 +130,31 @@ ok('a single CRLF-separated string is read the same way',
 
 $parent = fixture('parent', '{"includeFiles": ["/tmp"]}');
 $cov = staxx_backup_coverage($parent);
-ok('a listed parent folder covers what is inside it',
+ok('a listed parent folder covers the store',
    $cov !== null && $cov['missing'] === [],
    $cov === null ? 'null' : implode(' + ', $cov['missing']));
 
-$partial = fixture('partial', '{"includeFiles": ["/tmp/bk-store/stacks"]}');
-$cov = staxx_backup_coverage($partial);
-ok('one listed and one not is reported as exactly that',
-   $cov !== null && $cov['listed'] === ['/tmp/bk-store/stacks'] && $cov['missing'] === ['/tmp/bk-store/archives']);
+// PLAN_186: naming all three subfolders separately — the shape the dialog
+// used to ask for — still has to read as the store being covered, so nobody
+// who did it that way is told they are missing something.
+$allThree = fixture('allthree',
+  '{"includeFiles": ["/tmp/bk-store/stacks", "/tmp/bk-store/archives", "/tmp/bk-store/config"]}');
+$cov = staxx_backup_coverage($allThree);
+ok('all three subfolders listed separately still count as the store covered',
+   $cov !== null && $cov['missing'] === [],
+   $cov === null ? 'null' : implode(' + ', $cov['missing']));
 
-$near = fixture('near', '{"includeFiles": ["/tmp/bk-store/stacks-other", "/tmp/bk-store/stacksx"]}');
+// Today's common shape on an install that followed the old advice: stacks
+// and archives named, but not config — so the store as a whole is missing.
+$partial = fixture('partial', '{"includeFiles": ["/tmp/bk-store/stacks", "/tmp/bk-store/archives"]}');
+$cov = staxx_backup_coverage($partial);
+ok('stacks and archives listed but not config: the store is reported missing',
+   $cov !== null && $cov['listed'] === [] && $cov['missing'] === ['/tmp/bk-store']);
+
+$near = fixture('near', '{"includeFiles": ["/tmp/bk-store-other", "/tmp/bk-storex"]}');
 $cov = staxx_backup_coverage($near);
 ok('a path that merely starts the same is not a match',
-   $cov !== null && $cov['listed'] === [] && count($cov['missing']) === 2);
+   $cov !== null && $cov['listed'] === [] && $cov['missing'] === ['/tmp/bk-store']);
 
 /* ------------------------------------------------- the share-layer twin ----
  * /mnt/user/appdata/x and /mnt/<pool>/appdata/x are one directory when that
@@ -171,36 +184,15 @@ ok('a path outside /mnt is compared literally and nothing else',
    && !staxx_backup_covers_one('/tmp/other', '/tmp/bk-store/stacks'));
 
 /* ----------------------------------------------------- the owned-path set --
- * PLAN_97 landed the store consolidation, and the actual shape it produced
- * is two SIBLINGS under one store — "<store>/stacks" and "<store>/archives"
- * — never one nested inside the other, so this still returns two entries
- * rather than the one an earlier draft of this comment expected. The
- * collapse rule below is kept as a defensive check on the algorithm itself,
- * proven directly with a genuinely nested pair, in case the archive folder
- * ever does end up inside the stacks folder by accident. */
+ * PLAN_186: staxx_backup_owned_paths() names the store itself, not its
+ * stacks/archives subfolders separately — one path covers config too, which
+ * the old two-path answer never asked about at all. */
 
-echo "\n-- which folders StaXX says it owns --\n";
+echo "\n-- which folder StaXX says it owns --\n";
 
 $owned = staxx_backup_owned_paths();
-ok('the stacks and archive folders are two sibling entries',
-   $owned === ['/tmp/bk-store/archives', '/tmp/bk-store/stacks'], implode(' + ', $owned));
-
-// Proven directly rather than by moving the real config: the collapse rule is
-// what matters, and it is the same rule whatever the two paths happen to be.
-ok('a nested pair collapses to the one that contains the other',
-   (function () {
-     // A genuinely nested pair — not the real store shape, which is siblings.
-     $paths = ['/tmp/bk-store', '/tmp/bk-store/stray-nested'];
-     $out = [];
-     foreach ($paths as $p) {
-       $inside = false;
-       foreach ($paths as $other) {
-         if ($other !== $p && strpos($p, $other.'/') === 0) { $inside = true; break; }
-       }
-       if (!$inside) $out[] = $p;
-     }
-     return $out === ['/tmp/bk-store'];
-   })());
+ok('the store itself is the one owned path',
+   $owned === ['/tmp/bk-store'], implode(' + ', $owned));
 
 /* ------------------------------------------------- the stale old entry -----
  * After a move the old path is still listed, naming a folder that no longer
@@ -209,13 +201,46 @@ ok('a nested pair collapses to the one that contains the other',
 
 echo "\n-- is an old path still listed --\n";
 
-$stale = fixture('stale', '{"includeFiles": ["/tmp/bk-old-store/stacks", "/tmp/bk-store/stacks"]}');
+// PLAN_186: the old path asked about here is now the old STORE folder — a
+// move relocates the whole store, not just its stacks subfolder, so that is
+// what action.php now hands to this question after one completes.
+$stale = fixture('stale', '{"includeFiles": ["/tmp/bk-old-store", "/tmp/bk-store"]}');
 ok('an old path still in the list is reported as still there',
-   staxx_backup_lists_path('/tmp/bk-old-store/stacks', $stale) === true);
+   staxx_backup_lists_path('/tmp/bk-old-store', $stale) === true);
 ok('a path genuinely absent is reported false, not null',
    staxx_backup_lists_path('/tmp/bk-never', $stale) === false);
 ok('an empty path is no claim rather than a false one',
    staxx_backup_lists_path('   ', $stale) === null);
+
+/* --------------------------------------------------- the partial-setup notice --
+ * staxx_backup_partial_notice(): true only for an install that followed the
+ * OLD advice (stacks and/or archives named separately) and has not yet
+ * covered the store as a whole. $installed is passed explicitly so these
+ * cases do not depend on whether the box running this suite happens to have
+ * the Appdata Backup plugin installed. */
+
+echo "\n-- the partial-setup notice --\n";
+
+ok('stacks and archives named but not the store: the notice fires',
+   staxx_backup_partial_notice(
+     fixture('notice-partial', '{"includeFiles": ["/tmp/bk-store/stacks", "/tmp/bk-store/archives"]}'),
+     true
+   ) === true);
+
+ok('the store itself named: no notice — it is already covered',
+   staxx_backup_partial_notice(fixture('notice-full', '{"includeFiles": ["/tmp/bk-store"]}'), true) === false);
+
+ok('nothing of StaXX named: no notice — that is "not set up", not "set up the old way"',
+   staxx_backup_partial_notice(fixture('notice-none', '{"includeFiles": ["/tmp/unrelated"]}'), true) === false);
+
+ok('the plugin not installed: no notice, whatever the list says',
+   staxx_backup_partial_notice(
+     fixture('notice-wouldfire', '{"includeFiles": ["/tmp/bk-store/stacks"]}'),
+     false
+   ) === false);
+
+ok('an unreadable config: no notice',
+   staxx_backup_partial_notice($dir.'/absent.json', true) === false);
 
 /* ------------------------------------------------------------------- out ---
  * The one thing this suite must never do is leave anything behind that could

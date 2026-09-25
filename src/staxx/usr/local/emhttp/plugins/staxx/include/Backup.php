@@ -10,7 +10,7 @@
  * appdata beside StaXX's and appears in none of the archives. Being inside
  * appdata is not being backed up; somebody has to name the folder.
  *
- * So this file answers exactly one question — are StaXX's folders named in
+ * So this file answers exactly one question — is StaXX's data store named in
  * that plugin's "include extra files/folders" list — and it does so READ-ONLY.
  * It never writes to that config. That file belongs to another plugin, their
  * settings page rewrites it wholesale on save, and the thing a bad write
@@ -37,7 +37,8 @@
 ?>
 <?
 /* Stacks.php, not just Defines.php: staxx_stack_root() lives there, and
- * staxx_backup_owned_paths() is built from it. Nothing here is reached from
+ * staxx_backup_covers_store() needs it alongside staxx_archive_root() and
+ * staxx_config_root() from Defines.php. Nothing here is reached from
  * Stacks.php in return except through function_exists(), so there is no
  * loading order to get wrong. */
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
@@ -76,38 +77,19 @@ function staxx_backup_norm(string $p): string {
 }
 
 /**
- * The folders StaXX owns and that therefore need backing up.
+ * The one folder StaXX owns and that therefore needs backing up: the data
+ * store itself (staxx_store_root()), which holds stacks, archives and
+ * config together. '' when no store has been chosen.
  *
- * Asked for rather than hard-coded anywhere else, because separate work
- * collapses the two into a single store. When the archive folder ends up
- * INSIDE the stacks folder this returns one path instead of two, on its own,
- * and every caller carries on unchanged.
- *
- * It will not invent a shared parent, though, however tempting: today the two
- * are siblings under somebody's appdata share, and the only path containing
- * both is appdata itself. Naming that would tell someone to back up every
- * container's data to cover StaXX's, which is a far bigger claim than this
- * file is entitled to make.
+ * PLAN_186: this used to name stacks and archives as two separate paths,
+ * which left config/ — the settings file, icon cache and updates.json —
+ * out of the answer entirely. One path covering the whole store means
+ * Copy the path hands over a single folder, and nobody who names it that
+ * way is ever told part of StaXX is missing.
  */
 function staxx_backup_owned_paths(): array {
-  $paths = [];
-  foreach ([staxx_stack_root(), staxx_archive_root()] as $p) {
-    $p = staxx_backup_norm($p);
-    if ($p !== '') $paths[$p] = true;
-  }
-  $paths = array_keys($paths);
-
-  // Drop anything sitting inside another of them — one entry already covers it.
-  $out = [];
-  foreach ($paths as $p) {
-    $inside = false;
-    foreach ($paths as $other) {
-      if ($other !== $p && strpos($p, $other.'/') === 0) { $inside = true; break; }
-    }
-    if (!$inside) $out[] = $p;
-  }
-  sort($out);
-  return $out;
+  $store = staxx_backup_norm(staxx_store_root());
+  return $store === '' ? [] : [$store];
 }
 
 /**
@@ -130,6 +112,31 @@ function staxx_backup_covers_one(string $entry, string $path): bool {
   if (($me[1] === 'user') === ($mp[1] === 'user')) return false;
 
   return $me[2] === $mp[2] || strpos($mp[2], $me[2].'/') === 0;
+}
+
+/**
+ * Is the store covered by this list of entries — named directly (or a parent
+ * of it, via staxx_backup_covers_one()), OR the long way: stacks, archives
+ * and config each named separately (or each covered by their own parent).
+ * That second shape is what the dialog used to ask people to set up before
+ * PLAN_186, so anyone who already did it that way is not told they are
+ * missing anything, even though the one-path answer is now what is offered.
+ */
+function staxx_backup_covers_store(array $entries, string $storePath): bool {
+  foreach ($entries as $entry) {
+    if (staxx_backup_covers_one($entry, $storePath)) return true;
+  }
+
+  foreach ([staxx_stack_root(), staxx_archive_root(), staxx_config_root()] as $sub) {
+    $sub = staxx_backup_norm($sub);
+    if ($sub === '') return false;
+    $found = false;
+    foreach ($entries as $entry) {
+      if (staxx_backup_covers_one($entry, $sub)) { $found = true; break; }
+    }
+    if (!$found) return false;
+  }
+  return true;
 }
 
 /**
@@ -175,8 +182,9 @@ function staxx_backup_entries(string $configPath = STAXX_AB_CONFIG): ?array {
 /**
  * Which of StaXX's folders are named in that list, and which are missing.
  * Null when nothing can be said (see staxx_backup_entries()). An empty
- * 'missing' means every owned path is listed — which is still not a promise
- * that a backup will run, only that the folders are named.
+ * 'missing' means the store is listed — which is still not a promise that a
+ * backup will run, only that the folder is named. See
+ * staxx_backup_covers_store() for what counts.
  *
  * @return array{listed:string[], missing:string[], url:string}|null
  */
@@ -186,18 +194,14 @@ function staxx_backup_coverage(string $configPath = STAXX_AB_CONFIG): ?array {
 
   $listed = $missing = [];
   foreach (staxx_backup_owned_paths() as $path) {
-    $found = false;
-    foreach ($entries as $entry) {
-      if (staxx_backup_covers_one($entry, $path)) { $found = true; break; }
-    }
-    if ($found) $listed[] = $path; else $missing[] = $path;
+    if (staxx_backup_covers_store($entries, $path)) $listed[] = $path; else $missing[] = $path;
   }
 
   return ['listed' => $listed, 'missing' => $missing, 'url' => STAXX_AB_SETTINGS_URL];
 }
 
 /**
- * Is this one path — an OLD stacks folder, after a move — still named in the
+ * Is this one path — an OLD store folder, after a move — still named in the
  * list? A move leaves the old entry behind pointing at a folder that no
  * longer exists, and the backup then keeps running, keeps reporting success,
  * and copies nothing. That silent version of a working backup is the worst
@@ -214,6 +218,46 @@ function staxx_backup_lists_path(string $path, string $configPath = STAXX_AB_CON
 
   foreach ($entries as $entry) {
     if (staxx_backup_covers_one($entry, $path)) return true;
+  }
+  return false;
+}
+
+/**
+ * Should the stack list page tell somebody their backup is set up the old
+ * way — naming stacks and/or archives separately but not the store as a
+ * whole? True only when the backup plugin is installed, its list can be
+ * read, the store itself is NOT covered (see staxx_backup_covers_store()),
+ * and at least one of stacks or archives IS covered on its own — the shape
+ * the dialog used to ask for, before PLAN_186 asked for the store instead.
+ *
+ * Someone who never listed any of StaXX's folders gets no notice here —
+ * that is not "set up the old way", it is "not set up at all", and the
+ * ordinary dialog and self-test line already say so when asked. Plugin
+ * absent, config unreadable, or the store already covered: false, per the
+ * "only ever assert the negative" rule at the top of this file.
+ *
+ * $configPath is a parameter so the test suite can hand it a fixture, same
+ * as its siblings above. $installed likewise: null (nothing in the plugin
+ * ever passes anything else) asks staxx_backup_plugin_installed() for the
+ * real answer, and the test suite can pass true or false directly instead
+ * of depending on whether the box it happens to run on has the plugin.
+ */
+function staxx_backup_partial_notice(string $configPath = STAXX_AB_CONFIG, ?bool $installed = null): bool {
+  if ($installed === null) $installed = staxx_backup_plugin_installed();
+  if (!$installed) return false;
+
+  $entries = staxx_backup_entries($configPath);
+  if ($entries === null) return false;
+
+  $store = staxx_backup_norm(staxx_store_root());
+  if ($store === '' || staxx_backup_covers_store($entries, $store)) return false;
+
+  foreach ([staxx_stack_root(), staxx_archive_root()] as $sub) {
+    $sub = staxx_backup_norm($sub);
+    if ($sub === '') continue;
+    foreach ($entries as $entry) {
+      if (staxx_backup_covers_one($entry, $sub)) return true;
+    }
   }
   return false;
 }

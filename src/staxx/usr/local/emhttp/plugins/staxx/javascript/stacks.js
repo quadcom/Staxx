@@ -23308,6 +23308,15 @@
     openImagesDialog();
   });
 
+  // PLAN_186 — "Check your backup" on the notice telling someone their
+  // backup plugin is set up the old way (stacks/archives named separately,
+  // not the store as a whole). No old path to ask about here: this notice
+  // is about the store right now, not a stale entry left by a move.
+  var backupPartialReviewBtn = document.getElementById('staxx-backup-partial-review');
+  if (backupPartialReviewBtn) backupPartialReviewBtn.addEventListener('click', function () {
+    openBackupDialog('');
+  });
+
   // Add a blank stack, From Apps and Import now live inside buildAddMenu()
   // (PLAN_173) — the toolbar's own #staxx-add-btn opens that through the
   // shared #staxx-menu rather than each keeping its own click listener.
@@ -27072,7 +27081,7 @@
         '<button type="button" class="staxx-link-btn" id="staxx-open-storage-settings">' +
         (onFlash ? 'Move it somewhere else' : 'Move the data store') + '</button>' +
         ' · <button type="button" class="staxx-link-btn" id="staxx-open-backup-check">' +
-        'Check these are in your backup</button></p>'
+        'Check your backup</button></p>'
       : '';
     // PLAN_97: stacks, archives and (Phase 4) config are no longer separate
     // settings — they are fixed subfolders of the one store, shown here so
@@ -28744,7 +28753,7 @@
     var cov = res.coverage;
     if (!cov) {
       backupBody.innerHTML = '<p class="staxx-hint">Your backup plugin\'s settings could not be ' +
-        'read, so nothing can be said about whether these folders are in it. Worth checking ' +
+        'read, so nothing can be said about whether this folder is in it. Worth checking ' +
         'yourself if you rely on it.</p>';
       return;
     }
@@ -28755,27 +28764,27 @@
         '<i class="fa fa-check-circle" aria-hidden="true"></i>' +
         '<span><strong>Found in your backup plugin\'s list.</strong> ' +
         esc(cov.listed.join(', ')) + '</span></p>' +
-        '<p class="staxx-hint">That means the folders are named there — not that a backup has run ' +
+        '<p class="staxx-hint">That means the folder is named there — not that a backup has run ' +
         'or succeeded. Only your backup plugin can tell you that.</p>' +
         backupStaleHtml(res, oldPath);
       return;
     }
 
     backupBody.innerHTML =
-      '<p class="staxx-hint">Nothing backs these up on its own. Your backup plugin works from ' +
-      'each container\'s own folders, and StaXX is a plugin rather than a container, so its ' +
-      'folders have to be named there by hand.</p>' +
+      '<p class="staxx-hint">Nothing backs this folder up on its own. Your backup plugin works ' +
+      'from each container\'s own folders, and StaXX is a plugin rather than a container, so its ' +
+      'folder has to be named there by hand.</p>' +
       '<pre class="staxx-backup-paths" id="staxx-backup-paths">' + esc(cov.missing.join('\n')) + '</pre>' +
       backupStaleHtml(res, oldPath) +
       '<div class="staxx-buttons staxx-buttons--inline">' +
-        '<button type="button" class="staxx-btn staxx-btn--primary" data-backup-copy="1">Copy the paths</button>' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" data-backup-copy="1">Copy the path</button>' +
         '<a class="staxx-btn" href="' + esc(res.url) + '" target="_blank" rel="noopener">Open your backup settings</a>' +
       '</div>' +
-      '<p class="staxx-hint">Paste them into <strong>Include extra files/folders</strong>, one per ' +
-      'line, then <strong>press Save on that page</strong> — until you do, nothing has changed and ' +
+      '<p class="staxx-hint">Paste it into <strong>Include extra files/folders</strong> on a line of ' +
+      'its own, then <strong>press Save on that page</strong> — until you do, nothing has changed and ' +
       'nothing will appear here. That page has its own folder picker with an "Add to list" button ' +
       'too, if you would rather not paste.</p>' +
-      '<p class="staxx-hint">Watching for them to appear…</p>';
+      '<p class="staxx-hint">Watching for it to appear…</p>';
   }
 
   /* Ask now, then keep asking while the dialog is open, so the tick appears

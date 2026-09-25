@@ -27,6 +27,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';   // staxx_import_taken_facts(), for the first clash check
 require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';   // staxx_storage_alert_state(), for the notice below (PLAN_181 Part D)
+require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';   // staxx_backup_partial_notice(), for the notice below (PLAN_186)
 
 // PLAN_97 Phase 1: nothing below this point may run with an unchosen data
 // store — staxx_list_stacks(), staxx_autostart_sync() and staxx_folder_layout()
@@ -371,6 +372,31 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         <strong><?= $clutterText ?></strong>
         <?= $whyText ?>
         <button type="button" id="staxx-storage-alert-review" class="staxx-link-btn"><?= _('Review stored images') ?></button>
+      </div>
+    </div>
+  <? endif; ?>
+
+  <?
+  // PLAN_186: somebody set the backup plugin up the old way — naming stacks
+  // and/or archives separately, which is what the dialog used to ask for,
+  // rather than the whole store it asks for now — is told here rather than
+  // only if they happen to open the backup dialog. Ordinary .staxx-notice,
+  // collected by the same loop that lifts the Docker Hub notice above
+  // (data-notice-kind="warn", no id, no sticky hash): unlike the storage
+  // alert just above, it needs no special dismissal — it stops rendering,
+  // and so stops appearing, the moment the list covers the store.
+  if (staxx_backup_partial_notice()):
+    $partialStorePath = htmlspecialchars(staxx_store_root());
+    $partialBody = _('The Appdata Backup plugin lists some of StaXX\'s folders but not')
+                 . ' <code>' . $partialStorePath . '</code> '
+                 . _('as a whole. Add that folder to its list of extra files so your StaXX settings are backed up too.');
+  ?>
+    <div class="staxx-notice" data-notice-kind="warn">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('Your backup is missing part of StaXX.') ?></strong>
+        <?= $partialBody ?>
+        <button type="button" class="staxx-link-btn" id="staxx-backup-partial-review"><?= _('Check your backup') ?></button>
       </div>
     </div>
   <? endif; ?>
@@ -1611,7 +1637,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
   <dialog class="staxx-settings" id="staxx-backup-dlg" aria-labelledby="staxx-backup-title">
 
     <div class="staxx-settings-head">
-      <h3 class="staxx-settings-title" id="staxx-backup-title"><?= _('Add these folders to your backup') ?></h3>
+      <h3 class="staxx-settings-title" id="staxx-backup-title"><?= _('Is StaXX in your backup?') ?></h3>
     </div>
 
     <div class="staxx-settings-body" id="staxx-backup-body"></div>

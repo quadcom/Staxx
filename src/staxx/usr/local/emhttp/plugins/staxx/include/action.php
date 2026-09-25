@@ -2897,14 +2897,18 @@ switch ($action) {
    * either.
    */
 
-  /* ---- what could the stacks folder move to ----
+  /* ---- what could the data store move to ----
    *
-   * Read-only. 'onFlash' is true when the CURRENT stacks folder is /boot or
+   * Read-only. 'onFlash' is true when the CURRENT store folder is /boot or
    * sits under it — the same test staxx_storage_options() itself makes when
-   * deciding whether to offer flash as "where it already is".
+   * deciding whether to offer flash as "where it already is". 'current' is
+   * also what a move hands back to the backup dialog as the old path once
+   * it finishes (see stacks.js's startStorageMove()), so it names the whole
+   * store — not just its stacks/ subfolder — to match what the backup check
+   * now asks about.
    */
   case 'storage-options':
-    $current = staxx_stack_root();
+    $current = staxx_store_root();
     $options = staxx_storage_options();
 
     /* Which offered location to pre-fill in the first-run dialog, decided
@@ -2973,7 +2977,7 @@ switch ($action) {
    * not be read or understood). The browser must treat that as "say nothing",
    * never as "not listed" — see the rules in Backup.php.
    *
-   * 'old' is optional: after a move, the previous stacks path is asked about
+   * 'old' is optional: after a move, the previous store path is asked about
    * separately, because an entry left naming a folder that no longer exists
    * makes their backup keep reporting success while copying nothing.
    */

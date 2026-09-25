@@ -3397,10 +3397,12 @@ function staxx_selftest(): array {
         ? 'none — every catalogued image is still pulling from where its template currently publishes'
         : implode("\n  ", $movedLines));
 
-  /* PLAN (this session): are the compose files in anybody's backup? Nothing
-   * backs them up by default — the Appdata Backup plugin works from each
-   * container's volume mappings, and a plugin's own store is not one — so a
-   * store nobody has named is a store that quietly is not covered.
+  /* Is the data store in anybody's backup? Nothing backs it up by default —
+   * the Appdata Backup plugin works from each container's volume mappings,
+   * and a plugin's own store is not one — so a store nobody has named is a
+   * store that quietly is not covered. staxx_backup_owned_paths() names the
+   * one folder that matters (the whole store: stacks, archives and config
+   * together), so this reads and reports on a single path, not several.
    *
    * Guarded like the update-check line above, because this file is loadable on
    * its own (see the troubleshooting one-liner in stacks.js) and Backup.php is
@@ -3411,7 +3413,7 @@ function staxx_selftest(): array {
   if (function_exists('staxx_backup_coverage')) {
     if (!staxx_backup_plugin_installed()) {
       $backupReport = 'the Appdata Backup plugin is not installed, so there is nothing to check '
-                    . 'against — back these folders up some other way: '
+                    . 'against — back this folder up some other way: '
                     . implode(', ', staxx_backup_owned_paths());
     } else {
       $cov = staxx_backup_coverage();
@@ -3428,7 +3430,7 @@ function staxx_selftest(): array {
       } else {
         $backupReport = 'NOT listed in the Appdata Backup plugin, under extra files: '
                       . implode(', ', $cov['missing'])
-                      . ' — add them there, or these compose files are in no backup';
+                      . ' — add it there, or StaXX\'s settings and compose files are in no backup';
       }
     }
   }
