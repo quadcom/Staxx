@@ -56,6 +56,10 @@
  *     against the real API rather than here, the same boundary this file
  *     already draws for staxx_watch_discover()/staxx_watch_fetch() reaching
  *     the network.
+ *   - PLAN_184 — a dismissal is matched on a finding's key alone, never its
+ *     value, and survives staxx_watch_merge_compare()'s carry-forward across
+ *     a re-run of the comparison, pruned only once the finding it protects
+ *     has gone. Against Updates.php, required further down for this alone.
  */
 
 $scratch = '/tmp/staxx-watch-test.json';
@@ -398,6 +402,78 @@ ok('a single-service image names that one service',
 ok('two services sharing an image produce ONE note naming both',
    in_array('No known project home for this image, used by "adminer" and "cron".', $watch['notes'], true),
    implode(' | ', $watch['notes']));
+
+/* --- 7. PLAN_184 — a dismissal is matched by key, and survives a re-run -- *
+ * staxx_watch_active_findings(), staxx_watch_merge_compare() and
+ * staxx_watch_skip() all live in Updates.php, not Watch.php. */
+
+require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+
+// 7a. staxx_watch_active_findings() hides on key alone, whatever the value —
+// including a legacy entry still holding a copied value (the shape 'skip'
+// held before this plan, which the key-only rule reinterprets rather than
+// migrates).
+$findingsEntry = [
+  'findings' => [
+    ['service' => 'app', 'setting' => 'PUID', 'side' => 'dropped', 'value' => 'mine'],
+  ],
+  'skip' => ['app|PUID' => 'some-other-value'],
+];
+ok('a dismissal hides its finding regardless of the stored value',
+   staxx_watch_active_findings($findingsEntry) === []);
+
+$findingsEntryLegacy = $findingsEntry;
+$findingsEntryLegacy['skip'] = ['app|PUID' => 'mine']; // old shape: value equalled the finding's own
+ok('a legacy value-shaped skip entry still hides by key alone',
+   staxx_watch_active_findings($findingsEntryLegacy) === []);
+
+// 7b. staxx_watch_merge_compare() carries a skip key forward only while its
+// finding still appears in the fresh comparison.
+$oldEntry = ['skip' => ['app|PUID' => true, 'app|GONE' => true]];
+$freshCompare = ['findings' => [
+  ['service' => 'app', 'setting' => 'PUID', 'side' => 'dropped', 'value' => 'x'],
+], 'compare_error' => ''];
+$merged = staxx_watch_merge_compare($oldEntry, $freshCompare);
+ok('a skip key whose finding is still present is kept',
+   ($merged['skip']['app|PUID'] ?? null) === true, json_encode($merged));
+ok('a skip key whose finding has gone is dropped',
+   !array_key_exists('app|GONE', $merged['skip'] ?? []), json_encode($merged));
+
+$oldEntryAllGone = ['skip' => ['app|GONE' => true]];
+$mergedAllGone = staxx_watch_merge_compare($oldEntryAllGone, $freshCompare);
+ok('skip is omitted entirely once nothing survives',
+   !array_key_exists('skip', $mergedAllGone), json_encode($mergedAllGone));
+
+// 7c. an empty old entry (nothing to carry forward) returns compare unchanged.
+$mergedEmpty = staxx_watch_merge_compare([], $freshCompare);
+ok('merging against an empty old entry returns compare unchanged',
+   $mergedEmpty === $freshCompare, json_encode($mergedEmpty));
+
+// 7d. staxx_watch_skip() against the scratch state file, then read back
+// through staxx_watch_active_findings().
+staxx_update_state_save(['stacks' => [
+  'skiptest' => ['watch' => ['skiptest/app:latest' => [
+    'findings' => [
+      ['service' => 'app', 'setting' => 'PUID', 'side' => 'dropped', 'value' => 'mine'],
+    ],
+  ]]],
+]]);
+
+$err = '';
+ok('dismissing a setting with no finding on offer is refused',
+   staxx_watch_skip('skiptest', 'skiptest/app:latest', 'app', 'NOTREAL', $err) === false
+   && $err !== '', $err);
+
+$err = '';
+ok('dismissing a finding that is on offer succeeds',
+   staxx_watch_skip('skiptest', 'skiptest/app:latest', 'app', 'PUID', $err) === true, $err);
+
+$after = staxx_update_state();
+$afterEntry = $after['stacks']['skiptest']['watch']['skiptest/app:latest'] ?? [];
+ok('the dismissal is stored as true, not a copied value',
+   ($afterEntry['skip']['app|PUID'] ?? null) === true, json_encode($afterEntry));
+ok('the dismissed finding is now filtered by staxx_watch_active_findings()',
+   staxx_watch_active_findings($afterEntry) === []);
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

@@ -1922,7 +1922,12 @@ function staxx_update_check(string $scope, bool $force): array {
           $localFile = $stackFiles[$stackName] ?? '';
           if ($localFile === '') continue;
           $compare = staxx_watch_compare($localFile, $image);
-          $stacksState[$stackName]['watch'][$image] = $compare;
+          // A plain assignment here used to throw away every dismissal on each
+          // check, since staxx_watch_compare() never returns 'skip' (PLAN_184);
+          // the merge carries surviving dismissals forward instead.
+          $stacksState[$stackName]['watch'][$image] = staxx_watch_merge_compare(
+            (array)($stacksState[$stackName]['watch'][$image] ?? []), $compare
+          );
         }
       }
     }
@@ -3103,11 +3108,45 @@ function staxx_update_skip_move(string $image, string &$error): bool {
 }
 
 /**
- * PLAN_62 Stage 4 — dismiss one author-example finding: remember the
- * author's current value for this exact (stack, image, service, setting)
- * under 'skip' on the stack's own watch entry, so a later change to that
- * same setting speaks up once more. Third use of the self-expiring shape
+ * PLAN_184 — carry a stack's dismissals across a re-run of the comparison.
+ * The update check replaces the whole watch entry with a fresh $compare
+ * (Watch.php's staxx_watch_compare(), which only ever returns 'findings' and
+ * 'compare_error'), so without this the next check silently threw away
+ * every 'skip' recorded by staxx_watch_skip(). Keeps only the skip keys
+ * whose finding still appears in the fresh $compare — a dismissal of a
+ * finding that has gone away has nothing left to protect, and pruning it
+ * means a difference that later returns is asked about afresh. Omits
+ * 'skip' entirely once nothing survives, rather than storing an empty map.
+ */
+function staxx_watch_merge_compare(array $old, array $compare): array {
+  $skip = (array)($old['skip'] ?? []);
+  if ($skip === []) return $compare;
+
+  $live = [];
+  foreach ((array)($compare['findings'] ?? []) as $f) {
+    $live[(string)($f['service'] ?? '').'|'.(string)($f['setting'] ?? '')] = true;
+  }
+
+  $kept = array_intersect_key($skip, $live);
+  if ($kept !== []) {
+    $compare['skip'] = $kept;
+  }
+  return $compare;
+}
+
+/**
+ * PLAN_62 Stage 4 — dismiss one author-example finding: record it under
+ * 'skip' on the stack's own watch entry, so it stops appearing until the
+ * finding itself disappears (staxx_watch_merge_compare() above prunes the
+ * key when that happens). Third use of the self-expiring shape
  * staxx_update_skip()/staxx_update_skip_move() already establish above.
+ *
+ * PLAN_184 (Adrian's ruling, 2026-09-25): matched on the setting's name
+ * only, never its value. An author's example compose file is a starting
+ * base, not a full list of every option, and the value is customised per
+ * install — so recording the author's or the user's current value and
+ * expiring the dismissal when it changes would keep asking about a
+ * difference nobody disputed.
  *
  * Findings are per stack, not per image (PLAN_62's correction: two stacks
  * sharing an image must dismiss independently), so the key has to include
@@ -3129,10 +3168,8 @@ function staxx_watch_skip(string $stack, string $image, string $service, string 
   }
 
   $found = false;
-  $value = null;
   foreach ((array)($entry['findings'] ?? []) as $f) {
     if ((string)($f['service'] ?? '') === $service && (string)($f['setting'] ?? '') === $setting) {
-      $value = $f['value'] ?? null;
       $found = true;
       break;
     }
@@ -3142,7 +3179,7 @@ function staxx_watch_skip(string $stack, string $image, string $service, string 
     return false;
   }
 
-  $entry['skip'][$service.'|'.$setting] = $value;
+  $entry['skip'][$service.'|'.$setting] = true;
   $stacks[$stack]['watch'][$image]      = $entry;
 
   staxx_update_state_save(['stacks' => $stacks]);
@@ -3153,9 +3190,10 @@ function staxx_watch_skip(string $stack, string $image, string $service, string 
  * One image's findings for one stack, with anything currently dismissed
  * filtered out first — shared by every reader (the row pill's count, the
  * field grafts, Stage 4's combined report) so the three can never disagree
- * about what a dismissal covers. A dismissal only holds while the author's
- * value for that setting has not moved since it was recorded; the moment it
- * has, the stored 'skip' entry is stale and the finding shows again.
+ * about what a dismissal covers. PLAN_184: a dismissal holds regardless of
+ * the finding's value — matched on the setting's name alone — and lasts
+ * until the finding itself disappears (staxx_watch_merge_compare() prunes
+ * its key at that point).
  */
 function staxx_watch_active_findings(array $entry): array {
   $skip = (array)($entry['skip'] ?? []);
@@ -3165,7 +3203,7 @@ function staxx_watch_active_findings(array $entry): array {
   $out = [];
   foreach ($all as $f) {
     $key = (string)($f['service'] ?? '').'|'.(string)($f['setting'] ?? '');
-    if (array_key_exists($key, $skip) && $skip[$key] === ($f['value'] ?? null)) continue;
+    if (array_key_exists($key, $skip)) continue;
     $out[] = $f;
   }
   return $out;
