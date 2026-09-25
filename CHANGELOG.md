@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- The settings panel is shorter and easier to scan: the image settings on the Storage tab share one Unused image management box laid out in two columns, Copies on the flash drive shows its two settings side by side, every setting's control now comes before its explanation, and the Self-test tab scrolls as one page instead of two boxes that each scroll on their own.
 - Removing (archiving) a stack now also removes any roll-back copies of its images that no other stack still needs, and says so before you confirm. A roll-back copy still kept for a stack that no longer exists is no longer protected for ever.
 - The Storage tab has a new "Keep the images" switch beside Scan stored images. Switched off, StaXX still remembers which versions of an image you have run, but no longer keeps their files on disk — a roll-back downloads that version again instead.
 - Images are no longer removed on a schedule. If your server had "Remove old images automatically" set to weekly, that no longer happens — the setting is simply not read any more.
