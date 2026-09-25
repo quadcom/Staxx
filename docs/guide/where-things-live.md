@@ -11,7 +11,16 @@ live on the flash drive instead.
    the only route that keeps every other setting in step. See [Settings](settings.md).
 2. **Unraid's own settings page for StaXX**, under Settings → Utilities → StaXX. It writes straight
    to the flash drive, and works even when StaXX's own page cannot be reached, or while the array is
-   still starting. It only offers the Docker-menu choices and the data store's location.
+   still starting.
+
+   ![Unraid's own Settings → Utilities → StaXX page: a line saying the settings are in the app now with a link to open the panel, then two rows, Docker menu set to Replace it with StaXX and Data store holding the store path, with Apply and Done buttons](../images/guide/settings-unraid-page.png)
+
+   | Setting | What it undoes |
+   |---|---|
+   | **Docker menu** | Set it to **Leave it alone** and Unraid's own Docker page returns, with StaXX as a tab under it. |
+   | **Data store** | Point it at the right folder if the store has been moved or the path is wrong, and the stack list comes back. |
+
+   Press **Apply** to save.
 3. **Editing the file by hand**, the last resort. Open the settings file on the flash drive (over the
    network share Unraid publishes, or by putting the drive in another computer) and change the line
    yourself.

@@ -21,7 +21,7 @@ separator.
 
 ## Step 2 · The confirmation dialog
 
-![The Remove dialog: containers are stopped and removed, nothing is deleted because the folder is zipped into the archives folder, appdata is untouched, and a list of what else goes into the zip, with Cancel and Remove and archive buttons](../images/guide/removing-a-stack-confirm.png)
+![The Remove dialog for a stack: its containers are stopped and removed, nothing in the folder is deleted because it is zipped into the archives folder, appdata is untouched, its saved earlier versions (3 images, 1.4 GB) are removed too, the extra files going into the zip, and the folders and volume it uses, which stay as they are](../images/guide/removing-a-stack-confirm.png)
 
 1. Read what the dialog titled **Remove "\<name>"?** lists.
 2. Press **Remove and archive**.
@@ -30,8 +30,10 @@ The dialog lists, in order:
 
 - Its containers are stopped and removed.
 - The whole folder is zipped up and kept in the archive folder, named after the stack and the time
-  it was archived. Nothing is deleted.
+  it was archived. Nothing in the folder is deleted.
 - Appdata is not touched.
+- If the stack kept earlier versions of its images for rolling back, how many and how much space
+  they take. They are removed too, unless another stack still uses them.
 - Anything else going into the zip, besides the compose file itself — or, if the folder holds
   nothing more, a line saying so.
 - Every folder and named volume the compose file uses: folders by their path on your server, named

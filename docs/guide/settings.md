@@ -2,24 +2,10 @@
 
 <!-- index: 80 | every setting behind the cog, group by group, plus the self-test and the first-run screen. -->
 
-Press **Settings**, the cog above your stack list, to open this panel. Unraid's own Settings →
-Utilities → StaXX page keeps two of the settings as a way back.
+Press **Settings**, the cog above your stack list, to open this panel. If StaXX's own page will not
+open, see [If you cannot reach StaXX](where-things-live.md#if-you-cannot-reach-staxx).
 
-![The toolbar above the stack list with the Settings button outlined](../images/guide/settings-cog.png)
-
-## The page under Unraid's Settings
-
-![Unraid's own Settings → Utilities → StaXX page: a line saying the settings are in the app now with a link to open the panel, then two rows, Docker menu set to Replace it with StaXX and Data store holding the store path, with Apply and Done buttons](../images/guide/settings-unraid-page.png)
-
-Under Unraid's **Settings → Utilities** there is still a StaXX entry, and it is the way back if
-StaXX's own page will not open:
-
-| Setting | What it undoes |
-|---|---|
-| Docker menu | Set it to **Leave it alone** and Unraid's own Docker page returns, with StaXX as a tab under it. |
-| Data store | Point it at the right folder if the store has been moved or the path is wrong, and the stack list comes back. |
-
-Press **Apply** to save. Everything else lives in the panel.
+![The Settings button outlined in the middle of the toolbar above the stack list, with the search box and the other toolbar buttons either side, Unraid's own top bar above and the first folder row below](../images/guide/settings-cog.png)
 
 ## Using the panel
 
@@ -45,7 +31,7 @@ reloads for you and says so.
 
 ## Storage tab
 
-![The Storage tab in full: the Data store box holding the folder's path and its folder button, the Protect me from myself switch turned on with its one-line explanation, the three folders derived from the path and the Move the data store and Check these are in your backup links; then Copies on the flash drive with its dropdown, and beneath it the Keeping the copies current choice between On a schedule and Live; then the Archived stacks list of zips with dates and sizes; and the Unused images box with its Scan stored images button](../images/guide/settings-storage-tab.png)
+![The Storage tab in full: the Data store box with its folder path, the Protect me from myself switch and the three folders under it; Copies on the flash drive with its two dropdowns side by side; the Unused image management box in two columns, with the Scan stored images button beside Keep the images, and Warn when image storage is this full beside Or when clutter is this old; and the Archived stacks list of zips with dates and sizes](../images/guide/settings-storage-tab.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
@@ -53,8 +39,49 @@ reloads for you and says so.
 | Protect me from myself | On / Off | On | With this setting on, the folder picker will not let you choose a store location that could result in the loss of your data. With it off, the picker presents every storage location on your system, whether or not it could lose your files. Even with it off, two places are never allowed: anywhere that is wiped when the server restarts, and the top level of a whole share such as appdata, where every folder inside it would be mistaken for a stack. |
 | Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save, start or update a stack here a copy of its file is also written to the flash drive, which Unraid already backs up. If the data store were ever lost, StaXX offers to bring every stack back from these copies — see [if the data store is lost](recovery-and-redundancy.md). With it off, no copies are written. |
 | Keeping the copies current | On a schedule / Live | On a schedule | How a change made outside StaXX — the file edited by hand and the container recreated at a command line — still reaches the copy above. **On a schedule** compares every stack with its copy once an hour and rewrites the ones that differ; a change made this way can be up to an hour behind. **Live** keeps a small process running that refreshes a stack's copy the moment its container is recreated, however that was done, at the cost of one process that runs all the time; a daily sweep still runs as a backstop. Only means anything while the setting above is on. |
+| Scan stored images | — | — | Pressing **Scan stored images** shows a bar of **Docker's image storage**, split into **In use**, **Kept for rolling back**, **Clutter** and **Free**. Under the bar is the clutter, grouped by where it came from, with the space each image takes. Every image in the list starts ticked. Untick any you want to keep, then press the **Remove** button. The copies kept for rolling back sit under **Kept so you can roll back**; press it to open that list. If a container can no longer be read, its details appear at the top with a **Remove this broken container** button. It asks you to confirm, and leaves the container's data folder where it is. |
+| Keep the images | Yes / No — remember the version numbers only | Yes | With this on, earlier versions stay on the server, so rolling back is instant. With it off, only their version numbers are kept, and rolling back downloads that version again. |
+| Warn when image storage is this full | 50 to 99% | 85% | When there is clutter to clear and Docker's image storage is this full, the storage notice appears. |
+| Or when clutter is this old | 1 to 365 days | 30 days | When any clutter has gone unused for this many days, the storage notice appears, however much space is free. |
 | Archived stacks | — | — | Shows the zip of every stack you have removed, with its date and size. Nothing here can be changed. See [removing a stack](removing-a-stack.md). |
-| Unused images | — | — | Pressing **Scan stored images** shows a bar of **Docker's image storage**, split into **In use**, **Kept for rolling back**, **Clutter** and **Free**. Under the bar is the clutter, grouped by where it came from, with the space each image takes. Every image in the list starts ticked. Untick any you want to keep, then press the **Remove** button. The copies kept for rolling back sit under **Kept so you can roll back**; press it to open that list. If a container can no longer be read, its details appear at the top with a **Remove this broken container** button. It asks you to confirm, and leaves the container's data folder where it is. |
+
+### Scan stored images
+
+Press **Scan stored images** to open the window.
+
+![The Scan stored images window: a notice about a container Docker cannot read, with its details and a Remove this broken container button; the Docker's image storage bar and its key; the clutter grouped under Left behind by updates, Left behind by rebuilds, Older versions and Not used by any stack, every row ticked with its size; Kept so you can roll back folded shut at the bottom; and the Remove 8 images button](../images/guide/settings-scan-images.png)
+
+The bar at the top shows how Docker's image storage is used. The line under it says how much of it
+is clutter.
+
+![The storage bar: In use in solid grey, Kept for rolling back in blue stripes, Clutter in dotted amber and Free as a dashed outline, with a key giving each size, and the line 8 images, 1.8 GB, are clutter and can be removed](../images/guide/settings-scan-images-bar.png)
+
+Untick any image you want to keep, then press the **Remove** button at the foot of the window. Press
+**Kept so you can roll back** to see the copies kept for rolling back.
+
+If a container can no longer be read, its details appear at the top of the window: when it was set
+up, whether it ever ran, its image, its data folder, its network address and its limits. Press
+**Remove this broken container** to remove it.
+
+![The notice for a container Docker cannot read, with Set up, Ever run, Image, Database, Data folder, Network, Unraid template and Limits rows, and the red Remove this broken container button](../images/guide/settings-scan-images-broken.png)
+
+Confirm to remove it. Its data folder and its Unraid template stay where they are.
+
+![The confirmation: Remove the broken container "old-database"?, saying its data folder and its Unraid template are kept, with Cancel and a red Remove container button](../images/guide/settings-scan-images-confirm.png)
+
+### The storage notice
+
+When there is clutter to clear and one of the two storage settings above is reached, a notice
+appears at the top of the stack list.
+
+![The stack list with the storage notice in the line at the top left: Docker's image storage has 1.8 GB of clutter. It is 87% full.](../images/guide/settings-storage-notice.png)
+
+![A close-up of the notice line at the top of the stack list](../images/guide/settings-storage-notice-bar.png)
+
+Press the notice to open it, then press **Review stored images** to open **Scan stored images**. If
+you dismiss it, it stays hidden until the clutter changes.
+
+![The Notifications panel with the storage notice, how long ago it arrived, a Review stored images button and the dismiss cross](../images/guide/settings-storage-notice-panel.png)
 
 Two links sit under the Data store box:
 
@@ -81,7 +108,7 @@ Two links sit under the Data store box:
 
 This tab is explained fully in [checking for updates](updates.md).
 
-![The top of the Updates tab: Check for image updates with How often and Time of day, the Updates row ticked between Manual and Automatic, the When to install box greyed out because Updates is set to Manual, and three Notify me switches: New image, Image installed and Installation failed. The tab continues below with how many previous image releases to keep, removing old images automatically, and the update-check activity table](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with its three ticks, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
@@ -93,7 +120,6 @@ This tab is explained fully in [checking for updates](updates.md).
 | Quiet time starts / ends | A time, in half-hour steps | 03:00 / 05:00 | The hours during which updates may install themselves. The window can run past midnight into the next day. |
 | Notify me | New image / Image installed / Installation failed, each on or off | Installation failed is on; the other two are off | Three separate switches for when StaXX sends you an Unraid notification: New image when a check finds something waiting, Image installed once an update has gone in, and Installation failed when one hasn't. Any mix of the three can be on at once. A container can take itself out of these messages in its own settings — see [choosing how a container updates](update-policy.md). |
 | Previous image releases to keep | 0 to 5 | 2 | How many older versions of each image stay on disk after an update, so you can put one back. See [version history](recovery-and-redundancy.md). |
-| Remove old images automatically | No / Yes, once a week | No | With this on, once a week StaXX removes downloaded images that nothing is running and that are no longer kept for putting back. It never removes anything else. With it off, old images stay until you remove them yourself. |
 | Update-check activity | — | — | Shows, for each place StaXX asks about updates, how many times it has asked this hour and today, how many of those counted against that place's limit. Where there is something to say about a place — that it sets no limit of its own, or that it has stopped answering — the row carries an asterisk and the note appears once underneath the table. Look here when a row keeps saying `could not check`. See [checking for updates](updates.md#docker-hubs-limit). |
 
 ## Integrations tab
