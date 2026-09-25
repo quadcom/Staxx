@@ -1,243 +1,138 @@
 <?php
-/* PLAN_86 — copying a matched icon into a stack's own folder, and above all
- * its refusals: a bad reference, a cache miss, a name clash, an unwritable
- * folder. Server-only: it needs the plugin's icon helpers. Copy up and run:
+/* PLAN_187 — each service keeps its own icon, downloaded straight into its
+ * stack's own .staxx folder rather than a shared cache, and the
+ * once-per-install move that puts stacks written before this shape existed
+ * right (staxx_icons_into_stacks()). Server-only: it needs the plugin's
+ * icon helpers and a scratch data store.
  *
- *   php /tmp/icons.php
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
+ * pointed at /tmp/zzicons-store, set in the flash pointer file BEFORE php
+ * starts (staxx_cfg() memoises on first read, so changing it from inside
+ * this script is already too late — same reasoning tests/server/detail.php
+ * gives for STORE_ROOT). ICON_FETCH is not a flash key (STAXX_FLASH_KEYS in
+ * Defines.php), so this script seeds it into the scratch store's own
+ * config/staxx.cfg itself, before Defines.php's first require:
  *
- * Never touches a real stack folder: every case below hands
- * staxx_icon_adopt() an explicit /tmp directory to copy INTO, rather than
- * moving the store root — the same reason tests/server/pending.php gives for
- * avoiding that (moving it, even for one command, makes every real stack
- * vanish from the webGUI for as long as it is moved).
+ *     pscp tests/server/icons.php root@<box>:/tmp/
+ *     plink … '
+ *       CFG=/boot/config/plugins/staxx/staxx.cfg
+ *       cp $CFG /tmp/cfg.bak
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzicons-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/zzicons-store\"" >> $CFG
+ *       php /tmp/icons.php; RC=$?
+ *       cp /tmp/cfg.bak $CFG
+ *       exit $RC
+ *     '
  *
- * staxx_icon_adopt() reads its SOURCE from the real shared icon cache
- * (staxx_icon_store_dir(), inside the data store's config folder since
- * PLAN_97 Phase 4) — that function takes no override, because there is
- * only one icon cache on a real server, unlike the stack root. This test
- * writes one throwaway file into that cache under a reference no real icon
- * collection entry uses ('staxx-selftest'), and removes it again on exit.
- * That is a few bytes in a shared cache, never a stack's own folder, and it
- * self-cleans even on failure. Needs a real, reachable data store — there
- * is nowhere to keep the fixture icon otherwise — so this aborts early with
- * a plain message rather than silently testing nothing if none is chosen.
+ * Never touches the network and never touches the real store: everything
+ * here lives under the scratch STORE_ROOT this file sets up and removes on
+ * exit. ICON_FETCH is forced off for the WHOLE suite, seeded once before
+ * Defines.php's first require and never touched again — staxx_cfg()
+ * memoises on first read, so a mid-script rewrite of the config file is
+ * silently ignored, the same trap tests/server/detail.php's own header
+ * warns about for STORE_ROOT. staxx_icon_fetch_and_write() checks whether
+ * there is even anything to try, and whether there is somewhere to put it,
+ * before it ever asks whether fetching is allowed at all (see its own
+ * comment), so every refusal case below is reachable with fetching off the
+ * whole time and no network is ever reached, in any case. The one case
+ * that DOES need real bytes — a local picture already sitting on disk,
+ * migrated by staxx_icons_into_stacks() — is a file copy, never a fetch, so
+ * it needs no network either.
  *
- * What this does NOT cover: staxx_icon_adopt_sweep()'s own walk over
- * staxx_scan_stacks(), because that reads the real store root with no way
- * to point it elsewhere short of moving it — precisely what this file
- * exists to avoid doing on a live server. What IS checked instead, at the
- * level reachable without moving anything, is the field the walk skips on:
- * staxx_compose_meta() correctly reporting a service's own recorded icon,
- * via a synthetic compose file under /tmp.
- *
- * Also covers PLAN_105: staxx_service_icon() no longer takes a stack-level
- * icon at all, so a service with none of its own now has only its image
- * name left to resolve from, and a service's own stated icon still wins.
- *
- * Also covers PLAN_146: staxx_icon_adopt() given a pasted URL's `url-<hash>`
- * reference names the copy from the URL's own filename instead of the hash,
- * falls back to the hash when the URL has none, and still refuses a name
- * clash exactly as the ordinary case does. staxx_icon_adopt_sweep()'s own
- * decision not to offer a URL still marked missed is checked at the same
- * field-level as PLAN_105's case above, for the same reason given there —
- * the walk itself needs the real store root, which this file does not move.
- *
- * Also covers PLAN_149 phase 3: staxx_icon_adopt_drop() — a picture dropped
- * straight in from the desktop rather than fetched from an address. Unlike
- * staxx_icon_adopt() above, it needs no reachable data store and touches
- * nothing but the explicit /tmp folders this file already uses, since it
- * never reads from the shared icon cache at all — the bytes are handed to
- * it already in hand.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
  */
 
+@mkdir('/tmp/zzicons-store/config', 0755, true);
+file_put_contents('/tmp/zzicons-store/config/staxx.cfg', "ICON_FETCH=\"false\"\n");
+
+require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 
-if (!staxx_store_reachable()) {
-  echo "FAIL   no reachable data store — set STORE_ROOT to a real, present folder before "
-     . "running this suite; there is nowhere to keep the fixture icon otherwise\n";
+if (staxx_stack_root() !== '/tmp/zzicons-store/stacks') {
+  echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().") — "
+     . "see this file's header for how STORE_ROOT must be set before php starts\n";
+  exit(1);
+}
+if ((staxx_cfg()['ICON_FETCH'] ?? '') !== 'false') {
+  echo "FAIL   ICON_FETCH is not forced off — this run would be free to touch the network\n";
+  exit(1);
+}
+if (staxx_compose_cmd() === '') {
+  echo "FAIL   docker compose is not on the PATH — this suite needs it to read a stack\n";
   exit(1);
 }
 
 $fails = 0;
-function check(string $what, bool $ok): void {
+function check(string $what, bool $ok, $detail = null): void {
   global $fails;
   if (!$ok) $fails++;
   printf("%-4s %s\n", $ok ? 'ok' : 'FAIL', $what);
+  if (!$ok && $detail !== null) {
+    echo '     got: '.(is_string($detail) ? $detail : json_encode($detail))."\n";
+  }
 }
 
-$ref = 'staxx-selftest';
-
-// The one write outside /tmp this file makes, and it cleans itself up
-// however the run ends.
-$cachePath = staxx_icon_store_dir().'/'.$ref.'.png';
-register_shutdown_function(function () use ($cachePath) {
-  @unlink($cachePath);
-});
-
 $pngBytes = "\x89PNG\r\n\x1a\nfake-but-good-enough-for-this-test";
-@mkdir(staxx_icon_store_dir(), 0755, true);
-file_put_contents($cachePath, $pngBytes);
+$scratch  = '/tmp/zzicons-store/stacks';
 
-$scratch = '/tmp/staxx-icons-test';
-@exec('rm -rf '.escapeshellarg($scratch));
-$stack = $scratch.'/stack';
+/* ---- staxx_icon_fetch_and_write() refusals, no network ever reached ---- */
+
+$stack = staxx_stack_dir('zzicon-fw');
 @mkdir($stack, 0755, true);
 
-/* ---- the refusals ---- */
+// A source is given in every case that is not itself testing "nothing to
+// fetch" — otherwise that check, not fetching being off, would be first to
+// refuse, and this suite would never actually prove the setting's own gate.
+$error = '';
+$result = staxx_icon_fetch_and_write($stack, 'a', 'https://example.com/x.png', '', 'zz-fw-1', $error);
+check('switched off entirely is refused, with a source and a folder to write into',
+  $result === '' && $error === 'Icon lookups are switched off.', $error);
 
 $error = '';
-check('a ref that fails the safe-ref guard is refused',
-  staxx_icon_adopt('../etc/passwd', $stack, $error) === '' && $error !== '');
+$result = staxx_icon_fetch_and_write($stack, 'a', '', '', 'zz-fw-2', $error);
+check('nothing to fetch (no remote, no collection match) is refused first, before the setting is even asked',
+  $result === '' && $error === 'Nothing to fetch.', $error);
 
 $error = '';
-check('a picture not in the cache yields no file and no crash, quietly',
-  staxx_icon_adopt('staxx-nowhere-at-all', $stack, $error) === '' && $error !== ''
-  && !is_file($stack.'/staxx-nowhere-at-all.png'));
+$result = staxx_icon_fetch_and_write($scratch.'/does-not-exist', 'a', 'https://example.com/x.png', '', 'zz-fw-3', $error);
+check('an unwritable (non-existent) stack folder is refused, ahead of the setting too',
+  $result === '' && $error === 'The stack folder cannot be written to.', $error);
 
-$noDir = $scratch.'/does-not-exist';
-$error = '';
-check('an unwritable (non-existent) target directory is refused',
-  staxx_icon_adopt($ref, $noDir, $error) === '' && $error !== '');
+/* ---- PLAN_105 — a stack has no icon of its own ---- */
+// staxx_service_icon() (StacksTable.php) takes no stack-level icon at all,
+// so there is no route left for a stack's own `icon:` field to reach a
+// service — proven directly against the chain rather than through a
+// rendered page.
 
-/* ---- the copy itself ---- */
-
-// The picture lands in the stack's own hidden record folder, not loose beside
-// the compose file, and what comes back is the relative path the compose file
-// will name — './.staxx/<ref>.png', not a bare filename. This suite checked
-// for a bare filename in the stack directory long after that stopped being
-// true, and so reported three failures that were only ever its own.
-$rel = './'.STAXX_RECORD_DIR.'/'.$ref.'.png';
-$abs = $stack.'/'.STAXX_RECORD_DIR.'/'.$ref.'.png';
-
-$error = '';
-$file  = staxx_icon_adopt($ref, $stack, $error);
-check("a fresh copy lands in the stack's own hidden folder",
-  $file === $rel && is_file($abs));
-
-check('the copy is byte-identical to the cached source',
-  is_file($abs) && md5_file($abs) === md5($pngBytes));
-
-$mtimeFirst = @filemtime($abs);
-
-$error  = '';
-$again  = staxx_icon_adopt($ref, $stack, $error);
-check('running it a second time is a success',
-  $again === $rel && $error === '');
-
-check('and writes nothing the second time',
-  @filemtime($abs) === $mtimeFirst);
-
-/* ---- a different file already under that name ---- */
-
-$clashDir  = $scratch.'/clash';
-$clashPath = $clashDir.'/'.STAXX_RECORD_DIR.'/'.$ref.'.png';
-@mkdir(dirname($clashPath), 0755, true);
-file_put_contents($clashPath, 'not the same bytes at all');
-$before = md5_file($clashPath);
-
-$error = '';
-check('a different file already under that name is refused',
-  staxx_icon_adopt($ref, $clashDir, $error) === '' && $error !== '');
-
-check('and is left completely untouched',
-  md5_file($clashPath) === $before);
-
-/* ---- PLAN_146 — a pasted URL adopts under its own filename ---- */
-
-// A throwaway cache entry under a real `url-<hash>` reference, the shape
-// staxx_icon_resolve() actually assigns — not the plain collection ref the
-// cases above use.
-$urlNamed = 'https://cdn.example.com/png/My-Icon.PNG?x=1';
-$refNamed = 'url-'.md5($urlNamed);
-$cacheNamed = staxx_icon_store_dir().'/'.$refNamed.'.png';
-register_shutdown_function(function () use ($cacheNamed) { @unlink($cacheNamed); });
-@mkdir(staxx_icon_store_dir(), 0755, true);
-file_put_contents($cacheNamed, $pngBytes);
-
-$namedDir = $scratch.'/url-named';
-@mkdir($namedDir, 0755, true);
-$error = '';
-$file = staxx_icon_adopt($refNamed, $namedDir, $error, $urlNamed);
-check('a cached URL reference adopts under the URL’s own filename, lower-cased',
-  $file === './'.STAXX_RECORD_DIR.'/my-icon.png' &&
-  is_file($namedDir.'/'.STAXX_RECORD_DIR.'/my-icon.png'));
-
-// No path segment worth keeping — falls back to the hash, the same shape
-// every other reference in this file already adopts under.
-$urlBare = 'https://example.com';
-$refBare = 'url-'.md5($urlBare);
-$cacheBare = staxx_icon_store_dir().'/'.$refBare.'.png';
-register_shutdown_function(function () use ($cacheBare) { @unlink($cacheBare); });
-file_put_contents($cacheBare, $pngBytes);
-
-$bareDir = $scratch.'/url-bare';
-@mkdir($bareDir, 0755, true);
-$expectFallback = 'icon-'.substr(md5($urlBare), 0, 8).'.png';
-$error = '';
-$file = staxx_icon_adopt($refBare, $bareDir, $error, $urlBare);
-check('a URL with no usable filename adopts under the hash fallback',
-  $file === './'.STAXX_RECORD_DIR.'/'.$expectFallback &&
-  is_file($bareDir.'/'.STAXX_RECORD_DIR.'/'.$expectFallback));
-
-// A different picture already saved under the URL-derived name is refused,
-// exactly as the plain-reference clash case above — never overwritten.
-$clashNamedDir = $scratch.'/url-clash';
-$clashNamedPath = $clashNamedDir.'/'.STAXX_RECORD_DIR.'/my-icon.png';
-@mkdir(dirname($clashNamedPath), 0755, true);
-file_put_contents($clashNamedPath, 'not the same bytes at all');
-$beforeClash = md5_file($clashNamedPath);
-
-$error = '';
-check('a different picture already under the URL-derived name is refused, and named',
-  staxx_icon_adopt($refNamed, $clashNamedDir, $error, $urlNamed) === '' && $error !== '');
-check('and is left completely untouched',
-  md5_file($clashNamedPath) === $beforeClash);
-
-// staxx_icon_adopt_sweep() skips a URL still marked missed even though its
-// picture is sitting in the cache — the same "not yet fetched, try again
-// later" shape an unmatched image already gets. The walk itself needs the
-// real store root (see the file header), so this checks the field-level
-// fact the walk's own condition relies on, the way PLAN_105's case does.
-staxx_icon_mark_missed($refNamed);
-check('a URL marked missed is not offered, even though its picture is cached',
-  staxx_icon_missed($refNamed) && staxx_icon_url($refNamed) !== '');
-
-/* ---- PLAN_105 — the stack has no icon of its own ---- */
-// staxx_service_icon() (in StacksTable.php, already required above) no
-// longer takes a stack-icon argument at all, so there is no route left for
-// a stack-level `icon:` field to reach a service — proven here directly
-// against the chain rather than through a rendered page.
-
-// Every part of this has to match nothing, service and stack name included:
-// the search is not only on the image. An earlier version of this case used
-// the service name "app", which matches the "app-store" icon and made the
-// check fail for a reason that had nothing to do with what it was proving.
 $none = staxx_service_icon('', $stack, 'zzqqxx/zzqqxx-nothing', 'zzqqxx-nothing', 'zzqqxx-nothing');
-check('with no service icon, an image matching nothing resolves to nothing — no stack field is left to fall back to',
+check('with no service icon, an image matching nothing resolves to nothing',
   $none['fa'] === '' && $none['url'] === '' && $none['ref'] === '');
 
 $ownFa = staxx_service_icon('fa-server', $stack, 'zzstaxxtest/neverexisted-plan105', 'app', 'stack');
 check('a service that states its own icon still wins, regardless of anything at stack level',
   $ownFa['fa'] === 'fa-server');
 
-/* ---- the field the walk relies on, never overwritten ---- */
+/* ---- an already-adopted icon resolves through the serving page's own URL --- */
 
-$svcDir = $scratch.'/withicon';
-@mkdir($svcDir, 0755, true);
-file_put_contents($svcDir.'/compose.yaml',
-  "services:\n  a:\n    image: busybox\n    x-unraid:\n      icon: something-already-here\n");
+@mkdir($stack.'/'.STAXX_RECORD_DIR, 0755, true); // file_put_contents() never creates a missing parent
+file_put_contents($stack.'/'.STAXX_RECORD_DIR.'/a.svg', "<svg xmlns='http://www.w3.org/2000/svg'></svg>");
+$resolved = staxx_icon_resolve('./.staxx/a.svg', $stack);
+check('a service icon already in .staxx resolves to the serving page, with the file\'s own mtime',
+  strpos($resolved['url'], '/plugins/staxx/include/icon.php?stack=zzicon-fw&file=a.svg&v=') === 0, $resolved);
 
-$meta = staxx_compose_meta($svcDir.'/compose.yaml');
-check("a service's own recorded icon is what the walk reads before ever copying anything",
-  $meta['ok'] && ($meta['services']['a']['x']['icon'] ?? '') === 'something-already-here');
+$resolvedMissing = staxx_icon_resolve('./.staxx/nope.svg', $stack);
+check('a stated .staxx file that is not actually there resolves to nothing, not a dead link',
+  $resolvedMissing['url'] === '' && $resolvedMissing['fa'] === '', $resolvedMissing);
 
 /* ---- PLAN_149 phase 3 — a picture dropped straight in from the desktop ---- */
-// staxx_icon_adopt_drop() never touches the shared icon cache and never
-// fetches anything — the bytes are already in hand, the same shape a real
-// browser drop hands the server once it has read the file itself. Every
-// case below uses an explicit /tmp folder, same as the rest of this file.
+// Unchanged by this plan: staxx_icon_adopt_drop() never touched a shared
+// cache and never fetches anything — the bytes are already in hand.
 
-$dropDir = $scratch.'/drop';
+$dropDir = staxx_stack_dir('zzicon-drop');
 @mkdir($dropDir, 0755, true);
 $dropAbs = $dropDir.'/'.STAXX_RECORD_DIR.'/mylogo.png';
 
@@ -247,7 +142,6 @@ check('a genuine picture dropped in is accepted, and named from its own filename
   $file === './'.STAXX_RECORD_DIR.'/mylogo.png' && is_file($dropAbs) && $error === '');
 
 $mtimeDropFirst = @filemtime($dropAbs);
-
 $error = '';
 $again = staxx_icon_adopt_drop($dropDir, 'My Logo!!.PNG', $pngBytes, $error);
 check('dropping the same picture a second time lands one file, not two',
@@ -258,22 +152,43 @@ check('a file whose contents are not a picture is refused, whatever its name cla
   staxx_icon_adopt_drop($dropDir, 'fake.png', 'not actually a picture at all', $error) === ''
   && $error === 'Not a picture');
 
-$error = '';
-check('a kind outside the accepted list is refused',
-  staxx_icon_adopt_drop($dropDir, 'notes.txt', 'plain text, not a picture', $error) === ''
-  && $error === 'Not a picture');
+/* ---- staxx_icons_into_stacks() — putting an existing stack right ---- */
 
-$oversized = str_repeat('a', STAXX_ICON_DROP_MAX_BYTES + 1);
-$error = '';
-check('a body over the 512 KB limit is refused',
-  staxx_icon_adopt_drop($dropDir, 'huge.png', $oversized, $error) === ''
-  && $error === 'Too big — icons must be under 512 KB');
+$oldStack = staxx_stack_dir('zzicon-old');
+@mkdir($oldStack, 0755, true);
+file_put_contents($oldStack.'/logo.png', $pngBytes); // sits loose beside the compose file, the old shape
+file_put_contents($oldStack.'/compose.yaml',
+  "services:\n  web:\n    image: busybox\n    x-unraid:\n      icon: ./logo.png\n");
 
-$neverSaved = $scratch.'/drop-never-saved';
-$error = '';
-check('a stack that has never been saved has no folder to write into, and is refused rather than one being created for it',
-  staxx_icon_adopt_drop($neverSaved, 'logo.png', $pngBytes, $error) === ''
-  && $error === 'Save the stack first' && !is_dir($neverSaved));
+// A leftover from the OLD shared icon folder — never read any more, but a
+// real run has to clear it out once every stack above is done.
+@mkdir('/tmp/zzicons-store/config/icons', 0755, true);
+file_put_contents('/tmp/zzicons-store/config/icons/leftover.png', $pngBytes);
+file_put_contents('/tmp/zzicons-store/config/icons/_index.json', '{}'); // the OLD index location — never removed
+
+$dry = staxx_icons_into_stacks(true);
+check('a dry run reports the move it would make',
+  count(array_filter($dry['moved'], fn($m) => $m['stack'] === 'zzicon-old' && $m['service'] === 'web')) === 1);
+check('a dry run reports the old shared folder\'s leftover file, but not its index',
+  in_array('leftover.png', $dry['removed'], true) && !in_array('_index.json', $dry['removed'], true));
+check('a dry run writes nothing at all',
+  !is_file($oldStack.'/'.STAXX_RECORD_DIR.'/web.png')
+  && is_file('/tmp/zzicons-store/config/icons/leftover.png')
+  && strpos((string)file_get_contents($oldStack.'/compose.yaml'), 'icon: ./logo.png') !== false);
+
+$real = staxx_icons_into_stacks(false);
+check('a real run copies the picture into the stack\'s own .staxx folder, named for the service',
+  is_file($oldStack.'/'.STAXX_RECORD_DIR.'/web.png')
+  && md5_file($oldStack.'/'.STAXX_RECORD_DIR.'/web.png') === md5($pngBytes));
+check('and rewrites the icon: line to point at it',
+  strpos((string)file_get_contents($oldStack.'/compose.yaml'), 'icon: ./'.STAXX_RECORD_DIR.'/web.png') !== false);
+check('and removes the old shared folder\'s leftover file, keeping only its (now-unused) index',
+  !is_file('/tmp/zzicons-store/config/icons/leftover.png')
+  && is_file('/tmp/zzicons-store/config/icons/_index.json'));
+
+$again2 = staxx_icons_into_stacks(false);
+check('running it again finds nothing left to move',
+  count($again2['moved']) === 0, $again2);
 
 echo "\n".($fails === 0 ? "all checks passed\n" : "$fails check(s) FAILED\n");
 exit($fails === 0 ? 0 : 1);

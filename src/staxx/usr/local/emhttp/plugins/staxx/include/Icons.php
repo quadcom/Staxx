@@ -4,22 +4,25 @@
  *
  * WHAT THIS FILE IS FOR
  *
- * Every row in the table used to show the same grey cube, which is the one
- * thing an icon must not do. This finds a real logo for a row, in this order:
+ * Each service's icon is a picture living in its own stack's .staxx folder,
+ * one per service — never a shared picture kept anywhere else. This finds
+ * the picture for a row, in this order:
  *
- *   1. Whatever the compose file says, in `x-unraid: icon:`.
+ *   1. Whatever the compose file says, in `x-unraid: icon:` — a picture
+ *      already sitting in that stack's .staxx folder, or an address.
  *   2. A match against the selfh.st icon collection, worked out from the
- *      container's image name.
+ *      container's image name, shown straight from the collection's own
+ *      address rather than copied anywhere first.
  *   3. Nothing — and the caller draws a coloured tile with the row's initials.
  *
  * The collection lives at https://selfh.st/icons and is served from GitHub over
  * the jsDelivr CDN. It is CC-BY-4.0, and the credit sits on the settings page.
  *
- * NOTHING HERE REACHES THE NETWORK DURING A PAGE RENDER. Downloading twenty
- * icons at roughly a tenth of a second each is a two-second page, and it would
- * happen on the one render where the user is least willing to wait — the first.
- * The page draws with whatever is already cached; action=icons then fetches the
- * rest in the background and the browser swaps them in.
+ * NOTHING HERE REACHES THE NETWORK DURING A PAGE RENDER. A row's picture is
+ * always either a file already on disk or a plain address the BROWSER loads —
+ * this file never fetches anything to show a row, only to put a matched
+ * picture into a stack's own folder once, in the background (see
+ * staxx_icon_fetch_and_write()).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -32,47 +35,18 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 /** Where the collection is served from. */
 const STAXX_ICON_CDN = 'https://cdn.jsdelivr.net/gh/selfhst/icons';
 
-/**
- * The keeper: <store>/config/icons, inside StaXX's own data store — a
- * function rather than a constant because there may not be one yet. '' means
- * no store has been chosen, and every caller below checks for that rather
- * than building a path out of an empty string, which would otherwise be a
- * real, writable-looking directory at the root of the filesystem.
- *
- * Unraid puts its own container icons on the Docker vdisk instead; this
- * plugin does not, because /var/lib/docker is not mounted when Docker is
- * stopped, and writing there while it is stopped puts the file into RAM
- * without saying so — it then vanishes at the next reboot and every icon is
- * downloaded again. A cached icon is about a kilobyte of SVG, so a few
- * hundred of them are no burden on the store's own pool.
- */
-function staxx_icon_store_dir(): string {
-  $cfg = staxx_config_root();
-  return $cfg === '' ? '' : $cfg.'/icons';
-}
-
-/**
- * The copy the browser actually loads.
- *
- * /usr/local/emhttp/state is a symlink to /var/local/emhttp, so anything under
- * here is served as a plain static file at /state/... with no PHP involved.
- * This is exactly the split Unraid's own Docker page uses for its icons.
- */
-const STAXX_ICON_SERVE = '/var/local/emhttp/plugins/'.STAXX_PLUGIN.'/icons';
-const STAXX_ICON_BASE  = '/state/plugins/'.STAXX_PLUGIN.'/icons';
-
-/** The reduced collection index, inside the icon store above — '' when there
- *  is nowhere to keep it yet. Underscore-prefixed so it can never collide
- *  with an icon file: no reference in the collection starts with one. */
+/** The reduced collection index — a list of names, never a picture, so it
+ *  keeps living directly under StaXX's own config folder. '' when no store
+ *  has been chosen yet. */
 function staxx_icon_index_file(): string {
-  $dir = staxx_icon_store_dir();
-  return $dir === '' ? '' : $dir.'/_index.json';
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/icon-index.json';
 }
 
 /** How stale the index may get before it is fetched again. */
 const STAXX_ICON_INDEX_TTL = 7 * 86400;
 
-/** File extensions that may be written into the cache. */
+/** File extensions a picture may be written and served under. */
 const STAXX_ICON_EXTS = ['svg', 'png', 'webp', 'jpg', 'jpeg', 'gif', 'ico'];
 
 /** PLAN_149 phase 3 — the size limit on a picture dropped straight in from
@@ -91,22 +65,6 @@ const STAXX_ICON_MISS_DIR = '/tmp/staxx/icon-miss';
 
 /** How long a failed download is remembered before it is tried again. */
 const STAXX_ICON_MISS_TTL = 6 * 3600;
-
-/**
- * How long a local icon copy (see staxx_icon_from_path()) may sit unused
- * before staxx_icon_evict() removes it. Its ref is keyed on the source
- * file's own path and mtime, so a re-downloaded Unraid icon writes a fresh
- * copy under a new name every time and never revisits the old one — nothing
- * else in the plugin ever cleans that up, and it would otherwise accumulate
- * in the store forever.
- */
-const STAXX_ICON_EVICT_DAYS = 30;
-
-/** Where Unraid keeps a picture per container it has already downloaded, on
- *  the Docker vdisk rather than the flash device. Read-only from here — the
- *  importer copies out of it, exactly as the relative-path branch below
- *  copies out of a stack's own directory; nothing is ever written back. */
-const STAXX_ICON_UNRAID_DIR = '/var/lib/docker/unraid/images';
 
 /* ------------------------------------------------------------- settings -- */
 
@@ -374,13 +332,13 @@ function staxx_icon_match(string $image, string $service = '', string $stack = '
   return '';
 }
 
-/* ----------------------------------------------------------------- cache -- */
+/* ---------------------------------------------------------------- writing -- */
 
 /** Write a file, creating its directory, without ever leaving a half file. */
 function staxx_icon_write(string $path, string $body): bool {
   if ($path === '') return false; // no destination — never write to whatever dirname('') resolves to
   $dir = dirname($path);
-  // A cached icon inside the store must not be the thing that recreates a
+  // An icon written inside the store must not be the thing that recreates a
   // store whose pool has gone — see the same guard in Folders.php.
   $storeRoot = staxx_store_root();
   if ($storeRoot !== '' && strpos($path, $storeRoot.'/') === 0 && !staxx_store_reachable()) return false;
@@ -461,150 +419,187 @@ function staxx_icon_raw_url(string $url): string {
 }
 
 /**
- * Where the browser can load a cached icon from, or '' if it is not cached.
+ * The real file include/icon.php would stream for $stack/$file, or '' to
+ * refuse — the one place both that page and its own test suite decide what
+ * is safe to serve, so the two can never quietly disagree.
  *
- * The served copy lives in RAM and therefore disappears at every reboot,
- * while the durable keeper in the data store does not. Rather than a boot
- * script to put them back, that is repaired here the first time each icon is
- * asked for: a local copy of a one-kilobyte file is not worth arranging
- * anything more elaborate around. With no store chosen (or not reachable
- * yet), only the RAM copy can ever be found — a missing icon this boot, not
- * an error.
+ * Refuses, in order: a $stack staxx_list_stacks() does not itself report
+ * (never merely a path that parses); a $file that is not a bare, safe name
+ * with a picture extension; and — resolved through realpath(), which is
+ * what actually catches a symlink anywhere in the way, not only the file's
+ * own last component — anything whose real parent directory is not the
+ * stack's own .staxx folder exactly (no subfolder, so STAXX_RECORD_DIR's own
+ * history/ tree is never reachable this way) or that is not a plain file.
  */
-function staxx_icon_url(string $ref): string {
-  if (!staxx_icon_safe_ref($ref)) return '';
-  $store = staxx_icon_store_dir();
+function staxx_icon_serve_path(string $stack, string $file): string {
+  if (!staxx_valid_path($stack) || !staxx_valid_filename($file)) return '';
+  // staxx_valid_filename() allows one optional leading dot — right for a
+  // companion file like ".env", wrong here: no icon this plugin ever writes
+  // is named with one, so refusing it outright is one condition to keep
+  // right rather than a name this function has to trust.
+  if ($file[0] === '.') return '';
 
-  foreach (STAXX_ICON_EXTS as $ext) {
-    $served = STAXX_ICON_SERVE.'/'.$ref.'.'.$ext;
-    if (is_file($served)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
+  $ext = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
+  if (!in_array($ext, STAXX_ICON_EXTS, true)) return '';
 
-    if ($store === '') continue;
-    $kept = $store.'/'.$ref.'.'.$ext;
-    if (is_file($kept)) {
-      // Touched here, not on the (far more frequent) RAM-copy hit above: this
-      // still runs about once per boot for anything actually displayed —
-      // exactly the moment the RAM copy needs rebuilding anyway — without
-      // adding a flash write to every ordinary page render. Untouched is what
-      // staxx_icon_evict() reads as "orphaned"; see its own comment.
-      @touch($kept);
-      if (!is_dir(STAXX_ICON_SERVE)) @mkdir(STAXX_ICON_SERVE, 0755, true);
-      if (@copy($kept, $served)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
-    }
+  $dir = '';
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) { $dir = $s['dir']; break; }
   }
+  if ($dir === '') return '';
+
+  $path = $dir.'/'.STAXX_RECORD_DIR.'/'.$file;
+  $real = @realpath($path);
+  $recordReal = @realpath($dir.'/'.STAXX_RECORD_DIR);
+  if ($real === false || $recordReal === false) return '';
+  if (dirname($real) !== $recordReal) return '';
+  if (!is_file($real) || is_link($path)) return '';
+
+  return $real;
+}
+
+/**
+ * Where the browser loads an already-adopted picture from: the address that
+ * reaches include/icon.php, which streams the file straight out of a
+ * stack's own .staxx folder. '' when $file is not actually sitting there —
+ * a stated icon field pointing at a file that no longer exists is exactly
+ * what must fall through to initials rather than link to a 404.
+ *
+ * $dir is the stack's own directory; the identity the URL carries
+ * (staxx_list_stacks()'s own 'name') is worked out from it here, against
+ * staxx_stack_root(), rather than trusted from a caller that may not have
+ * it to hand — staxx_icon_resolve()'s first, icon-only pass calls this with
+ * nothing else.
+ *
+ * The address carries the file's own mtime so a replaced picture is never
+ * served stale out of the browser's cache — nothing here ever has to be
+ * invalidated by hand.
+ */
+function staxx_icon_serve_url(string $dir, string $file): string {
+  if (!staxx_valid_filename($file) || $file[0] === '.') return '';
+  $ext = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
+  if (!in_array($ext, STAXX_ICON_EXTS, true)) return '';
+
+  $path = $dir.'/'.STAXX_RECORD_DIR.'/'.$file;
+  if (is_link($path) || !is_file($path)) return '';
+
+  $root = staxx_stack_root();
+  if ($root === '' || strncmp($dir, $root.'/', strlen($root) + 1) !== 0) return '';
+  $stack = substr($dir, strlen($root) + 1);
+
+  $mtime = (int)@filemtime($path);
+  return '/plugins/'.STAXX_PLUGIN.'/include/icon.php?stack='.rawurlencode($stack)
+       . '&file='.rawurlencode($file).'&v='.$mtime;
+}
+
+/**
+ * The collection's own address for a matched reference — svg first, since it
+ * is a fraction of the size and stays sharp at any zoom, png only when that
+ * is all the collection holds. '' when $ref is not actually in the index, so
+ * a stale or hand-typed reference never links to a picture that is not there.
+ *
+ * Loaded by the browser directly from jsDelivr; nothing here fetches or
+ * keeps a copy of it. See staxx_icon_fetch_and_write() for the one place a
+ * matched picture is ever downloaded, which happens purely to give the
+ * compose file's own icon: line something inside the stack to point at.
+ */
+function staxx_icon_cdn_url(string $ref): string {
+  if (!staxx_icon_safe_ref($ref)) return '';
+  $have = staxx_icon_index()['refs'][$ref] ?? '';
+  if ($have === '') return '';
+  $ext = strpos($have, 's') !== false ? 'svg' : 'png';
+  return STAXX_ICON_CDN.'/'.$ext.'/'.$ref.'.'.$ext;
+}
+
+/**
+ * Find a picture for a service with none and write it straight into that
+ * stack's own .staxx folder — the one place a matched or pasted icon is
+ * ever downloaded to. Named for the service ($baseName), not the collection
+ * reference or the address, so the folder reads sensibly to anyone who
+ * opens it by hand.
+ *
+ * $remote, when given, is fetched as-is (a pasted or template address,
+ * already run through staxx_icon_raw_url()); otherwise $ref must be a
+ * collection match and the picture comes from staxx_icon_cdn_url().
+ * Exactly one of the two is ever set — the caller decides which kind of
+ * find this is.
+ *
+ * Returns the relative path to record as the compose file's icon: value
+ * (e.g. './.staxx/sonarr.svg'), or '' with $error set to a sentence.
+ * $failRef, always set on the way in by the caller, is what
+ * staxx_icon_mark_missed() remembers a failure against, so a source that
+ * cannot be reached is not retried on every single sweep.
+ */
+function staxx_icon_fetch_and_write(string $dir, string $baseName, string $remote,
+                                     string $ref, string $failRef, string &$error): string {
+  $error = '';
+
+  // Structural checks first — is there even anything named to try, and is
+  // there somewhere to put it — and only then the policy question of
+  // whether fetching is allowed at all. Ordered this way rather than
+  // fetching-first so each refusal names the thing actually wrong rather
+  // than always reporting "switched off" first regardless of what else is
+  // also missing; it makes no difference to what a real caller ever sees,
+  // since a real caller only ever hits exactly one of these at a time.
+  $sources = $remote !== '' ? [[$remote, '']] : [];
+  if ($remote === '' && $ref !== '') {
+    $have = staxx_icon_index()['refs'][$ref] ?? '';
+    if (strpos($have, 's') !== false) $sources[] = [STAXX_ICON_CDN.'/svg/'.$ref.'.svg', 'svg'];
+    if (strpos($have, 'p') !== false) $sources[] = [STAXX_ICON_CDN.'/png/'.$ref.'.png', 'png'];
+  }
+  if (!$sources) { $error = 'Nothing to fetch.'; return ''; }
+
+  if (!is_dir($dir) || !is_writable($dir)) { $error = 'The stack folder cannot be written to.'; return ''; }
+
+  if (!staxx_icon_fetching()) { $error = 'Icon lookups are switched off.'; return ''; }
+
+  $stem = staxx_icon_norm($baseName);
+  if ($stem === '') $stem = 'icon';
+
+  foreach ($sources as [$url, $ext]) {
+    $body = staxx_icon_get($url);
+    if ($body === null) continue;
+
+    if ($ext === '') {
+      // An address typed or pasted by whoever wrote the compose file is not
+      // evidence of what it actually points to — an SVG is left out of the
+      // guesses entirely, same reasoning as the collection fetch below.
+      foreach (STAXX_ICON_EXTS as $candidate) {
+        if ($candidate === 'svg') continue;
+        if (staxx_icon_is_picture($candidate, $body)) { $ext = $candidate; break; }
+      }
+      if ($ext === '') continue;
+    } elseif (!staxx_icon_is_picture($ext, $body)) {
+      continue;
+    }
+
+    $file     = $stem.'.'.$ext;
+    $target   = $dir.'/'.STAXX_RECORD_DIR.'/'.$file;
+    $relative = './'.STAXX_RECORD_DIR.'/'.$file;
+
+    if (is_file($target)) {
+      // Already there under this name. Identical bytes is a no-op success —
+      // this must be safe to run twice — a different picture is left alone
+      // rather than overwritten, since it is not this plugin's to replace.
+      if (md5_file($target) === md5($body)) return $relative;
+      $error = 'A different picture is already saved under that name for this stack.';
+      return '';
+    }
+
+    if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
+    return $relative;
+  }
+
+  staxx_icon_mark_missed($failRef);
+  $error = 'Could not fetch a picture.';
   return '';
 }
 
 /**
- * PLAN_146 — the readable filename a pasted icon URL adopts under, in place
- * of the hash `staxx_icon_adopt()` otherwise names every picture by. Taken
- * from the URL's own last path segment (`unifi-voucher-site.png` out of
- * `.../png/unifi-voucher-site.png`) rather than trusted whole: an address is
- * typed by whoever pasted it, not this plugin, so only letters, digits, dots,
- * underscores and hyphens survive, lower-cased. The extension is never taken
- * from the URL — $ext is what the cached file's own magic-byte check already
- * proved it to be, and a URL's claimed extension need not agree with that.
- *
- * Falls back to `icon-<first 8 of the hash>.<ext>` when the URL has no path
- * segment left worth keeping (no path at all, or one that reduces to
- * nothing) — still readable, and still unique per address.
- */
-function staxx_icon_url_filename(string $url, string $ext, string $hash): string {
-  $fallback = 'icon-'.substr($hash, 0, 8).'.'.$ext;
-
-  $path = (string)parse_url($url, PHP_URL_PATH);
-  if ($path === '') return $fallback;
-
-  $stem = strtolower(pathinfo(basename($path), PATHINFO_FILENAME));
-  $stem = (string)preg_replace('/[^a-z0-9._-]+/', '', $stem);
-  $stem = trim($stem, '.-');
-  if ($stem === '') return $fallback;
-
-  return $stem.'.'.$ext;
-}
-
-/**
- * PLAN_86 — copy an already-cached icon into the stack's own hidden record
- * folder, so the picture travels with the compose file instead of living
- * only in the shared plugin cache. Returns the relative path written (e.g.
- * './.staxx/cloudbeaver.png') for use as the compose file's icon: value, or
- * '' with $error set to a sentence.
- *
- * It has to be a path, not a bare filename: a compose file reading
- * `icon: mariadb.svg` states that the picture sits beside it, which is a lie
- * to anyone reading the YAML — or any tool that is not StaXX — once the
- * picture actually lives in a subfolder. Keeping the file out of the stack's
- * top level also stops it showing up as an editable tab next to the compose
- * file in the YAML editor, which is not where an adopted picture belongs.
- *
- * Never fetches anything — the icon must already be in STAXX_ICON_SERVE or
- * the icon store, found the same way staxx_icon_url() looks for one. Safe
- * to call twice: a file already there with identical contents is treated as
- * success, having written nothing.
- *
- * The stack root may itself be on the flash drive, where every file comes
- * out owner-only whatever mode is asked for — that is the drive, not a bug,
- * so this does not try to chmod anything looser.
- *
- * $url is PLAN_146's addition: the pasted address behind a `url-<hash>`
- * reference, needed only to name the copy — see staxx_icon_url_filename().
- * Every other kind of reference ignores it.
- */
-function staxx_icon_adopt(string $ref, string $dir, string &$error, string $url = ''): string {
-  $error = '';
-  if (!staxx_icon_safe_ref($ref)) { $error = 'That is not a valid icon reference.'; return ''; }
-
-  $store  = staxx_icon_store_dir();
-  $source = '';
-  $ext    = '';
-  foreach (STAXX_ICON_EXTS as $candidate) {
-    $served = STAXX_ICON_SERVE.'/'.$ref.'.'.$candidate;
-    $kept   = $store === '' ? '' : $store.'/'.$ref.'.'.$candidate;
-    if (is_file($served)) { $source = $served; $ext = $candidate; break; }
-    if ($kept !== '' && is_file($kept)) { $source = $kept; $ext = $candidate; break; }
-  }
-  if ($source === '') { $error = 'This icon has not been downloaded yet.'; return ''; }
-
-  if (!is_dir($dir) || !is_writable($dir)) {
-    $error = 'The stack folder cannot be written to.';
-    return '';
-  }
-
-  // The picture goes in the stack's own hidden record folder rather than
-  // beside the compose file — a stack edited for the first time may not
-  // have one yet, so staxx_icon_write() below creates it as part of writing
-  // the file (same as it creates any other missing directory).
-  $recordDir = $dir.'/'.STAXX_RECORD_DIR;
-  $file      = (strpos($ref, 'url-') === 0 && $url !== '')
-             ? staxx_icon_url_filename($url, $ext, substr($ref, 4))
-             : $ref.'.'.$ext;
-  $target    = $recordDir.'/'.$file;
-  $relative  = './'.STAXX_RECORD_DIR.'/'.$file;
-
-  if (is_file($target)) {
-    // Already there. Identical contents is a no-op success — this has to be
-    // safe to run twice — but different contents is left alone: it is not
-    // this plugin's picture to overwrite.
-    if (md5_file($target) === md5_file($source)) return $relative;
-    $error = 'A different picture is already saved under that name for this stack. '
-           . 'Rename the icon, or remove the one already there, and try again.';
-    return '';
-  }
-
-  $body = @file_get_contents($source);
-  if ($body === false) { $error = 'The cached icon could not be read.'; return ''; }
-  if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
-
-  return $relative;
-}
-
-/**
- * PLAN_149 phase 3 — write a picture handed over directly (dragged off the
- * desktop, not an address) into the stack's own hidden record folder. The
- * one difference from staxx_icon_adopt() above: there is no reference to
- * resolve and nothing cached to copy from — the bytes are already in hand,
- * sent as text in the ordinary post the page already uses rather than a
- * multipart upload, which hangs on this box. $body is therefore the
+ * Write a picture handed over directly (dragged off the desktop, not an
+ * address) into the stack's own .staxx folder. The bytes are already in
+ * hand, sent as text in the ordinary post the page already uses rather
+ * than a multipart upload, which hangs on this box. $body is therefore the
  * DECODED file — the caller's job, not this function's, since decoding is
  * about how the bytes travelled, and this is only about what they are.
  *
@@ -620,20 +615,18 @@ function staxx_icon_adopt(string $ref, string $dir, string &$error, string $url 
  *     and one is never created behind the person's back to make room for
  *     this.
  *
- * Named from $filename's own stem, cleaned to safe characters and lower-
- * cased exactly the way staxx_icon_url_filename() names a pasted address
- * (see its own comment above) — falling back to a hash of the body when
- * nothing survives the clean, rather than a bare extension nobody could
- * tell apart from another dropped picture. There is no address to record
- * beside it, so — unlike staxx_icon_adopt() — nothing is ever appended as
- * a comment; the plan is explicit that only a note of the drop itself
- * belongs there, and that note is the caller's to write, once, into the
- * compose file's own icon line (see action.php's 'icon-drop' case).
+ * Named from $filename's own stem, cleaned to safe characters and
+ * lower-cased, falling back to a hash of the body when nothing survives the
+ * clean, rather than a bare extension nobody could tell apart from another
+ * dropped picture. There is no address to record beside it, so nothing is
+ * ever appended as a comment; the plan is explicit that only a note of the
+ * drop itself belongs there, and that note is the caller's to write, once,
+ * into the compose file's own icon line (see action.php's 'icon-drop' case).
  *
  * Safe to call twice with the same picture: identical bytes already under
- * that name is a no-op success, the same idempotence staxx_icon_adopt()
- * already gives an adopted one — needed here for exactly the same reason,
- * a repeated drop landing one file rather than two.
+ * that name is a no-op success — needed for the same reason
+ * staxx_icon_fetch_and_write() is, a repeated drop landing one file rather
+ * than two.
  */
 function staxx_icon_adopt_drop(string $dir, string $filename, string $body, string &$error): string {
   $error = '';
@@ -665,8 +658,8 @@ function staxx_icon_adopt_drop(string $dir, string $filename, string $body, stri
   $relative  = './'.STAXX_RECORD_DIR.'/'.$file;
 
   if (is_file($target)) {
-    // Already there. Identical contents is a no-op success, same as
-    // staxx_icon_adopt() — a repeated drop must land one file, not two.
+    // Already there. Identical contents is a no-op success — a repeated
+    // drop must land one file, not two.
     if (md5_file($target) === md5($body)) return $relative;
     $error = 'A different picture is already saved under that name for this stack. '
            . 'Rename the icon, or remove the one already there, and try again.';
@@ -708,83 +701,6 @@ function staxx_icon_is_picture(string $ext, string $body): bool {
   }
 }
 
-/**
- * Store one icon under $ref. The RAM copy is what actually displays this
- * boot, so it is written first and is what this function's return value
- * reports; the durable copy in the data store is best-effort on top of
- * that — with no store chosen or reachable yet, re-fetching next boot is a
- * cosmetic inconvenience, not a reason to refuse to show the icon now.
- */
-function staxx_icon_store(string $ref, string $ext, string $body): bool {
-  if (!staxx_icon_safe_ref($ref)) return false;
-  if (!in_array($ext, STAXX_ICON_EXTS, true)) return false;
-  if (!staxx_icon_is_picture($ext, $body)) return false;
-
-  $ok = staxx_icon_write(STAXX_ICON_SERVE.'/'.$ref.'.'.$ext, $body);
-  $store = staxx_icon_store_dir();
-  if ($store !== '') staxx_icon_write($store.'/'.$ref.'.'.$ext, $body);
-  return $ok;
-}
-
-/**
- * Copy a picture already sitting on this server into the icon cache, or
- * hand back the copy already made. Never fetches anything — every caller
- * here starts from a path that is already local.
- *
- * The extension allow-list is what makes an arbitrary local path safe to
- * accept: a template's `<Icon>` field is written by whoever built that
- * template, not typed into this plugin, so it is trusted only as far as
- * "reads as one of the picture formats this cache already stores" — the
- * worst a hostile path can do is make StaXX copy some other file ending in
- * .png (say) into its own icon store, which is no different from what the
- * relative-path case below has always allowed for a stack's own directory.
- *
- * @return array{fa:string, ref:string, url:string, remote:string}
- */
-function staxx_icon_from_path(string $path): array {
-  $none = ['fa' => '', 'ref' => '', 'url' => '', 'remote' => ''];
-  $ext  = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
-  if (!in_array($ext, STAXX_ICON_EXTS, true) || !is_file($path)) return $none;
-
-  // The modification time rides along in the reference, the same trick the
-  // relative-path case uses, so an icon that is replaced on disk is not
-  // served stale forever from the cache.
-  $ref = 'local-'.md5($path.'|'.(string)@filemtime($path));
-  $url = staxx_icon_url($ref);
-  // A copy that failed once (unreadable file, or bytes that do not actually
-  // look like $ext) is marked missed the same way a failed download is, so a
-  // page's first icon sweep does not retry it every single time — see
-  // staxx_icon_fetch()'s use of the same marker below.
-  if ($url === '' && !staxx_icon_missed($ref)) {
-    $body = @file_get_contents($path);
-    if ($body !== false && staxx_icon_store($ref, $ext, $body)) {
-      $url = STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
-    } else {
-      staxx_icon_mark_missed($ref);
-    }
-  }
-  return ['fa' => '', 'ref' => $ref, 'url' => $url, 'remote' => ''];
-}
-
-/**
- * The picture Unraid already downloaded for a container, or none.
- *
- * Unraid keeps one of these per container it has ever run from a template,
- * regardless of whether StaXX has heard of it — so this is nearly free for
- * anything imported from one. No network involved: Unraid did that work
- * already, this only copies the result.
- */
-function staxx_icon_unraid(string $name): array {
-  $none = ['fa' => '', 'ref' => '', 'url' => '', 'remote' => ''];
-  // Defensive rather than load-bearing: docker container names cannot
-  // actually contain a slash or "..", but the cost of checking is one
-  // strpos() and it keeps this function honest even if that ever changes.
-  if ($name === '' || strpos($name, '/') !== false || strpos($name, '..') !== false) {
-    return $none;
-  }
-  return staxx_icon_from_path(STAXX_ICON_UNRAID_DIR.'/'.$name.'-icon.png');
-}
-
 /* --------------------------------------------------------------- fetching -- */
 
 /**
@@ -805,156 +721,32 @@ function staxx_icon_mark_missed(string $ref): void {
   @touch(STAXX_ICON_MISS_DIR.'/'.$ref);
 }
 
-/**
- * Download one icon and cache it. Returns the URL to load it from, or ''.
- *
- * $remote is where to get it: for a collection icon the caller does not supply
- * one and it is worked out from the index, which is also what stops a reference
- * that is not in the collection from being fetched at all.
- */
-function staxx_icon_fetch(string $ref, string $remote = ''): string {
-  if (!staxx_icon_fetching()) return '';
-  if (!staxx_icon_safe_ref($ref)) return '';
-
-  $cached = staxx_icon_url($ref);
-  if ($cached !== '') return $cached;
-  if (staxx_icon_missed($ref)) return '';
-
-  // A URL from $remote comes from the catalogue feed, not from this server —
-  // its extension is left blank here rather than guessed, because the guess
-  // used to default straight to 'png' and silently fail on anything else.
-  $sources = [];
-  if ($remote !== '') {
-    $sources[] = [$remote, ''];
-  } else {
-    $have = staxx_icon_index()['refs'][$ref] ?? '';
-    if ($have === '') return '';
-    if (strpos($have, 's') !== false) $sources[] = [STAXX_ICON_CDN.'/svg/'.$ref.'.svg', 'svg'];
-    if (strpos($have, 'p') !== false) $sources[] = [STAXX_ICON_CDN.'/png/'.$ref.'.png', 'png'];
-  }
-
-  foreach ($sources as [$url, $ext]) {
-    $body = staxx_icon_get($url);
-    if ($body === null) continue;
-
-    if ($ext === '') {
-      // An untrusted URL's extension is not evidence of its content, so the
-      // real type comes from sniffing the body instead — and SVG is left out
-      // of the candidates entirely. A same-origin SVG with a <script> in it
-      // executes if its cached URL is ever opened directly, and a filter that
-      // has to catch every way to smuggle a script into an SVG forever is a
-      // bet not worth taking for an icon; refusing it outright is one
-      // condition to keep right, not a sanitiser to maintain.
-      foreach (STAXX_ICON_EXTS as $candidate) {
-        if ($candidate === 'svg') continue;
-        if (staxx_icon_is_picture($candidate, $body)) { $ext = $candidate; break; }
-      }
-      if ($ext === '') continue;
-    }
-
-    if (staxx_icon_store($ref, $ext, $body)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
-  }
-
-  // A network attempt genuinely happened and none of it worked, so remembering
-  // this is what lets the wanted list actually empty: the sweep then reports
-  // itself finished instead of tripping its budget and making the browser ask
-  // again 500ms later, forever.
-  staxx_icon_mark_missed($ref);
-  return '';
-}
-
-/**
- * Remove local icon copies nobody has asked for in STAXX_ICON_EVICT_DAYS —
- * see the constant's own comment for why they otherwise accumulate in the
- * store forever. Only "local-*" files are ever considered: a catalogue
- * icon's ref never changes, so nothing about it can go orphaned the same way.
- *
- * Gated behind its own marker file so this only actually scans the icon
- * store about once a day, not on every sweep tick. A no-op with no store
- * chosen or reachable yet — nothing durable exists for it to clean up.
- */
-function staxx_icon_evict(): void {
-  $store = staxx_icon_store_dir();
-  if ($store === '') return;
-
-  $marker = $store.'/.last-evict';
-  if (is_file($marker) && (int)@filemtime($marker) > time() - 86400) return;
-
-  $cutoff = time() - STAXX_ICON_EVICT_DAYS * 86400;
-  foreach ((array)@glob($store.'/local-*') as $path) {
-    if ((int)@filemtime($path) >= $cutoff) continue;
-    @unlink($path);
-    $served = STAXX_ICON_SERVE.'/'.basename($path);
-    if (is_file($served)) @unlink($served);
-  }
-
-  // Same rule as Folders.php's writer: never conjure the store root itself.
-  if (!is_dir($store) && staxx_store_reachable()) @mkdir($store, 0755, true);
-  @touch($marker);
-}
-
-/**
- * Fetch a batch of icons, under a time limit.
- *
- * This is the only thing in the plugin that waits on the internet, and it runs
- * where waiting is free: after the page has already drawn. It still keeps a
- * budget, because a server whose DNS is broken answers every request with a
- * five-second timeout, and eighty of those is a request that never returns.
- * Whatever is left over is simply picked up by the next sweep.
- *
- * @param array $wanted list of ['ref' => string, 'remote' => string]
- * @return array{icons:array<string,string>, done:bool}
- *         icons  reference => URL, for everything fetched this time
- *         done   false when the budget ran out with work still to do, which is
- *                the browser's cue to ask again
- */
-function staxx_icon_sweep(array $wanted, int $budget = 10): array {
-  if (!staxx_icon_fetching()) return ['icons' => [], 'done' => true];
-
-  // Cheap on every call bar the first one each day — see the function's own
-  // marker-file gate — so it costs nothing to run unconditionally here.
-  staxx_icon_evict();
-
-  $deadline = time() + $budget;
-
-  // Refreshed here rather than on a schedule: this is the one moment the plugin
-  // is already allowed to be slow, and a stale index only ever means a missing
-  // icon, never a wrong one.
-  if (staxx_icon_index_stale()) staxx_icon_index_refresh();
-
-  $icons = [];
-  $done  = true;
-
-  foreach ($wanted as $item) {
-    if (time() >= $deadline) { $done = false; break; }
-
-    $ref = (string)($item['ref'] ?? '');
-    if ($ref === '' || isset($icons[$ref])) continue;
-
-    $url = staxx_icon_fetch($ref, (string)($item['remote'] ?? ''));
-    if ($url !== '') $icons[$ref] = $url;
-  }
-
-  return ['icons' => $icons, 'done' => $done];
-}
-
 /* --------------------------------------------------------------- resolving -- */
 
 /**
- * Decide what one row's icon is.
+ * Decide what one row's icon is. Never fetches or copies anything: a
+ * picture is either already sitting in the stack's own .staxx folder, or
+ * loaded straight from wherever it is addressed (a pasted address, or the
+ * collection's own CDN) — nothing here waits on the network, so this is
+ * exactly as safe to call during a page render as it always was.
  *
  * @param string $icon    the x-unraid `icon:` value, or ''
- * @param string $dir     the stack directory, for a relative path
+ * @param string $dir     the stack directory, so a `./.staxx/...` value can
+ *                        be checked against the file actually sitting there
  * @param string $image   the container image, for automatic matching
  * @param string $service the service name, tried after the image
  * @param string $stack   the stack name, tried last
  *
  * @return array{fa:string, ref:string, url:string, remote:string}
  *   fa      a Font Awesome glyph to draw instead of a picture, or ''
- *   ref     the cache key, or '' when there is no icon to be had at all
- *   url     where the browser can load it right now, or '' if not cached yet
- *   remote  where the server should fetch it from; '' means the collection
- *           knows, and staxx_icon_fetch() works it out from $ref
+ *   ref     a collection reference or address hash, kept only so
+ *           staxx_icon_missed() can be asked about it; '' when there is
+ *           nothing to look for at all
+ *   url     where the browser can load the picture right now, or '' when
+ *           there genuinely is none
+ *   remote  the address a picture with no url yet should be fetched from to
+ *           adopt it into the stack — '' when $ref names a collection match
+ *           instead, which staxx_icon_fetch_and_write() works out for itself
  */
 function staxx_icon_resolve(string $icon, string $dir = '', string $image = '',
                                string $service = '', string $stack = ''): array {
@@ -969,34 +761,33 @@ function staxx_icon_resolve(string $icon, string $dir = '', string $image = '',
       return ['fa' => strtolower($icon), 'ref' => '', 'url' => '', 'remote' => ''];
     }
 
-    // A URL. Cached under a hash of it rather than its filename, because two
-    // stacks are perfectly likely to both point at something called icon.png.
+    // A URL — shown straight from the address itself, whoever pasted it.
+    // Nothing is fetched here; staxx_icon_fetch_and_write() is what turns
+    // this into a picture living inside the stack, in the background.
     if (preg_match('#^https?://#i', $icon)) {
       $icon = staxx_icon_raw_url($icon);
       $ref = 'url-'.md5($icon);
-      return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_url($ref), 'remote' => $icon];
+      return ['fa' => '', 'ref' => $ref, 'url' => $icon, 'remote' => $icon];
     }
 
-    // A path relative to the stack directory. Copied into the cache rather than
-    // served from where it sits: the stack directory is not inside the web
-    // root, and putting it there would publish the whole directory.
-    if ($dir !== '' && strpos($icon, '..') === false) {
-      $found = staxx_icon_from_path($dir.'/'.ltrim($icon, '/'));
-      if ($found['ref'] !== '') return $found;
-    }
-
-    // An absolute path on this server — some Unraid templates give one
-    // instead of a URL (Vert and Reubah both do). No stack directory is
-    // needed to make sense of it, so this does not depend on $dir.
-    if ($icon[0] === '/' && strpos($icon, '..') === false) {
-      $found = staxx_icon_from_path($icon);
-      if ($found['ref'] !== '') return $found;
+    // A path into the stack's own .staxx folder — the shape every icon this
+    // plugin has ever adopted is written as. Anything else (a bare filename
+    // beside the compose file, an absolute path on this server) has no
+    // picture to show: nothing outside .staxx is ever read or copied to
+    // display an icon.
+    $bare = preg_replace('#^\./#', '', $icon);
+    $prefix = STAXX_RECORD_DIR.'/';
+    if ($dir !== '' && strncmp($bare, $prefix, strlen($prefix)) === 0) {
+      $file = substr($bare, strlen($prefix));
+      $url  = staxx_icon_serve_url($dir, $file);
+      if ($url !== '') return ['fa' => '', 'ref' => '', 'url' => $url, 'remote' => ''];
+      return $none;
     }
 
     // Anything else is taken as a collection name, so `icon: jellyfin` works.
     $ref = staxx_icon_norm($icon);
     if (staxx_icon_safe_ref($ref) && isset(staxx_icon_index()['refs'][$ref])) {
-      return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_url($ref), 'remote' => ''];
+      return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_cdn_url($ref), 'remote' => ''];
     }
     return $none;
   }
@@ -1004,7 +795,242 @@ function staxx_icon_resolve(string $icon, string $dir = '', string $image = '',
   $ref = staxx_icon_match($image, $service, $stack);
   if ($ref === '') return $none;
 
-  return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_url($ref), 'remote' => ''];
+  return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_cdn_url($ref), 'remote' => ''];
+}
+
+/* ------------------------------------------------------------- migration -- */
+
+/** Guards staxx_icons_into_stacks_auto() so it runs at most once per
+ *  install — see that function's own comment. */
+function staxx_icons_migrated_marker(): string {
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/.icons-in-stacks';
+}
+
+/**
+ * Rewrite one service's `icon:` line in a compose file's own text, in place,
+ * to $newValue — the one piece of hand-written text surgery this plugin's
+ * migration needs, because nothing server-side otherwise parses and
+ * reserialises a compose file the way the browser's own YAML editor does.
+ *
+ * Deliberately narrow rather than a general nested-key writer: it finds
+ * $service's own top-level block under `services:` by name and indentation
+ * (from that line down to the next line indented no further than it), and
+ * inside that block only, a line reading `icon:` whose CURRENT value is
+ * exactly $oldValue once quotes are stripped. Both conditions have to hold —
+ * the right service AND the value staxx_compose_meta() already read for it —
+ * so this can never rewrite a line it was not specifically looking for.
+ * Returns the rewritten text, or null when the line could not be found
+ * uniquely, which the caller treats as "leave this one for by hand".
+ */
+function staxx_icon_migrate_line(string $composeText, string $service, string $oldValue, string $newValue): ?string {
+  $lines = explode("\n", $composeText);
+  $n     = count($lines);
+
+  // The service's own line: some amount of leading spaces, then its name and
+  // a colon, nothing else worth arguing with. staxx_valid_name() already
+  // limits what a service may be called, so this is not trying to parse
+  // arbitrary YAML keys, only find the one already known to exist.
+  $svcPattern = '/^(\s+)'.preg_quote($service, '/').':\s*(#.*)?$/';
+  $start = -1;
+  $indent = '';
+  for ($i = 0; $i < $n; $i++) {
+    if (preg_match($svcPattern, $lines[$i], $m)) { $start = $i; $indent = $m[1]; break; }
+  }
+  if ($start === -1) return null;
+
+  $end = $n;
+  for ($i = $start + 1; $i < $n; $i++) {
+    $line = $lines[$i];
+    if (trim($line) === '') continue;
+    $lead = (string)preg_replace('/[^ ].*$/', '', $line);
+    if (strlen($lead) <= strlen($indent)) { $end = $i; break; }
+  }
+
+  $target = -1;
+  for ($i = $start + 1; $i < $end; $i++) {
+    if (!preg_match('/^\s*icon:\s*["\']?([^"\'\r\n]*?)["\']?\s*$/', $lines[$i], $m)) continue;
+    if (trim($m[1]) !== $oldValue) continue;
+    if ($target !== -1) return null; // more than one match — not safe to guess between them
+    $target = $i;
+  }
+  if ($target === -1) return null;
+
+  $lead = (string)preg_replace('/[^ ].*$/', '', $lines[$target]);
+  $lines[$target] = $lead.'icon: '.$newValue;
+  return implode("\n", $lines);
+}
+
+/**
+ * Put existing stacks right: every service whose icon is not already a
+ * picture sitting in its own stack's .staxx folder gets one copied or
+ * downloaded there, and its `icon:` line rewritten to point at it — through
+ * staxx_save_stack(), so it lands in history and the notice says what
+ * changed, exactly like any other edit this plugin makes on a stack's behalf.
+ *
+ * Three sources, tried in the order a service's own icon: value names one:
+ *   - a plain `http(s)://` address — fetched, same as staxx_icon_fetch_and_write()
+ *     does for a newly-matched service;
+ *   - a name the collection recognises — downloaded from there;
+ *   - a path to a picture already sitting on this server (relative to the
+ *     stack's own folder, or absolute) — copied, never fetched.
+ * A Font Awesome glyph, an empty field, or a value already inside .staxx
+ * (whether or not the file is actually there) is left alone: the first two
+ * name no picture to move, and the third is either already migrated or a
+ * broken reference nothing here invented.
+ *
+ * $dryRun changes nothing and only reports what it would do — every entry
+ * staxx_save_stack() would otherwise be asked to write, and every file under
+ * the OLD shared icon folder (config/icons, kept only as long as this
+ * function has not yet run for real) that a real run would go on to remove.
+ * A real run removes that folder itself once every stack is done, keeping
+ * only its collection index.
+ *
+ * @return array{moved: array<int, array{stack:string, service:string, from:string, to:string}>,
+ *               removed: string[], errors: array<int, string>}
+ */
+function staxx_icons_into_stacks(bool $dryRun): array {
+  $moved     = [];
+  $removed   = [];
+  $errors    = [];
+  $anyWrites = false;
+
+  $oldStore = staxx_config_root();
+  $oldStore = $oldStore === '' ? '' : $oldStore.'/icons';
+
+  foreach (staxx_list_stacks() as $s) {
+    if (!$s['parses']) continue;
+    $file = $s['file'];
+    if ($file === '') continue;
+
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) continue;
+
+    $text    = (string)@file_get_contents($file);
+    $changed = false;
+
+    foreach ($meta['services'] as $svc => $svcMeta) {
+      $icon = trim((string)($svcMeta['x']['icon'] ?? ''));
+      if ($icon === '' || preg_match('/^fa-[a-z0-9-]+$/i', $icon)) continue;
+
+      $bare = preg_replace('#^\./#', '', $icon);
+      if (strncmp($bare, STAXX_RECORD_DIR.'/', strlen(STAXX_RECORD_DIR) + 1) === 0) continue; // already migrated (or broken; not this pass's job)
+
+      $written = '';
+      $error   = '';
+
+      if (preg_match('#^https?://#i', $icon)) {
+        $remote  = staxx_icon_raw_url($icon);
+        $failRef = 'url-'.md5($remote);
+        if (!$dryRun) $written = staxx_icon_fetch_and_write($s['dir'], $svc, $remote, '', $failRef, $error);
+        else          $written = './'.STAXX_RECORD_DIR.'/'.staxx_icon_norm($svc).'.svg'; // reported shape only
+      } elseif (staxx_icon_safe_ref(staxx_icon_norm($icon))
+                && isset(staxx_icon_index()['refs'][staxx_icon_norm($icon)])) {
+        $ref = staxx_icon_norm($icon);
+        if (!$dryRun) $written = staxx_icon_fetch_and_write($s['dir'], $svc, '', $ref, $ref, $error);
+        else          $written = './'.STAXX_RECORD_DIR.'/'.staxx_icon_norm($svc).'.svg';
+      } else {
+        // A local path: relative to the stack's own folder, or absolute on
+        // this server (some Unraid templates give one instead of an
+        // address). Copied, never fetched — the picture is already here.
+        $local = ($icon !== '' && $icon[0] === '/' && strpos($icon, '..') === false)
+          ? $icon
+          : ($s['dir'] !== '' && strpos($icon, '..') === false ? $s['dir'].'/'.ltrim($icon, '/') : '');
+        $ext = strtolower((string)pathinfo($local, PATHINFO_EXTENSION));
+        if ($local !== '' && is_file($local) && !is_link($local)
+            && in_array($ext, STAXX_ICON_EXTS, true)) {
+          $body = @file_get_contents($local);
+          if ($body !== false && staxx_icon_is_picture($ext, $body)) {
+            $stem   = staxx_icon_norm($svc) ?: 'icon';
+            $target = $s['dir'].'/'.STAXX_RECORD_DIR.'/'.$stem.'.'.$ext;
+            $rel    = './'.STAXX_RECORD_DIR.'/'.$stem.'.'.$ext;
+            if (is_file($target) && md5_file($target) !== md5($body)) {
+              $error = 'A different picture is already saved under that name.';
+            } elseif ($dryRun) {
+              $written = $rel;
+            } elseif (is_file($target) || staxx_icon_write($target, $body)) {
+              $written = $rel;
+            } else {
+              $error = 'Could not write the picture into the stack folder.';
+            }
+          }
+        }
+      }
+
+      if ($written === '') {
+        if ($error !== '') $errors[] = $s['name'].' / '.$svc.': '.$error;
+        continue;
+      }
+
+      $moved[] = ['stack' => $s['name'], 'service' => $svc, 'from' => $icon, 'to' => $written];
+
+      if (!$dryRun) {
+        $rewritten = staxx_icon_migrate_line($text, $svc, $icon, $written);
+        if ($rewritten === null) {
+          $errors[] = $s['name'].' / '.$svc.': the picture was saved, but its icon: line could not be '
+                    . 'found to rewrite — fix it by hand to "'.$written.'".';
+          continue;
+        }
+        $text    = $rewritten;
+        $changed = true;
+      }
+    }
+
+    if ($changed) {
+      $saveError = '';
+      if (!staxx_save_stack($s['name'], $text, $saveError)) {
+        $errors[] = $s['name'].': the stack could not be saved — '.$saveError;
+      } else {
+        $anyWrites = true;
+      }
+    }
+  }
+
+  // staxx_compose_meta() memoises per process, keyed on a file's contents —
+  // exactly what a save just changed. Nothing here would otherwise notice
+  // until the next request, which matters because this same function can
+  // run again (a second install-time pass, or a script re-run) inside the
+  // one process that just wrote these files. The same reset action.php's
+  // 'import-list' case already makes after staxx_import_backfill() writes.
+  if ($anyWrites) {
+    $err = null;
+    staxx_compose_meta('', $err, true);
+    staxx_scan_stacks_reset();
+  }
+
+  // The old shared folder is only ever removed on a real run, and only once
+  // every stack above has had its turn — a dry run must change nothing at
+  // all, on disk or in the compose files.
+  if (!$dryRun && $oldStore !== '' && is_dir($oldStore)) {
+    foreach ((array)@scandir($oldStore) as $entry) {
+      if ($entry === '.' || $entry === '..' || $entry === '_index.json') continue;
+      $path = $oldStore.'/'.$entry;
+      if (is_file($path)) { @unlink($path); $removed[] = $entry; }
+    }
+  } elseif ($dryRun && $oldStore !== '' && is_dir($oldStore)) {
+    foreach ((array)@scandir($oldStore) as $entry) {
+      if ($entry === '.' || $entry === '..' || $entry === '_index.json') continue;
+      if (is_file($oldStore.'/'.$entry)) $removed[] = $entry;
+    }
+  }
+
+  return ['moved' => $moved, 'removed' => $removed, 'errors' => $errors];
+}
+
+/**
+ * Run staxx_icons_into_stacks() for real, but only the first time anything
+ * asks — guarded by a marker file next to the (by then, removed) old icon
+ * folder, so every page load and sweep after the first is a single
+ * is_file() check. Called from the same place the icon-adopt sweep already
+ * runs from (action.php's 'icon-todo' case), which is reached once per page
+ * load and periodically thereafter, rather than adding a second hook for a
+ * migration that only ever needs to run once.
+ */
+function staxx_icons_into_stacks_auto(): void {
+  $marker = staxx_icons_migrated_marker();
+  if ($marker === '' || is_file($marker)) return;
+  staxx_icons_into_stacks(false);
+  @touch($marker);
 }
 
 /* -------------------------------------------------------------- fallback -- */

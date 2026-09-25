@@ -171,14 +171,16 @@ file_put_contents($caIndex, json_encode([
 /* --------------------------------------------- icon index fixture -- */
 
 // Both are now functions of the data store rather than flash constants
-// (PLAN_97 Phase 4) — the scratch STORE_ROOT set up above puts them under
-// /tmp/zzdetail-store/config, same as everywhere else in this fixture.
+// (PLAN_97 Phase 4) — the scratch STORE_ROOT set up above puts the icon
+// index directly under /tmp/zzdetail-store/config, same as everywhere else
+// in this fixture; it is a list of names, never a picture, so it is not
+// inside a stack's own .staxx folder.
 $iconIndexPath = staxx_icon_index_file();
 $iconIndexBak = '/tmp/zzdetail-icon-index.bak';
 $hadIconIndex = is_file($iconIndexPath);
 if ($hadIconIndex) copy($iconIndexPath, $iconIndexBak);
 
-if (!is_dir(staxx_icon_store_dir())) @mkdir(staxx_icon_store_dir(), 0755, true);
+if (!is_dir(staxx_config_root())) @mkdir(staxx_config_root(), 0755, true);
 file_put_contents($iconIndexPath, json_encode([
   'refs' => [
     'uniquewidgetzz' => 's',

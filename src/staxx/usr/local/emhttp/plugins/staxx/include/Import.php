@@ -219,46 +219,22 @@ function staxx_import_folderview3(string $path = STAXX_IMPORT_FOLDERVIEW3_FILE):
 /* ---------------------------------------------------------------- icons -- */
 
 /**
- * One row's icon: the app's own word for it, the picture Unraid already
- * downloaded for that container, then the public collection matched on the
- * image name. Every step reaches only staxx_icon_resolve()/
- * staxx_icon_unraid(), so nothing here downloads anything.
- *
- * WHAT ALREADY-ON-DISK OUTRANKS. Nearly every template names its icon as a
- * web address, which resolves to "nothing to show yet, fetch this later" —
- * so taking the app's own word first and stopping there left a list of 85
- * rows with 7 pictures on it and 77 downloads pending, on a panel whose
- * whole justification was that this server already holds the pictures.
- * Unraid downloaded one per container long ago, and it is the same picture
- * from the same address.
- *
- * So a source that can be drawn RIGHT NOW beats one that has to be fetched,
- * whoever named it. The pending address is kept as the fallback rather than
- * discarded, which is what covers a container Unraid never downloaded one
- * for.
+ * One row's icon, before anything here is a stack: the app's own word for
+ * it — a Font Awesome glyph or a plain address, shown straight from that
+ * address — else the public collection matched on the image name, shown
+ * from its own address too. Nothing is ever downloaded or copied to build
+ * this: a local file (an absolute path some templates give instead of an
+ * address, or Unraid's own downloaded copy of one) names no address at all,
+ * so it draws the initials tile like any other unmatched row, the same as
+ * every other picture nothing here has fetched.
  *
  * @return array{fa:string, ref:string, url:string, remote:string}
  */
-function staxx_import_icon(string $iconField, string $dir, string $containerName, string $image): array {
+function staxx_import_icon(string $iconField, string $dir, string $image = ''): array {
   $found = staxx_icon_resolve($iconField, $dir);
+  if ($found['fa'] !== '' || $found['url'] !== '') return $found;
 
-  // Drawable now: a glyph, or a file already in the cache.
-  $ready = fn(array $i) => $i['fa'] !== '' || $i['url'] !== '';
-
-  if (!$ready($found) && $containerName !== '') {
-    $unraid = staxx_icon_unraid($containerName);
-    if ($ready($unraid)) return $unraid;
-    // Nothing of Unraid's either — keep whatever the app named, including a
-    // download still to come, rather than falling through to a worse guess.
-    if ($found['ref'] !== '') return $found;
-    if ($unraid['ref'] !== '') return $unraid;
-  }
-
-  if ($found['ref'] === '' && $found['fa'] === '' && $image !== '') {
-    $found = staxx_icon_resolve('', '', $image);
-  }
-
-  return $found;
+  return $image !== '' ? staxx_icon_resolve('', '', $image) : $found;
 }
 
 /* -------------------------------------------------------------- containers -- */
@@ -621,7 +597,7 @@ function staxx_import_templates(bool $reset = false): array {
       'takenBy'        => $takenRel,
       'notes'          => $notes,
       'app'            => $app,
-      'icon'           => staxx_import_icon((string)($app['Icon'] ?? ''), '', $name,
+      'icon'           => staxx_import_icon((string)($app['Icon'] ?? ''), '',
                                                (string)($app['Repository'] ?? '')),
       'dockerFolder'   => $dockerFolder,
       'folderName'     => $folderName,
@@ -854,7 +830,7 @@ function staxx_import_projects(): array {
         break;
       }
     }
-    $icon = staxx_import_icon($svcIcon, $file !== '' ? dirname($file) : '', '', $image);
+    $icon = staxx_import_icon($svcIcon, $file !== '' ? dirname($file) : '', $image);
 
     $out[] = [
       'source'   => 'project',
@@ -926,9 +902,9 @@ function staxx_import_loose(): array {
       'taken'   => $takenNow,
       'takenBy' => $takenRel,
       'notes'   => $notes,
-      // A loose row's only clue is its own container name, so that is the
-      // only source tried — Unraid's downloaded copy, or nothing.
-      'icon'    => staxx_import_icon('', '', $name, ''),
+      // A loose row names no compose service and no image, so it has no
+      // address to draw a picture from at all — the initials tile, always.
+      'icon'    => staxx_import_icon('', ''),
     ];
   }
 
@@ -961,29 +937,6 @@ function staxx_import_list(): array {
     // panel can say so rather than staying quiet about it.
     'folderRules' => staxx_import_folderview3()['skipped'],
   ];
-}
-
-/**
- * Every icon the import panel would like to show but does not have yet, in
- * the same shape staxx_icon_wanted() already hands staxx_icon_sweep() for
- * the main page — see action.php's 'icons' case, which is what asks for
- * this under the import scope.
- *
- * @return array<int, array{ref:string, remote:string}>
- */
-function staxx_import_icon_wanted(): array {
-  $wanted = [];
-
-  $add = function (array $icon) use (&$wanted) {
-    if ($icon['ref'] === '' || $icon['url'] !== '') return;
-    $wanted[$icon['ref']] = ['ref' => $icon['ref'], 'remote' => $icon['remote']];
-  };
-
-  foreach (array_merge(staxx_import_templates(), staxx_import_projects(), staxx_import_loose()) as $row) {
-    if (isset($row['icon'])) $add($row['icon']);
-  }
-
-  return array_values($wanted);
 }
 
 /* -------------------------------------------------------------------- drift -- */

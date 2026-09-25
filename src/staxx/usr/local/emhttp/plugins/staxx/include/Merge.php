@@ -346,11 +346,12 @@ function staxx_merge_files(string $rel, string &$error): ?array {
         // "Not used by anything" is now only genuinely loose files.
         'referenced' => ($composeText !== '' && strpos($composeText, $path) !== false)
           || staxx_merge_path_under($path, $mountedFolders),
-        // The hover preview (PLAN_155 C17) reuses the icon store's existing
-        // local-file route rather than exposing a new one — empty when the
-        // extension isn't a picture format or the file can't be served.
-        'url'        => in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), $imageExts, true)
-          ? staxx_icon_from_path($full2)['url'] : '',
+        // PLAN_155 C17's hover preview: no serving route reaches a picture
+        // sitting loose anywhere in a stack's own folder (only a service
+        // icon inside .staxx is ever served), so this always reads '' —
+        // the same "no preview" a non-picture file already gets — until a
+        // route for it is worth building.
+        'url'        => '',
       ];
 
       if ($isDir) {

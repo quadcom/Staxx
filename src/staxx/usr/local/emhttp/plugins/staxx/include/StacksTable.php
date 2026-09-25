@@ -804,32 +804,40 @@ function staxx_service_icons_for_stack(string $stack): array {
 }
 
 /**
- * PLAN_86 — the walk that finds services worth recording an icon for, and
- * copies each picture into its own stack's folder as it goes: an item is
- * only ever offered once the file it names is already sitting there.
+ * PLAN_86 — the walk that finds services worth an icon and downloads one
+ * straight into that stack's own .staxx folder as it goes: an item is only
+ * ever offered once the picture it names is already sitting there.
  *
  * Skips, quietly, each for its own reason: a stack in $skip (the editor is
  * open on it right now); a stack whose compose file did not parse; a service
- * that already records an icon (never overwritten, ever, unless it is the
- * pasted-address case below); a service with no image; an image
- * staxx_icon_match() cannot place; and a copy that failed for any reason.
- * None of those stop the walk — only the cap does.
+ * that already records an icon (never overwritten, ever); a service with no
+ * image and no address either; a name staxx_icon_match() cannot place; and a
+ * fetch that failed for any reason. None of those stop the walk — only the
+ * cap does, and nothing here runs at all with icon lookups switched off.
  *
- * PLAN_146 added the second qualifying case: an icon field already holding a
- * `http(s)://` address whose picture StaXX has already fetched into its
- * cache. Not yet fetched is left alone this round — the same "picked up
- * later" shape an unmatched image already gets — and a fetch StaXX tried and
- * failed at stays a visibly dead link rather than being swapped for nothing.
- * Such an item carries `was`, the address exactly as the author typed it,
- * so the browser can keep it in a comment rather than dropping it.
+ * Two qualifying cases: a service with no icon at all, matched from its
+ * image name (PLAN_86); and one whose icon field already holds a plain
+ * `http(s)://` address (PLAN_146), which is fetched and swapped for the copy
+ * now living inside the stack. Such an item carries `was`, the address
+ * exactly as the author typed it, so the browser can keep it in a comment
+ * rather than dropping it.
  *
- * Same call, same arguments, as the grid's own child rows (see
- * staxx_stack_tile()) — what gets recorded is exactly what the grid was
- * already showing, never a fresh guess.
+ * Same $svc/$image and $s['rel'] the grid's own child rows are matched
+ * against (see staxx_stack_tile()), so what gets recorded is exactly what
+ * the grid was already showing, never a fresh guess.
  *
  * @return array<int, array{stack:string, service:string, file:string, was?:string}>
  */
 function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
+  $done = true;
+  if (!staxx_icon_fetching()) return [];
+
+  // Refreshed here rather than on a schedule: this walk is the one moment
+  // the plugin is already allowed to be slow (it is a background sweep, not
+  // a page render), and a stale index only ever means a missing match,
+  // never a wrong one.
+  if (staxx_icon_index_stale()) staxx_icon_index_refresh();
+
   $skip   = array_flip($skip);
   $out    = [];
   $cutoff = false;
@@ -845,8 +853,6 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
 
     foreach ($meta['services'] as $svc => $svcMeta) {
       $icon = trim((string)($svcMeta['x']['icon'] ?? ''));
-      $url  = '';
-      $was  = '';
 
       if ($icon === '') {
         $image = trim((string)($svcMeta['image'] ?? ''));
@@ -860,24 +866,25 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
         // this must not do.
         $ref = staxx_icon_match($image, $svc, $s['rel']);
         if ($ref === '') continue;
+        if (staxx_icon_missed($ref)) continue;
+
+        $error = '';
+        $written = staxx_icon_fetch_and_write($s['dir'], $svc, '', $ref, $ref, $error);
+        if ($written === '') continue;
+        $item = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
       } elseif (preg_match('#^https?://#i', $icon)) {
-        $ref = 'url-'.md5(staxx_icon_raw_url($icon));
-        // Not cached yet, or a download already known to fail: leave the
-        // field alone. staxx_icon_missed() is checked first because it is
-        // the cheap answer — no filesystem probe needed.
-        if (staxx_icon_missed($ref) || staxx_icon_url($ref) === '') continue;
-        $url = staxx_icon_raw_url($icon);
-        $was = $icon;
+        $remote  = staxx_icon_raw_url($icon);
+        $failRef = 'url-'.md5($remote);
+        if (staxx_icon_missed($failRef)) continue;
+
+        $error = '';
+        $written = staxx_icon_fetch_and_write($s['dir'], $svc, $remote, '', $failRef, $error);
+        if ($written === '') continue;
+        $item = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written, 'was' => $icon];
       } else {
         continue;
       }
 
-      $error = '';
-      $written = staxx_icon_adopt($ref, $s['dir'], $error, $url);
-      if ($written === '') continue;
-
-      $item = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
-      if ($was !== '') $item['was'] = $was;
       $out[] = $item;
       if (count($out) >= $cap) { $cutoff = true; break 2; }
     }
@@ -1111,16 +1118,16 @@ function staxx_stack_children(array $s): array {
 /**
  * What goes inside one icon tile.
  *
- * Four possibilities, and every one of them draws SOMETHING — a tile that can
- * come out empty is worse than the grey cube this replaces, because an empty
- * square reads as a broken image rather than as an unrecognised container.
+ * Three possibilities, and every one of them draws SOMETHING — a tile that
+ * can come out empty is worse than the grey cube this replaces, because an
+ * empty square reads as a broken image rather than as an unrecognised
+ * container.
  *
  *   a glyph      the compose file asked for a Font Awesome icon by name
- *   a picture    an icon that is already cached and can be loaded right now
- *   initials     a match exists but has not been downloaded yet, so the tile
- *                carries data-icon-ref and the browser swaps a picture in as
- *                soon as the background fetch has it
- *   initials     nothing matched, and nothing ever will
+ *   a picture    a file already in the stack's own .staxx folder, or loaded
+ *                straight from its own address
+ *   initials     nothing to show — the compose file names nothing, and
+ *                nothing was matched either
  *
  * @param array  $icon from staxx_icon_resolve()
  * @param string $name what the initials and the colour are worked out from
@@ -1135,23 +1142,23 @@ function staxx_icon_tile(array $icon, string $name): string {
     return '<i class="fa '.$fa.'"></i>';
   }
 
-  $ref  = $icon['ref'] !== '' ? ' data-icon-ref="'.htmlspecialchars($icon['ref']).'"' : '';
   $tile = staxx_icon_initials($name);
 
   if ($icon['url'] !== '') {
     // alt is empty on purpose: the row already says the name right beside it,
     // and a screen reader repeating it is noise.
     //
-    // The initials travel WITH the picture. A cached icon can disappear from
-    // under a page that is already open — the served copy lives in RAM and a
-    // reboot takes it — and an image that cannot load is a broken-image box,
-    // which looks like a bug. stacks.js listens for that and puts these back.
-    return '<img src="'.htmlspecialchars($icon['url']).'" alt=""'.$ref
+    // The initials travel WITH the picture. A picture hotlinked from an
+    // address (the collection's CDN, or one an author pasted) can fail to
+    // load — that address moves, or is briefly unreachable — and an image
+    // that cannot load is a broken-image box, which looks like a bug.
+    // stacks.js listens for that and puts these back.
+    return '<img src="'.htmlspecialchars($icon['url']).'" alt=""'
          . ' data-fallback="'.htmlspecialchars($tile['text']).'"'
          . ' data-fallback-colour="'.$tile['colour'].'">';
   }
 
-  return '<span class="staxx-tile staxx-tile--'.$tile['colour'].'"'.$ref.'>'
+  return '<span class="staxx-tile staxx-tile--'.$tile['colour'].'">'
        . htmlspecialchars($tile['text']).'</span>';
 }
 
@@ -1364,36 +1371,6 @@ function staxx_stack_strip_tile(array $s, array $kids): array {
     'cols'  => $cols,
     'rows'  => $rows,
   ];
-}
-
-/**
- * Every icon the table would like to show but does not have yet.
- *
- * Worked out on the server rather than read off the page, because the browser
- * is not a trustworthy source of "please download this URL". A reference here
- * has already come from a compose file the server read itself, or from the
- * collection index, and nothing else can get into the list.
- *
- * @return array<int, array{ref:string, remote:string}>
- */
-function staxx_icon_wanted(): array {
-  $wanted = [];
-
-  $add = function (array $icon) use (&$wanted) {
-    if ($icon['ref'] === '' || $icon['url'] !== '') return;   // nothing to do, or already cached
-    $wanted[$icon['ref']] = ['ref' => $icon['ref'], 'remote' => $icon['remote']];
-  };
-
-  foreach (staxx_list_stacks() as $s) {
-    if (!$s['parses']) continue;
-
-    foreach (staxx_stack_children($s) as $kid) {
-      $add(staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'],
-                                 $kid['service'], $s['name']));
-    }
-  }
-
-  return array_values($wanted);
 }
 
 /**

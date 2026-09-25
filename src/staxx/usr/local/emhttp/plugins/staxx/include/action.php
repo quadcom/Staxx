@@ -1991,23 +1991,6 @@ switch ($action) {
     staxx_update_editing_mark($name);
     staxx_reply(['ok' => true]);
 
-  /* ---- download the icons the table is still missing ----
-   *
-   * The only thing in the plugin that waits on the internet, and it is asked
-   * for after the page has drawn, never during. Answers with a map of
-   * reference => URL for whatever it got; `done` is false if it ran out of time
-   * with work left, and the browser asks again.
-   *
-   * `scope=import` is the one thing that changes here: it sweeps the import
-   * panel's rows instead of the main table's, for the panel to ask for on its
-   * own. Any other value — including none — is the main page's sweep exactly
-   * as it always was, so the main page never pays for the import list it may
-   * never have opened.
-   */
-  case 'icons':
-    $wanted = ($_POST['scope'] ?? '') === 'import' ? staxx_import_icon_wanted() : staxx_icon_wanted();
-    staxx_reply(['ok' => true] + staxx_icon_sweep($wanted));
-
   /* ---- PLAN_86 — record an icon in the services that only ever guessed one ----
    *
    * `skip` names stacks the browser wants left alone this round (the editor
@@ -2019,6 +2002,13 @@ switch ($action) {
   case 'icon-todo':
     // Always on since PLAN_129: a matched icon is recorded in the compose
     // file so it travels with it. The former ICON_ADOPT switch is gone.
+    //
+    // PLAN_187 — this is also where the once-per-install move of every
+    // existing stack's icon into its own .staxx folder runs from (see
+    // staxx_icons_into_stacks_auto()): a single is_file() check once its
+    // marker exists, so it costs nothing on every other call.
+    staxx_icons_into_stacks_auto();
+
     $skip = array_values(array_filter(
       explode(',', (string)($_POST['skip'] ?? '')),
       'staxx_valid_path'
@@ -2307,7 +2297,7 @@ switch ($action) {
    * exactly the moment nothing may wait on a 24 MB download. A missing or
    * stale cache kicks off that rebuild and replies with an empty result list
    * straight away rather than blocking; the page polls this same action again
-   * in a few seconds, same done:false-style protocol as staxx_icon_sweep().
+   * in a few seconds, same done:false-style protocol as 'icon-todo'.
    */
   case 'ca-search':
     $status = staxx_ca_status();

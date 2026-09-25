@@ -106,10 +106,11 @@ Four rules run through the whole set:
 | `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
 | `handover_unraid` | The Unraid-template half of a handover: finding a template by name, holding and releasing it and its Auto Update entry, the `Unraid-N` note line's round trip, and which targets a foreign rebuild leaves unsafe to answer | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
-| `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
+| `icon_serve` | The picture-serving page's own refusals — an unknown stack, `..`, a subfolder inside `.staxx`, a dotfile, a non-picture extension, a symlink pointing out — plus a real file serving | `STORE_ROOT` at `/tmp` |
+| `icons` | Service icons and their refusals, `staxx_icon_fetch_and_write()`'s own refusals with no network ever reached, and `staxx_icons_into_stacks()`'s dry run and real run putting an old-shape stack right | `STORE_ROOT` at `/tmp`; `ICON_FETCH` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
 | `imagehistory` | Per-stack image history, and the keep-list the Scan stored images window and the storage alert build from it | `STORE_ROOT`; `UPDATE_RETAIN="3"` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
 | `images_unused` | The "Scan stored images" window's grouping (include/Images.php): dangling vs. built-here vs. rollback-protected, the crypt-image label exclusion, and rule 2's refusal of an id not on the server's own current list. Builds and removes only its own labelled throwaway images | — |
-| `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |
+| `import` | The importer's three readers, the write path, and per-row icons | — |
 | `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
 | `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
 | `merge` | The write half of merging several stacks into one (PLAN_148 phase 4): the companion-file copy and its refusal, the one named history entry, image history carried across under the arriving service's own name, the leftover's own record mark, and every refusal before anything is written | `STORE_ROOT` at `/tmp` |

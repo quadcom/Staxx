@@ -10582,10 +10582,10 @@ div.title.staxx-has-titlebar {
 
 /* The row's own icon — a plain .staxx-icon wrapper sized down for a denser
    list, same as .staxx-icon--child does for a container row nested under a
-   stack. Everything inside it (the <img>, the .staxx-tile fallback, the
-   data-icon-ref hook) is exactly what staxx_icon_tile() already writes for
-   the main table, so paintIcons() and the broken-image listener both work
-   here unmodified — nothing icon-related is reimplemented, just placed. */
+   stack. Everything inside it (the <img>, the .staxx-tile fallback) is the
+   same shape staxx_icon_tile() writes for the main table, so the
+   broken-image listener works here unmodified — nothing icon-related is
+   reimplemented, just placed. */
 .staxx-scaffold .staxx-import-rowicon {
   width: 2.4rem;
   height: 2.4rem;

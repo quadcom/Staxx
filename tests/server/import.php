@@ -331,20 +331,18 @@ ok('...and false for "Media", which needed no change',
 
 /* -------------------------------------------------------------- icons -- */
 //
-// Nothing here may reach the network or claim a picture exists before it has
-// actually been copied to disk — same rule Icons.php states at its own top.
+// Nothing here may reach the network or copy anything to disk to show a
+// picture — same rule Icons.php states at its own top. A picture is either
+// already a file inside a stack's own .staxx folder, or shown straight from
+// its own address; nothing else is ever fetched or claimed to exist.
 
 $remoteIcon = staxx_icon_resolve('https://example.invalid/'.uniqid().'.png');
-ok('resolving a URL never fetches it — url stays empty until the sweep runs',
-   $remoteIcon['ref'] !== '' && $remoteIcon['url'] === '', json_encode($remoteIcon));
+ok('resolving a URL shows it straight from its own address — nothing is fetched to do that',
+   $remoteIcon['ref'] !== '' && $remoteIcon['url'] !== '', json_encode($remoteIcon));
 
 $missingLocal = staxx_icon_resolve('/tmp/staxx-test-nonexistent-'.uniqid().'.png');
-ok('an absolute local path that does not exist yields no icon',
+ok('an absolute local path names no picture at all — only a .staxx file or an address ever does',
    $missingLocal['ref'] === '' && $missingLocal['url'] === '', json_encode($missingLocal));
-
-$noUnraidIcon = staxx_icon_unraid('staxx-test-no-such-container-'.uniqid());
-ok('a container with no Unraid-downloaded icon yields no icon',
-   $noUnraidIcon['ref'] === '' && $noUnraidIcon['url'] === '', json_encode($noUnraidIcon));
 
 /* -------------------------------------------------------------- writing -- */
 

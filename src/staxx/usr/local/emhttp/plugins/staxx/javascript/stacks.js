@@ -14583,22 +14583,22 @@
     return { text: text, colour: hash % 10 };
   }
 
-  // Builds exactly what staxx_icon_tile() writes server-side for the main
-  // table, from the {fa, url, ref} the reply carries for every row — reusing
-  // the same classes and data-icon-ref hook rather than a second rendering
-  // path, so paintIcons() and the broken-image fallback listener (both
-  // already wired for the main table) work here unchanged.
+  // Builds the same shape staxx_icon_tile() writes server-side for the main
+  // table, from the {fa, url} the reply carries for every row — a glyph, a
+  // picture loaded straight from its own address, or the initials tile.
   function importIconHtml(entry) {
     var icon = entry.icon || {};
     var inner;
     if (icon.fa) {
       inner = '<i class="fa ' + esc(icon.fa) + '"></i>';
     } else if (icon.url) {
+      // Loaded straight from wherever the server named — the collection's
+      // own address, or whatever the app/template pasted in — never a copy
+      // this page keeps anywhere.
       inner = '<img src="' + esc(icon.url) + '" alt="">';
     } else {
       var tile = importInitials(entry.name);
-      var ref = icon.ref ? ' data-icon-ref="' + esc(icon.ref) + '"' : '';
-      inner = '<span class="staxx-tile staxx-tile--' + tile.colour + '"' + ref + '>' + esc(tile.text) + '</span>';
+      inner = '<span class="staxx-tile staxx-tile--' + tile.colour + '">' + esc(tile.text) + '</span>';
     }
     return '<span class="staxx-icon staxx-import-rowicon">' + inner + '</span>';
   }
@@ -14969,43 +14969,6 @@
       body.dataset.filled = '1';
     }
     importSyncSelectAll();
-    importFetchIcons();
-  }
-
-  // Sweeps whatever this repaint just left carrying a data-icon-ref — the
-  // same loop fetchIcons() below already runs for the main table, pointed at
-  // the import list instead via scope: 'import' (action.php reads
-  // $_POST['scope'] === 'import' to sweep staxx_import_icon_wanted() rather
-  // than the main table's own list). A full repaint (every open or folder
-  // switch) rebuilds every tile from scratch, so this has to run again each
-  // time rather than once per dialog open.
-  var importIconsBusy = false;
-  // Its own counter, separate from fetchIcons()'s below — the two sweep
-  // different lists and must not share a ceiling. ICONS_MAX_ROUNDS is declared
-  // alongside fetchIcons() further down but applies to both sweeps.
-  var importIconsRounds = 0;
-  function importFetchIcons() {
-    if (importIconsBusy || !importModal.open) return;
-    if (!importList.querySelector('[data-icon-ref]')) return;
-    importIconsBusy = true;
-    call('icons', { scope: 'import' }, 60000).then(function (res) {
-      importIconsBusy = false;
-      if (!importModal.open) return;   // the dialog closed while this was in flight
-      if (!res || !res.ok) return;
-      paintIcons(res.icons || {});
-      // Backstop against a runaway: if the wanted list never shrinks this would
-      // otherwise re-arm for ever, one Docker command per stack per round. The
-      // real fix is server-side (failed downloads are now remembered); this
-      // just makes a repeat of that regression impossible rather than unlikely.
-      if (res.done === false) {
-        if (importIconsRounds < ICONS_MAX_ROUNDS) {
-          importIconsRounds++;
-          setTimeout(importFetchIcons, 500);
-        }
-      } else {
-        importIconsRounds = 0;
-      }
-    });
   }
 
   // Each group's header tick box reads as a tri-state summary of its OWN
@@ -22789,9 +22752,6 @@
       // keyed by project, so it survives the swap untouched.
       rebindStatRows();
       pollStats();
-      // Fresh markup may name icons this browser has never loaded — a stack
-      // that was just added, for instance.
-      fetchIcons();
 
       // PLAN_176 B5 — the fresh markup's DNS mark placeholders are all blank
       // (staxx_dnsmark_placeholder_html() never calls NPM/Pi-hole), so the
@@ -22809,35 +22769,26 @@
 
   /* -------------------------------------------------------------- icons -- */
 
-  /* Icons arrive after the page does.
-   *
-   * Downloading them while building the page would be the obvious thing and the
-   * wrong one: twenty new containers at a tenth of a second each is a two-second
-   * page, paid on the one render where nobody is willing to wait. So the table
-   * draws with whatever is already cached, every tile that is still missing one
-   * carries data-icon-ref, and this fills them in afterwards. Nothing moves when
-   * they land — the tile is the same size either way.
+  /* A row's picture is always either a file already in its stack's own
+   * .staxx folder or a plain address the browser loads directly — nothing
+   * this page draws is ever fetched or cached by StaXX itself, so the
+   * table's own markup is the whole story for every icon on it.
    */
 
-  var iconsBusy = false;
-  var iconsRounds = 0;
-  // Backstop against a runaway sweep: if the wanted list never shrinks, both
-  // fetchIcons() and importFetchIcons() would otherwise re-arm for ever, each
-  // round costing a Docker command per stack on the server. Twenty rounds is
-  // well over three minutes against the server's ten-second-per-round budget,
-  // so a genuine first load is never cut short — this only bites a regression.
-  // The real fix is server-side (failed downloads are now remembered); this
-  // just makes a repeat of that regression impossible rather than unlikely.
+  // Shared with iconAdoptSweep() below: a backstop against a runaway sweep
+  // that never runs out of stacks to look at, one round per set of Docker
+  // commands on the server. Twenty rounds is well over three minutes
+  // against the server's own per-round budget, so a genuine first load is
+  // never cut short — this only bites a regression.
   var ICONS_MAX_ROUNDS = 20;
 
   // PLAN_85 — swaps the server's own tile markup (same shape as the main
   // table's rows) into each service heading's link, and says in the hover
   // text what to search the collection for. A service name is
   // author-supplied text, so it is read off the element's dataset rather than
-  // built into a selector — the same reason data-icon-ref above is safe to
-  // put straight into one and a service name is not. The HTML itself is
-  // trusted because it is our own server-rendered tile, so paintIcons() and
-  // the broken-image fallback listener keep working on it unchanged.
+  // built into a selector. The HTML itself is trusted because it is our own
+  // server-rendered tile, so the broken-image fallback listener below keeps
+  // working on it unchanged.
   function paintServiceIcons() {
     var nodes = document.querySelectorAll('[data-svc-icon]');
     Array.prototype.forEach.call(nodes, function (node) {
@@ -23061,68 +23012,12 @@
     handleIconDrop(node, event.dataTransfer);
   });
 
-  function paintIcons(map) {
-    Object.keys(map).forEach(function (ref) {
-      // A reference is lower-case letters, digits and hyphens — the server
-      // enforces that before it will write a file under one — so it is safe to
-      // put straight into a selector.
-      var nodes = document.querySelectorAll('[data-icon-ref="' + ref + '"]');
-
-      Array.prototype.forEach.call(nodes, function (node) {
-        if (node.tagName === 'IMG') {
-          if (!node.getAttribute('src')) node.src = map[ref];
-          return;
-        }
-
-        // Replacing the initials tile, not hiding it: the letters and colour go
-        // onto the picture so that if the picture later fails to load, there is
-        // still something to put back.
-        var img = document.createElement('img');
-        img.alt = '';
-        img.dataset.iconRef = ref;
-        img.dataset.fallback = (node.textContent || '').trim();
-        img.dataset.fallbackColour = (String(node.className).match(/staxx-tile--(\d+)/) || [])[1] || '0';
-        img.src = map[ref];
-        if (node.parentNode) node.parentNode.replaceChild(img, node);
-      });
-    });
-  }
-
-  function fetchIcons() {
-    if (iconsBusy) return;
-    iconsBusy = true;
-    call('icons', {}, 60000).then(function (res) {
-      iconsBusy = false;
-      if (!res || !res.ok) return;
-      paintIcons(res.icons || {});
-      // The sweep keeps a time budget. `done: false` means it stopped with work
-      // still on the list rather than because there was nothing left.
-      if (res.done === false) {
-        if (iconsRounds < ICONS_MAX_ROUNDS) {
-          iconsRounds++;
-          setTimeout(fetchIcons, 500);
-        }
-      } else {
-        iconsRounds = 0;
-        // A picture that has just landed in the cache may be the one a
-        // pasted address is waiting on — offer it to the adoption sweep now
-        // rather than at the next page load.
-        iconAdoptSweep();
-      }
-    });
-  }
-
   /* An icon that cannot load leaves a broken-image box, which reads as a bug in
-   * the page. It happens for a real reason: the copy the browser loads lives in
-   * RAM and does not survive a reboot, so a page left open overnight asks for
-   * files that are no longer there. Put the initials back instead.
-   *
-   * The replacement deliberately does NOT carry data-icon-ref forward. A tile
-   * that has tried and failed must not look identical to one that has never
-   * tried — carrying the reference over made paintIcons() treat it as still
-   * wanted, so the next sweep swapped the same broken picture straight back in
-   * and the two traded places for ever (visible flicker, a network request
-   * every cycle). One attempt, one fallback, and it stays initials until the
+   * the page. It happens for a real reason: a picture hotlinked from an
+   * address (the collection's own CDN, or one an author pasted in) can move
+   * or go briefly unreachable, and a stack whose .staxx picture was removed
+   * by hand asks for a file that is no longer there. Put the initials back
+   * instead — one attempt, one fallback, and it stays initials until the
    * next full page load.
    *
    * Listened for in the capture phase because `error` does not bubble. */
@@ -23144,13 +23039,13 @@
 
   /* ---------------------------------------------------- icon adoption -- */
 
-  /* PLAN_86. `icon-todo` names services with no icon: recorded yet, whose
-   * picture is already sitting in the collection cache; this copies that
-   * picture into the stack's own folder (server-side, before the item is
-   * ever offered) and then writes the line naming it, through the same
-   * read/addNested/save path writeProjectLink() above already uses — never
-   * a hand-rolled splice, so a service block that has to be found and
-   * inserted into is not code this project writes twice.
+  /* PLAN_86. `icon-todo` names services StaXX has just found and downloaded
+   * a picture for, straight into the stack's own .staxx folder
+   * (server-side, before the item is ever offered); this writes the line
+   * naming it, through the same read/addNested/save path writeProjectLink()
+   * above already uses — never a hand-rolled splice, so a service block
+   * that has to be found and inserted into is not code this project writes
+   * twice.
    *
    * One stack at a time, sequentially, never in parallel: a second write
    * landing on a stack whose fingerprint the first write just moved would
@@ -26562,17 +26457,14 @@
     {
       key: 'ICON_FETCH', control: 'choice', label: 'Container icons', tab: 'icons',
       choices: [
-        ['true',  'Download them automatically — matched by name, or from an address you give'],
-        ['false', 'Do not download anything — saved icons, local files and initials only']
+        ['true',  'Find one for each container — matched by name, or from an address you give'],
+        ['false', 'Leave a container with no icon showing its initials']
       ],
-      help: 'Whether StaXX may download icons. A container\'s icon is matched by name against ' +
-            'the <a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
-            'collection</a>, or taken from a web address you name with <code>icon:</code> in its ' +
-            '<code>x-unraid</code> section. An icon is downloaded once and kept; only the icon\'s ' +
-            'name or address is sent. Turned off, nothing is downloaded: icons already saved keep ' +
-            'working, an <code>icon:</code> that names a file in the stack folder or a Font ' +
-            'Awesome glyph still works, and anything else shows a coloured tile with its ' +
-            'initials.',
+      help: 'On, StaXX finds an icon for each service that has none, matched against the ' +
+            '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
+            'collection</a> by its name, or taken from a web address you name with ' +
+            '<code>icon:</code> in its <code>x-unraid</code> section. Off, a service with no ' +
+            'icon shows a coloured tile with its initials instead.',
       // Split from `help` so it can be drawn after the sample icons rather
       // than run on inside the same paragraph — settingsFieldHtml() places
       // it as its own line.
@@ -27088,9 +26980,11 @@
     // nobody has to guess what choosing a store actually does, or mistake
     // them for a second choice. Greyed out because there is nothing to edit:
     // typing a different value here would do nothing, since only the store
-    // path itself is saved. config is where these very settings now live,
-    // alongside the icon cache and StaXX's other state — see the note PLAN_97
-    // writes into that folder for the full list.
+    // path itself is saved. config is where these very settings and StaXX's
+    // other state live — see the note PLAN_97 writes into that folder for
+    // the full list. A service's own icon lives beside its compose file
+    // instead, in that stack's own .staxx folder, so it is not part of this
+    // line.
     var derivedLine = row.key === 'STORE_ROOT'
       ? '<div class="staxx-field">' +
           '<span></span>' +
@@ -27098,7 +26992,7 @@
             ? '<span class="staxx-hint">' +
                 '<code>' + esc(value) + '/stacks</code> — the compose files<br>' +
                 '<code>' + esc(value) + '/archives</code> — removed stacks\' zips<br>' +
-                '<code>' + esc(value) + '/config</code> — settings, icons and other StaXX state' +
+                '<code>' + esc(value) + '/config</code> — settings and other StaXX state' +
               '</span>'
             : '<span class="staxx-hint">No data store has been chosen yet.</span>') +
         '</div>'
@@ -33798,25 +33692,19 @@
     });
   }
 
-  // Started on whether anything CAN run, not on whether there is a row right
-  // now: the first stack added to an empty page arrives without a reload, and
-  // a timer that was never set up would leave it with no figures at all.
-  // Not gated on CAN_RUN: icons are worth having whether or not docker and
-  // compose are usable, and a stack that cannot start still deserves a face.
-  fetchIcons();
-
   // PLAN_176 B5 — "on page load": the one other moment (besides straight
   // after an expose-apply and an editor opening) the per-service DNS mark is
-  // allowed to ask NPM/Pi-hole anything at all. Started here, once, same as
-  // fetchIcons() above — never re-armed on the periodic row refresh, which
-  // paintDnsMarks() alone (called from refreshRows()) has to answer for.
+  // allowed to ask NPM/Pi-hole anything at all. Started here, once — never
+  // re-armed on the periodic row refresh, which paintDnsMarks() alone
+  // (called from refreshRows()) has to answer for.
   loadExposeStatus();
 
-  // PLAN_86 — started once, here, after the rows first render. Unlike
-  // fetchIcons() above this does not re-arm on every table refresh: it is a
-  // walk of every stack's own file, not a picture fetch, and its own bounded
-  // rounds already carry it to completion (or the setting being off) without
-  // needing a second trigger.
+  // PLAN_86 — started once, here, after the rows first render. Not gated on
+  // CAN_RUN: an icon is worth finding whether or not docker and compose are
+  // usable, and a stack that cannot start still deserves a face. It does
+  // not re-arm on every table refresh: it is a walk of every stack's own
+  // file, and its own bounded rounds already carry it to completion (or the
+  // setting being off) without needing a second trigger.
   iconAdoptSweep();
 
   // The applications catalogue refreshes itself here rather than waiting for
