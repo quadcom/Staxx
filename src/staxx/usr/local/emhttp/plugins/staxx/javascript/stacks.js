@@ -28693,16 +28693,29 @@
   var imagesData   = null;   // the last { groups, totals } the server sent
   var imagesWatch  = null;   // the running job's poll timer, while removal is in progress
 
-  // In the order the window shows them. 'checkable' matches the table in
-  // PLAN_180: the "Kept so you can roll back" group has no checkbox at all,
-  // never merely an unticked one. 'defaultOn' is which of the checkable
-  // groups start ticked.
+  // In the order the window shows them. PLAN_181 item 9: 'keep' (roll-back
+  // copies) is no longer in this list at all — Adrian's ruling 2026-09-25 is
+  // that an image held for rolling back is still in use, so it moved to its
+  // own collapsed section below (imagesRollbackHtml()) and 'wanted' left the
+  // window entirely, its bytes folded into the capacity bar's "in use"
+  // slice. What is left here really is only the clutter the tool exists to
+  // report. 'defaultOn' is which of these start ticked.
   var IMAGES_GROUP_DEFS = [
-    { key: 'keep',     heading: 'Kept so you can roll back', checkable: false },
-    { key: 'dangling', heading: 'Left behind by updates',     checkable: true,  defaultOn: true },
-    { key: 'older',    heading: 'Older versions',             checkable: true,  defaultOn: true },
-    { key: 'unused',   heading: 'Not used by any stack',      checkable: true,  defaultOn: true },
-    { key: 'wanted',   heading: 'Still wanted',                checkable: true,  defaultOn: false }
+    { key: 'dangling', heading: 'Left behind by updates',  checkable: true, defaultOn: true },
+    { key: 'rebuilt',  heading: 'Left behind by rebuilds', checkable: true, defaultOn: true },
+    { key: 'older',    heading: 'Older versions',          checkable: true, defaultOn: true },
+    { key: 'unused',   heading: 'Not used by any stack',   checkable: true, defaultOn: true }
+  ];
+
+  // Segments in the order the bar draws them, left to right — see
+  // imagesCapacityBarHtml(). Colours are the PLAN_167 palette (grey at rest,
+  // blue worth knowing, amber wants you); the free segment is an outline,
+  // not a fill, so empty storage does not read as a solid block of colour.
+  var IMAGES_CAP_SEGS = [
+    { key: 'use',  cls: 'staxx-images-seg--use',  label: 'In use' },
+    { key: 'roll', cls: 'staxx-images-seg--roll', label: 'Kept for rolling back' },
+    { key: 'clut', cls: 'staxx-images-seg--clut', label: 'Clutter' },
+    { key: 'free', cls: 'staxx-images-seg--free', label: 'Free' }
   ];
 
   function imagesHumanBytes(bytes) {
@@ -28712,66 +28725,354 @@
     return (i >= 2 ? n.toFixed(1) : Math.round(n)) + ' ' + units[i];
   }
 
+  // Row name: the tags the image carries, exactly as before; failing that,
+  // a name built from what the server could tell about it — never a guess
+  // of our own. A 'dangling' row without a tag was once an update's target
+  // and still names its repository; a 'rebuilt' row without a tag is a
+  // leftover the naming pass matched to a current build by layers; neither
+  // fact known, it stays the plain "(no tag)" it always was.
+  function imagesRowName(def, row) {
+    if (row.tags && row.tags.length) return esc(row.tags.join(', '));
+    if (def.key === 'dangling' && row.repo) return esc(row.repo) + ' (no longer tagged)';
+    if (def.key === 'rebuilt' && row.buildOf) return 'An earlier build of ' + esc(row.buildOf);
+    return '<em>(no tag)</em>';
+  }
+
   function imagesRowHtml(def, row, idx) {
-    var tags = row.tags.length ? esc(row.tags.join(', ')) : '<em>(no tag)</em>';
+    var name = imagesRowName(def, row);
     var note = row.note ? '<div class="staxx-hint">' + esc(row.note) + '</div>' : '';
+    // clutterLayers only ever arrives on a checkable clutter row, when the
+    // server could read Docker's own layer sizes (sizing:'layers') — see
+    // imagesFreedTotals(), which reads this back to work out what ticking
+    // this row off actually still frees once shared layers are accounted
+    // for. esc() first: it can hold a colon and other JSON punctuation, and
+    // the attribute is read back through .dataset, which undoes the escape.
+    var layersAttr = (def.checkable && row.clutterLayers)
+      ? ' data-images-layers="' + esc(JSON.stringify(row.clutterLayers)) + '"'
+      : '';
     var box = def.checkable
       ? '<input type="checkbox" class="staxx-images-check" data-images-id="' + esc(row.id) +
-        '" data-images-size="' + row.size + '"' + (def.defaultOn ? ' checked' : '') + '>'
+        '" data-images-size="' + row.size + '"' + layersAttr + (def.defaultOn ? ' checked' : '') + '>'
       : '<span class="staxx-images-nocheck" aria-hidden="true"></span>';
     return '<label class="staxx-images-row">' + box +
-             '<span class="staxx-images-rowtext"><span>' + tags + '</span>' +
+             '<span class="staxx-images-rowtext"><span>' + name + '</span>' +
              '<span class="staxx-images-rowsize">' + imagesHumanBytes(row.size) + '</span>' + note +
              '</span></label>';
   }
 
   function imagesGroupHtml(def, rows) {
     if (!rows.length) return '';
-    var extra = def.key === 'keep'
-      ? ' To keep fewer, change <strong>Previous image releases to keep</strong> in ' +
-        '<strong>Settings → Updates</strong>.'
-      : '';
     return '<div class="staxx-images-group">' +
              '<h4 class="staxx-images-group-title">' + esc(def.heading) + '</h4>' +
-             (extra ? '<p class="staxx-hint">' + extra + '</p>' : '') +
              rows.map(function (row, i) { return imagesRowHtml(def, row, i); }).join('') +
            '</div>';
   }
 
+  // PLAN_181 item 9 — roll-back copies moved out of the checkable list into
+  // their own collapsed section, closed by default so the window still
+  // leads with the clutter it exists to report. The heading carries the
+  // count and size so it says something useful shut.
+  var KEEP_DEF = { key: 'keep', checkable: false };
+
+  function imagesRollbackHtml(rows, totals) {
+    if (!rows.length) return '';
+    return '<details class="staxx-images-roll">' +
+             '<summary><span class="staxx-images-sw staxx-images-seg--roll"></span>' +
+               'Kept so you can roll back — ' + totals.keptCount + ' image' +
+               (totals.keptCount === 1 ? '' : 's') + ', ' + esc(imagesHumanBytes(totals.keptBytes)) +
+             '</summary>' +
+             '<p class="staxx-hint">To keep fewer, change <strong>Previous image releases to keep</strong> ' +
+               'in <strong>Settings → Updates</strong>.</p>' +
+             rows.map(function (row, i) { return imagesRowHtml(KEEP_DEF, row, i); }).join('') +
+           '</details>';
+  }
+
+  // The window's date fields (PLAN_181 item 10) all come from Docker as ISO
+  // timestamps; shown the same "5 February 2025" long form throughout so a
+  // set-up date and a last-changed date read the same way.
+  function imagesDateLong(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return esc(iso);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  // The capacity bar (PLAN_181 item 9) — Docker's own image storage, split
+  // into what is in use, what is kept for rolling back, what is clutter and
+  // what is free. "In use" is never sent by the server; it is whatever is
+  // left once the other three are taken off the total, which is exactly
+  // right since "still wanted" images (item 9, decision 2) are in use and
+  // carry no colour of their own. Drawn only when the server could read
+  // Docker's storage total at all.
+  function imagesCapacityBarHtml(storage, totals) {
+    if (!storage) return '';
+    var total = storage.total || 0, free = storage.free || 0;
+    var kept = totals.keptBytes || 0, removable = totals.removableBytes || 0;
+    var inUse = Math.max(0, total - free - kept - removable);
+    var byKey = { use: inUse, roll: kept, clut: removable, free: free };
+
+    var ariaLabel = IMAGES_CAP_SEGS.map(function (s) {
+      return s.label + ' ' + imagesHumanBytes(byKey[s.key]);
+    }).join(', ');
+
+    // flex-grow, not width percentages, so the CSS min-width on each segment
+    // (12px) can win over a slice too small to see rather than fighting it.
+    var barSegs = IMAGES_CAP_SEGS.filter(function (s) { return byKey[s.key] > 0; })
+      .map(function (s) {
+        var grow = total > 0 ? (byKey[s.key] / total) : 0;
+        return '<span class="staxx-images-seg ' + s.cls + '" style="flex-grow:' + grow + '"></span>';
+      }).join('');
+
+    var legendItems = IMAGES_CAP_SEGS.map(function (s) {
+      var cls = s.key === 'clut' ? ' class="staxx-images-legend-clut"' : '';
+      return '<span' + cls + '><span class="staxx-images-sw ' + s.cls + '"></span>' +
+             esc(s.label) + ' <strong>' + esc(imagesHumanBytes(byKey[s.key])) + '</strong></span>';
+    }).join('');
+
+    return '<div class="staxx-images-cap">' +
+             '<div class="staxx-images-cap-head">' +
+               '<span><strong>Docker’s image storage</strong> — ' + esc(imagesHumanBytes(total)) + '</span>' +
+               '<span>' + esc(imagesHumanBytes(free)) + ' free</span>' +
+             '</div>' +
+             '<div class="staxx-images-cap-bar" role="img" aria-label="' + esc(ariaLabel) + '">' +
+               barSegs +
+             '</div>' +
+             '<div class="staxx-images-legend">' + legendItems + '</div>' +
+           '</div>';
+  }
+
+  // PLAN_181 item 10 — one container Docker cannot read (config.v2.json
+  // could not be parsed, or the RWLayer-nil error the box's own postgresql15
+  // shows). Everything here is read-only fact from the server; this only
+  // ever draws what it is sent, same rule the rest of the window follows.
+  function imagesBrokenFactRow(label, html) {
+    return html ? '<dt>' + esc(label) + '</dt><dd>' + html + '</dd>' : '';
+  }
+
+  function imagesBrokenFactsHtml(item) {
+    var rows = '';
+
+    // Single-phrase rows (Set up, Ever run, Image, Database, Unraid
+    // template, Limits) carry no trailing full stop, matching the approved
+    // mock; Data folder and Network are multi-sentence and keep theirs.
+    var setUp = item.created ? esc(imagesDateLong(item.created)) : '';
+    if (setUp && item.unraidTemplate) setUp += ', from an Unraid template';
+    rows += imagesBrokenFactRow('Set up', setUp);
+
+    var everRun;
+    if (item.running) {
+      everRun = 'Running now — CPU ' + esc(item.cpu || '?') + ', memory ' + esc(item.mem || '?');
+    } else if (item.neverStarted) {
+      everRun = 'Never started. Not running now, so it uses no processor or memory';
+    } else {
+      everRun = 'Not running now';
+    }
+    rows += imagesBrokenFactRow('Ever run', everRun);
+
+    if (item.imageRef) {
+      var imgLine = esc(item.imageRef) + ' — ' +
+        (item.imagePresent ? 'kept while this container exists' : 'no longer on this server');
+      rows += imagesBrokenFactRow('Image', imgLine);
+    }
+
+    if (item.database && item.database.db) {
+      var d = item.database;
+      var engineVersion = [d.engine, d.version].filter(function (v) { return v; }).join(' ');
+      var dbLine = '"' + esc(d.db) + '"' + (d.user ? ', user "' + esc(d.user) + '"' : '') +
+        (engineVersion ? ', ' + esc(engineVersion) : '');
+      rows += imagesBrokenFactRow('Database', dbLine);
+    }
+
+    (item.folders || []).forEach(function (f) {
+      var size = (f.bytes !== null && f.bytes !== undefined) ? imagesHumanBytes(f.bytes)
+        : (f.remote ? 'on a network share, not measured' : 'too large to measure quickly');
+      var usedBy = (f.usedBy && f.usedBy.length)
+        ? '<strong>"' + esc(f.usedBy.join('", "')) + '" uses this folder too.</strong> '
+        : '<strong>Nothing running uses this folder.</strong> ';
+      var line = esc(f.source) + ' — ' + esc(size) +
+        (f.changed ? ', last changed ' + esc(imagesDateLong(f.changed)) : '') + '. ' +
+        usedBy + 'Removing the container keeps this folder.';
+      rows += imagesBrokenFactRow('Data folder', line);
+    });
+
+    // ExposedPorts keys arrive as "5432/tcp" — tcp is assumed throughout the
+    // rest of the page, so only udp is worth saying twice.
+    var ports = (item.ports || []).map(function (p) { return p.replace(/\/tcp$/, ''); });
+    var portsLine = ports.length
+      ? ', port' + (ports.length === 1 ? '' : 's') + ' ' + ports.join(', ')
+      : '';
+
+    (item.networks || []).forEach(function (n) {
+      var line = esc(n.name || '') +
+        ((n.ip && n.ip !== '') ? ', fixed address ' + esc(n.ip) : '') +
+        esc(portsLine) + '.';
+      if (n.heldBy) {
+        line += ' <strong>"' + esc(n.heldBy) + '" is using that address now</strong>, so this one ' +
+          'could not start alongside it.';
+      }
+      line += ' ' + (item.mac ? 'Fixed hardware address ' + esc(item.mac) + '.' : 'No fixed hardware address.');
+      rows += imagesBrokenFactRow('Network', line);
+    });
+
+    if (item.templateFile) {
+      rows += imagesBrokenFactRow('Unraid template', esc(item.templateFile) + ' is still on the flash drive');
+    }
+
+    if (item.limits) {
+      var l = item.limits, limitBits = [];
+      if (l.memory) limitBits.push('memory capped at ' + esc(l.memory));
+      if (l.nanoCpus) limitBits.push('processor capped');
+      if (l.devices > 0) limitBits.push(l.devices + ' device' + (l.devices === 1 ? '' : 's') + ' attached');
+      if (l.privileged) limitBits.push('privileged');
+      var limitsLine = limitBits.length
+        ? limitBits.join(', ')
+        : 'None: no memory or processor cap, no devices, not privileged';
+      rows += imagesBrokenFactRow('Limits', limitsLine);
+    }
+
+    return rows ? '<dl class="staxx-images-facts">' + rows + '</dl>' : '';
+  }
+
+  function imagesBrokenNoticeHtml(item) {
+    var name = esc(item.name);
+    var s = 'Docker cannot read the container <strong>"' + name + '"</strong>.';
+    if (item.neverStarted && item.empty) {
+      s += ' It was never started, the container itself is empty, and the image it names (' +
+        esc(item.imageShort) + ') ' +
+        (item.imagePresent ? 'is kept while this container exists.' : 'is no longer on this server.');
+    } else if (item.imageShort) {
+      s += ' The image it names (' + esc(item.imageShort) + ') ' +
+        (item.imagePresent ? 'is kept while this container exists.' : 'is no longer on this server.');
+    }
+    s += ' Removing it clears Docker’s broken record; any folders it was set up to use are left alone.';
+
+    return '<div class="staxx-notice staxx-images-broken">' +
+             '<div class="staxx-images-brokentext"><p>' + s + '</p>' + imagesBrokenFactsHtml(item) + '</div>' +
+             '<button type="button" class="staxx-btn staxx-btn--danger" data-images-broken-remove="' +
+               esc(item.id) + '">Remove this broken container</button>' +
+           '</div>';
+  }
+
+  // The confirm dialog reuses askConfirm() (danger by default) exactly as
+  // Delete stack does — PLAN_181 item 10, Adrian 2026-09-25: "can we make
+  // that the red warning button, because it's a destructive function and is
+  // checked on confirmation?"
+  function imagesBrokenRemove(id) {
+    var item = null;
+    (imagesData.broken || []).forEach(function (b) { if (b.id === id) item = b; });
+    if (!item) return;
+
+    var kept = [];
+    (item.folders || []).forEach(function (f) {
+      var size = (f.bytes === null || f.bytes === undefined) ? 'size unknown' : imagesHumanBytes(f.bytes);
+      kept.push('its data folder, ' + esc(f.source) + ' (' + esc(size) + ')');
+    });
+    if (item.templateFile) kept.push('its Unraid template');
+    var keptHtml = kept.length
+      ? '<p><strong>Kept:</strong> ' + kept.join(', ') + '. Nothing else is touched.</p>'
+      : '';
+
+    askConfirm({
+      title: 'Remove the broken container "' + esc(item.name) + '"?',
+      bodyHtml: '<p>Docker’s broken record for it is removed. This cannot be undone.</p>' + keptHtml,
+      goLabel: 'Remove container'
+    }).then(function (go) {
+      if (!go) return;
+      closeConfirm();
+      imagesMsg.textContent = 'Removing…';
+      call('images_remove_broken', { id: item.id }, 15000).then(function (res) {
+        if (!res.ok) { imagesMsg.textContent = res.error || 'Could not remove.'; return; }
+        imagesMsg.textContent = '';
+        imagesReload();
+      });
+    });
+  }
+
+  function imagesRowLayers(box) {
+    var raw = box.dataset.imagesLayers;
+    if (!raw) return [];
+    try { var arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch (e) { return []; }
+  }
+
+  // What ticking the current selection would actually free. Build of layer
+  // counting, approved 2026-09-25: two clutter images sharing a layer only
+  // give that layer back once BOTH are gone, so a layer any still-unticked
+  // clutter row still needs is not free yet, however many ticked rows also
+  // name it. Recomputed from the live checkbox state on every call, which
+  // is what "on every tick change" means — there is no cached total to
+  // patch, since unticking one row can put bytes back onto several others.
+  function imagesFreedTotals() {
+    var count = 0, approxBytes = 0, checkedLayers = {}, uncheckedLayers = {};
+    imagesBody.querySelectorAll('.staxx-images-check').forEach(function (box) {
+      var layers = imagesRowLayers(box);
+      if (box.checked) {
+        count++;
+        approxBytes += parseInt(box.dataset.imagesSize, 10) || 0;
+        layers.forEach(function (id) { checkedLayers[id] = true; });
+      } else {
+        layers.forEach(function (id) { uncheckedLayers[id] = true; });
+      }
+    });
+    var bytes = approxBytes;
+    if (imagesData && imagesData.sizing === 'layers') {
+      bytes = 0;
+      Object.keys(checkedLayers).forEach(function (id) {
+        if (uncheckedLayers[id]) return;
+        bytes += (imagesData.layers && imagesData.layers[id]) || 0;
+      });
+    }
+    return { count: count, bytes: bytes };
+  }
+
   function imagesUpdateRemoveButton() {
     if (!imagesBody) return;
-    var count = 0, bytes = 0;
-    imagesBody.querySelectorAll('.staxx-images-check:checked').forEach(function (box) {
-      count++;
-      bytes += parseInt(box.dataset.imagesSize, 10) || 0;
-    });
+    var freed = imagesFreedTotals();
     imagesRemove.hidden = false;
-    imagesRemove.disabled = count === 0;
-    imagesRemove.textContent = count === 0
+    imagesRemove.disabled = freed.count === 0;
+    imagesRemove.textContent = freed.count === 0
       ? 'Remove selected'
-      : 'Remove ' + count + ' image' + (count === 1 ? '' : 's') + ', ' + imagesHumanBytes(bytes);
+      : 'Remove ' + freed.count + ' image' + (freed.count === 1 ? '' : 's') + ', ' +
+        imagesHumanBytes(freed.bytes);
+
+    // The summary line above the list states the same figure a press of
+    // Remove would free, so it tracks the same ticked-selection maths
+    // rather than repeating the server's own "everything found" total,
+    // which is only ever true while every default-on row is still ticked.
+    var summaryEl = document.getElementById('staxx-images-summary-text');
+    if (summaryEl) {
+      summaryEl.textContent = (imagesData && imagesData.totals.removableCount)
+        ? freed.count + ' image' + (freed.count === 1 ? '' : 's') + ', ' + imagesHumanBytes(freed.bytes) +
+          ', are clutter and can be removed.'
+        : 'Nothing is cluttering Docker’s storage right now.';
+    }
   }
 
   function renderImagesList() {
     if (!imagesData) return;
     var totals = imagesData.totals;
-    var summary = totals.removableCount
-      ? totals.removableCount + ' image' + (totals.removableCount === 1 ? '' : 's') + ', ' +
-        imagesHumanBytes(totals.removableBytes) + ', can be cleaned up.'
-      : 'Nothing to clean up right now.';
-    if (totals.keptCount) {
-      summary += ' ' + totals.keptCount + ' more, ' + imagesHumanBytes(totals.keptBytes) +
-        ', ' + (totals.keptCount === 1 ? 'is' : 'are') + ' kept for rolling back.';
-    }
 
     var html = '';
+    (imagesData.broken || []).forEach(function (b) { html += imagesBrokenNoticeHtml(b); });
     (imagesData.warnings || []).forEach(function (w) {
       html += '<p class="staxx-notice">' + esc(w) + '</p>';
     });
-    html += '<p class="staxx-images-summary">' + esc(summary) + '</p>';
+    html += imagesCapacityBarHtml(imagesData.storage, totals);
+    // Build of layer counting, approved 2026-09-25: when Docker's own layer
+    // sizes could not be read the window falls back to each image's full
+    // size, which double-counts a layer shared between two clutter images
+    // — said here, once, rather than on every row it affects.
+    if (imagesData.sizing === 'approximate') {
+      html += '<p class="staxx-hint">Sizes are approximate: Docker’s layer sizes could not be read, ' +
+        'so shared layers may be counted more than once.</p>';
+    }
+    // Filled in by imagesUpdateRemoveButton() below, which is the one place
+    // that knows the ticked selection — this starting text only ever shows
+    // for the instant before that call runs.
+    html += '<p class="staxx-images-summary" id="staxx-images-summary-text"></p>';
     IMAGES_GROUP_DEFS.forEach(function (def) {
       html += imagesGroupHtml(def, imagesData.groups[def.key] || []);
     });
+    html += imagesRollbackHtml(imagesData.groups.keep || [], totals);
     if (!totals.removableCount && !totals.keptCount) {
       html += '<p class="staxx-hint">No image on this server is going unused right now.</p>';
     }
@@ -28836,14 +29137,44 @@
           esc(res.error || 'Could not read the images.') + '</p>';
         return;
       }
-      imagesData = { groups: res.groups, totals: res.totals, warnings: res.warnings || [] };
+      imagesData = {
+        groups: res.groups, totals: res.totals, warnings: res.warnings || [],
+        storage: res.storage || null, broken: res.broken || [],
+        sizing: res.sizing || 'approximate', layers: res.layers || {}
+      };
       renderImagesList();
+    });
+  }
+
+  // Rescans after images_remove_broken succeeds (PLAN_181 item 10). Keeps
+  // the panel's scroll position — "a redraw keeps its scroll" — rather than
+  // openImagesDialog()'s own "Checking…" flash, which is right for opening
+  // the window but would otherwise throw the reader back to the top after
+  // one button press.
+  function imagesReload() {
+    if (!imagesModal.open) return;
+    var scrollTop = imagesBody.scrollTop;
+    call('images_unused', {}, 30000).then(function (res) {
+      if (!imagesModal.open) return;
+      if (!res.ok) { imagesMsg.textContent = res.error || 'Could not read the images.'; return; }
+      imagesData = {
+        groups: res.groups, totals: res.totals, warnings: res.warnings || [],
+        storage: res.storage || null, broken: res.broken || [],
+        sizing: res.sizing || 'approximate', layers: res.layers || {}
+      };
+      renderImagesList();
+      imagesBody.scrollTop = scrollTop;
     });
   }
 
   if (imagesModal) {
     imagesBody.addEventListener('change', function (event) {
       if (event.target.classList.contains('staxx-images-check')) imagesUpdateRemoveButton();
+    });
+
+    imagesBody.addEventListener('click', function (event) {
+      var btn = event.target.closest('[data-images-broken-remove]');
+      if (btn) imagesBrokenRemove(btn.getAttribute('data-images-broken-remove'));
     });
 
     if (imagesCancel) imagesCancel.addEventListener('click', function () { imagesModal.close(); });

@@ -336,6 +336,195 @@
   margin: 0.2rem 0 0;
 }
 
+/* PLAN_181 item 9 — the capacity bar. Segments are drawn with flex-grow
+   rather than a width percentage so the min-width below can win over a
+   slice too small to see; free is an outline rather than a fill so an
+   almost-full bar still shows a sliver of "room left" rather than reading
+   solid. Colours are the PLAN_167 palette measured live in the mock: grey
+   at rest (in use), blue worth knowing (kept for rolling back, striped
+   rather than solid so it never reads as "in use" at a glance), amber wants
+   you (clutter, dotted so it is never confused with a plain fill). */
+.staxx-images-cap {
+  margin: 0 0 1.2rem;
+}
+
+.staxx-images-cap-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 0.4rem;
+  font-size: 1.3rem;
+}
+
+.staxx-images-cap-bar {
+  display: flex;
+  gap: 0.3rem;
+  height: 2.2rem;
+  border-radius: 0.4rem;
+  overflow: hidden;
+}
+
+.staxx-images-seg {
+  min-width: 1.2rem;
+  flex-shrink: 1;
+  flex-basis: 0;
+}
+
+.staxx-images-seg--use {
+  background: #8b949e;
+}
+
+.staxx-images-seg--roll {
+  background: repeating-linear-gradient(135deg, #58a6ff 0 0.5rem, #2d5f99 0.5rem 1rem);
+}
+
+.staxx-images-seg--clut {
+  background:
+    radial-gradient(circle, #1c1c1c 0.16rem, transparent 0.19rem) 0 0 / 0.6rem 0.6rem,
+    #f0a020;
+  outline: 0.2rem solid #f0a020;
+  outline-offset: -0.2rem;
+}
+
+.staxx-images-seg--free {
+  background: transparent;
+  border: 0.1rem dashed #8b949e;
+  border-radius: 0 0.4rem 0.4rem 0;
+  box-sizing: border-box;
+}
+
+.staxx-images-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 2.2rem;
+  margin-top: 1rem;
+  font-size: 1.3rem;
+}
+
+/* Clutter is the one item worth calling out by weight, not just colour, in
+   its own legend row — it is the reason the tool exists. */
+.staxx-images-legend-clut {
+  font-weight: 600;
+}
+
+.staxx-images-sw {
+  display: inline-block;
+  width: 2.2rem;
+  height: 1.4rem;
+  margin-right: 0.7rem;
+  vertical-align: middle;
+  border-radius: 0.3rem;
+}
+
+/* Reuse the four segment fills for the legend swatches rather than a second
+   copy of each pattern — the swatch is the same box, just smaller. */
+.staxx-images-sw.staxx-images-seg--use  { background: #8b949e; }
+.staxx-images-sw.staxx-images-seg--roll { background: repeating-linear-gradient(135deg, #58a6ff 0 0.5rem, #2d5f99 0.5rem 1rem); }
+.staxx-images-sw.staxx-images-seg--clut {
+  background:
+    radial-gradient(circle, #1c1c1c 0.16rem, transparent 0.19rem) 0 0 / 0.6rem 0.6rem,
+    #f0a020;
+  outline: 0.2rem solid #f0a020;
+  outline-offset: -0.2rem;
+}
+.staxx-images-sw.staxx-images-seg--free {
+  background: transparent;
+  border: 0.1rem dashed #8b949e;
+  box-sizing: border-box;
+}
+
+/* PLAN_181 item 9 — the roll-back section, closed by default so it does not
+   compete with the clutter list above it for attention. A plain <details>;
+   the marker is redrawn rather than left as the browser's own triangle so
+   it matches the rest of the page's iconography and can rotate on open. */
+.staxx-images-roll {
+  margin: 1.8rem 0 0;
+  padding-top: 1rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-images-roll summary {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  list-style: none;
+  cursor: pointer;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+/* The marker and swatch line up with the text on the same row, so the
+   swatch's own right margin (set for the legend, where it sits before
+   plain text) would double up with the summary's gap; both are zeroed here. */
+.staxx-images-roll summary .staxx-images-sw {
+  width: 1.8rem;
+  height: 1.2rem;
+  margin-right: 0;
+}
+
+.staxx-images-roll summary::-webkit-details-marker {
+  display: none;
+}
+
+.staxx-images-roll summary::before {
+  content: '\25B8';
+  display: inline-block;
+  width: 1.2rem;
+  margin-right: 0;
+  transition: transform var(--sm-motion, 160ms) ease;
+}
+
+.staxx-images-roll[open] summary::before {
+  transform: rotate(90deg);
+}
+
+/* PLAN_181 item 10 — the broken-container notice. Text block left, the
+   danger button right, both vertically centred — .staxx-notice's own
+   align-items:flex-start is right for an icon sitting on the first line of
+   text, but wrong here, where the second child is a button that should sit
+   level with the notice as a whole rather than its top edge. */
+.staxx-images-broken {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.staxx-images-brokentext {
+  flex: 1 1 30rem;
+  min-width: 0;
+}
+
+.staxx-images-brokentext p {
+  margin: 0 0 0.6rem;
+}
+
+.staxx-images-brokentext p:last-child {
+  margin-bottom: 0;
+}
+
+/* Measured live in the mock, 2026-09-25: the cause is Unraid's own
+   default-base.css, not anything of ours — it turns every <dl> into a
+   one-column grid with its own padding and a right-aligned, 600-weight
+   <dt>, and every <dd> into display:flex; flex-direction:column, which
+   breaks a <strong> phrase inside a <dd> onto its own line. display:block
+   has to be restated on dd here to make this dl behave like a plain
+   description list again. */
+.staxx-images-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1.6rem;
+  margin: 0.8rem 0 0;
+  font-size: 1.25rem;
+}
+
+.staxx-images-facts dt {
+  opacity: 0.7;
+}
+
+.staxx-images-facts dd {
+  display: block;
+  margin: 0;
+}
+
 .staxx-images-joblog {
   margin: 0;
   padding: 0.8rem 1rem;

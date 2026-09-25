@@ -1,7 +1,9 @@
 <?PHP
 /* StaXX — the "Scan stored images" window on the Storage tab: finding every
  * Docker image no container uses, sorting it into the groups the window
- * shows, and removing only what was ticked. PLAN_180 Part 1.
+ * shows (clutter only — PLAN_181 item 9), removing only what was ticked,
+ * the capacity bar's figures (item 9), and the facts and removal for a
+ * container `docker inspect` cannot read (item 10). PLAN_180 Part 1.
  * Copyright 2026, StaXX contributors.
  *
  * This is a second, by-hand door onto the same protection the weekly
@@ -40,6 +42,371 @@ function staxx_images_php_bin(): string {
     if (is_file($path) && is_executable($path)) return $bin = $path;
   }
   return $bin = 'php';
+}
+
+/**
+ * Docker's own data root ("docker info"'s DockerRootDir) — needed for the
+ * capacity bar's figures (item 9) and to find a broken container's own
+ * files under <root>/containers/<id>/, which `docker inspect` cannot read
+ * for it (item 10). Cached for the life of the request; falls back to
+ * Docker's own usual default when `docker info` itself cannot be asked,
+ * since a wrong guess only ever costs a missing bar or missing facts
+ * downstream, never a wrong command.
+ * PLAN_181 item 9 / item 10.
+ */
+function staxx_images_docker_root(): string {
+  static $root = null;
+  if ($root !== null) return $root;
+  $code = 1;
+  $out = trim(staxx_sh(staxx_docker_bin().' info --format '.escapeshellarg('{{.DockerRootDir}}'), 10, $code));
+  return $root = ($code === 0 && $out !== '') ? $out : '/var/lib/docker';
+}
+
+/**
+ * PLAN_181 item 9 — the capacity bar's numbers. `df` on Docker's own data
+ * root: on Unraid that is the docker.img loop file's filesystem, or in
+ * directory mode the pool it sits on. Null on any failure — the page draws
+ * no bar rather than a wrong one.
+ */
+function staxx_images_storage(): ?array {
+  $code = 1;
+  $out = trim(staxx_sh('df -B1 --output=size,avail '.escapeshellarg(staxx_images_docker_root()), 10, $code));
+  if ($code !== 0 || $out === '') return null;
+  $lines = explode("\n", $out);
+  $data  = trim($lines[1] ?? '');
+  if (!preg_match('/^(\d+)\s+(\d+)$/', $data, $m)) return null;
+  return ['total' => (int)$m[1], 'free' => (int)$m[2]];
+}
+
+/**
+ * PLAN_181 "layer counting" build — Docker's storage driver ("docker
+ * info"'s Driver, e.g. "btrfs" on the box), needed to find where each
+ * layer's own size is recorded. Cached for the life of the request.
+ */
+function staxx_images_docker_driver(): string {
+  static $driver = null;
+  if ($driver !== null) return $driver;
+  $code = 1;
+  $out = trim(staxx_sh(staxx_docker_bin().' info --format '.escapeshellarg('{{.Driver}}'), 10, $code));
+  return $driver = ($code === 0 && $out !== '') ? $out : '';
+}
+
+/**
+ * An image's layer chain. Proved on the box 2026-09-25: `docker history`
+ * does NOT align with RootFS.Layers (pmd:local has 10 layers but only 7
+ * non-zero history rows), so it cannot be used to attribute size to a
+ * layer — Docker's own layer store can. A chain ID is not the layer's own
+ * diff ID except for the first one; each later one folds in everything
+ * before it, which is exactly what lets two images that share a leading
+ * run of layers also share that run's chain IDs, and so its sizes.
+ *
+ * @param array $diffIds RootFS.Layers, in order ("sha256:<hex>" each)
+ * @return array chain IDs, same order, one per diff ID
+ */
+function staxx_images_chain_ids(array $diffIds): array {
+  $chains = [];
+  $prev = null;
+  foreach ($diffIds as $diffId) {
+    $diffId = (string)$diffId;
+    $chain = $prev === null ? $diffId : 'sha256:'.hash('sha256', $prev.' '.$diffId);
+    $chains[] = $chain;
+    $prev = $chain;
+  }
+  return $chains;
+}
+
+/**
+ * One layer's own size, straight from Docker's layer store — a plain file
+ * under DockerRootDir, root-only, no `docker` call needed:
+ * <DockerRootDir>/image/<Driver>/layerdb/sha256/<hex>/size. Proved on the
+ * box: for pmd:local the ten layers' sizes summed to exactly its own
+ * reported Size, 195110997. Null on any failure (no driver, missing file,
+ * unreadable, not a number): the caller falls back to full image sizes for
+ * the whole reply rather than mixing layer-accurate and guessed figures.
+ */
+function staxx_images_layer_size(string $chainId): ?int {
+  $driver = staxx_images_docker_driver();
+  if ($driver === '' || strncmp($chainId, 'sha256:', 7) !== 0) return null;
+  $hex  = substr($chainId, 7);
+  $path = staxx_images_docker_root().'/image/'.$driver.'/layerdb/sha256/'.$hex.'/size';
+  $raw  = @file_get_contents($path);
+  if ($raw === false) return null;
+  $raw = trim($raw);
+  return ctype_digit($raw) ? (int)$raw : null;
+}
+
+/**
+ * Read one of Docker's own internal JSON files (config.v2.json,
+ * hostconfig.json). Not a supported interface — used only for the fields
+ * `docker ps`/`docker inspect` cannot give for a container they cannot
+ * read (item 10) — so any failure (missing file, bad JSON) is silent: the
+ * caller leaves the field out rather than showing a guess.
+ */
+function staxx_images_read_json(string $path): ?array {
+  $raw = @file_get_contents($path);
+  if ($raw === false) return null;
+  $data = json_decode($raw, true);
+  return is_array($data) ? $data : null;
+}
+
+/**
+ * PLAN_181 item 10 — the only environment values a broken container's
+ * notice will ever show. Everything else in Config.Env (passwords among
+ * them) is never read into a reply.
+ */
+function staxx_images_db_env_allowlist(): array {
+  return [
+    'POSTGRES_DB', 'POSTGRES_USER', 'PG_VERSION',
+    'MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_VERSION',
+    'MARIADB_DATABASE', 'MARIADB_USER', 'MARIADB_VERSION',
+  ];
+}
+
+/**
+ * A bind source with any trailing "/" removed (never the root "/" itself),
+ * so "/mnt/user/appdata/postgres15/" from hostconfig.json's Binds and
+ * "/mnt/user/appdata/postgres15" from a running container's own Mounts
+ * compare and display as the same path.
+ */
+function staxx_images_norm_path(string $path): string {
+  return $path !== '/' ? rtrim($path, '/') : $path;
+}
+
+/**
+ * Name, mounted-folder sources and network addresses for every RUNNING
+ * container — gathered once per scan and reused for every broken
+ * container's "who else uses this" comparisons (item 10, folders' usedBy
+ * and networks' heldBy), rather than one extra `docker inspect` per folder
+ * or network being compared.
+ */
+function staxx_images_running_facts(array $runningIds): array {
+  $out = [];
+  if (!$runningIds) return $out;
+  $idsArg = implode(' ', array_map('escapeshellarg', $runningIds));
+  $raw = staxx_sh(staxx_docker_bin().' inspect --format '.escapeshellarg('{{json .}}').' '.$idsArg, 20);
+  foreach (explode("\n", trim($raw)) as $line) {
+    $line = trim($line);
+    if ($line === '') continue;
+    $info = json_decode($line, true);
+    if (!is_array($info)) continue;
+
+    $sources = [];
+    foreach ((array)($info['Mounts'] ?? []) as $m) {
+      if (!empty($m['Source'])) $sources[] = staxx_images_norm_path((string)$m['Source']);
+    }
+    $nets = [];
+    foreach ((array)($info['NetworkSettings']['Networks'] ?? []) as $netName => $net) {
+      if (!empty($net['IPAddress'])) $nets[$netName] = (string)$net['IPAddress'];
+    }
+    $out[] = [
+      'name'    => ltrim((string)($info['Name'] ?? ''), '/'),
+      'sources' => $sources,
+      'nets'    => $nets,
+    ];
+  }
+  return $out;
+}
+
+/**
+ * Everything the window shows for one container `docker inspect` cannot
+ * read (PLAN_181 item 10), replacing the old warning sentence. `docker ps`
+ * has already named its image by the time this is called; everything else
+ * is read from Docker's own internal files and is entirely optional — a
+ * source that fails or does not parse just leaves that field out.
+ *
+ * @param array $ps      this container's row from the batch `docker ps -a`
+ *                        (id, name, created, state, image — no size; see
+ *                        below for why that is fetched separately here)
+ * @param bool  $imagePresent whether $ps['image'] still resolves to a
+ *                        local image
+ * @param array $running  every running container's name/mounts/networks,
+ *                        from staxx_images_running_facts()
+ */
+function staxx_images_broken_entry(array $ps, bool $imagePresent, array $running): array {
+  $id       = $ps['id'];
+  $rawImage = trim((string)($ps['image'] ?? ''));
+
+  $entry = [
+    'id'           => $id,
+    'name'         => $ps['name'],
+    'state'        => $ps['state'],
+    'running'      => $ps['state'] === 'running',
+    'imageShort'   => strncmp($rawImage, 'sha256:', 7) === 0
+                         ? staxx_update_short_id($rawImage) : $rawImage,
+    'imagePresent' => $imagePresent,
+  ];
+
+  // Docker's CreatedAt carries a numeric offset AND a trailing zone name
+  // ("-0500 EST"); the name after the offset sometimes trips strtotime(),
+  // so it is dropped — the offset alone is enough to place the moment.
+  $createdRaw = preg_replace('/\s+[A-Za-z]+$/', '', trim((string)($ps['created'] ?? '')));
+  $ts = $createdRaw !== '' ? strtotime($createdRaw) : false;
+  if ($ts !== false) $entry['created'] = date('c', $ts);
+
+  // --size over ALL containers measured at 10.2s on a box with 81 of them —
+  // past staxx_images_unused()'s own 10s timeout on that batch call — so
+  // this one broken container's size is asked for on its own instead,
+  // filtered to its id (0.013s measured), never as part of the batch.
+  $sizeOut = trim(staxx_sh(
+    staxx_docker_bin().' ps -a --no-trunc --size --filter '.escapeshellarg('id='.$id)
+      .' --format '.escapeshellarg('{{.Size}}'), 8
+  ));
+  $firstSize = explode(' ', $sizeOut)[0] ?? '';
+  $entry['empty'] = strcasecmp($firstSize, '0B') === 0;
+
+  if ($entry['running']) {
+    $statCode = 1;
+    $statOut  = trim(staxx_sh(
+      staxx_docker_bin().' stats --no-stream --format '.escapeshellarg('{{.CPUPerc}}'."\t".'{{.MemUsage}}')
+        .' '.escapeshellarg($id), 8, $statCode
+    ));
+    if ($statCode === 0 && $statOut !== '') {
+      $cols = explode("\t", $statOut);
+      if (isset($cols[0]) && trim($cols[0]) !== '') $entry['cpu'] = trim($cols[0]);
+      if (isset($cols[1]) && trim($cols[1]) !== '') $entry['mem'] = trim($cols[1]);
+    }
+  }
+
+  $root   = staxx_images_docker_root();
+  $config = staxx_images_read_json($root.'/containers/'.$id.'/config.v2.json');
+  $host   = staxx_images_read_json($root.'/containers/'.$id.'/hostconfig.json');
+
+  if (is_array($config)) {
+    $cfgImage = trim((string)($config['Config']['Image'] ?? ''));
+    if ($cfgImage !== '') $entry['imageRef'] = $cfgImage;
+
+    $started = (string)($config['State']['StartedAt'] ?? '');
+    if ($started !== '') $entry['neverStarted'] = strncmp($started, '0001-', 5) === 0;
+
+    $labels = (array)($config['Config']['Labels'] ?? []);
+    $entry['unraidTemplate'] = ($labels['net.unraid.docker.managed'] ?? '') === 'dockerman';
+
+    $allow = array_flip(staxx_images_db_env_allowlist());
+    $vars  = [];
+    foreach ((array)($config['Config']['Env'] ?? []) as $line) {
+      $eq = strpos((string)$line, '=');
+      if ($eq === false) continue;
+      $key = substr((string)$line, 0, $eq);
+      if (isset($allow[$key])) $vars[$key] = substr((string)$line, $eq + 1);
+    }
+    if ($vars) {
+      $db      = $vars['POSTGRES_DB']      ?? $vars['MYSQL_DATABASE']   ?? $vars['MARIADB_DATABASE'] ?? '';
+      $user    = $vars['POSTGRES_USER']    ?? $vars['MYSQL_USER']       ?? $vars['MARIADB_USER']     ?? '';
+      $version = $vars['PG_VERSION']       ?? $vars['MARIADB_VERSION']  ?? $vars['MYSQL_VERSION']    ?? '';
+      // Docker Hub's PG_VERSION carries the package build too
+      // ("15.10-1.pgdg120+1") — only the part a person would recognise is shown.
+      $version = explode('-', $version)[0];
+
+      $engine = '';
+      if (isset($vars['PG_VERSION']) || isset($vars['POSTGRES_DB']) || isset($vars['POSTGRES_USER'])) {
+        $engine = 'PostgreSQL';
+      } elseif (isset($vars['MARIADB_DATABASE']) || isset($vars['MARIADB_USER']) || isset($vars['MARIADB_VERSION'])) {
+        $engine = 'MariaDB';
+      } elseif (isset($vars['MYSQL_DATABASE']) || isset($vars['MYSQL_USER']) || isset($vars['MYSQL_VERSION'])) {
+        $engine = 'MySQL';
+      }
+
+      if ($db !== '' || $user !== '' || $version !== '' || $engine !== '') {
+        $entry['database'] = ['engine' => $engine, 'db' => $db, 'user' => $user, 'version' => $version];
+      }
+    }
+
+    $ports = array_keys((array)($config['Config']['ExposedPorts'] ?? []));
+    if ($ports) $entry['ports'] = $ports;
+
+    // On Unraid, a container fixed to a custom network shows up under TWO
+    // names with the same address — the network's own name, and again under
+    // HostConfig.NetworkMode (on the box, "br0.2" and "eth0.2"). Only the
+    // name that is not NetworkMode is kept, so the window lists the address
+    // once. heldBy checks a running container's address on ANY of its
+    // networks, not just the one with this name, for the same reason.
+    //
+    // Only IPAMConfig.IPv4Address is ever shown here — that is the FIXED
+    // address a person configured. A container that never started has no
+    // live NetworkSettings.IPAddress to fall back to anyway, and even where
+    // one happened to be readable, a dynamic address must never be reported
+    // as fixed. A network with no fixed address still appears, with ip ''.
+    $mac         = (string)($config['Config']['MacAddress'] ?? '');
+    $networkMode = is_array($host) ? (string)($host['NetworkMode'] ?? '') : '';
+    $byIp        = [];  // fixed ip => network name, deduplicated
+    $noFixedIp   = [];  // network name => true, kept one row each, never merged
+    foreach ((array)($config['NetworkSettings']['Networks'] ?? []) as $netName => $net) {
+      if ($mac === '') $mac = (string)($net['MacAddress'] ?? '');
+      $ip = (string)($net['IPAMConfig']['IPv4Address'] ?? '');
+      if ($ip === '') { $noFixedIp[$netName] = true; continue; }
+
+      if (!isset($byIp[$ip])) {
+        $byIp[$ip] = $netName;
+      } elseif ($byIp[$ip] === $networkMode && $netName !== $networkMode) {
+        $byIp[$ip] = $netName;
+      }
+    }
+    $networks = [];
+    foreach ($byIp as $ip => $netName) {
+      $heldBy = '';
+      foreach ($running as $r) {
+        if (in_array($ip, $r['nets'], true)) { $heldBy = $r['name']; break; }
+      }
+      $row = ['name' => $netName, 'ip' => $ip];
+      if ($heldBy !== '') $row['heldBy'] = $heldBy;
+      $networks[] = $row;
+    }
+    foreach (array_keys($noFixedIp) as $netName) {
+      $networks[] = ['name' => $netName, 'ip' => ''];
+    }
+    if ($networks) $entry['networks'] = $networks;
+    $entry['mac'] = $mac;
+  }
+
+  if (is_array($host)) {
+    $entry['limits'] = [
+      'memory'     => (int)($host['Memory'] ?? 0),
+      'nanoCpus'   => (int)($host['NanoCpus'] ?? 0),
+      'devices'    => count((array)($host['Devices'] ?? [])),
+      'privileged' => (bool)($host['Privileged'] ?? false),
+    ];
+
+    $folders = [];
+    foreach ((array)($host['Binds'] ?? []) as $bind) {
+      $parts  = explode(':', (string)$bind);
+      $source = staxx_images_norm_path((string)($parts[0] ?? ''));
+      $dest   = $parts[1] ?? '';
+      if ($source === '') continue;
+
+      $row = ['source' => $source, 'dest' => $dest];
+
+      // A network or remote mount is never measured: on this box `du` over
+      // a dead network share wedged the whole process in uninterruptible
+      // sleep, which even `timeout` cannot kill. `-x` keeps any ordinary
+      // du call from wandering onto one it was not warned about.
+      $isRemote = (bool)preg_match('#^/mnt/(remotes|rootshare|addons)/#', $source);
+      if ($isRemote) {
+        $row['remote'] = true;
+        $row['bytes']  = null;
+      } else {
+        $duCode = 1;
+        $duOut  = trim(staxx_sh('du -sbx '.escapeshellarg($source), 10, $duCode));
+        $row['bytes'] = ($duCode === 0 && preg_match('/^(\d+)/', $duOut, $m)) ? (int)$m[1] : null;
+      }
+
+      $mtime = @filemtime($source);
+      if ($mtime !== false) $row['changed'] = date('c', $mtime);
+
+      $usedBy = [];
+      foreach ($running as $r) {
+        if (in_array($source, $r['sources'], true)) $usedBy[] = $r['name'];
+      }
+      if ($usedBy) $row['usedBy'] = $usedBy;
+
+      $folders[] = $row;
+    }
+    if ($folders) $entry['folders'] = $folders;
+  }
+
+  $templatePath = '/boot/config/plugins/dockerMan/templates-user/my-'.$entry['name'].'.xml';
+  $entry['templateFile'] = is_file($templatePath) ? basename($templatePath) : '';
+
+  return $entry;
 }
 
 /**
@@ -122,9 +489,10 @@ function staxx_images_stack_refs(): array {
  * The grouped list the window shows. Every rule in PLAN_180 lives here:
  *
  *  3.  a container `docker inspect` cannot read no longer refuses the whole
- *      list: its image is protected by name instead, via `docker ps`, and a
- *      warning says so. Only a container `docker ps` itself cannot name an
- *      image for still fails the list closed.
+ *      list: its image is protected by name instead, via `docker ps`, and it
+ *      gets its own "broken" entry (PLAN_181 item 10) instead of a warning.
+ *      Only a container `docker ps` itself cannot name an image for still
+ *      fails the list closed.
  *  4a. a roll-back image is matched by digest alone.
  *  4b. fails closed on the same three conditions staxx_update_cleanup() does.
  *  4c. StaXX's own images (the crypt container) are excluded by their own
@@ -132,7 +500,11 @@ function staxx_images_stack_refs(): array {
  *  6.  a stack's images are its compose file's resolved "image:" values.
  *  7.  "built here" means no RepoDigests (a pulled image always has one).
  *
- * @return array{ok:bool, groups?:array, totals?:array, warnings?:string[]}
+ * PLAN_181 item 9 — the main groups carry only clutter (dangling/older/
+ * unused); a stack's own "still wanted" images are no longer a group at
+ * all, just bytes folded into totals.wantedBytes.
+ *
+ * @return array{ok:bool, groups?:array, totals?:array, broken?:array, storage?:?array}
  */
 function staxx_images_unused(string &$error): array {
   $error = '';
@@ -167,17 +539,19 @@ function staxx_images_unused(string &$error): array {
 
   // Rule 3 — every container, read in one batch, not one call each. If the
   // batch as a whole fails, only THEN is each container asked about on its
-  // own, purely to name which one Docker could not read for the refusal.
+  // own, purely to name which one Docker could not read for the refusal, or
+  // to gather its facts for a "broken" entry (item 10). --no-trunc so a
+  // broken entry's own id is the full 64 hex the page needs to send back.
   $psCode = 1;
-  $psOut  = staxx_sh(staxx_docker_bin().' ps -aq', 10, $psCode);
+  $psOut  = staxx_sh(staxx_docker_bin().' ps -aq --no-trunc', 10, $psCode);
   if ($psCode !== 0) {
     $error = 'Docker could not be asked which containers exist, so nothing was worked out.';
     return ['ok' => false];
   }
   $cids = array_values(array_filter(array_map('trim', explode("\n", $psOut))));
 
-  $used     = [];   // short image id => true
-  $warnings = [];   // one sentence per container the batch could not read
+  $used   = [];   // short image id => true
+  $broken = [];   // PLAN_181 item 10 — one entry per container docker inspect cannot read
   if ($cids) {
     $idsArg = implode(' ', array_map('escapeshellarg', $cids));
     $inCode = 1;
@@ -193,17 +567,32 @@ function staxx_images_unused(string &$error): array {
       // own: a container that reads fine still counts as using its image;
       // one that does not is protected by name instead, via `docker ps`,
       // which (unlike `docker inspect`) still answers for a container in a
-      // broken state. Only a container `docker ps` itself cannot name an
-      // image for still refuses the whole listing.
-      $namesOut = staxx_sh(
-        staxx_docker_bin().' ps -a --format '.escapeshellarg('{{.ID}}'."\t".'{{.Names}}'), 10
+      // broken state, and gets its own "broken" entry (item 10). Only a
+      // container `docker ps` itself cannot name an image for still refuses
+      // the whole listing.
+      // --size left out deliberately: measured on the box at 10.2s over 81
+      // containers, past this call's own 10s timeout, which made $psAll
+      // come back empty and every broken container fall through to the
+      // refusal below. Without it the same call takes 0.03s; a broken
+      // container's own size is fetched on its own, filtered to one id,
+      // in staxx_images_broken_entry().
+      $psAllOut = staxx_sh(
+        staxx_docker_bin().' ps -a --no-trunc --format '.escapeshellarg(
+          '{{.ID}}'."\t".'{{.Names}}'."\t".'{{.CreatedAt}}'."\t".'{{.State}}'."\t".'{{.Image}}'
+        ), 10
       );
-      $names = [];
-      foreach (explode("\n", $namesOut) as $line) {
-        $cols = explode("\t", $line, 2);
-        if (count($cols) === 2) $names[$cols[0]] = $cols[1];
+      $psAll = [];
+      foreach (explode("\n", $psAllOut) as $line) {
+        $cols = explode("\t", $line);
+        if (count($cols) < 5) continue;
+        $psAll[$cols[0]] = [
+          'id' => $cols[0], 'name' => $cols[1], 'created' => $cols[2],
+          'state' => $cols[3], 'image' => $cols[4],
+        ];
       }
+
       $sawFailure = false;
+      $brokenRaw  = []; // ['row' => psAll row, 'imagePresent' => bool]
       foreach ($cids as $cid) {
         $oneCode = 1;
         $oneOut  = staxx_sh(staxx_docker_bin().' inspect --format '.escapeshellarg('{{.Image}}').' '.escapeshellarg($cid), 8, $oneCode);
@@ -212,14 +601,11 @@ function staxx_images_unused(string &$error): array {
           continue;
         }
         $sawFailure = true;
-        $name = $names[$cid] ?? $cid;
+        $row  = $psAll[$cid] ?? null;
+        $name = $row['name'] ?? $cid;
+        $ref  = trim((string)($row['image'] ?? ''));
 
-        $psCode = 1;
-        $ref = trim(staxx_sh(
-          staxx_docker_bin().' ps -a --no-trunc --filter '.escapeshellarg('id='.$cid)
-            .' --format '.escapeshellarg('{{.Image}}'), 8, $psCode
-        ));
-        if ($psCode !== 0 || $ref === '') {
+        if ($row === null || $ref === '') {
           // `docker ps` cannot even name an image for it — nothing to
           // protect on disk, so this is the one case still worth refusing
           // the whole listing over.
@@ -229,21 +615,17 @@ function staxx_images_unused(string &$error): array {
           return ['ok' => false];
         }
 
-        $shownRef = strncmp($ref, 'sha256:', 7) === 0 ? staxx_update_short_id($ref) : $ref;
-
         $resolveCode = 1;
         $resolvedId  = trim(staxx_sh(
           staxx_docker_bin().' image inspect --format '.escapeshellarg('{{.Id}}').' '.escapeshellarg($ref),
           8, $resolveCode
         ));
-        if ($resolveCode === 0 && $resolvedId !== '') {
-          $used[staxx_update_short_id($resolvedId)] = true;
-        }
-        // Whether or not it resolved, the container itself could not be
-        // read, so the window says so — the image is protected either way,
-        // by being added to $used above when it resolves.
-        $warnings[] = 'Docker could not read the container "'.$name.'", so the image it uses ('
-                    . $shownRef.') is left out of this list and will not be removed.';
+        $imagePresent = $resolveCode === 0 && $resolvedId !== '';
+        // Whether or not the container itself could be read, its image is
+        // protected either way — by being added to $used when it resolves.
+        if ($imagePresent) $used[staxx_update_short_id($resolvedId)] = true;
+
+        $brokenRaw[] = ['row' => $row, 'imagePresent' => $imagePresent];
       }
       if (!$sawFailure) {
         // Could not reproduce the failure a second time — still refuse,
@@ -252,6 +634,15 @@ function staxx_images_unused(string &$error): array {
         $error = 'Docker could not be asked about every container, so StaXX cannot tell which images '
                . 'are in use. Nothing will be removed — try again in a moment.';
         return ['ok' => false];
+      }
+
+      // Item 10's facts, gathered once for every running container and
+      // reused for each broken entry's "who else uses this" comparisons.
+      $runningIds = [];
+      foreach ($psAll as $r) { if (($r['state'] ?? '') === 'running') $runningIds[] = $r['id']; }
+      $runningFacts = staxx_images_running_facts($runningIds);
+      foreach ($brokenRaw as $b) {
+        $broken[] = staxx_images_broken_entry($b['row'], $b['imagePresent'], $runningFacts);
       }
     } else {
       foreach ($inLines as $line) {
@@ -262,17 +653,36 @@ function staxx_images_unused(string &$error): array {
 
   // The candidates: one image per Docker image ID, its tags (if any) kept
   // together on the same row.
-  $lsOut = staxx_sh(
-    staxx_docker_bin().' images --no-trunc --format '
-      .escapeshellarg('{{.ID}}'."\t".'{{.Repository}}'."\t".'{{.Tag}}'),
-    20
-  );
+  //
+  // Two calls, not one: measured on the box (Docker 29.5.3), plain
+  // `docker images` no longer lists untagged (dangling) images at all — a
+  // fresh `docker import` with no tag is absent from it, present only under
+  // `-a` or `--filter dangling=true`. `-a` also lists intermediate build
+  // layers, which have children and can never be removed, so the narrower
+  // dangling filter is used instead and its rows merged in below. Missing
+  // this cost the window most of what it had to show: the box had 64 such
+  // images (Docker's own reclaimable figure ~35 GB) the window never saw.
+  $lsFormat = escapeshellarg('{{.ID}}'."\t".'{{.Repository}}'."\t".'{{.Tag}}');
+  $lsOut = staxx_sh(staxx_docker_bin().' images --no-trunc --format '.$lsFormat, 20)
+    ."\n".staxx_sh(staxx_docker_bin().' images --no-trunc --filter dangling=true --format '.$lsFormat, 20);
   // The repository name (everything before the tag) of every image a
   // container is actually using — read from the SAME listing, before it is
   // filtered down to candidates, since a used row is exactly what an
   // "older release of something running" row has to be compared against.
   $usedRepos = [];
   $byId = [];
+  // Every image id a container is actually using — kept full-length (not
+  // shortened), so the layer-counting build below can ask Docker for their
+  // RootFS.Layers too: a layer only an in-use image needs still has to
+  // count as "in use", not clutter, even though the image itself is never
+  // a candidate row.
+  $usedFullIds = [];
+  // Its own tags, kept alongside — so a "rebuilt" leftover can be named
+  // after a RUNNING app too (the common case: 28 of the box's rebuild
+  // leftovers are earlier builds of pmd:local, which is in use, so is
+  // never itself a candidate row and would otherwise never be a match
+  // target at all).
+  $usedTags = [];
   foreach (explode("\n", $lsOut) as $line) {
     $cols = explode("\t", $line);
     if (count($cols) < 3 || trim($cols[0]) === '') continue;
@@ -280,21 +690,27 @@ function staxx_images_unused(string &$error): array {
     $hasTag = $cols[1] !== '<none>' && $cols[2] !== '<none>';
 
     if (isset($used[staxx_update_short_id($id)])) {
-      if ($hasTag) $usedRepos[$cols[1]] = true;
+      if ($hasTag) {
+        $usedRepos[$cols[1]] = true;
+        $usedTags[$id][] = $cols[1].':'.$cols[2];
+      }
+      $usedFullIds[$id] = true;
       continue; // rule: never an image a container uses
     }
     if (!isset($byId[$id])) $byId[$id] = [];
     if ($hasTag) $byId[$id][] = $cols[1].':'.$cols[2];
   }
   if (!$byId) {
-    return ['ok' => true, 'groups' => ['keep' => [], 'dangling' => [], 'older' => [], 'unused' => [], 'wanted' => []],
-             'totals' => ['removableCount' => 0, 'removableBytes' => 0, 'keptCount' => 0, 'keptBytes' => 0],
-             'warnings' => $warnings];
+    return ['ok' => true,
+             'groups' => ['keep' => [], 'dangling' => [], 'rebuilt' => [], 'older' => [], 'unused' => []],
+             'totals' => ['removableCount' => 0, 'removableBytes' => 0, 'keptCount' => 0, 'keptBytes' => 0, 'wantedBytes' => 0],
+             'sizing' => 'layers', 'layers' => [],
+             'broken' => $broken, 'storage' => staxx_images_storage()];
   }
 
   // Rules 4a/4c/6/7 all need docker image inspect's own view — RepoDigests,
-  // labels and byte size — asked once over every candidate ID, not one call
-  // per image.
+  // labels, layers (below) and byte size — asked once over every candidate
+  // ID, not one call per image.
   $idsArg = implode(' ', array_map('escapeshellarg', array_keys($byId)));
   $inspectOut = staxx_sh(
     staxx_docker_bin().' image inspect --format '.escapeshellarg('{{json .}}').' '.$idsArg, 30
@@ -304,8 +720,15 @@ function staxx_images_unused(string &$error): array {
   $keepOwners  = staxx_images_keep_owners();
   $stackRefs   = staxx_images_stack_refs();
 
-  $groups = ['keep' => [], 'dangling' => [], 'older' => [], 'unused' => [], 'wanted' => []];
-  $removableCount = 0; $removableBytes = 0; $keptCount = 0; $keptBytes = 0;
+  // Pass 1 — every candidate's own facts, and which group it belongs to,
+  // without yet building the rows the window is sent: naming a "rebuilt"
+  // row (below) needs every TAGGED candidate's layers already known, which
+  // is only true once this pass has finished.
+  $records          = [];  // id => facts, keyed for the layer pass below
+  $taggedCandidates = [];  // every image WITH a tag, whatever its group —
+                            // what a "rebuilt" row is compared against
+  $protectedLayers  = [];  // layer lists of images excluded before grouping
+                            // (today: staxx.crypt) — never clutter, never a row
 
   foreach (explode("\n", trim($inspectOut)) as $jsonLine) {
     $jsonLine = trim($jsonLine);
@@ -320,69 +743,82 @@ function staxx_images_unused(string &$error): array {
 
     // Rule 4c — StaXX's own images (today, only the cryptography
     // container), excluded by the label that container is built with,
-    // never by name — see staxx_crypt_images() for the same filter.
+    // never by name — see staxx_crypt_images() for the same filter. Never
+    // a candidate row, but a layer it still needs is not clutter just
+    // because nothing else is watching it: its own layers are recorded
+    // before the skip and fed into the "in use" pass below, the same way a
+    // running container's are, so a clutter image sharing one is never
+    // shown as freeing space this image still holds onto.
     $labels = (array)($info['Config']['Labels'] ?? []);
-    if (($labels['staxx.crypt'] ?? '') === '1') continue;
-
-    $digests = [];
-    foreach ((array)($info['RepoDigests'] ?? []) as $rd) {
-      $at = strrpos($rd, '@');
-      if ($at !== false) $digests[] = substr($rd, $at + 1);
+    if (($labels['staxx.crypt'] ?? '') === '1') {
+      $protectedLayers[] = array_values((array)($info['RootFS']['Layers'] ?? []));
+      continue;
     }
 
-    $row = ['id' => $id, 'tags' => $tags, 'size' => $size, 'note' => ''];
+    $digests     = [];
+    $repoDigests = [];  // {repo, digest} pairs — item 11's "dangling" naming needs the repo half too
+    foreach ((array)($info['RepoDigests'] ?? []) as $rd) {
+      $at = strrpos($rd, '@');
+      if ($at !== false) {
+        $digests[]     = substr($rd, $at + 1);
+        $repoDigests[] = ['repo' => substr($rd, 0, $at), 'digest' => substr($rd, $at + 1)];
+      }
+    }
+
+    $layers     = array_values((array)($info['RootFS']['Layers'] ?? []));
+    $cmd        = $info['Config']['Cmd']        ?? null;
+    $entrypoint = $info['Config']['Entrypoint'] ?? null;
+
+    $rec = [
+      'id' => $id, 'tags' => $tags, 'size' => $size, 'note' => '',
+      'layers' => $layers, 'cmd' => $cmd, 'entrypoint' => $entrypoint,
+    ];
+    if ($tags) {
+      $taggedCandidates[] = ['tag' => $tags[0], 'layers' => $layers, 'cmd' => $cmd, 'entrypoint' => $entrypoint];
+    }
 
     // Rule 4a — roll-back protection, by digest alone.
     $keptDigest = null;
     foreach ($digests as $d) { if (isset($keepDigests[$d])) { $keptDigest = $d; break; } }
     if ($keptDigest !== null) {
       $owner = $keepOwners[$keptDigest] ?? '';
-      $row['note'] = $owner !== ''
+      $rec['note'] = $owner !== ''
         ? 'Kept so "'.$owner.'" can be rolled back.'
         : 'Kept for rolling back an update.';
-      $groups['keep'][] = $row;
-      $keptCount++; $keptBytes += $size;
+      $rec['group'] = 'keep';
+      $records[$id] = $rec;
       continue;
     }
 
-    // Dangling — left behind by an update or a rebuild, no tag at all.
+    // No tag at all — left behind by an update or a rebuild. Item 11's
+    // naming split: one WITH a RepoDigest is an update leftover (rule 7 —
+    // a pulled image always has one), named by the repository the digest
+    // belonged to; one WITHOUT is a local rebuild's leftover, named below
+    // (once every tagged candidate's layers are known) against whichever
+    // tagged image it most resembles.
     if (!$tags) {
-      $groups['dangling'][] = $row;
-      $removableCount++; $removableBytes += $size;
+      if ($repoDigests) {
+        $rec['group'] = 'dangling';
+        $rec['repo']  = $repoDigests[0]['repo'];
+      } else {
+        $rec['group'] = 'rebuilt';
+      }
+      $records[$id] = $rec;
       continue;
     }
 
-    // Rule 6/7 — does a stack still name this exact reference?
+    // Rule 6/7 — does a stack still name this exact reference, or does it
+    // have no RepoDigests at all (built here)? Either way it is "still
+    // wanted" — item 9 folds it into the capacity bar's in-use slice and
+    // never turns it into a removable row.
     $namedBy = null;
     foreach ($tags as $ref) {
       if (isset($stackRefs[$ref])) { $namedBy = $stackRefs[$ref]; break; }
     }
-    // Rule 7 — built here: no RepoDigests at all. A pulled image always has
-    // one, but removing it by digest (what the weekly cleanup used to do) also
-    // strips it, so the note says "may have been" rather than claiming it.
     $builtLocally = !$digests;
-
-    // "Still wanted" images keep their own checkbox — rule 2 lets the
-    // server accept their id from the page like any other selectable row —
-    // so they count toward what CAN be removed, same as every other
-    // checkable group, even though the box starts unticked.
-    // A running stack can name an image its container is not on yet — a
-    // newer pull waiting for a recreate — so being named at all is enough to
-    // leave a row unticked, whether or not the stack is running.
-    if ($namedBy !== null) {
-      $row['note'] = $namedBy['running']
-        ? 'The stack "'.$namedBy['stack'].'" names this, but its container is not using it yet. '
-          . 'Removing it means it downloads again the next time the stack is recreated.'
-        : 'The stack "'.$namedBy['stack'].'" uses this. It is stopped, so removing this '
-          . 'means it downloads again when you start it.';
-      $groups['wanted'][] = $row;
-      $removableCount++; $removableBytes += $size;
-      continue;
-    }
-    if ($builtLocally) {
-      $row['note'] = 'Docker has no download record for this, so it may have been built on this server. If it was, removing it means building it again.';
-      $groups['wanted'][] = $row;
-      $removableCount++; $removableBytes += $size;
+    if ($namedBy !== null || $builtLocally) {
+      $rec['group'] = 'wanted';
+      $records[$id] = $rec;
       continue;
     }
 
@@ -398,12 +834,198 @@ function staxx_images_unused(string &$error): array {
       $repo = $c !== false ? substr($ref, 0, $c) : $ref;
       if (isset($usedRepos[$repo])) { $isOlder = true; break; }
     }
-
-    $row['note'] = $isOlder
+    $rec['note'] = $isOlder
       ? 'An older release of an app that is running, older than the ones kept for rolling back.'
       : 'No stack uses this. It will download again if you ever need it.';
-    $groups[$isOlder ? 'older' : 'unused'][] = $row;
-    $removableCount++; $removableBytes += $size;
+    $rec['group'] = $isOlder ? 'older' : 'unused';
+    $records[$id] = $rec;
+  }
+
+  // Pass 1a — every RUNNING (in-use) image's own layers, Cmd and
+  // Entrypoint, one more batched inspect over the ids $usedFullIds
+  // collected above (never a candidate row, since a container is using
+  // them). Needed before naming below: the common real-world "rebuilt"
+  // case is a leftover from rebuilding an app that is CURRENTLY RUNNING —
+  // on the box, 28 leftovers are earlier builds of pmd:local, itself never
+  // a candidate — so the match pool below has to include these, not just
+  // the clutter/keep/wanted candidates already in $taggedCandidates.
+  $usedLayersById = [];
+  if ($usedFullIds) {
+    $usedIdsArg = implode(' ', array_map('escapeshellarg', array_keys($usedFullIds)));
+    $usedInspectOut = staxx_sh(
+      staxx_docker_bin().' image inspect --format '.escapeshellarg('{{json .}}').' '.$usedIdsArg, 30
+    );
+    foreach (explode("\n", trim($usedInspectOut)) as $jsonLine) {
+      $jsonLine = trim($jsonLine);
+      if ($jsonLine === '') continue;
+      $info = json_decode($jsonLine, true);
+      if (!is_array($info)) continue;
+      $uid = (string)($info['Id'] ?? '');
+      if ($uid === '') continue;
+      $uLayers = array_values((array)($info['RootFS']['Layers'] ?? []));
+      $usedLayersById[$uid] = $uLayers;
+      $uTags = $usedTags[$uid] ?? [];
+      if ($uTags) {
+        $taggedCandidates[] = [
+          'tag' => $uTags[0], 'layers' => $uLayers,
+          'cmd' => $info['Config']['Cmd'] ?? null, 'entrypoint' => $info['Config']['Entrypoint'] ?? null,
+        ];
+      }
+    }
+  }
+
+  // Pass 2a — every layer's own chain ID and byte size, needed both for
+  // naming (below) and for counting (further below), so it is done once,
+  // before naming, rather than fetched twice. Every candidate's and every
+  // in-use image's layers are already known (above).
+  $chainIdsById = [];
+  foreach ($records as $rid => $rec) $chainIdsById[$rid] = staxx_images_chain_ids($rec['layers']);
+  foreach ($usedLayersById as $uid => $layers) $chainIdsById[$uid] = staxx_images_chain_ids($layers);
+  // staxx.crypt images are excluded before grouping and so never reach
+  // $records — chained here by their own list position, not an id, purely
+  // so their layers still enter $allChainIds and the "in use" pass below.
+  $protectedChainSets = [];
+  foreach ($protectedLayers as $pl) $protectedChainSets[] = staxx_images_chain_ids($pl);
+
+  $allChainIds = [];
+  foreach ($chainIdsById as $chains) { foreach ($chains as $c) $allChainIds[$c] = true; }
+  foreach ($protectedChainSets as $chains) { foreach ($chains as $c) $allChainIds[$c] = true; }
+
+  // If ANY layer any of this needs cannot be sized, the whole reply falls
+  // back to full image sizes rather than mixing layer-accurate and guessed
+  // figures within the same list.
+  $layerBytes = [];
+  $sizingOk   = true;
+  foreach (array_keys($allChainIds) as $chainId) {
+    $bytes = staxx_images_layer_size($chainId);
+    if ($bytes === null) { $sizingOk = false; continue; }
+    $layerBytes[$chainId] = $bytes;
+  }
+
+  // Pass 2b — naming a "rebuilt" row: the tagged image — candidate OR
+  // in-use, from the combined pool just built — whose layers share the
+  // strictly longest leading run with it AND whose Cmd and Entrypoint
+  // match exactly, including when both are null/empty (an image with no
+  // Cmd only ever matches another image with no Cmd). Never a guess on a
+  // tie — two tagged images reaching the same length leave buildOf unset.
+  //
+  // A shared run proves nothing on its own where every layer in it is
+  // empty: Docker gives every all-zero-byte layer (a no-op WORKDIR/ENV
+  // instruction, or this suite's own empty-tar test fixture) the SAME
+  // diff ID, so an empty leading layer alone would "match" almost any
+  // image. The run is trimmed back to its last layer over 0 bytes, and at
+  // least one such layer is required, or the candidate is skipped outright.
+  //
+  // The loop variable below is $named, not $rec — $rec is used BY VALUE
+  // elsewhere in this function (Pass 1 above, the row-building pass
+  // below), and this is the one place it would be bound BY REFERENCE, so a
+  // shared name risks the classic PHP foreach-by-reference alias surviving
+  // past the loop. `unset()` already guards against that; the separate
+  // name removes the risk regardless of future edits nearby. This is a
+  // defensive rename only — it fixes no observed fault. The apparent
+  // "match" seen on the box on 2026-09-25 (this suite's own empty-layer
+  // fixture reported as an earlier build of a real image) turned out to be
+  // the SUITE'S OWN TEST wrongly picking up a real box image before ever
+  // reaching this naming code at all — see tests/server/images_unused.php.
+  // This naming code was not at fault.
+  foreach ($records as $rid => &$named) {
+    if ($named['group'] !== 'rebuilt') continue;
+    $recChainIds = $chainIdsById[$rid];
+    $bestLen = 0; $bestTag = null; $tie = false;
+    foreach ($taggedCandidates as $tc) {
+      if ($tc['cmd'] !== $named['cmd'] || $tc['entrypoint'] !== $named['entrypoint']) continue;
+      $max = min(count($named['layers']), count($tc['layers']));
+      $len = 0;
+      while ($len < $max && $named['layers'][$len] === $tc['layers'][$len]) $len++;
+      if ($len < 1) continue;
+
+      // A 0-byte layer must disqualify, never count as non-zero: $bytes is
+      // either a genuine positive integer or exactly null (never 0 read as
+      // truthy) — checked explicitly rather than a bare truthiness test,
+      // which a real 0-byte layer would also fail but for the wrong reason.
+      $effLen = 0;
+      for ($i = 0; $i < $len; $i++) {
+        $bytes = $layerBytes[$recChainIds[$i]] ?? null;
+        if ($bytes !== null && $bytes > 0) $effLen = $i + 1;
+      }
+      if ($effLen < 1) continue;
+
+      if ($effLen > $bestLen)      { $bestLen = $effLen; $bestTag = $tc['tag']; $tie = false; }
+      elseif ($effLen === $bestLen) { $tie = true; }
+    }
+    if ($bestTag !== null && !$tie) $named['buildOf'] = $bestTag;
+  }
+  unset($named);
+
+  // Pass 2c — attribution, each layer once, in this priority: a layer any WANTED
+  // (still in use, item 9), genuinely running, or excluded-before-grouping
+  // (staxx.crypt) image needs is in use; else one any KEEP (roll-back)
+  // image needs is kept; else it is clutter.
+  $category = [];
+  if ($sizingOk) {
+    foreach ($records as $rid => $rec) {
+      if ($rec['group'] !== 'wanted') continue;
+      foreach ($chainIdsById[$rid] as $c) $category[$c] = 'in-use';
+    }
+    foreach ($usedLayersById as $uid => $layers) {
+      foreach ($chainIdsById[$uid] as $c) $category[$c] = 'in-use';
+    }
+    foreach ($protectedChainSets as $chains) {
+      foreach ($chains as $c) $category[$c] = 'in-use';
+    }
+    foreach ($records as $rid => $rec) {
+      if ($rec['group'] !== 'keep') continue;
+      foreach ($chainIdsById[$rid] as $c) { if (!isset($category[$c])) $category[$c] = 'kept'; }
+    }
+    foreach ($records as $rid => $rec) {
+      if (!in_array($rec['group'], ['dangling', 'rebuilt', 'older', 'unused'], true)) continue;
+      foreach ($chainIdsById[$rid] as $c) { if (!isset($category[$c])) $category[$c] = 'clutter'; }
+    }
+  }
+
+  $groups = ['keep' => [], 'dangling' => [], 'rebuilt' => [], 'older' => [], 'unused' => []];
+  $removableCount = 0; $keptCount = 0; $wantedBytes = 0;
+  $removableBytes = 0; $keptBytes = 0;
+  $layersOut = [];
+
+  foreach ($records as $rid => $rec) {
+    $group = $rec['group'];
+    if ($group === 'wanted') { $wantedBytes += $rec['size']; continue; }
+
+    $row = ['id' => $rid, 'tags' => $rec['tags'], 'note' => $rec['note']];
+    if (isset($rec['repo']))    $row['repo']    = $rec['repo'];
+    if (isset($rec['buildOf'])) $row['buildOf'] = $rec['buildOf'];
+
+    if ($sizingOk) {
+      if ($group === 'keep') {
+        $bytes = 0;
+        foreach ($chainIdsById[$rid] as $c) { if (($category[$c] ?? '') === 'kept') $bytes += $layerBytes[$c]; }
+        $row['size'] = $bytes;
+      } else {
+        $clutter = []; $bytes = 0;
+        foreach ($chainIdsById[$rid] as $c) {
+          if (($category[$c] ?? '') === 'clutter') { $clutter[] = $c; $bytes += $layerBytes[$c]; }
+        }
+        $row['size']          = $bytes;
+        $row['clutterLayers'] = $clutter;
+      }
+    } else {
+      $row['size'] = $rec['size'];
+      if ($group === 'keep') { $keptBytes += $rec['size']; } else { $removableBytes += $rec['size']; }
+    }
+
+    $groups[$group][] = $row;
+    if ($group === 'keep') { $keptCount++; } else { $removableCount++; }
+  }
+
+  if ($sizingOk) {
+    // Each layer counted exactly once, globally — never the sum of the
+    // rows above, which would count a layer twice wherever two rows share it.
+    foreach ($layerBytes as $c => $bytes) {
+      $cat = $category[$c] ?? null;
+      if ($cat === 'clutter') { $removableBytes += $bytes; $layersOut[$c] = $bytes; }
+      elseif ($cat === 'kept') { $keptBytes += $bytes; }
+    }
   }
 
   // Largest first within each group.
@@ -413,13 +1035,17 @@ function staxx_images_unused(string &$error): array {
   unset($g);
 
   return [
-    'ok'       => true,
-    'groups'   => $groups,
-    'totals'   => [
+    'ok'      => true,
+    'groups'  => $groups,
+    'totals'  => [
       'removableCount' => $removableCount, 'removableBytes' => $removableBytes,
       'keptCount'      => $keptCount,      'keptBytes'      => $keptBytes,
+      'wantedBytes'    => $wantedBytes,
     ],
-    'warnings' => $warnings,
+    'sizing'  => $sizingOk ? 'layers' : 'approximate',
+    'layers'  => $sizingOk ? $layersOut : [],
+    'broken'  => $broken,
+    'storage' => staxx_images_storage(),
   ];
 }
 
@@ -439,8 +1065,13 @@ function staxx_images_remove_job(array $ids, string &$error): string {
   $listing = staxx_images_unused($error);
   if (!$listing['ok']) return ''; // $error already set, with the right sentence
 
+  // PLAN_181 item 9 — "wanted" is no longer offered for removal at all, so
+  // it is dropped from the allowlist along with everything else that never
+  // was: "keep" rows, and any id not on the server's own current list.
+  // "rebuilt" (leftovers from a local rebuild) is offered like every other
+  // clutter group and is ticked by default on the page.
   $allowed = [];
-  foreach (['dangling', 'older', 'unused', 'wanted'] as $g) {
+  foreach (['dangling', 'rebuilt', 'older', 'unused'] as $g) {
     foreach ($listing['groups'][$g] as $row) $allowed[$row['id']] = $row;
   }
 
@@ -478,6 +1109,48 @@ function staxx_images_remove_job(array $ids, string &$error): string {
   @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
 
   return $job;
+}
+
+/**
+ * PLAN_181 item 10 — clears Docker's own broken record for one container
+ * `docker inspect` cannot read. `docker rm -f`, never `-v`, so any volume
+ * it names is left alone — deleting data is a separate, deliberate act this
+ * button never performs. Runs inline rather than as a detached job: `rm -f`
+ * on a container that is not really running returns in well under a second.
+ *
+ * The id must be in a FRESH staxx_images_unused()'s `broken` list — never
+ * trusted from the caller — the same "check the server's own live list"
+ * rule staxx_images_remove_job() follows for image ids.
+ */
+function staxx_images_remove_broken(string $id, string &$error): bool {
+  $error = '';
+  if (!preg_match('/^[0-9a-f]{64}$/', $id)) {
+    $error = 'That is not a container id StaXX recognises.';
+    return false;
+  }
+
+  $listError = '';
+  $listing = staxx_images_unused($listError);
+  if (!$listing['ok']) { $error = $listError; return false; }
+
+  $found = null;
+  foreach ($listing['broken'] as $b) {
+    if ($b['id'] === $id) { $found = $b; break; }
+  }
+  if ($found === null) {
+    $error = 'That container is no longer listed as broken — close this window and open it again.';
+    return false;
+  }
+
+  $code = 1;
+  staxx_sh(staxx_docker_bin().' rm -f '.escapeshellarg($id), 20, $code);
+  if ($code !== 0) {
+    $error = 'Docker would not remove the container "'.$found['name'].'" either. Restarting Docker '
+           . '(Settings → Docker: set Enable Docker to No, apply, then Yes) often clears a record '
+           . 'like this — then scan again.';
+    return false;
+  }
+  return true;
 }
 
 /**

@@ -1954,10 +1954,13 @@ switch ($action) {
     $listing = staxx_images_unused($error);
     if (!$listing['ok']) staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply([
-      'ok'       => true,
-      'groups'   => $listing['groups'],
-      'totals'   => $listing['totals'],
-      'warnings' => $listing['warnings'] ?? [],
+      'ok'      => true,
+      'groups'  => $listing['groups'],
+      'totals'  => $listing['totals'],
+      'sizing'  => $listing['sizing'] ?? 'approximate',
+      'layers'  => $listing['layers'] ?? [],
+      'broken'  => $listing['broken'] ?? [],
+      'storage' => $listing['storage'] ?? null,
     ]);
 
   // ---- removing the ticked images — a detached job, same shape as every other one ----
@@ -1970,6 +1973,12 @@ switch ($action) {
     $job = staxx_images_remove_job($ids, $error);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
+
+  // ---- PLAN_181 item 10 — clearing one broken container's own record ----
+  case 'images_remove_broken':
+    $id = trim((string)($_POST['id'] ?? ''));
+    if (!staxx_images_remove_broken($id, $error)) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true]);
 
   // ---- the browser saying an editor on this stack still has unsaved changes --
   //
