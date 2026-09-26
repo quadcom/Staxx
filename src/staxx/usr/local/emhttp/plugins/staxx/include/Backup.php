@@ -82,8 +82,8 @@ function staxx_backup_norm(string $p): string {
  * config together. '' when no store has been chosen.
  *
  * PLAN_186: this used to name stacks and archives as two separate paths,
- * which left config/ — the settings file, icon cache and updates.json —
- * out of the answer entirely. One path covering the whole store means
+ * which left config/ — the settings file, updates.json and similar — out
+ * of the answer entirely. One path covering the whole store means
  * Copy the path hands over a single folder, and nobody who names it that
  * way is ever told part of StaXX is missing.
  */

@@ -442,10 +442,7 @@ function staxx_icon_serve_path(string $stack, string $file): string {
   $ext = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
   if (!in_array($ext, STAXX_ICON_EXTS, true)) return '';
 
-  $dir = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $dir = $s['dir']; break; }
-  }
+  $dir = staxx_icon_stack_dir($stack);
   if ($dir === '') return '';
 
   $path = $dir.'/'.STAXX_RECORD_DIR.'/'.$file;
@@ -454,6 +451,56 @@ function staxx_icon_serve_path(string $stack, string $file): string {
   if ($real === false || $recordReal === false) return '';
   if (dirname($real) !== $recordReal) return '';
   if (!is_file($real) || is_link($path)) return '';
+
+  return $real;
+}
+
+/** The directory staxx_list_stacks() itself reports for $stack, or '' — the
+ *  one lookup both staxx_icon_serve_path() and staxx_icon_serve_tree_path()
+ *  share, so they can never disagree about which stacks exist. */
+function staxx_icon_stack_dir(string $stack): string {
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) return $s['dir'];
+  }
+  return '';
+}
+
+/**
+ * The real file include/icon.php would stream for a picture sitting
+ * anywhere in $stack's own folder tree, given as a path relative to the
+ * stack's own directory — the merge wizard's file-tree hover preview, which
+ * (unlike staxx_icon_serve_path() above) is not limited to .staxx itself.
+ * '' to refuse.
+ *
+ * Refuses, in order: an absolute path (a leading '/'); any segment that is
+ * '..'; any segment starting with a dot — which keeps every dot-folder out,
+ * including .staxx and its own history/ subfolder, so an already-adopted
+ * service icon is still only ever reached through staxx_icon_serve_path()
+ * above, never this one; an extension outside STAXX_ICON_EXTS; and —
+ * resolved through realpath(), which is what actually catches a symlink
+ * anywhere in the way, not only the file's own last component — anything
+ * whose real path is not inside the stack's own real directory, or that is
+ * not a plain file.
+ */
+function staxx_icon_serve_tree_path(string $stack, string $path): string {
+  if (!staxx_valid_path($stack) || $path === '' || $path[0] === '/') return '';
+
+  $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+  if (!in_array($ext, STAXX_ICON_EXTS, true)) return '';
+
+  foreach (explode('/', $path) as $segment) {
+    if ($segment === '' || $segment === '..' || $segment[0] === '.') return '';
+  }
+
+  $dir = staxx_icon_stack_dir($stack);
+  if ($dir === '') return '';
+
+  $full = $dir.'/'.$path;
+  $real = @realpath($full);
+  $rootReal = @realpath($dir);
+  if ($real === false || $rootReal === false) return '';
+  if ($real !== $rootReal && strncmp($real, $rootReal.'/', strlen($rootReal) + 1) !== 0) return '';
+  if (!is_file($real) || is_link($full)) return '';
 
   return $real;
 }
@@ -883,8 +930,9 @@ function staxx_icon_migrate_line(string $composeText, string $service, string $o
  * staxx_save_stack() would otherwise be asked to write, and every file under
  * the OLD shared icon folder (config/icons, kept only as long as this
  * function has not yet run for real) that a real run would go on to remove.
- * A real run removes that folder itself once every stack is done, keeping
- * only its collection index.
+ * A real run removes that folder entirely, including its own old
+ * _index.json (superseded by config/icon-index.json — see
+ * staxx_icon_index_file()), and the folder itself once every stack is done.
  *
  * @return array{moved: array<int, array{stack:string, service:string, from:string, to:string}>,
  *               removed: string[], errors: array<int, string>}
@@ -1000,18 +1048,18 @@ function staxx_icons_into_stacks(bool $dryRun): array {
 
   // The old shared folder is only ever removed on a real run, and only once
   // every stack above has had its turn — a dry run must change nothing at
-  // all, on disk or in the compose files.
-  if (!$dryRun && $oldStore !== '' && is_dir($oldStore)) {
+  // all, on disk or in the compose files. A real run takes the folder
+  // itself too, including its own old _index.json: nothing reads either any
+  // more, the collection index having already moved to config/icon-index.json.
+  if ($oldStore !== '' && is_dir($oldStore)) {
     foreach ((array)@scandir($oldStore) as $entry) {
-      if ($entry === '.' || $entry === '..' || $entry === '_index.json') continue;
+      if ($entry === '.' || $entry === '..') continue;
       $path = $oldStore.'/'.$entry;
-      if (is_file($path)) { @unlink($path); $removed[] = $entry; }
+      if (!is_file($path)) continue;
+      $removed[] = $entry;
+      if (!$dryRun) @unlink($path);
     }
-  } elseif ($dryRun && $oldStore !== '' && is_dir($oldStore)) {
-    foreach ((array)@scandir($oldStore) as $entry) {
-      if ($entry === '.' || $entry === '..' || $entry === '_index.json') continue;
-      if (is_file($oldStore.'/'.$entry)) $removed[] = $entry;
-    }
+    if (!$dryRun) @rmdir($oldStore);
   }
 
   return ['moved' => $moved, 'removed' => $removed, 'errors' => $errors];

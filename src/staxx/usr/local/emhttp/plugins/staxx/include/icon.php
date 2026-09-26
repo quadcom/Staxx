@@ -11,9 +11,13 @@
  * stack's .staxx folder, nothing else; `v` only busts the browser's cache
  * when the picture changes and is never checked against anything.
  *
- * What counts as safe to serve is decided once, in
- * staxx_icon_serve_path() (include/Icons.php), so this page and its own
- * test suite can never quietly disagree about it.
+ * `path` is given instead of `file` for the merge wizard's file-tree hover
+ * preview — a picture sitting loose anywhere else in the stack's own folder
+ * tree, addressed relative to the stack's directory rather than to .staxx.
+ *
+ * What counts as safe to serve is decided once, in staxx_icon_serve_path()
+ * and staxx_icon_serve_tree_path() (include/Icons.php), so this page and
+ * its own test suite can never quietly disagree about it.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -31,7 +35,10 @@ function staxx_icon_serve_fail(): void {
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') staxx_icon_serve_fail();
 
-$real = staxx_icon_serve_path((string)($_GET['stack'] ?? ''), (string)($_GET['file'] ?? ''));
+$stack = (string)($_GET['stack'] ?? '');
+$real  = isset($_GET['path']) && $_GET['path'] !== ''
+  ? staxx_icon_serve_tree_path($stack, (string)$_GET['path'])
+  : staxx_icon_serve_path($stack, (string)($_GET['file'] ?? ''));
 if ($real === '') staxx_icon_serve_fail();
 
 $types = [

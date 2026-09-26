@@ -65,8 +65,8 @@ stacks/     Every stack's compose file lives in its own folder here. This is
 archives/   A zip of each stack that has been removed, kept so it can be put
             back later.
 
-config/     StaXX's own settings and housekeeping — the icon cache, update
-            history and similar. This note lives here too.
+config/     StaXX's own settings and other state — update history and
+            similar. This note lives here too.
 
 Two small files stay on the flash drive and cannot move here:
 

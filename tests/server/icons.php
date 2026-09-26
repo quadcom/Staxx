@@ -161,19 +161,21 @@ file_put_contents($oldStack.'/compose.yaml',
   "services:\n  web:\n    image: busybox\n    x-unraid:\n      icon: ./logo.png\n");
 
 // A leftover from the OLD shared icon folder — never read any more, but a
-// real run has to clear it out once every stack above is done.
+// real run has to clear it, and its old index, out entirely once every
+// stack above is done.
 @mkdir('/tmp/zzicons-store/config/icons', 0755, true);
 file_put_contents('/tmp/zzicons-store/config/icons/leftover.png', $pngBytes);
-file_put_contents('/tmp/zzicons-store/config/icons/_index.json', '{}'); // the OLD index location — never removed
+file_put_contents('/tmp/zzicons-store/config/icons/_index.json', '{}'); // the OLD index location, now removed too
 
 $dry = staxx_icons_into_stacks(true);
 check('a dry run reports the move it would make',
   count(array_filter($dry['moved'], fn($m) => $m['stack'] === 'zzicon-old' && $m['service'] === 'web')) === 1);
-check('a dry run reports the old shared folder\'s leftover file, but not its index',
-  in_array('leftover.png', $dry['removed'], true) && !in_array('_index.json', $dry['removed'], true));
+check('a dry run reports every file in the old shared folder, including its old index',
+  in_array('leftover.png', $dry['removed'], true) && in_array('_index.json', $dry['removed'], true));
 check('a dry run writes nothing at all',
   !is_file($oldStack.'/'.STAXX_RECORD_DIR.'/web.png')
   && is_file('/tmp/zzicons-store/config/icons/leftover.png')
+  && is_file('/tmp/zzicons-store/config/icons/_index.json')
   && strpos((string)file_get_contents($oldStack.'/compose.yaml'), 'icon: ./logo.png') !== false);
 
 $real = staxx_icons_into_stacks(false);
@@ -182,9 +184,8 @@ check('a real run copies the picture into the stack\'s own .staxx folder, named 
   && md5_file($oldStack.'/'.STAXX_RECORD_DIR.'/web.png') === md5($pngBytes));
 check('and rewrites the icon: line to point at it',
   strpos((string)file_get_contents($oldStack.'/compose.yaml'), 'icon: ./'.STAXX_RECORD_DIR.'/web.png') !== false);
-check('and removes the old shared folder\'s leftover file, keeping only its (now-unused) index',
-  !is_file('/tmp/zzicons-store/config/icons/leftover.png')
-  && is_file('/tmp/zzicons-store/config/icons/_index.json'));
+check('and removes the old shared folder entirely, including its old index',
+  !is_dir('/tmp/zzicons-store/config/icons'));
 
 $again2 = staxx_icons_into_stacks(false);
 check('running it again finds nothing left to move',

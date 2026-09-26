@@ -252,7 +252,9 @@ function staxx_merge_files(string $rel, string &$error): ?array {
   }
   $mountedFolders = staxx_merge_mounted_folders($composeText);   // PLAN_156 F12
 
-  $imageExts = ['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif'];
+  // Same list the serving page itself will accept (STAXX_ICON_EXTS), so a
+  // preview url is never offered for a picture the server would then refuse.
+  $imageExts = STAXX_ICON_EXTS;
 
   $files      = [];
   $large      = null;
@@ -332,6 +334,27 @@ function staxx_merge_files(string $rel, string &$error): ?array {
         }
       }
 
+      // PLAN_187's hover preview: a loose picture anywhere in the stack's own
+      // tree is servable, through staxx_icon_serve_tree_path() — except a
+      // file sitting directly in .staxx, which is served the way an adopted
+      // service icon always is, through staxx_icon_serve_path()'s own `file`
+      // form (staxx_icon_serve_tree_path() refuses every dot-folder,
+      // including .staxx itself, on purpose). Never offered for a folder, a
+      // symlink, one pointing outside the stack, or a non-picture extension.
+      $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+      // A hidden folder elsewhere in the tree (anything other than .staxx
+      // itself, handled above) is never offered a preview url at all —
+      // staxx_icon_serve_tree_path() would only refuse it as a dot-folder,
+      // and a url nothing can ever serve is worse than none.
+      $hiddenElsewhere = $sub !== '.staxx' && strpos('/'.$sub.'/', '/.') !== false;
+      $url = '';
+      if (!$isDir && !$isLink && !$outside && !$hiddenElsewhere && in_array($ext, $imageExts, true)) {
+        $mtime = (string)(int)@filemtime($full2);
+        $url = $sub === '.staxx'
+          ? '/plugins/'.STAXX_PLUGIN.'/include/icon.php?stack='.rawurlencode($rel).'&file='.rawurlencode($name).'&v='.$mtime
+          : '/plugins/'.STAXX_PLUGIN.'/include/icon.php?stack='.rawurlencode($rel).'&path='.rawurlencode($path).'&v='.$mtime;
+      }
+
       $files[] = [
         'path'       => $path,
         'size'       => $size,
@@ -346,12 +369,7 @@ function staxx_merge_files(string $rel, string &$error): ?array {
         // "Not used by anything" is now only genuinely loose files.
         'referenced' => ($composeText !== '' && strpos($composeText, $path) !== false)
           || staxx_merge_path_under($path, $mountedFolders),
-        // PLAN_155 C17's hover preview: no serving route reaches a picture
-        // sitting loose anywhere in a stack's own folder (only a service
-        // icon inside .staxx is ever served), so this always reads '' —
-        // the same "no preview" a non-picture file already gets — until a
-        // route for it is worth building.
-        'url'        => '',
+        'url'        => $url,
       ];
 
       if ($isDir) {

@@ -1,9 +1,14 @@
 <?php
 /* PLAN_187 — staxx_icon_serve_path(), the one place include/icon.php decides
- * what is safe to stream, and its refusals: an unknown stack, "..", a
- * subfolder inside .staxx, a dotfile, a non-picture extension, and a
- * symlink pointing outside .staxx. Server-only: it needs staxx_list_stacks()
- * and a real stack directory to test against.
+ * what is safe to stream for an already-adopted service icon, and its
+ * refusals: an unknown stack, "..", a subfolder inside .staxx, a dotfile, a
+ * non-picture extension, and a symlink pointing outside .staxx. Also
+ * staxx_icon_serve_tree_path(), the wider sibling that serves the merge
+ * wizard's file-tree hover preview — any picture in the stack's own tree —
+ * and its own refusals: an absolute path, "..", a dot-folder anywhere in the
+ * path, a non-picture extension, and a symlink pointing outside the stack.
+ * Server-only: it needs staxx_list_stacks() and a real stack directory to
+ * test against.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
  * pointed at /tmp/zzicons-store, set in the flash pointer file BEFORE php
@@ -95,6 +100,43 @@ check('a symlink pointing outside .staxx is refused', $got === '', $got);
 
 $got = staxx_icon_serve_path('zzicon-stack', 'nowhere.svg');
 check('a name that does not exist at all is refused', $got === '', $got);
+
+/* ---- staxx_icon_serve_tree_path() — the merge wizard's hover preview ---- */
+
+file_put_contents($stackDir.'/loose.png', "\x89PNG\r\n\x1a\nfake-but-good-enough");
+@mkdir($stackDir.'/nested', 0755, true);
+file_put_contents($stackDir.'/nested/pic.svg', '<svg></svg>');
+file_put_contents($stackDir.'/nested/notes.txt', 'not a picture');
+@mkdir($stackDir.'/.hidden', 0755, true);
+file_put_contents($stackDir.'/.hidden/pic.svg', '<svg></svg>');
+@symlink($stackDir.'/outside/evil.svg', $stackDir.'/nested/escape.svg');
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', 'nested/pic.svg');
+check('a picture nested anywhere in the stack tree is served',
+  $got === realpath($stackDir.'/nested/pic.svg'), $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', '../loose.png');
+check('".." in the path is refused', $got === '', $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', '.hidden/pic.svg');
+check('a dot-folder anywhere in the path is refused', $got === '', $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', '.staxx/a.svg');
+check('.staxx itself is refused here too — only staxx_icon_serve_path() reaches it',
+  $got === '', $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', '/etc/passwd');
+check('an absolute path is refused', $got === '', $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', 'nested/notes.txt');
+check('a non-picture extension is refused', $got === '', $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', 'nested/escape.svg');
+check('a symlink pointing outside the stack is refused', $got === '', $got);
+
+$got = staxx_icon_serve_tree_path('zzicon-stack', 'loose.png');
+check('a loose picture sitting beside the compose file is served',
+  $got === realpath($stackDir.'/loose.png'), $got);
 
 @unlink($stackDir.'/outside/evil.svg');
 @rmdir($stackDir.'/outside');

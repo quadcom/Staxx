@@ -47,7 +47,7 @@ if (!$report['moved']) {
 
 if ($report['removed']) {
   echo "\n".($dryRun ? 'would remove ' : 'removed ').count($report['removed'])
-     . " file(s) from the old shared icon folder.\n";
+     . " file(s) from the old shared icon folder".($dryRun ? '' : ', and the folder itself').".\n";
 }
 
 if ($report['errors']) {
