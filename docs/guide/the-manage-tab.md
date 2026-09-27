@@ -1,6 +1,6 @@
 # The Manage tab
 
-<!-- index: 35 | what the Manage tab is for, how to open it, and what each of its three panes — log, shell and file browser — does and refuses to do. -->
+<!-- index: 8 | what the Manage tab is for, how to open it, and what each of its three panes — log, shell and file browser — does and refuses to do. -->
 
 Manage gives you a live console for one running container: its log, a real command line inside it, and a look at its files. Open it from a stack's **Logs** button on the list, or from the **Manage** tab in [the stack editor](the-stack-editor.md) once a stack is open. A **Logs** item against one particular container opens Manage with that container already picked; the stack's own **Logs** button opens on **All**.
 
@@ -44,7 +44,7 @@ Reading follows the container's own output as it arrives, keeping up to 4,000 li
 | Wrap | Turns long lines onto more than one line, or lets them run off the side. |
 | Copy visible | Copies exactly what the pane shows right now. |
 | Download all | Loads the whole log into a box you can select and copy from. |
-| Show environment | Prints this container's environment variables into the pane, marked as StaXX's own line rather than something the container said. |
+| Show environment | Prints this container's environment variables into the pane, marked as StaXX's own line rather than something the container said. Shown only when **Container files** is on. |
 
 ## The Shell pane
 
@@ -56,9 +56,9 @@ The first time you open a shell on this server, a notice explains this and asks 
 
 When a session ends, whether the container stopped or the shell process exited, press **Reconnect** to start a fresh one.
 
-Turn on **Container shells**, under [Settings](settings.md), to use Shell or Files.
+Turn on **Container shells**, in the **Container access** box on the [General tab](settings-general.md) of Settings, to use Shell.
 
-![The Container shells box on the General tab, set to Allow opening a shell](../images/guide/the-manage-tab-containershells.png)
+![The Container access box on the General tab, with Container shells set to Allow opening a shell and Container files set to Allow browsing a container's files](../images/guide/the-manage-tab-containershells.png)
 
 ## The Files pane
 
@@ -80,6 +80,14 @@ Files browses whatever this one container can see: its own filesystem, exactly a
 
 A binary file opens read-only, its contents shown as raw text.
 
+Turn on **Container files**, in the **Container access** box on the [General tab](settings-general.md) of Settings, to browse a container's files. With Files off, the **Config folder** and **Show environment** buttons are gone as well, and so is the restarts-and-health reading beside the container's state.
+
+## Shell and Files, switched off
+
+**Container shells** and **Container files** are two separate switches in the **Container access** box on the [General tab](settings-general.md) of Settings, and each pane appears only when its own switch is on.
+
+A pane that is switched off is not shown at all: no heading, no empty box, and nothing to drag. Whichever of Shell and Files is still on takes the whole space on the right. With both off, Log fills the entire tab. On a narrow window, the row of tabs across the top only lists the panes that are switched on.
+
 ## Resizing the panes
 
 Drag the line between Log and the other two panes, or the line between Shell and Files, to give one more room. Double-click either line for an even split, or select it and use the arrow keys. Collapse a pane by clicking its heading. On a narrow window, a row of tabs picks one pane at a time instead.
@@ -88,7 +96,8 @@ Drag the line between Log and the other two panes, or the line between Shell and
 
 | Message | What to do |
 |---|---|
-| "Shell access to containers is turned off in Settings." / "Container file access is turned off in Settings, under the same switch as the shell." | Turn on **Container shells**, under [Settings](settings.md). |
+| "Shell access to containers is turned off in Settings." | Turn on **Container shells**, on the [General tab](settings-general.md) of Settings. |
+| "Container file access is turned off in Settings." | Turn on **Container files**, on the [General tab](settings-general.md) of Settings. |
 | "This stack was imported and has not been reviewed yet…" | Open the stack and clear its review lock first. |
 | "That container is not running, so there is nothing to open a shell into." / "No running container for service…" | Start the container first. |
 | "No service called…in this stack." | Pick a container that is still in the compose file. |

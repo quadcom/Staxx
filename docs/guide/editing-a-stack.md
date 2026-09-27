@@ -63,7 +63,7 @@ A container already running keeps running on its old settings until you restart 
 changes what the file says should happen next. If the two have drifted apart, the row shows a
 "Restart to apply" mark once you close the editor — see [the stack list](the-stack-list.md).
 
-To undo a save, see [recovery and redundancy](recovery-and-redundancy.md).
+To undo a save, see [the History tab](editor-history.md).
 
 ## Ports on a container with its own address
 
@@ -168,17 +168,18 @@ leaves that part alone and says so. This is StaXX declining to guess, not a faul
 
 Tidying lands as an ordinary unsaved change: Save keeps it, Undo puts it straight back. The version
 from before it was tidied, arrival or button alike, is in the stack's history if you want it back
-later; see [recovery and redundancy](recovery-and-redundancy.md).
+later; see [the History tab](editor-history.md).
 
 What happened appears as its own message above the file, as well as on the status line below it.
 
 ## The icon
 
-A service's icon field takes a name from the selfh.st icon collection, a picture kept with the
-stack, or a web address. Paste a web address and StaXX downloads the picture once, keeps a copy in
-the stack's own folder, and updates the file to point at that copy, with the address you pasted
-kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
-The change is announced in the same notice that reports a matched icon.
+The app or service icon is stored in the `.staxx` folder beside the compose file, one for each
+service the compose file declares. A stack's icon is a tiled composite of the icons of all its
+services; when the compose file declares only one service, the stack's icon is that service's icon.
+
+To set a service's icon, type a name from the selfh.st icon collection or paste a web address into
+its icon field.
 
 You do not have to open the field at all: drag a picture, or drag a picture's web address across
 from another browser tab, and drop it straight onto a service's own icon in the editor. The icon
@@ -192,8 +193,8 @@ that site again.
 
 ## Fill in details
 
-**Fill in details**, at the top of the screen, looks up your stack's icon, description, author and
-project links from three places: the image's own labels, the app's Community Applications entry, and
+**Fill in details**, at the top of the screen, looks up your services' icons and your stack's description, author
+and project links from three places: the image's own labels, the app's Community Applications entry, and
 the project's own page. Nothing is written until you have seen it.
 
 ![The bar at the top of the editor with Fill in details outlined, between Password and Outline](../images/guide/editing-a-stack-fill-in-details-button.png)
@@ -216,7 +217,7 @@ Press the button or the bar's link and a window shows what was found:
 
 A value identical to one already in the file is never offered again, and a link that is not a
 secure `https` address is thrown away rather than offered. To type your own wording instead, switch
-to the Compose view — see [the stack editor](the-stack-editor.md) for the three views — and edit it
+to the Compose view — see [the Configure tab](editor-configure.md) for the three views — and edit it
 by hand:
 
 ![The editor in Split view: the form of boxes on the left and the compose file's text on the right, with the Form, Split and Compose buttons above them and the Configure, Manage, History and Versions tabs across the top](../images/guide/editing-a-stack-split.png)

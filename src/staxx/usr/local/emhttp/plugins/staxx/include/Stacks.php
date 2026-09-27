@@ -8247,6 +8247,48 @@ function staxx_exec_resolve_container(string $file, string $leaf, string $servic
 }
 
 /**
+ * Like staxx_exec_resolve_container() above, but for a caller that has no
+ * live session to open and so no reason to refuse a stopped container —
+ * staxx_pin_resolve() (PLAN_188 part D), which wants whatever build a
+ * service's own container last ran, running or not. Prefers a running
+ * match; falls back to the first stopped one `docker ps` itself lists.
+ * Never used by the shell — staxx_exec_resolve_container()'s own wording
+ * and behaviour are untouched by this.
+ *
+ * $error is set only for "this stack has never been started at all" —
+ * callers that mean to fall back to the compose file's own image when no
+ * container exists at all should treat an empty return as that, not
+ * necessarily as a hard failure of their own.
+ *
+ * @return string the container name, or '' when none exists for this service
+ */
+function staxx_service_container_any_state(string $file, string $leaf, string $service, string &$error): string {
+  $state   = staxx_state_for($file, $leaf);
+  $project = $state['name'] ?? '';
+  if ($project === '') {
+    $error = 'This stack does not appear to be running.';
+    return '';
+  }
+
+  $fmt = '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t'
+       . '{{.Label "com.docker.compose.service"}}\t{{.State}}';
+  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10);
+
+  $stopped = '';
+  foreach (explode("\n", trim($out)) as $line) {
+    if ($line === '') continue;
+    [$cname, $proj, $svc, $state2] = array_pad(explode("\t", $line, 4), 4, '');
+    if ($proj !== $project || $svc !== $service) continue;
+    if ($state2 === 'running') return $cname;
+    if ($stopped === '') $stopped = $cname;   // the first Docker lists, its own default order
+  }
+
+  if ($stopped !== '') return $stopped;
+  $error = 'No container for service "'.$service.'" in this stack.';
+  return '';
+}
+
+/**
  * Open a shell session in the running container behind one service of one
  * stack, and return its session id, or '' with $error set.
  *
@@ -8466,12 +8508,11 @@ function staxx_exec_reap(): void {
 
 /* ============================================================= container files ===
  *
- * A file manager for the inside of a running container, gated by the SAME
- * SHELL_ENABLED switch as the shell above — not a switch of its own, because
- * it is the same capability wearing a different hat: both let the browser
- * reach into whatever is inside a container. Being honest about that is why
- * one switch covers both rather than two that would always be flipped
- * together.
+ * A file manager for the inside of a running container, gated by its own
+ * switch — FILES_ENABLED (PLAN_188 part C), checked through
+ * staxx_files_enabled() (Defines.php) so it follows SHELL_ENABLED until
+ * someone saves a value of its own. The shell above keeps SHELL_ENABLED;
+ * turning one off no longer turns off the other.
  *
  * Listings and the small operations (rename, delete, mkdir) go through
  * `docker exec`, one short-lived command at a time. File *contents* go
@@ -8721,18 +8762,19 @@ function staxx_health_trial(string $container, $test, string &$why): bool {
 
 /**
  * Resolve the running container behind one service of one stack, gated by
- * the same order staxx_exec_start() uses for the shell: valid stack path,
- * the SHELL_ENABLED switch, the review lock, compose and Docker present, the
- * service actually named in the compose file, then a container that both
- * resolves and is running. Every staxx_cfile_*() function below calls this
- * first, so all of them share one place these refusals are enforced.
+ * the same order staxx_exec_start() uses for the shell, but its own switch:
+ * valid stack path, the FILES_ENABLED switch (staxx_files_enabled()), the
+ * review lock, compose and Docker present, the service actually named in the
+ * compose file, then a container that both resolves and is running. Every
+ * staxx_cfile_*() function below calls this first, so all of them share one
+ * place these refusals are enforced.
  */
 function staxx_cfile_container(string $stack, string $service, string &$error): string {
   $error = '';
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
 
-  if (!staxx_cfg_bool('SHELL_ENABLED')) {
-    $error = 'Container file access is turned off in Settings, under the same switch as the shell.';
+  if (!staxx_files_enabled()) {
+    $error = 'Container file access is turned off in Settings.';
     return '';
   }
 
@@ -9085,12 +9127,12 @@ function staxx_cfile_home(string $stack, string $service, string &$error): strin
  *
  * The one line above the panes (restart count and health), and the "show
  * the environment" one-press job. Both share staxx_cfile_container()'s gate
- * — the same SHELL_ENABLED switch, review lock and service-membership rule
- * the shell and file manager already stand behind — because this is that
- * same reach into a running container answering two more small questions,
- * not a capability of its own. The third D6 job, "fix ownership", never
- * reaches here at all: it only builds a command string client-side and
- * leaves it unrun in the shell, so there is nothing for the server to do.
+ * — FILES_ENABLED, the review lock and service-membership rule the file
+ * manager already stands behind — because this is that same reach into a
+ * running container answering two more small questions, not a capability of
+ * its own. The third D6 job, "fix ownership", never reaches here at all: it
+ * only builds a command string client-side and leaves it unrun in the
+ * shell, so there is nothing for the server to do.
  */
 
 /**

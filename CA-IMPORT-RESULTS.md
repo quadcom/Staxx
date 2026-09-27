@@ -69,7 +69,7 @@ first).
 
 **5. `ExtraParams` needed a much bigger table.** The plan listed ~18 flags. The feed actually uses
 80-odd. I added the ones with clean equivalents (`--gpus` and the `--health-*` family deliberately
-excluded — see decision 3 below) and everything else warns.
+excluded — see decision 2 below) and everything else warns.
 
 **6. Custom networks were unplanned.** 250-odd apps use `br0` or a named network. These now emit a
 proper `external: true` declaration plus a warning, rather than silently losing the network.
@@ -104,20 +104,11 @@ keeping.
 ### 1. Nothing is downloaded until you press Apps — is that enough?
 
 There is no setting to switch the CA fetch off, on the reasoning that it is already opt-in by action.
-The alternative is an `ICON_FETCH`-style toggle in settings. **My view: leave it.** A switch for
+The alternative is a toggle in settings. **My view: leave it.** A switch for
 something that only happens when you press a button is configurability nobody asked for. Say the word
 if you disagree.
 
-### 2. Result icons load from the internet, in your browser
-
-Each row shows the app's icon from wherever CA points — `raw.githubusercontent.com` and similar. The
-*server* never fetches them; your *browser* does, and only while the dialog is open. That is what CA's
-own Apps tab does too. It does mean opening the dialog makes ~60 requests to third-party hosts.
-Options: leave it, drop icons from the list, or route them through the existing icon cache
-(`Icons.php` already does this for the table). **My view: leave it for now**, but it is a real
-privacy surface and worth knowing about.
-
-### 3. `--gpus` and `--health-*` are deliberately not translated — RESOLVED 2026-08-16
+### 2. `--gpus` and `--health-*` are deliberately not translated — RESOLVED 2026-08-16
 
 **Your question: can the editor mark these invalid, and can we suggest the equivalent?**
 
@@ -139,7 +130,7 @@ block at all. There are two headings — see "Two kinds of message" below.
 Still not translated, and still deliberately: a subtly wrong healthcheck or resource limit produces a
 file that looks right and behaves differently.
 
-### 4. Odd category names — RESOLVED 2026-08-16, and you were right
+### 3. Odd category names — RESOLVED 2026-08-16, and you were right
 
 **Your question: is `;` how CA packs multiple categories into one string?** Yes. Confirmed against
 the feed — `"Gaming-;Productivity-;Network-Web"` is three categories, and the raw `Category` field
@@ -157,19 +148,19 @@ Both fixed. Every category an app claims is now indexed, and the normaliser unde
 Genuinely made-up categories (`MediaApplication-Video`, `System-Monitoring`) still pass through
 untouched — reshaping those would be a guess.
 
-### 5. Bad data passes through verbatim
+### 4. Bad data passes through verbatim
 
 `binhex-emby`'s project link in the feed is `https://https://emby.media/` — a double `https://`. It is
 in the imported file as-is. This is correct behaviour under "never invent", but you will see the
 occasional oddity and should know it came from CA, not from us.
 
-### 6. `author` is set from CA's `Repo` string
+### 5. `author` is set from CA's `Repo` string
 
 That field holds things like `"Binhex's Repository"`, so imported files say
 `author: Binhex's Repository`. It reads a little oddly for an "author" field. The alternative is to
 leave `author` out entirely. Minor either way.
 
-### 7. Committing — DONE 2026-08-16
+### 6. Committing — DONE 2026-08-16
 
 Two commits on `editor-and-field-help`, pushed to `origin`. `main` is untouched.
 

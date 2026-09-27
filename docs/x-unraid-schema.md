@@ -90,7 +90,7 @@ services:
     ports:
       - "8096:8096"    # the page you open -!R   ← per-setting notes live here
     x-unraid:          # service-level: describes one container
-      icon: jellyfin
+      icon: ./.staxx/jellyfin.png
       overview: |
         Free software media system…
 ```
@@ -326,7 +326,7 @@ the person's decision, made with a click, not something StaXX does on its own.
 services:
   jellyfin:
     x-unraid:
-      icon: jellyfin               # see "Icons" below
+      icon: ./.staxx/jellyfin.png   # see "Icons" below
       overview: |                  # markdown
         …
       project: https://jellyfin.org
@@ -467,35 +467,12 @@ file never carries a password for either.
 
 ## Icons
 
-`icon:` is a service-level key only — a stack has no picture of its own to state, only the pictures
-of the containers inside it (see below). It takes four forms, told apart by their shape, so there is
-no extra key saying which kind it is:
+The app or service icon is stored in the `.staxx` folder beside the compose file, one for each
+service the compose file declares. A stack's icon is a tiled composite of the icons of all its
+services; when the compose file declares only one service, the stack's icon is that service's icon.
 
-| Written like this | What it means |
-|---|---|
-| `jellyfin` | A name from the [selfh.st icon collection](https://selfh.st/icons/) — about 2,900 logos of self-hosted software. This is usually the shortest thing to write. |
-| `./icon.png` | A file sitting in the stack's own directory, next to the compose file. |
-| `https://example.org/icon.png` | Any address on the web. |
-| `fa-database` | A [Font Awesome](https://fontawesome.com/v4/icons/) glyph — the same form Unraid's own XML templates accept, kept working so a converted template does not lose the icon it already had. |
-
-**Leaving it out is the normal case.** With no `icon:`, one is worked out from the container's image
-name: `lscr.io/linuxserver/jellyfin:latest` finds the Jellyfin logo on its own. Roughly three
-containers in four match something. The rest show a coloured tile with their initials — the colour
-comes from the name, so the same container is always the same colour, and nothing shuffles about
-between page loads.
-
-The matching is deliberately strict. It will not guess at a near-miss, because **a wrong icon is
-worse than no icon**: no icon reads as "not recognised", while the wrong logo on a container reads
-as a bug in the page. When a name would fit more than one entry — `node` begins six of them — none
-is chosen.
-
-**A stack has no `icon:` at all.** Its tile is always built from the icons of the containers inside
-it, shrunk and tiled together, up to four; beyond that the fourth cell counts what did not fit. A
-single-service stack simply shows that one container's icon, which is why the tiling is not obvious
-until a stack holds more than one.
-
-Downloaded icons are cached on the flash device and never fetched twice. The whole thing can be
-turned off under **Settings → StaXX**, in which case icons already saved keep working.
+`icon:` is a service-level key only — a stack has no `icon:` of its own to state. It is a path to the
+picture in `.staxx`, for example `./.staxx/jellyfin.png`.
 
 ---
 
@@ -637,9 +614,7 @@ container that cannot see its hardware.
 variable is a password is wrong in both directions, and guessing that a box is required blocks a save
 the user has no way to resolve.
 
-**Icons** — matched from the container's image name against the selfh.st collection, then from the
-service name, then the stack name; a coloured tile of initials when nothing matches. See
-[Icons](#icons) above for why the matching refuses to guess.
+**Icons** — see [Icons](#icons) above.
 
 ---
 

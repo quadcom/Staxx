@@ -166,8 +166,8 @@ with a converter, already built, that turns a template into a compose file on de
 Relevant because anything stored there cannot be read at boot time.
 
 **Data store** — the one folder, chosen the first time you open StaXX, that holds everything StaXX
-manages: your stacks, an archive of anything you have removed, and StaXX's own settings and icon
-cache. It normally sits on a drive pool rather than the flash drive.
+manages: your stacks, an archive of anything you have removed, and StaXX's own settings. It normally
+sits on a drive pool rather than the flash drive.
 
 *Why it matters here:* a drive pool is not available in the first seconds after the server powers
 on, and is not reachable at all if something has gone wrong. That is why three settings that have to

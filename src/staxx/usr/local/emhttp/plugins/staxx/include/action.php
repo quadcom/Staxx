@@ -1031,8 +1031,8 @@ switch ($action) {
 
   /* ---- the file manager: list, read, save, rename, delete and mkdir
    * inside a running container. See the "container files" section of
-   * Stacks.php — the same SHELL_ENABLED switch and container-resolution
-   * rules as the shell above gate every one of these. */
+   * Stacks.php — its own FILES_ENABLED switch and the same
+   * container-resolution rules as the shell above gate every one of these. */
   case 'cfile-list':
     $service = (string)($_POST['service'] ?? '');
     $dir     = (string)($_POST['dir'] ?? '');
@@ -1130,7 +1130,7 @@ switch ($action) {
 
   /* ---- PLAN_44 D6: the line above the panes, and "show the environment" -
    * See the "PLAN_44 D6 jobs" section of Stacks.php — both share the file
-   * manager's own container-resolution and SHELL_ENABLED gate. The third D6
+   * manager's own container-resolution and FILES_ENABLED gate. The third D6
    * job, "fix ownership", never reaches the server at all; it only builds a
    * command string in the browser and leaves it unrun in the shell. */
   case 'cstat':
@@ -1149,7 +1149,7 @@ switch ($action) {
    *
    * Answers only, never a candidate check and never a trial of one — this
    * is what the browser reads before it offers anything. It shares the file
-   * manager's own container resolution (SHELL_ENABLED, the review lock, and
+   * manager's own container resolution (FILES_ENABLED, the review lock, and
    * — critically — the service being a real member of this stack's compose
    * file, the same membership rule the job runner checks a service name
    * against), because working out what StaXX knows about a container's own
@@ -1205,7 +1205,7 @@ switch ($action) {
    * container. That is only ever safe because it grants no capability that
    * is not already granted: it sits behind the identical door as the file
    * manager and the interactive console above — staxx_cfile_container()'s
-   * own SHELL_ENABLED switch, review lock and service-membership check —
+   * own FILES_ENABLED switch, review lock and service-membership check —
    * and anyone who can reach any of those can already open a shell in that
    * same container and type whatever they like. The candidate is not
    * re-derived from the recipe table server-side on purpose: that would
@@ -1858,25 +1858,17 @@ switch ($action) {
                  'historyNote' => $rbNote,
                  'fingerprint' => staxx_stack_fingerprint($name)]);
 
-  /* ---- release a pin: put a service's image back to plain repo:tag ----
+  /* ---- PLAN_188 part D — what the Pinned choice needs before it writes ----
    *
-   * No job comes back — releasing changes only the file, nothing on disk
-   * or in Docker, so there is nothing to poll for.
+   * Read-only: this never touches the compose file. The browser side turns
+   * the digest into the pinned reference itself (compose-model.js's
+   * pinnedImageRef()) and saves it the ordinary way through 'save', so the
+   * change lands in History exactly like any other edit.
    */
-  case 'update-unpin':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
-    $upNote = '';
-    $ok = staxx_update_unpin(
-      $name, (string)($_POST['service'] ?? ''), (string)($_POST['yaml'] ?? ''), $error, $upNote
-    );
-    if (!$ok) staxx_reply(['ok' => false, 'error' => $error]);
-    // Same reasoning as update-rollback's reply just above: the file changed,
-    // so the fingerprint an open editor is holding has to change with it.
-    staxx_reply(['ok'          => true,
-                 'historyNote' => $upNote,
-                 'fingerprint' => staxx_stack_fingerprint($name)]);
+  case 'pin-resolve':
+    $pinRes = staxx_pin_resolve($name, (string)($_POST['service'] ?? ''), $error);
+    if (!$pinRes['ok']) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'digest' => $pinRes['digest']]);
 
   /* ---- what a stack's Versions tab needs: every service's image, what is on
    * disk for it now, and everything recorded that a rollback could target --

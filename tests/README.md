@@ -120,6 +120,7 @@ Four rules run through the whole set:
 | `override` | Two-file compose support, the strict pairing rule, and what it feeds | `STORE_ROOT` at `/tmp` |
 | `paths` | Making and checking volume paths, including how one outside `/mnt` is judged | `STORE_ROOT` |
 | `pending` | The restart-pending comparison — what is running against what the file now says — and above all its refusals | — |
+| `pinned_due` | What an automatic pass does with a pinned image — reported the same as any other, never offered as a candidate (formerly `unpin`, alongside the now-removed `staxx_update_unpin()`) | `STORE_ROOT` |
 | `project-links` | Working out an app's own project links | **opt-in**, several `STAXX_CA_*` |
 | `record` | Each stack's own hidden record — its compose-file history — and the two doors that capture into it | `STORE_ROOT` |
 | `registry_live` | A real `304` against a real registry, and that the digest matches what the docker CLI reports | **opt-in** `STAXX_LIVE_REGISTRY=1` |
@@ -136,7 +137,6 @@ Four rules run through the whole set:
 | `storage_alert` | PLAN_181 Part D — the pure alert rule over (percent, clutter bytes, oldest days, thresholds), and the clutter-since merge (an id keeps its remembered date, a new one is stamped today, one no longer in the clutter is dropped), over in-memory lists only | — |
 | `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |
 | `takeover` | The route an imported Compose Manager project takes instead of a handover. Every case is a refusal, on purpose | `STORE_ROOT` |
-| `unpin` | Releasing a pin, and what an automatic pass may act on afterwards | `STORE_ROOT` |
 | `unraid_templates` | The sweep for stacks taken over before this plan: classifying every Unraid template still naming a StaXX stack's container (`ours`/`absent`/`unraid`), and reclaiming only the first two | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `update_mode_convert` | The one-pass rewrite of old `update.mode` spellings (`off`, `notify`) to `manual`, run once at install, and its undo | `STORE_ROOT` at `/tmp` |
 | `updateeconomy` | Reference parsing, the `Accept` list, the whole cadence table, and the failed-image notice's wording | `STORE_ROOT` (row-notice cases) |
@@ -147,8 +147,9 @@ Four rules run through the whole set:
 
 Where the traps are, none of them recoverable from the code:
 
-- **`unpin`** — the declined-version fingerprint is filed under the image's UNPINNED name, so clearing
-  the pinned one instead makes the whole feature silently do nothing.
+- **`pinned_due`** — staxx_update_due()'s pinned-image exclusion cannot be proved live on this server
+  (it needs a running container, which this suite may not start); the case it feeds is a note, not a
+  pass, and the exclusion is really verified by reading the code (see the suite's own comment).
 - **`crypt`** — the two cases that matter are that a hash format is refused until the self-test has
   proved it on this machine, and that the superseded-image chooser never picks an image without
   StaXX's own stamp. That is the one place StaXX deletes without asking.

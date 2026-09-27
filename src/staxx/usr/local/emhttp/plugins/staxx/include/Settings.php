@@ -101,6 +101,14 @@ function staxx_settings_keys(): array {
     // Gates staxx_exec_start() on the server, not only the button in the
     // browser — see PLAN_44 section D4.
     'SHELL_ENABLED'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // Gates the container file manager (staxx_cfile_container(), PLAN_188
+    // part C) — its own switch, separate from SHELL_ENABLED above. The
+    // 'default' here is only what validates a posted value; while nothing has
+    // been saved the panel shows and the server acts on whatever
+    // staxx_files_enabled() (Defines.php) resolves instead, so a store that
+    // had shells switched off before this setting existed does not find the
+    // file manager quietly back on.
+    'FILES_ENABLED'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // Set once, by the same settings-save path, the first time a shell is
     // opened — so the "changes vanish on rebuild" warning is shown once per
     // server rather than once per browser. Not in $reload below: nothing
@@ -202,6 +210,10 @@ function staxx_settings_read(): array {
     if ($key === 'UPDATE_NOTIFY_FOUND')     { $out[$key] = $notify['found']     ? 'true' : 'false'; continue; }
     if ($key === 'UPDATE_NOTIFY_INSTALLED') { $out[$key] = $notify['installed'] ? 'true' : 'false'; continue; }
     if ($key === 'UPDATE_NOTIFY_FAILED')    { $out[$key] = $notify['failed']    ? 'true' : 'false'; continue; }
+    // Same reasoning: while no FILES_ENABLED value has been saved, show what
+    // the server actually acts on (staxx_files_enabled() — follows
+    // SHELL_ENABLED), not the schema default.
+    if ($key === 'FILES_ENABLED') { $out[$key] = staxx_files_enabled() ? 'true' : 'false'; continue; }
 
     $v = trim((string)($cfg[$key] ?? ''));
     $v = $v !== '' ? $v : $spec['default'];
@@ -648,7 +660,14 @@ function staxx_settings_save(
     }
   }
 
-  foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT'] as $key) {
+  // PLAN_188 part C: SHELL_ENABLED and FILES_ENABLED join this list because
+  // the Manage tab's layout is now baked into the page at load (StacksPage.php's
+  // data-shell-enabled/data-files-enabled) rather than asked of the server on
+  // every open — the same reason STORE_ROOT is here. Both, not only
+  // FILES_ENABLED: while FILES_ENABLED has never been saved of its own it
+  // follows SHELL_ENABLED (staxx_files_enabled()), so changing the shell
+  // switch alone can change what the file manager effectively is too.
+  foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT', 'SHELL_ENABLED', 'FILES_ENABLED'] as $key) {
     if ($saved[$key] !== $before[$key]) { $reload = true; break; }
   }
 

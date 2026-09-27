@@ -44,7 +44,7 @@ Every entry below depends on this.
 - **A setting a `.page` file's `Cond` needs to read must be projected onto a marker file**, the way
   `HEADER_MENU` always has been — `Cond` runs on every render of every page, so parsing the config
   there would be wasteful. `TAKEOVER_DOCKER_TAB` now does the same job a different way: instead of a
-  marker, `apply_settings` installs or removes a whole shadow page file when it changes. `ICON_FETCH`
+  marker, `apply_settings` installs or removes a whole shadow page file when it changes. `IMAGE_LOOKUP`
   is the counter-example — it is read normally from PHP in one place and must never be projected.
 
 ---
@@ -91,7 +91,3 @@ Recorded in `CA-IMPORT-RESULTS.md` as an open question and still open. The catal
 without asking, now on page load rather than on first search (`PLAN_23`). The argument against a
 switch is that it is configurability nobody asked for; the argument for is that it is the one thing
 this plugin does that reaches the internet unprompted.
-
-Related and unresolved: the Apps dialog loads app icons directly from third-party hosts in the
-browser, roughly 60 requests when it opens, and **ignores `ICON_FETCH`** — which a reasonable person
-would expect to cover it. That inconsistency is worth settling whichever way this goes.

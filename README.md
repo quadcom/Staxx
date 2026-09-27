@@ -110,7 +110,7 @@ whether StaXX does what you need.
 - **Health checks** can be worked out for you: where nothing is watching a running container, StaXX
   finds a real question to ask that image, tries it inside the container first, and tells you what
   the answer would actually prove — see
-  [letting StaXX work out a health check](docs/guide/marks.md#letting-staxx-work-out-a-health-check).
+  [letting StaXX work out a health check](docs/guide/marks.md#health-check-offer).
 - **One house layout** puts every file in the same order as it arrives, so your stacks all read the
   same way. Order only — nothing you wrote is rewritten, and comments stay with what they annotate;
   see [tidying a file](docs/guide/editing-a-stack.md#tidying-a-file-into-staxxs-layout).
@@ -175,7 +175,7 @@ before the array starts — see [where StaXX keeps its things](docs/guide/where-
 | `HEADER_MENU` | `false` | `true` gives StaXX its own button in the top bar instead of a tab under Docker. |
 | `TAKEOVER_DOCKER_TAB` | `false` | `true` replaces the Docker button entirely. No stock Unraid file is modified either way. |
 | `CATCH_INSTALLS` | `true` | What happens when something is installed from Unraid's own Apps page: `true` brings it in as a stack, `prompt` asks first, `false` leaves it to Unraid. |
-| `ICON_FETCH` | `true` | Fetch container logos. Only the icon's name is sent. |
+| `ICON_FETCH` | `true` | Whether StaXX finds an icon for a service that has none. |
 | `IMAGE_LOOKUP` | `true` | Read an image's documentation when adding it, for a fuller starting file. |
 | `WATCH_EXAMPLES` | `true` | Compare your file with the publisher's own example during an update check. |
 | `SHELL_ENABLED` | `true` | The root command line inside a container. `false` removes it everywhere. |

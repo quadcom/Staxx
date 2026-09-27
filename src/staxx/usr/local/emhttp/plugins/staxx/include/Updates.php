@@ -1448,6 +1448,48 @@ function staxx_image_local(string $image): array {
 }
 
 /**
+ * PLAN_188 part D — the digest for the exact build a running container is
+ * ON, not whatever its tag currently resolves to. staxx_image_local() reads
+ * RepoDigests off the image a REFERENCE (repo:tag) points at right now,
+ * which can have moved since the container was started; this reads off the
+ * image ID Docker itself says the container is running ({{.Image}} on the
+ * container, not {{.Config.Image}}), so a tag re-pulled since starting
+ * cannot change the answer. $ref is only used to pick which RepoDigests
+ * entry belongs to this repository, the same matching rule
+ * staxx_image_local() applies, kept here as its own small copy rather than
+ * a shared refactor of that function — the two answer different questions
+ * about $imageId even though the matching step is identical.
+ *
+ * Same three-shape contract as staxx_image_local(): [] not present or no
+ * matching digest, ['built' => true] present with no RepoDigests at all
+ * (built here, never pushed or pulled), ['unknown' => true] the inspect
+ * itself failed.
+ */
+function staxx_image_id_digest(string $imageId, string $ref): array {
+  $out = staxx_sh(
+    staxx_docker_bin().' image inspect '.escapeshellarg($imageId).' --format '.escapeshellarg('{{json .}}').' 2>&1',
+    15
+  );
+  $data = staxx_image_local_verdict($out);
+  if ($data === [] || !empty($data['unknown'])) return $data;
+
+  $repo = staxx_hub_repo_path($ref);
+  $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($ref));
+
+  $digests = [];
+  foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
+    $at = strrpos((string)$entry, '@');
+    if ($at === false) continue;
+    $entryRepo = substr((string)$entry, 0, $at);
+    if ($entryRepo === $wantRepo || staxx_hub_repo_path($entryRepo) === $wantRepo) {
+      $digests[] = substr((string)$entry, $at + 1);
+    }
+  }
+  if (!$digests) return empty($data['RepoDigests']) ? ['built' => true] : [];
+  return ['digest' => $digests[0], 'digests' => $digests];
+}
+
+/**
  * The local digest to record against a registry answer. When the registry's
  * digest is any one of the image's own recorded digests, that is the one
  * kept — so the stored 'local' equals 'remote' and every later

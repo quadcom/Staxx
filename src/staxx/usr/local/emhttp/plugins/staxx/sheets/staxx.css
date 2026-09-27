@@ -10693,6 +10693,28 @@ div.title.staxx-has-titlebar {
   font-size: 1.2rem;
 }
 
+/* askTagPick() (PLAN_188 part D) — reuses the #staxx-confirm dialog rather
+   than a purpose-built window, so only the two shapes it adds get their own
+   rules: a list of tag buttons, and the "type one instead" row. */
+.staxx-tagpick-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.staxx-tagpick-type {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.staxx-tagpick-type .staxx-input {
+  flex: 1 1 auto;
+}
+
 /* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
    input reset (trap 3, header) on background and border-radius, decided
    only by source order otherwise. */

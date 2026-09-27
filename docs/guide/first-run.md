@@ -21,8 +21,8 @@ offers the next safest place instead.
 
 If you type a path of your own, StaXX shows how much free space it has and warns you if it is a
 slower kind of path. With **Protect me from myself** on, which it is to start with, the folder
-picker will not let you choose a place that could lose your data; see [settings](settings.md#storage-tab)
-for what that covers.
+picker will not let you choose a place that could lose your data; see
+[the Storage tab](settings-storage.md) for what that covers.
 
 **Go to Settings** opens the settings panel instead, where the same choice sits in the Storage tab.
 

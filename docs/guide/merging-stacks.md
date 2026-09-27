@@ -131,12 +131,10 @@ Two kinds of line are marked:
 Click a setting's name on any pane and every line of that setting lights up on both sides, so you can
 see where it is used.
 
-Anything sitting in a stack's folder beside the compose file, such as an icon, a certificate or a
-settings file, travels across into the new stack's folder. Each one says what will happen to it:
-**Copied as …** for an icon renamed after its service, **not copied — points outside the stack** for
-a link that leaves the folder, and a note that a copied key or certificate **will exist in two
-places**. If a service's icon file is missing, its icon line is kept exactly as written and a note
-says none was copied. A folder over 10 MB is copied in full, with a warning. Two file cards can appear:
+Anything sitting in a stack's folder beside the compose file, such as a certificate or a settings
+file, travels across into the new stack's folder. Each one says what will happen to it: **Copied
+as …** for a file given a new name, **not copied — points outside the stack** for a link that
+leaves the folder, and a note that a copied key or certificate **will exist in two places**. A folder over 10 MB is copied in full, with a warning. Two file cards can appear:
 
 | Card title | Buttons |
 |---|---|

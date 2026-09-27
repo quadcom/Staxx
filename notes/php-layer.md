@@ -12,7 +12,7 @@ early return, and each `require_once`s by absolute path.
 | `Folders.php` | The presentational folder layer |
 | `StacksTable.php` | Renders table rows; `staxx_state_snapshot()` for cheap refreshes |
 | `StacksPage.php` | Page shell, asset tags, CSRF handoff to the client |
-| `Icons.php` | Icon resolution — selfh.st index, caching, initials fallback |
+| `Icons.php` | Owns each service's icon, stored in `.staxx` beside the compose file |
 | `Images.php` | The "Scan stored images" window (Storage tab): grouping unused images, the removal job — sits beside `UpdateRun.php`'s weekly cleanup and calls its keep-set, never edits it |
 | `Stats.php` | Reads what the background collector wrote; GPU/CPU/mem/net |
 | `action.php` | The single JSON endpoint |

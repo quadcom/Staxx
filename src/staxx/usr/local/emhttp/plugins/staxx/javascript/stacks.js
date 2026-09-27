@@ -19,6 +19,13 @@
   // below; the settings panel uses it to say a save will be refused rather
   // than let somebody find that out by trying.
   var STORE_REACHABLE = scaffold.dataset.storeReachable === '1';
+  // PLAN_188 part C — Settings' Container shells / Container files switches,
+  // baked in at page load the same way STORE_REACHABLE above is (and, like
+  // it, reloaded whenever either changes — see staxx_settings_save()'s own
+  // $reload list). The Manage tab's layout needs both to decide which of the
+  // Log/Shell/Files panes to build; see mountManageForCurrentStack().
+  var SHELL_ENABLED = scaffold.dataset.shellEnabled === '1';
+  var FILES_ENABLED = scaffold.dataset.filesEnabled === '1';
   // PLAN_72 — this server's own time zone (Unraid's ident.cfg), for the no-TZ
   // notice's "Add TZ=<zone>" button. Blank when the server-side read could
   // not find one; never guessed at from here.
@@ -4306,12 +4313,15 @@
            '<span class="staxx-tickword">' + esc(label) + '</span></label>';
   }
 
-  // The When row inside the fieldset. `pinned`/`bare` only decide whether the
-  // row is drawn disabled (CSS, via the fieldset's own dim class) — the marks
+  // The When row inside the fieldset. `bare` only decides whether the row is
+  // drawn disabled (CSS, via the fieldset's own dim class) — the marks
   // themselves are always drawn from the field's real state, pinned or not,
   // so "what this would do" stays readable even while it cannot be changed
-  // (PLAN_150's own point about a grey box nobody can decode).
-  function updatePolicyRowHtml(f, index) {
+  // (PLAN_150's own point about a grey box nobody can decode). `pinned`
+  // (PLAN_188 part D) is never the field's own value — the x-unraid choice
+  // sits untouched underneath a pin — so it overrides which mark is shown
+  // checked without changing what `value` below reports.
+  function updatePolicyRowHtml(f, index, pinned) {
     var label = 'When';
     var name  = 'staxx-updpolicy-' + f.policy.field + '-' + index;
 
@@ -4326,8 +4336,8 @@
     }
 
     var value = policyValueOf(f);
-    var topValue = value === 'auto-immediate' ? 'auto' : value;
-    var options = [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
+    var topValue = pinned ? 'pinned' : (value === 'auto-immediate' ? 'auto' : value);
+    var options = [['pinned', 'Pinned'], ['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
     var optsHtml = options.map(function (o) {
       return updTickOptionHtml(name, index, f.policy.field, o[0], o[1], topValue);
     }).join('');
@@ -4358,7 +4368,11 @@
         '</div>' +
       '</div>';
 
-    var note = updateModeNoteHtml(f);
+    // The fieldset's own notice already says what Pinned means (see
+    // updatesFieldsetHtml()) — a per-row note here would either repeat that
+    // or describe a choice that is not really in force while pinned, so
+    // this row shows none while pinned.
+    var note = pinned ? '' : updateModeNoteHtml(f);
 
     return '<div class="staxx-upd-row" data-row="' + index + '">' +
              '<span class="staxx-upd-label">' + esc(label) + help + '</span>' +
@@ -4449,6 +4463,141 @@
     return { image: image, pinned: image.indexOf('@') !== -1, hasBuild: hasBuild };
   }
 
+  // Whether one service's image line is pinned, off any fields array a
+  // caller already has parsed (MODEL.fields in the editor, a fresh disk
+  // parse's own fields for the row menu and the bulk panel) — never a
+  // stored value (PLAN_188 part D: Pinned is read off the "@" in the image
+  // line, nothing StaXX remembers separately).
+  function svcIsPinned(fields, name) {
+    return serviceImageAndBuild(fields, name).pinned;
+  }
+
+  // The one service's own image field, off a fields array the caller has
+  // already parsed — used by the Pinned choice's own two flows below,
+  // which both need the exact text on the image line before touching it.
+  function imageFieldFor(fields, service) {
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image') return f;
+    }
+    return null;
+  }
+
+  /* =====================================================================
+   * PLAN_188 part D, follow-up — which FILE actually sets a service's
+   * image: line. Compose merges an override on top of the main file, so an
+   * override that names its own image: for this service is the one line
+   * that wins — pinning or releasing has to land there, not in the main
+   * file, or the edit would be silently overridden right back (Adrian,
+   * 2026-09-26: "take the version that is set, and either the compose file
+   * or in the override file, and just mark that in the comment field").
+   *
+   * Independent of whatever the editor happens to have open: the row menu
+   * calls this with no editor open at all, so it always reads fresh off
+   * disk through the same 'files'/'file-read'/'read' actions the Files tab
+   * itself uses, never off FILES/MODEL, which may be showing a different
+   * stack or nothing at all.
+   * ===================================================================== */
+
+  // The main file, wrapped in the same {ok, isOverride, fileName, text,
+  // fingerprint, eol} shape findImageOwner() below answers with either way,
+  // so every caller handles "which file" with one shape, not two.
+  function mainImageOwner(name) {
+    return call('read', { name: name }).then(function (r) {
+      if (!r || !r.ok) return { ok: false, why: (r && r.error) || 'Could not read the stack.' };
+      return { ok: true, isOverride: false, fileName: '', text: r.body, fingerprint: r.fingerprint,
+               eol: r.body.indexOf('\r\n') >= 0 ? '\r\n' : '\n' };
+    });
+  }
+
+  // Resolves to the main file's own answer unless an override sits beside
+  // it AND that override sets this service's own image: line — a companion
+  // file this cannot read as text (binary, a read failure, or one that
+  // fails to parse) falls back to the main file the same way this project
+  // already degrades rather than refuses whenever an override cannot be
+  // understood.
+  function findImageOwner(name, service) {
+    return call('files', { name: name }).then(function (res) {
+      var overrideEntry = null;
+      if (res && res.ok && res.files) {
+        for (var i = 0; i < res.files.length; i++) {
+          if (!res.files[i].dir && isStackOverride(res.files[i].name)) { overrideEntry = res.files[i]; break; }
+        }
+      }
+      if (!overrideEntry) return mainImageOwner(name);
+
+      return call('file-read', { name: name, file: overrideEntry.name }).then(function (r) {
+        if (!r || !r.ok || r.binary) return mainImageOwner(name);
+        var oform;
+        try { oform = YAML.buildForm(YAML.parse(r.text)); } catch (e) { oform = null; }
+        var oField = oform ? imageFieldFor(oform.fields, service) : null;
+        var setsImage = !!(oField && oField.parts.value && String(oField.parts.value.value).trim() !== '');
+        if (!setsImage) return mainImageOwner(name);
+        return { ok: true, isOverride: true, fileName: overrideEntry.name, text: r.text,
+                 eol: r.text.indexOf('\r\n') >= 0 ? '\r\n' : '\n' };
+      });
+    });
+  }
+
+  // Writes newText into whichever file `owner` (findImageOwner()'s own
+  // answer) named: the override through the same file-save the Files tab
+  // itself uses — no fingerprint conflict check exists for a companion
+  // file, same as everywhere else one is saved — or the main file through
+  // the ordinary compose save, so the change is in History exactly like
+  // any other edit either way (staxx_write_file() captures history for an
+  // override too, the same as staxx_save_stack() does for the main file).
+  function saveImageOwner(name, owner, newText) {
+    var body = withEol(newText, owner.eol);
+    if (owner.isOverride) return call('file-save', { name: name, file: owner.fileName, body: body });
+    return call('save', { name: name, body: body, 'new': '0', fingerprint: owner.fingerprint });
+  }
+
+  // Puts a just-saved owner's new text on screen IF the editor open right
+  // now is showing exactly that file — never otherwise, since `newText` is
+  // only ever the file the write actually targeted (main or override) and
+  // putting it anywhere else would show one file's text as another's. The
+  // main file always goes through adoptRolledBackText() (currentText()'s
+  // own contract: fileStash holds the main file even while a companion tab
+  // is on screen, so that function already knows where to put it). An
+  // override only needs a hand here when its OWN tab is the one open —
+  // loadCompanion() re-reads it fresh, the same read every ordinary tab
+  // switch already does, rather than trying to patch the box in place.
+  function adoptImageOwnerWrite(name, owner, newText) {
+    if (!owner.isOverride) { if (openedName === name && MODEL) adoptRolledBackText(newText); return; }
+    if (openedName === name && fileOpen === owner.fileName) loadCompanion(owner.fileName);
+  }
+
+  // Releasing a pin removes exactly the "was <ref>" note it added
+  // (compose-model's unpinNoteText()) — never anything an author put
+  // beside it. `freshForm` must be rebuilt off `doc` AFTER the image
+  // value's own rewrite, not reused from before it: a shorter or longer
+  // value shifts where a trailing comment on the same line sits, the same
+  // trap pinServiceToDigest() rebuilds its own form to avoid in the other
+  // direction. A field with nothing recognisable as the pin's own note
+  // (a hand-pinned image, say, or a note this cannot confidently read as
+  // its own) is left untouched.
+  function stripPinNoteAfterEdit(doc, freshForm, fieldId) {
+    var freshField = null;
+    for (var i = 0; i < freshForm.fields.length; i++) {
+      if (freshForm.fields[i].id === fieldId) { freshField = freshForm.fields[i]; break; }
+    }
+    if (!freshField || !freshField.commentSpot) return;
+    var stripped = YAML.unpinNoteText(freshField.note);
+    if (stripped === (freshField.note || '')) return;   // nothing of ours to remove
+    YAML.setComment(doc, freshForm, freshField.id, stripped, !!freshField.secret, !!freshField.required);
+  }
+
+  // The bare tag a "was <ref>" note names — "alpine" out of "nginx:alpine"
+  // — for offering the tag a service was pinned from at the top of the
+  // release picker (askTagPick()). '' when the note carries no such
+  // fragment, or the ref it names carries no tag of its own to offer.
+  function tagFromPinnedRef(note) {
+    var ref = YAML.pinnedRefFromNote(note);
+    if (!ref) return '';
+    var slash = ref.lastIndexOf('/'), colon = ref.lastIndexOf(':');
+    return colon > slash ? ref.slice(colon + 1) : '';
+  }
+
   // The two fieldsets for one service — Updates (legend, the two odd-state
   // notices, then the When row) and, directly beneath it, Notifications
   // (the one row of three switches) — same fieldset/legend markup and
@@ -4463,13 +4612,16 @@
     var pinned = info.pinned;
     var builtOnly = !pinned && info.hasBuild;
     var bare = !pinned && !info.hasBuild && !String(info.image).trim();
-    var dim = pinned || bare;
+    // A pinned row is no longer dimmed (PLAN_188 part D) — Default/Manual/
+    // Automatic stay clickable on a pinned service, since clicking one is
+    // now how a pin is released (see the formHost 'change' handler below),
+    // not a dead control waiting on an "Unpin it" link.
+    var dim = bare;
 
     var notice = '';
     if (pinned) {
-      notice = '<p class="staxx-upd-notice">Pinned to one exact build, so it cannot move. ' +
-        '<button type="button" class="staxx-udlink" data-upd-unpin="' + esc(svc.name) + '">Unpin it</button> ' +
-        'to change this.</p>';
+      notice = '<p class="staxx-upd-notice">Pinned to one exact build, so it is never checked for an ' +
+        'update. Choosing another option here opens a picker for the tag to release it to.</p>';
     } else if (builtOnly) {
       notice = '<p class="staxx-upd-notice">Built here from a recipe — rebuilds when the image it is ' +
         'built from moves.</p>';
@@ -4484,7 +4636,7 @@
       else notifyEntry = { f: f, idx: idx };
     });
 
-    var updatesHtml = (modeEntry ? updatePolicyRowHtml(modeEntry.f, modeEntry.idx) : '');
+    var updatesHtml = (modeEntry ? updatePolicyRowHtml(modeEntry.f, modeEntry.idx, pinned) : '');
     var notifyHtml = notifyEntry ? updateNotifyGroupHtml(notifyEntry.f, notifyEntry.idx) : '';
 
     // PLAN_176 B3b — wrapped in the same .staxx-formgroup/.staxx-groupbody
@@ -4871,6 +5023,205 @@
     });
   }
 
+  /* =====================================================================
+   * PLAN_188 part D — the editor's own Pinned choice, and releasing one
+   * from here. Both are reached only from the "When" row's own radios
+   * (formHost's 'change' handler below); neither is a bulk-panel or row-
+   * menu concern (see writeUpdatePolicyForServices()'s own pinned-skip
+   * for those). Pinning writes at once, the same "tick reaches disk
+   * immediately" rule writeUpdatePolicy() follows, since nothing about it
+   * is unsafe to leave unsaved-but-half-typed; releasing only ever touches
+   * the OPEN document (never disk directly) and switches to Configure, so
+   * an unrelated unsaved edit elsewhere in the form is never carried along
+   * or lost — the person still presses Save themselves, exactly as if they
+   * had typed the new tag in by hand.
+   * ===================================================================== */
+
+  // Puts the "When" row's radios back to whatever they should show once a
+  // Pinned choice or a release is abandoned partway through — the browser
+  // has already flipped the clicked radio's checked state by the time
+  // 'change' fires, and neither flow writes anything until a server round
+  // trip and (for Pinned) a confirmation both land, so a refusal or Cancel
+  // anywhere along the way must visibly put the row back.
+  function resetUpdateModeRadio(index, value) {
+    var row = formHost.querySelector('.staxx-upd-row[data-row="' + index + '"]');
+    if (!row) return;
+    row.querySelectorAll('input[data-updpolicy="mode"]').forEach(function (input) {
+      input.checked = (input.value === value);
+    });
+  }
+
+  // Choosing Pinned: ask the server what build this service is actually
+  // running (pin-resolve, PLAN_188 part D), confirm, then write it through
+  // the same disk-read/single-edit/save shape writeUpdatePolicy() above
+  // uses for a tick — a pin is exactly as urgent to land as any other
+  // update-policy change, and the reasoning for two separate writes there
+  // (never carry unrelated unsaved typing along) applies here word for
+  // word. No job follows: pinning to the build already running changes
+  // nothing that is actually on disk in Docker, only the file that
+  // describes it.
+  function choosePinnedInEditor(service, index) {
+    if (!openedName) {
+      resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+      showError('Save this stack at least once before pinning a service to its running build.');
+      return;
+    }
+    clearError();
+    var name = openedName;
+    call('pin-resolve', { name: name, service: service }).then(function (res) {
+      if (!res || !res.ok) {
+        resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+        showError((res && res.error) || 'Could not find a build to pin this service to.');
+        return;
+      }
+      askConfirm({
+        title: 'Pin "' + service + '" to this build?',
+        bodyHtml: '<p>The compose file will name this exact build, so it is never checked for an update ' +
+          'again — the only way back onto one is picking a tag.</p>' +
+          '<p>The file as it stands now is kept in History, so this can be undone.</p>',
+        goLabel: 'Pin it', danger: false
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) { resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index])); return; }
+        // Which file actually sets this service's image — the override if
+        // one sits beside the main file and names its own image: for this
+        // service, the main file otherwise (findImageOwner(), above).
+        findImageOwner(name, service).then(function (owner) {
+          if (!owner.ok) {
+            showError(owner.why);
+            resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+            return;
+          }
+          var pinned = pinServiceToDigest(service, res.digest, owner.text);
+          if (!pinned.ok) {
+            showError(pinned.why);
+            resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+            return;
+          }
+          saveImageOwner(name, owner, pinned.yaml).then(function (saveRes) {
+            if (!saveRes || !saveRes.ok) {
+              showError((saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
+              resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+              return;
+            }
+            if (saveRes.icons) serviceIcons = saveRes.icons;
+            adoptImageOwnerWrite(name, owner, pinned.yaml);
+            // The main-file save carries a fresh fingerprint the open
+            // editor must adopt (its stamp is now stale); a companion
+            // save carries none — the main file it is holding did not
+            // move, so fingerprintAtOpen stays exactly what it was.
+            if (!owner.isOverride) fingerprintAtOpen = saveRes.fingerprint || owner.fingerprint;
+            showPageNotice('"' + service + '" is now pinned to this exact build' +
+              (owner.isOverride ? ', in ' + owner.fileName : '') +
+              '. The file it replaces is kept in History.');
+            paintServiceIcons();
+          });
+        });
+      });
+    });
+  }
+
+  // The shared core both in-editor release doors use — this "When" row's
+  // own Default/Manual/Automatic click while pinned, and the Versions tab's
+  // "Release this pin" (see releaseViaVersionsTab() near pinnedBandHtml()):
+  // resolve which file owns the image (findImageOwner(), above), look up
+  // its repo's tags, let the person pick one through askTagPick(), then
+  // write it in.
+  //
+  // The two owners land differently, on purpose: the MAIN file only ever
+  // edits the OPEN document — never disk directly — so the person presses
+  // Save themselves once they are happy, exactly like typing the tag in by
+  // hand. An OVERRIDE has no such "unsaved until Save" state to preserve —
+  // a companion file already saves itself the moment its own tab is typed
+  // into (see runFileSave()) — so this writes it straight to disk at once,
+  // the same immediacy the row menu's own release already has for the
+  // main-file case.
+  //
+  // `onFail(message)` is called for every refusal (and '' for a plain
+  // Cancel) instead of this picking one error surface itself, since the two
+  // callers show it differently (the "When" row's showError() vs the
+  // Versions tab's own error banner).
+  function releaseViaTagPicker(name, service, onFail) {
+    findImageOwner(name, service).then(function (owner) {
+      if (!owner.ok) { onFail(owner.why); return; }
+      var doc = YAML.parse(owner.text);
+      var form = YAML.buildForm(doc);
+      var field = imageFieldFor(form.fields, service);
+      var image = field && field.parts.value ? field.parts.value.value : '';
+      var atIdx = image.indexOf('@');
+      var repo = repoOf(atIdx >= 0 ? image.slice(0, atIdx) : image);
+      if (!repo) {
+        onFail('Could not read this service’s image to look up its tags.');
+        return;
+      }
+      var beforePinTag = tagFromPinnedRef(field && field.note);
+      (tagCache.hasOwnProperty(repo) ? Promise.resolve(tagCache[repo])
+        : call('tags', { repo: repo }, 15000).then(function (res) {
+            tagCache[repo] = (res && res.ok) ? (res.tags || []) : [];
+            return tagCache[repo];
+          })
+      ).then(function (tags) {
+        askTagPick(repo, tags, beforePinTag).then(function (picked) {
+          // Nothing this function does from here on ever opens another
+          // question on top of the picker (unlike the row menu's own
+          // release, which repeats the chosen tag in a confirm) — safe to
+          // close it outright, whichever way this resolved.
+          closeConfirm();
+          if (!picked) { onFail(''); return; }   // '' — Cancel, not a real refusal
+
+          if (owner.isOverride) {
+            if (!field || !YAML.setValue(doc, form, field.id, picked)) {
+              onFail('That image line could not be rewritten — edit it in the Compose view instead.');
+              return;
+            }
+            stripPinNoteAfterEdit(doc, YAML.buildForm(doc), field.id);
+            var newText = YAML.serialise(doc);
+            saveImageOwner(name, owner, newText).then(function (saveRes) {
+              if (!saveRes || !saveRes.ok) {
+                onFail((saveRes && saveRes.error) || 'Save failed.');
+                return;
+              }
+              adoptImageOwnerWrite(name, owner, newText);
+              // The pin just came off, so the Versions tab's own "Pinned
+              // to…" band (built from the last read()) is stale — see
+              // rollbackToVersion()/finishRollback()'s own reasoning for
+              // the same reset.
+              versionsLoaded = false;
+            });
+            return;
+          }
+
+          if (openedName !== name || !MODEL) {
+            onFail('Open this stack to release this pin.');
+            return;
+          }
+          var imgField = imageFieldFor(MODEL.fields, service);
+          pushUndo('releasing the pin on "' + service + '"');
+          if (!imgField || !YAML.setValue(MODEL.doc, MODEL, imgField.id, picked)) {
+            undoStack.pop(); updateUndo();
+            onFail('That image line could not be rewritten — edit it in the Compose view instead.');
+            return;
+          }
+          stripPinNoteAfterEdit(MODEL.doc, YAML.buildForm(MODEL.doc, netDrivers(), envNameList()), imgField.id);
+          yamlPane.value = YAML.serialise(MODEL.doc);
+          paintGutter();
+          paintInk();
+          reparse();
+          setTab('configure');
+          versionsLoaded = false;
+        });
+      });
+    });
+  }
+
+  // Clicking Default/Manual/Automatic on the "When" row while pinned.
+  function openReleaseInEditor(service, index) {
+    releaseViaTagPicker(openedName, service, function (message) {
+      resetUpdateModeRadio(index, 'pinned');
+      if (message) showError(message);
+    });
+  }
+
   // The Immediate/Delayed reveal eases in — see updatePolicyRowHtml()'s own
   // comment. Run once after every full render (reparse()) rather than from
   // whatever caused it, since a rename, an undo or anything else that
@@ -4909,6 +5260,23 @@
     // reveals nothing) needs no such delay: the normal render already eases
     // it in.
     if (el.dataset.updpolicy === 'mode') {
+      var modeIndex = el.dataset.row | 0;
+      var modeField = MODEL && MODEL.fields[modeIndex];
+      var modeService = modeField && modeField.service;
+      var pinnedNow = modeService ? svcIsPinned(MODEL.fields, modeService) : false;
+
+      // Pinned itself is never a stored value to write (PLAN_188 part D) —
+      // choosing it or releasing it are both their own flows, neither of
+      // which is writeUpdatePolicy()'s ordinary tick.
+      if (el.value === 'pinned') {
+        if (!pinnedNow) choosePinnedInEditor(modeService, modeIndex);
+        return;
+      }
+      if (pinnedNow) {
+        openReleaseInEditor(modeService, modeIndex);
+        return;
+      }
+
       var reveal = formHost.querySelector('.staxx-upd-reveal[data-updreveal="' + el.dataset.row + '"]');
       var wasAuto = !!reveal;
       var newTop = el.value === 'auto-immediate' ? 'auto' : el.value;
@@ -4925,9 +5293,6 @@
   formHost.addEventListener('click', function (event) {
     var openBtn = event.target.closest('[data-open-settings]');
     if (openBtn) { openSettings(openBtn.dataset.openSettings); return; }
-
-    var unpinBtn = event.target.closest('[data-upd-unpin]');
-    if (unpinBtn) { performUnpin(unpinBtn.dataset.updUnpin); return; }
   });
 
   /* =====================================================================
@@ -4985,10 +5350,21 @@
       }
 
       var applied = [];
+      var pinnedSkipped = 0;
       for (var i = 0; i < services.length; i++) {
         var svc = services[i];
         var diskField = policyFieldFor(diskForm.fields, svc, policyField);
         if (!diskField || diskField.policy.unreadable) continue;
+        // A pinned service's update choice is left exactly as it stands —
+        // Adrian, 2026-09-26, on the bulk Updates… panel: "changing the
+        // update setting for an item that is pinned, I think it should
+        // ignore changing that setting on that stack." A stack-wide row
+        // menu (several services in one write) is the same shape for one
+        // stack, so the same rule applies here rather than only in the
+        // bulk panel. The Pinned choice itself is reached a different way
+        // entirely (choosePinnedInEditor()/the row menu's own single-
+        // service branch), never through this function.
+        if (svcIsPinned(diskForm.fields, svc)) { pinnedSkipped++; continue; }
         if (!YAML.setPart(diskDoc, diskForm, diskField.id, 'value', value)) {
           report('Could not change this setting',
                  'That cannot be written as it stands for "' + svc + '" — edit it in the Compose view.');
@@ -4998,6 +5374,10 @@
       }
 
       if (!applied.length) {
+        // Every service in scope was pinned, not merely unreadable —
+        // Adrian's ruling above is silence, never a refusal dialog, so this
+        // is treated as nothing to do rather than "could not be changed".
+        if (pinnedSkipped && pinnedSkipped === services.length) return [];
         report('Could not change this setting',
                'None of these containers could be changed here — edit the compose file directly.');
         return null;
@@ -5081,7 +5461,15 @@
   // "Mixed" label as noise); pressing one still sets every one of them,
   // since the write always targets the full list, not just whichever
   // service happened to agree.
-  function fillUpdateMenuRow(skel, readable, name) {
+  //
+  // `singleService` (PLAN_188 part D) is the one service this menu is
+  // scoped to, or '' for a whole stack's own menu — Pinned is offered only
+  // for a single service: a stack-wide row has no single build to point
+  // at, and Adrian never asked for a bulk pin. `allFields` is the full
+  // parse's own field list (not `readable`, which holds only the 'mode'
+  // policy fields) — the pinned check needs the image field, which is a
+  // different binder entirely.
+  function fillUpdateMenuRow(skel, readable, name, singleService, allFields) {
     if (!readable.length) {
       skel.body.querySelector('.staxx-menu-updloading').textContent =
         'This is set to something StaXX does not recognise — edit it in the Compose view.';
@@ -5091,7 +5479,10 @@
     var values = readable.map(policyValueOf);
     var agreed = values.every(function (v) { return v === values[0]; }) ? values[0] : null;
     var topAgreed = agreed === 'auto-immediate' ? 'auto' : agreed;
-    var options = [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
+    var pinnedNow = !!singleService && svcIsPinned(allFields, singleService);
+    var options = singleService
+      ? [['pinned', 'Pinned'], ['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']]
+      : [['default', 'Default'], ['manual', 'Manual'], ['auto', 'Automatic']];
 
     skel.body.querySelector('.staxx-menu-updloading').remove();
 
@@ -5101,14 +5492,21 @@
     tickrow.setAttribute('role', 'radiogroup');
     tickrow.setAttribute('aria-label', skel.label.textContent);
     tickrow.innerHTML = options.map(function (o) {
-      return updMenuTickHtml(groupName, o[0], o[1], topAgreed);
+      return updMenuTickHtml(groupName, o[0], o[1], pinnedNow ? 'pinned' : topAgreed);
     }).join('');
     skel.body.appendChild(tickrow);
 
     // Immediate/Delayed animates open/closed already (PLAN_150 phase 5) —
     // the same CSS transition PLAN_155 borrows for the editor's own reveal.
+    // Never shown while pinned: `topAgreed` is the real underlying policy
+    // value (kept untouched by a pin, so "remember the old choice" on
+    // release has something to come back to) and can still read 'auto'
+    // even though Pinned is what is actually displayed — the editor's own
+    // updatePolicyRowHtml() avoids this by overriding topValue to 'pinned'
+    // outright; this row has no such single variable to override, so the
+    // pinned check is added here instead.
     var subEl = document.createElement('div');
-    subEl.className = 'staxx-menu-updsub' + (topAgreed === 'auto' ? ' staxx-menu-updsub--open' : '');
+    subEl.className = 'staxx-menu-updsub' + (!pinnedNow && topAgreed === 'auto' ? ' staxx-menu-updsub--open' : '');
     var subChecked = agreed === 'auto-immediate' ? 'auto-immediate' : 'auto';
     subEl.innerHTML =
       updMenuTickHtml(groupName + '-sub', 'auto-immediate', 'Immediate', subChecked) +
@@ -5117,16 +5515,44 @@
 
     var services = readable.map(function (f) { return f.service; });
 
-    function commit(value) {
-      var allInputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'))
+    function allInputsOf() {
+      return Array.prototype.slice.call(tickrow.querySelectorAll('input'))
         .concat(Array.prototype.slice.call(subEl.querySelectorAll('input')));
+    }
+
+    function commit(value) {
+      // Pinned/pinned-release both go on to open a dialog (a confirm, or
+      // the tag picker first) — closed here, before that, the same way
+      // every ordinary menuItem() button closes the menu before its own
+      // handler runs. Left open, the menu sat visually on top of the
+      // dialog that opened underneath it (Adrian, 2026-09-26). Nothing is
+      // left to revert on a Cancel or a refusal once the row itself is
+      // gone with the rest of the menu; refreshRows() alone puts the true
+      // state back next time the row is drawn.
+      if (singleService && value === 'pinned') {
+        if (pinnedNow) return;   // already pinned — nothing to do
+        closeMenu();
+        choosePinnedFromMenu(name, singleService, function (ok) { if (ok) refreshRows(); });
+        return;
+      }
+      if (singleService && pinnedNow) {
+        closeMenu();
+        releasePinFromMenu(name, singleService, value, function (ok) { if (ok) refreshRows(); });
+        return;
+      }
+
+      var allInputs = allInputsOf();
+
       // Disabled for the round trip, same reasoning as the Autostart switch:
       // a second click landing mid-flight must not race the first.
       allInputs.forEach(function (i) { i.disabled = true; });
 
       writeUpdatePolicyForServices(name, services, 'mode', value).then(function (applied) {
         allInputs.forEach(function (i) { i.disabled = false; });
-        if (!applied) return; // a refusal — failed() already said why
+        // A refusal answers null; every service in scope being pinned
+        // answers [] (nothing written, nothing to report — see that
+        // function's own comment) — neither leaves anything to re-tick.
+        if (!applied || !applied.length) return;
 
         // Every service the write touched now holds this same value, so
         // there is nothing left to disagree about — re-tick from the value
@@ -5144,6 +5570,200 @@
 
     tickrow.addEventListener('change', function (event) { commit(event.target.value); });
     subEl.addEventListener('change', function (event) { commit(event.target.value); });
+  }
+
+  // Choosing Pinned from the row menu: the same pin-resolve/confirm/disk-
+  // read/save shape choosePinnedInEditor() uses in the form — there is no
+  // open MODEL here to update in step, so the caller just re-reads the row
+  // from scratch (refreshRows()/menuRedraw) the way every other menu write
+  // already does. `done(ok)` is called exactly once.
+  function choosePinnedFromMenu(name, service, done) {
+    call('pin-resolve', { name: name, service: service }).then(function (res) {
+      if (!res || !res.ok) {
+        failed('Could not pin this service', (res && res.error) || 'Could not find a build to pin this service to.');
+        done(false);
+        return;
+      }
+      askConfirm({
+        title: 'Pin "' + service + '" to this build?',
+        bodyHtml: '<p>The compose file will name this exact build, so it is never checked for an update ' +
+          'again — the only way back onto one is picking a tag.</p>' +
+          '<p>The file as it stands now is kept in History, so this can be undone.</p>',
+        goLabel: 'Pin it', danger: false
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) { done(false); return; }
+        // Which file actually sets this service's image — the override
+        // wins when it names its own, the main file otherwise (see
+        // findImageOwner()'s own header comment above).
+        findImageOwner(name, service).then(function (owner) {
+          if (!owner.ok) {
+            failed('Could not pin this service', owner.why);
+            done(false);
+            return;
+          }
+          var pinned = pinServiceToDigest(service, res.digest, owner.text);
+          if (!pinned.ok) {
+            failed('Could not pin this service', pinned.why);
+            done(false);
+            return;
+          }
+          saveImageOwner(name, owner, pinned.yaml).then(function (saveRes) {
+            if (!saveRes || !saveRes.ok) {
+              failed('Could not pin this service',
+                     (saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
+              done(false);
+              return;
+            }
+            if (saveRes.icons) serviceIcons = saveRes.icons;
+            adoptImageOwnerWrite(name, owner, pinned.yaml);
+            if (openedName === name && MODEL) reparse();
+            paintServiceIcons();
+            done(true);
+          });
+        });
+      });
+    });
+  }
+
+  // Clicking Default/Manual/Automatic on a pinned service's row menu: opens
+  // the same tag picker the Versions tab's own "Release this pin" does
+  // (askTagPick()), then — unlike the editor's own openReleaseInEditor(),
+  // which only ever edits the open document — a confirm window repeating
+  // the chosen tag, since there is no Save button here for the change to
+  // wait on: Adrian, 2026-09-26, "a confirm window repeats the chosen tag
+  // and says it takes effect immediately." Confirm writes the tag into
+  // whichever file sets the image AND the clicked choice, through the
+  // normal save, then pulls that tag and recreates only this service —
+  // `rollback-pull`, the same verb staxx_update_rollback() itself starts a
+  // job with, reused directly through the ordinary `run` action rather than
+  // a bespoke one, since it already does exactly "pull, then up -d --force-
+  // recreate" for one named service.
+  function releasePinFromMenu(name, service, clickedValue, done) {
+    findImageOwner(name, service).then(function (owner) {
+      if (!owner.ok) {
+        failed('Could not release this pin', owner.why);
+        done(false);
+        return;
+      }
+      var form = YAML.buildForm(YAML.parse(owner.text), netDrivers(), envNameList());
+      var imgField = imageFieldFor(form.fields, service);
+      var image = imgField && imgField.parts.value ? imgField.parts.value.value : '';
+      var atIdx = image.indexOf('@');
+      var repo = repoOf(atIdx >= 0 ? image.slice(0, atIdx) : image);
+      if (!repo) {
+        failed('Could not release this pin', 'Could not read this service’s image to look up its tags.');
+        done(false);
+        return;
+      }
+
+      var beforePinTag = tagFromPinnedRef(imgField && imgField.note);
+      (tagCache.hasOwnProperty(repo) ? Promise.resolve(tagCache[repo])
+        : call('tags', { repo: repo }, 15000).then(function (res) {
+            tagCache[repo] = (res && res.ok) ? (res.tags || []) : [];
+            return tagCache[repo];
+          })
+      ).then(function (tags) {
+        askTagPick(repo, tags, beforePinTag).then(function (picked) {
+          // Cancelled — nothing further to show, so this closes it; picked
+          // goes straight on to askConfirm() below WITHOUT closing first
+          // (askConfirm()'s own "already open" branch just restyles the
+          // same dialog in place) — closing here raced that reopen: the
+          // picker's dialog.close() queues its 'close' event rather than
+          // firing it inline, and by the time that stale event actually
+          // fired, askConfirm() had already reassigned confirmResolve to
+          // the NEW question, so the OLD close silently answered it with
+          // false (Adrian, 2026-09-26: the confirm "closes itself within
+          // about a second, with nothing done").
+          if (!picked) { closeConfirm(); done(false); return; }
+          askConfirm({
+            title: 'Set "' + service + '" to ' + picked + '?',
+            bodyHtml: '<p>This takes effect immediately: the compose file is rewritten, "' + esc(picked) +
+              '" is pulled, and this service is recreated on it.</p>' +
+              '<p>The pinned file is kept in History, so this can be undone.</p>',
+            goLabel: 'Set it', danger: false
+          }).then(function (go) {
+            closeConfirm();
+            if (!go) { done(false); return; }
+
+            // Re-resolve fresh rather than reuse the parse above — the tag
+            // lookup can take a moment, and this must post whatever is
+            // actually on disk right now, not a copy that has gone stale.
+            findImageOwner(name, service).then(function (owner2) {
+              if (!owner2.ok) {
+                failed('Could not release this pin', owner2.why);
+                done(false);
+                return;
+              }
+              var doc2 = YAML.parse(owner2.text);
+              var form2 = YAML.buildForm(doc2, netDrivers(), envNameList());
+              form2.doc = doc2;
+              var imgField2 = imageFieldFor(form2.fields, service);
+              if (!imgField2 || !YAML.setValue(doc2, form2, imgField2.id, picked)) {
+                failed('Could not release this pin',
+                       'That image line could not be rewritten — edit it in the Compose view instead.');
+                done(false);
+                return;
+              }
+              stripPinNoteAfterEdit(doc2, YAML.buildForm(doc2, netDrivers(), envNameList()), imgField2.id);
+              // The clicked choice IS written here, unlike the editor's own
+              // openReleaseInEditor() — Adrian, 2026-09-26: "Confirm writes
+              // repo:tag ... and sets the clicked update choice." The row
+              // menu is the only door where a choice was actually clicked.
+              // Written into the image's own file when that file already
+              // carries this service's x-unraid update field (the ordinary
+              // case — x-unraid metadata lives in one file); otherwise a
+              // second, separate write puts it in the main file, since an
+              // override that sets only the image has no x-unraid block of
+              // its own to hold it.
+              var modeField2 = policyFieldFor(form2.fields, service, 'mode');
+              var modeInSameFile = !!(modeField2 && !modeField2.policy.unreadable);
+              if (modeInSameFile) YAML.setPart(doc2, form2, modeField2.id, 'value', clickedValue);
+
+              var text2 = YAML.serialise(doc2);
+              saveImageOwner(name, owner2, text2).then(function (saveRes) {
+                if (!saveRes || !saveRes.ok) {
+                  failed('Could not release this pin',
+                         (saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
+                  done(false);
+                  return;
+                }
+                if (saveRes.icons) serviceIcons = saveRes.icons;
+                adoptImageOwnerWrite(name, owner2, text2);
+
+                (modeInSameFile ? Promise.resolve(true)
+                  : writeUpdatePolicyForServices(name, [service], 'mode', clickedValue)
+                ).then(function () {
+                  if (openedName === name && MODEL) reparse();
+                  paintServiceIcons();
+
+                  var rows = containerRows(name, service);
+                  if (rows.length) setBusy(rows, 'Updating…');
+                  call('run', { name: name, verb: 'rollback-pull', service: service }).then(function (runRes) {
+                    if (!runRes || !runRes.ok) {
+                      if (rows.length) clearBusy(rows);
+                      failed('The file was changed but the new tag could not be brought in',
+                             (runRes && runRes.error) || 'Could not start the job.');
+                      done(true);   // the file itself already changed — the row must re-read
+                      return;
+                    }
+                    track(runRes.job, {
+                      rows: rows, verb: 'rollback-pull',
+                      done: function (job) {
+                        if (rows.length) clearBusy(rows);
+                        if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'rollback-pull', runRes.job);
+                        refreshStateSoon();
+                      }
+                    });
+                    done(true);
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
   }
 
   // Fills the Notifications row — one row of three flag switches, the same
@@ -5199,7 +5819,9 @@
 
       writeUpdatePolicyForServices(name, services, 'notify', value).then(function (applied) {
         inputs.forEach(function (i) { i.disabled = false; });
-        if (!applied) return; // a refusal — failed() already said why
+        // A refusal answers null; every service in scope being pinned
+        // answers [] — neither leaves the ticks anything to reflect.
+        if (!applied || !applied.length) return;
         if (note) { note.remove(); note = null; }   // the ticks now say it themselves
         if (menu.hidden) refreshRows(); else menuRedraw = true;
       });
@@ -5241,10 +5863,17 @@
       modeSkel.label.textContent = 'Updates' + suffix;
       notifySkel.label.textContent = 'Notifications' + suffix;
 
+      // A single-service stack IS the stack — Adrian, 2026-09-26: "a single-
+      // service stack is the stack" — so its own stack-wide row menu offers
+      // Pinned exactly as a container's own row menu would, even though
+      // scopeService itself is '' here (this is the stack row, not one
+      // container's row).
+      var singleService = scopeService || (services.length === 1 ? services[0] : '');
+
       var modeReadable = services
         .map(function (svc) { return policyFieldFor(form.fields, svc, 'mode'); })
         .filter(function (f) { return f && !f.policy.unreadable; });
-      fillUpdateMenuRow(modeSkel, modeReadable, name);
+      fillUpdateMenuRow(modeSkel, modeReadable, name, singleService, form.fields);
 
       var notifyReadable = services
         .map(function (svc) { return policyFieldFor(form.fields, svc, 'notify'); })
@@ -23568,6 +24197,129 @@
       .then(function (went) { closeConfirm(); return went ? input.value : null; });
   }
 
+  // PLAN_188 part D — the tag picker for releasing a pin. Reuses the same
+  // #staxx-confirm dialog every other question in this file asks through,
+  // rather than a purpose-built window: Adrian, 2026-09-26, rejected the
+  // browser's own suggestion list for this because it "didn't match" the
+  // rest of StaXX's own controls and cannot be opened by the page — reusing
+  // the shared dialog is what "styled like the existing confirm windows"
+  // means here, for free. Resolves the chosen "repo:tag" string, or '' on
+  // Cancel/Escape/a backdrop click (never null — every caller tests it the
+  // same way askConfirm()'s callers test a boolean). See askTagPick()'s own
+  // comment, just below, for the order the list is offered in.
+  //
+  // Not a real semver parser (pre-release suffixes and build metadata are
+  // not modelled) — just the digit runs in a tag ("1.25.3" -> [1, 25, 3])
+  // compared numerically position by position, since a plain string sort
+  // would put "10" before "2".
+  function versionParts(tag) {
+    var m = String(tag).match(/\d+/g);
+    return m ? m.map(Number) : null;
+  }
+
+  function compareTagsNewestFirst(a, b) {
+    var pa = versionParts(a), pb = versionParts(b);
+    if (pa && pb) {
+      var len = Math.max(pa.length, pb.length);
+      for (var i = 0; i < len; i++) {
+        var na = pa[i] === undefined ? 0 : pa[i];
+        var nb = pb[i] === undefined ? 0 : pb[i];
+        if (na !== nb) return nb - na;   // descending — newest first
+      }
+      return 0;
+    }
+    if (pa && !pb) return -1;
+    if (!pa && pb) return 1;
+    return a < b ? -1 : (a > b ? 1 : 0);   // neither has digits — alphabetical
+  }
+
+  // `beforePinTag` (PLAN_188 part D follow-up) is the bare tag the service
+  // was pinned from — tagFromPinnedRef() reading its own "was <ref>" note —
+  // or '' when there is none to offer. Order: that tag first of all,
+  // marked; then the plan's own moving-tag list, in its own order, for
+  // whichever of them the image actually has; then every OTHER tag with no
+  // digit in it at all (nginx's own "alpine", "mainline", "perl" and so
+  // on — a real image's rolling tags are rarely limited to the plan's
+  // named nine), alphabetically; then every tag that does carry a version
+  // number, newest first.
+  function askTagPick(repo, tags, beforePinTag) {
+    var MOVING = ['latest', 'main', 'master', 'develop', 'dev', 'stable', 'beta', 'nightly', 'edge'];
+    var movingIndex = {};
+    MOVING.forEach(function (m, i) { movingIndex[m] = i; });
+
+    var planListed = [], otherMoving = [], versions = [];
+    (tags || []).forEach(function (t) {
+      if (movingIndex.hasOwnProperty(t)) { planListed.push(t); return; }
+      if (versionParts(t)) { versions.push(t); return; }   // has at least one digit
+      otherMoving.push(t);
+    });
+    planListed.sort(function (a, b) { return movingIndex[a] - movingIndex[b]; });
+    otherMoving.sort();
+    versions.sort(compareTagsNewestFirst);
+
+    var ordered = planListed.concat(otherMoving, versions);
+    if (beforePinTag) {
+      ordered = [beforePinTag].concat(ordered.filter(function (t) { return t !== beforePinTag; }));
+    }
+
+    var listHtml = ordered.length
+      ? '<ul class="staxx-tagpick-list">' + ordered.map(function (t, i) {
+          var label = (beforePinTag && i === 0) ? t + ' (before the pin)' : t;
+          return '<li><button type="button" class="staxx-btn staxx-btn--small" data-tag-pick="' +
+                 esc(repo + ':' + t) + '">' + esc(label) + '</button></li>';
+        }).join('') + '</ul>'
+      : '<p class="staxx-form-empty">StaXX could not read a list of tags for this image.</p>';
+    var typeHtml = '<div class="staxx-tagpick-type">' +
+      '<input type="text" class="staxx-input" data-tag-pick-box placeholder="or type a tag" ' + NOFILL + '>' +
+      '<button type="button" class="staxx-btn" data-tag-pick-go>Use this tag</button>' +
+      '</div>';
+
+    confirmSetBusy(false);
+    confirmMsg.textContent = '';
+    confirmTitle.textContent = 'Choose a tag for ' + repo;
+    confirmBody.innerHTML = listHtml + typeHtml;
+    // Neither of this dialog's own buttons answers the question here — a
+    // tag button or "Use this tag" does, through the delegated click
+    // handler below — so Go is hidden rather than repurposed.
+    confirmGo.hidden = true;
+    confirmCancel.hidden = false;
+    confirmCancel.textContent = confirmCancelDefault;
+    if (confirmBadicon) confirmBadicon.hidden = true;
+    if (confirmExtra) confirmExtra.hidden = true;
+    if (!confirmModal.open) confirmModal.showModal();
+    confirmCancel.focus({ preventScroll: true });
+
+    function onBodyClick(event) {
+      var pick = event.target.closest('[data-tag-pick]');
+      if (pick) { settleConfirm(pick.dataset.tagPick); return; }
+      var go = event.target.closest('[data-tag-pick-go]');
+      if (go) {
+        var box = confirmBody.querySelector('[data-tag-pick-box]');
+        var typed = box ? box.value.trim() : '';
+        if (typed) settleConfirm(repo + ':' + typed);
+      }
+    }
+    confirmBody.addEventListener('click', onBodyClick);
+
+    // Deliberately never closes the dialog itself — see this function's own
+    // header comment. A caller that goes straight on to askConfirm() (the
+    // row menu's own release, which repeats the chosen tag) needs the
+    // dialog left open exactly as askConfirm()'s own "already open" branch
+    // expects; closing it here first raced that reopen (Adrian, 2026-09-26:
+    // the confirm "closes itself within about a second, with nothing
+    // done") — dialog.close() queues its 'close' event rather than firing
+    // it inline, and by the time that stale event actually fired, the very
+    // same #staxx-confirm had already been reused for the NEW question, so
+    // the OLD close settled the NEW promise with false. Every caller now
+    // closes it explicitly once it truly has nothing further to show.
+    return new Promise(function (resolve) { confirmResolve = resolve; })
+      .then(function (picked) {
+        confirmBody.removeEventListener('click', onBodyClick);
+        confirmGo.hidden = false;
+        return (picked && typeof picked === 'string') ? picked : '';
+      });
+  }
+
   if (confirmModal) {
     // Enter in the text field submits it, same as a form would — askText()
     // is the only caller that ever fills the body with an <input>.
@@ -24981,7 +25733,9 @@
       stack: openedName,
       services: services,
       icons: manageIconsFor(openedName, services),
-      mounts: manageMountsFor(services)
+      mounts: manageMountsFor(services),
+      shellEnabled: SHELL_ENABLED,
+      filesEnabled: FILES_ENABLED
     });
     manageMounted = true;
   }
@@ -25646,6 +26400,49 @@
     return { ok: true, yaml: YAML.serialise(doc) };
   }
 
+  // PLAN_188 part D — the "Pinned" choice's own edit: the same rewrite
+  // pinServiceImage() above makes, plus a "was <old image>" note beside it
+  // (rule 2, CLAUDE.md — never lose what the author wrote; an existing note
+  // is kept and this is added beside it, never over it). Never used by a
+  // rollback's own pin — "put this version back" is a different claim from
+  // "pin the build running now", so only the Pinned choice adds this note.
+  //
+  // The form is rebuilt after setValue() before the note is written, rather
+  // than reusing the field found above: a longer "@sha256:…" value can shift
+  // where a trailing comment on the same line sits, so the comment's spot has
+  // to be read fresh off the document setValue() just changed, the same trap
+  // applyHealthOfferToText() rebuilds its form to avoid.
+  function pinServiceToDigest(service, digest, text) {
+    if (!YAML || typeof YAML.pinnedImageRef !== 'function' || typeof YAML.pinNoteText !== 'function') {
+      return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
+    }
+    var doc = YAML.parse(text);
+    var form = YAML.buildForm(doc, netDrivers());
+    form.doc = doc;
+    var field = null;
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
+    }
+    var image = field && field.parts.value ? field.parts.value.value : '';
+    var pinned = YAML.pinnedImageRef(image, digest);
+    if (!pinned.ok) return pinned;
+    if (!field || !YAML.setValue(doc, form, field.id, pinned.ref)) {
+      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
+    }
+
+    var freshForm = YAML.buildForm(doc, netDrivers());
+    var freshField = null;
+    for (var j = 0; j < freshForm.fields.length; j++) {
+      if (freshForm.fields[j].id === field.id) { freshField = freshForm.fields[j]; break; }
+    }
+    if (freshField) {
+      var note = YAML.pinNoteText(freshField.note, image);
+      YAML.setComment(doc, freshForm, freshField.id, note, !!freshField.secret, !!freshField.required);
+    }
+    return { ok: true, yaml: YAML.serialise(doc), oldImage: image };
+  }
+
   // The tail shared by a single rollback and a several-at-once one, once the
   // server has actually accepted the save: put the new text on screen,
   // stamp the fresh fingerprint (the file on disk just changed under this
@@ -26083,76 +26880,18 @@
     });
   }
 
-  // Mirrors pinServiceImage() above: reads the image line exactly as
-  // written, on a throwaway parse so a refusal below never touches the
-  // live editor state, and asks compose-model.js's unpinnedImageRef() to
-  // drop the pin rather than doing that stripping here.
-  function unpinServiceImage(service) {
-    if (!YAML || typeof YAML.unpinnedImageRef !== 'function') {
-      return { ok: false, why: 'This version of StaXX cannot release pins yet — reload the page and try again.' };
-    }
-    var doc = YAML.parse(currentText());
-    var form = YAML.buildForm(doc, netDrivers());
-    form.doc = doc;
-    var field = null;
-    for (var i = 0; i < form.fields.length; i++) {
-      var f = form.fields[i];
-      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
-    }
-    var image = field && field.parts.value ? field.parts.value.value : '';
-    var unpinned = YAML.unpinnedImageRef(image);
-    if (!unpinned.ok) return unpinned;
-    if (!field || !YAML.setValue(doc, form, field.id, unpinned.ref)) {
-      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
-    }
-    return { ok: true, yaml: YAML.serialise(doc) };
-  }
-
-  // Releasing a pin only edits the compose file — nothing is recreated, so
-  // unlike rollbackToVersion() there is no job to follow. adoptRolledBackText
-  // is reused as-is: it just puts fresh text wherever the editor is
-  // currently reading it from, which is exactly what a release needs too.
-  function releasePin(service) {
-    var unpinned = unpinServiceImage(service);
-    if (!unpinned.ok) {
-      versionsActionError = unpinned.why;
-      renderVersionsPane();
-      return;
-    }
-    call('update-unpin', { name: openedName, service: service,
-                            yaml: withEol(unpinned.yaml, composeEol) }).then(function (res) {
-      if (!res || !res.ok) {
-        versionsActionError = (res && res.error) || 'Could not release the pin on ' + service + '.';
-        renderVersionsPane();
-        return;
-      }
-      versionsActionError = '';
-      adoptRolledBackText(unpinned.yaml);
-      // As with a rollback, the stamp this editor is holding is now stale —
-      // the file on disk just changed under it.
-      fingerprintAtOpen = res.fingerprint || '';
-      showPageNotice(res.historyNote ||
-        ('"' + service + '" now follows its tag again. The pinned file is kept in History.'));
-      // The pin just came off, so the band above the list has to go too.
-      versionsLoaded = false;
-      if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
-      else renderVersionsPane();
-    });
-  }
-
-  // service is the raw (unescaped) name, for the confirmation's own
-  // textContent — see askConfirm(), which never treats its title as HTML.
-  function performUnpin(service) {
-    askConfirm({
-      title: 'Release the pin on ' + service + '?',
-      bodyHtml: '<p>The compose file will stop naming an exact build, so this service follows its tag again. ' +
-        'Nothing restarts now — it keeps running what it is running until the next update or recreate moves ' +
-        'it.</p>' +
-        '<p>The pinned file is kept in History, so this can be undone.</p>',
-      goLabel: 'Release it'
-    }).then(function (go) {
-      closeConfirm();
-      if (go) releasePin(service);
+  // PLAN_188 part D — "Release this pin" now opens the same tag picker the
+  // "When" row's own release door does (releaseViaTagPicker()), rather than
+  // stripping the digest back to whatever tag it was pinned from
+  // (update-unpin's own staxx_update_unpin(), which insists on exactly that
+  // tag — see its own comment): Adrian, 2026-09-26, "the only way to release
+  // a pin would be to open the editor and go to the image field and drop
+  // down the list of tags ... and to pick a new tag". Failures show in the
+  // Versions pane's own error banner, the same as every other Versions
+  // action; a plain Cancel (onFail('')) shows nothing at all.
+  function releaseViaVersionsTab(service) {
+    releaseViaTagPicker(openedName, service, function (message) {
+      if (message) { versionsActionError = message; renderVersionsPane(); }
     });
   }
 
@@ -26162,7 +26901,7 @@
       if (svcBtn) { selectVersionsService(svcBtn.dataset.versionsService); return; }
 
       var unpinBtn = event.target.closest('[data-version-unpin]');
-      if (unpinBtn) { performUnpin(unpinBtn.dataset.versionUnpin); return; }
+      if (unpinBtn) { releaseViaVersionsTab(unpinBtn.dataset.versionUnpin); return; }
 
       var multiToggle = event.target.closest('[data-versions-multi-toggle]');
       if (multiToggle) { toggleVersionsMulti(); return; }
@@ -26500,7 +27239,10 @@
             'starting file and nothing leaves the server.'
     },
     {
+      // PLAN_188 part C: shares the 'container-access' box with FILES_ENABLED
+      // below rather than standing alone — see SETTINGS_BLOCKS.
       key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells', tab: 'general',
+      block: 'container-access', sublabel: 'Container shells',
       choices: [
         ['true',  'Allow opening a shell'],
         ['false', 'Do not allow shells']
@@ -26511,6 +27253,25 @@
             'recreate, an update, or the image being pulled again all start it fresh. Turning this ' +
             'off refuses every shell on the server, not just hides the tab — there is no way around ' +
             'it from the page.'
+    },
+    {
+      // PLAN_188 part C: a switch of its own, separate from Container shells
+      // above — turning one off no longer turns the other off with it. While
+      // this has never been saved it reads and acts as whatever Container
+      // shells is set to (staxx_files_enabled(), Defines.php), so nobody who
+      // already had shells off finds the file manager quietly back on.
+      key: 'FILES_ENABLED', control: 'choice', label: 'Container files', tab: 'general',
+      block: 'container-access', sublabel: 'Container files',
+      choices: [
+        ['true',  "Allow browsing a container's files"],
+        ['false', 'Do not allow file browsing']
+      ],
+      help: 'Manage\'s Files tab lets you browse, open and edit files inside a running container, ' +
+            'and rename, delete or create folders there — the same reach as the shell above, but ' +
+            'through a file browser rather than a command line. Anything changed this way is gone ' +
+            'the next time the container is rebuilt: a recreate, an update, or the image being ' +
+            'pulled again all start it fresh. Turning this off refuses every file action on the ' +
+            'server, not just hides the tab — there is no way around it from the page.'
     },
     {
       key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates', tab: 'updates',
@@ -26721,6 +27482,13 @@
   // tracking and validation need no change at all — this table only gives
   // each block a tab, a title and the one explanation shown above its grid.
   var SETTINGS_BLOCKS = {
+    // PLAN_188 part C: Container shells and Container files side by side —
+    // rowHints so each keeps its own explanation under its own control,
+    // rather than one summary trying to cover both (the "Unused image
+    // management" block above is the other one built this way).
+    'container-access': {
+      tab: 'general', label: 'Container access', rowHints: true
+    },
     'update-check': {
       tab: 'updates', label: 'Check for image updates',
       help: 'How often to check, and when. Leaving this off means nothing is ever looked up. ' +
@@ -31139,8 +31907,11 @@
         reason = message || 'Could not change this setting.';
       }).then(function (applied) {
         doneCount++;
-        if (applied) changed++;
-        else refusals.push({ name: stackLabel(name), reason: reason });
+        // null is a genuine refusal; [] means every service in this stack
+        // was pinned and so silently left alone (Adrian, 2026-09-26) —
+        // neither a change nor a refusal, so it counts as neither.
+        if (applied && applied.length) changed++;
+        else if (!applied) refusals.push({ name: stackLabel(name), reason: reason });
         var line = selectBar && selectBar.querySelector('.staxx-bulkpanel-progress');
         if (line) line.textContent = doneCount + ' of ' + total + ' written';
         next(i + 1);

@@ -237,6 +237,15 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
      data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
      data-server-timezone="<?= htmlspecialchars($serverTimeZone) ?>"
+     <?php /* PLAN_188 part C: the Manage tab's Shell and Files panes need to
+        know whether either is switched off, to lay themselves out — the same
+        "baked in at page load, not asked of the server per open" channel
+        data-store-reachable above uses. Saving either setting forces a reload
+        (staxx_settings_save()'s own $reload list), so this can never go
+        stale under an open tab the way data-store-reachable's own comment
+        above worries about for the store dropping out mid-visit. */ ?>
+     data-shell-enabled="<?= staxx_cfg_bool('SHELL_ENABLED') ? '1' : '0' ?>"
+     data-files-enabled="<?= staxx_files_enabled() ? '1' : '0' ?>"
      <?php /* PLAN_176: whether the editor's Proxy and DNS group and its DNS row
         appear. Only the yes/no crosses to the browser, never the address. */ ?>
      data-npm-configured="<?= trim((string)(staxx_cfg()['NPM_URL'] ?? '')) !== '' ? '1' : '0' ?>"

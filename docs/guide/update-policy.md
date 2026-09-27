@@ -4,7 +4,7 @@
 
 Every container can have its own answer to two questions: does StaXX install a newer version for
 it on its own, and which of StaXX's update messages does it show up in? Left alone, both follow your
-server-wide setting in [Settings](settings.md#updates-tab). Set them here to make one container
+server-wide setting in [the Updates tab](settings-updates.md). Set them here to make one container
 behave differently from the rest.
 
 Change both from a container's own page in the editor, or straight from its row on
@@ -23,15 +23,19 @@ Change both from a container's own page in the editor, or straight from its row 
 
 ## From a container's own page
 
-![The When to update box in the editor, showing the When row set to Automatic with Immediate and Delayed underneath it, and beneath it a separate Notifications box with three switches — New image, Image installed and Installation failed — each shown as an orange tick, and a note reading Default = New image, Image installed, Installation failed](../images/guide/update-policy-editor.png)
+![The When to update box in the editor, showing the When row with Pinned, Default, Manual and Automatic, set to Automatic with Immediate and Delayed underneath it, and beneath it a separate Notifications box with three switches — New image, Image installed and Installation failed — each shown as an orange tick, and a note reading Default = New image, Image installed, Installation failed](../images/guide/update-policy-editor.png)
 
 Open the stack, then the container inside it, and find the **When to update** box below its container
 settings.
 
 | Row | Choices | What it does |
 |---|---|---|
-| When | **Default**, **Manual**, **Automatic** | **Default** leaves this container following your server-wide setting. **Manual** means you press **Update** yourself. **Automatic** lets StaXX install a newer version without being asked. |
-| Immediate / Delayed | shown only when When is **Automatic** | **Immediate** installs the moment an update is found. **Delayed** waits for the server's own delay, set in [Settings](settings.md#updates-tab), and for the quiet hours where you have them switched on. |
+| When | **Pinned**, **Default**, **Manual**, **Automatic** | **Pinned** fixes this container to the exact build it is running right now, and StaXX never checks it for an update again. **Default** leaves this container following your server-wide setting. **Manual** means you press **Update** yourself. **Automatic** lets StaXX install a newer version without being asked. |
+| Immediate / Delayed | shown only when When is **Automatic** | **Immediate** installs the moment an update is found. **Delayed** waits for the server's own delay, set in [the Updates tab](settings-updates.md), and for the quiet hours where you have them switched on. |
+
+Choosing **Pinned** asks you to confirm before it writes anything. It refuses, with a sentence saying
+why, when there is nothing fixed to point at: the image is built here from your own recipe, or has
+never been downloaded to this server.
 
 A short note beside the **When** row states what is actually going to happen right now, in plain
 words — for example "Waits 24 hours, then installs in the quiet hours." Press the bold words inside
@@ -59,13 +63,18 @@ Open a container's own menu, or a stack's menu, from [the row menu](the-stack-li
 Both carry the same **Updates** row and the same three **Notifications** switches, working the same
 way as in the editor.
 
-- Opening a container's menu sets that container alone.
+- Opening a container's menu sets that container alone, and its **Updates** row offers **Pinned**
+  first, the same as the editor.
 - Opening a stack's menu sets every container inside it at once, and says so on the label —
-  "Updates — all 6", for example. A stack holding only one container just says "Updates".
+  "Updates — all 6", for example. A stack holding only one container just says "Updates", and its
+  menu offers **Pinned** too — a single-service stack is the stack. A stack with more than one
+  container offers only **Default**, **Manual** and **Automatic**: pinning several containers to
+  their own separate builds is not a choice a single click can make.
 - Choose an option in a stack's menu to set every container in the stack to it, even where they did
   not already match.
 
-A choice made this way takes effect straight away. Nothing needs saving.
+A choice made this way takes effect straight away. Nothing needs saving, except choosing **Pinned**
+or releasing a pin, both of which confirm first — see below.
 
 ## From Select
 
@@ -75,16 +84,31 @@ Turn on **Select** and tick the stacks you want to change, then press **Updates�
 **Notifications…** in the button row that appears.
 
 - **Updates…** offers the same **When** choice as a container's own page — **Default**, **Manual**
-  or **Automatic**, with **Immediate** or **Delayed** underneath once you choose **Automatic**. Press
-  **Apply to N stacks** to set every service in every ticked stack at once.
+  or **Automatic** (not **Pinned**: this window can set several services at once, and a pin fixes
+  each one to its own build, which is not something one click can decide for all of them), with
+  **Immediate** or **Delayed** underneath once you choose **Automatic**. Press **Apply to N stacks**
+  to set every service in every ticked stack at once. A service already pinned to a build is left
+  exactly as it is, with no message.
 - **Notifications…** offers the same three switches as a container's own page. Press
   **Apply to N stacks** to set them for every service in every ticked stack.
 
-## Containers this cannot change
+## Containers that need an extra step
 
-**Pinned to one exact build.** The rows still show, but pressing them does nothing until you unpin
-the container, using the link at the top of the box. See
-[pinning](recovery-and-redundancy.md) for what it means to pin a container.
+**Pinned to one exact build.** Choosing **Pinned** fixes a container to the exact build it is
+running right now, after a window asks you to confirm it.
+
+![The Updates row in a pinned service's menu: Pinned ticked, with Default, Manual and Automatic beside it, and the Notifications switches below](../images/guide/update-policy-pinned-menu.png)
+
+From then on, clicking **Default**, **Manual** or **Automatic** on that same container does not set
+it straight away — it opens a small window listing the tags that image offers instead. Pick one,
+confirm that it takes effect immediately, and StaXX downloads that build and recreates the container
+on it, setting the choice you clicked.
+
+![The confirm window over the stack list, titled Set "nginx" to nginx:alpine?, saying this takes effect immediately and the pinned file is kept in History, with Cancel and Set it](../images/guide/update-policy-release-confirm.png)
+
+[The Versions tab](editor-versions.md) offers the same tag list through its own **Release this
+pin**. Either way, the container is put back on whichever of Default, Manual or Automatic it had
+before it was pinned.
 
 **Built on this server, from your own recipe.** These rows work as normal, but **Automatic** means
 something slightly different: StaXX watches the image the recipe is built from, and rebuilds this

@@ -1,13 +1,13 @@
 # The stack editor
 
-<!-- index: 6 | a walk round the window that opens when you open a stack: the three ways to see the same file, the tabs, the form's sections, and the buttons along the bottom. -->
+<!-- index: 6 | a walk round the window that opens when you open a stack: the header row across the top, its four tabs, and the buttons along the bottom. -->
 
 Open it by clicking [a stack's picture](the-stack-list.md) on the list, or by opening **Add** and
 choosing **Add a blank stack**.
 Clicking one service's own icon, rather than the stack's, opens the same window in Split view,
 scrolled straight to that service.
 
-![The whole editor window in Split view: the header with the stack name and tools, the four tabs, the form on the left showing the Container and Ports sections, the compose file on the right, and the buttons along the bottom](../images/guide/the-stack-editor-whole.png)
+![The stack editor open in Split view: the header row with the stack name box, Sanitise, Password, Fill in details, Outline, the Form, Split and Compose buttons and Close; the Configure, Manage, History and Versions tabs; the form on the left, the compose file on the right, and Tidy this file, Undo, Save and Save and start along the bottom](../images/guide/the-stack-editor-overview.png)
 
 ## The header
 
@@ -21,35 +21,8 @@ scrolled straight to that service.
 | Password | Opens the password generator, and a hashing tool beside it. See [password generator and hashing tool](passwords-and-hashes.md). |
 | Fill in details | Looks up each container's icon, links, description and more from the image, its catalogue entry and its own page. |
 | Outline | Jumps to a block or service inside the compose file. |
+| Form, Split, Compose | Switches between the three ways of seeing this stack's file. See the [Configure tab](editor-configure.md). |
 | Close | Closes the editor. |
-
-## The three views
-
-![The three view buttons — Form, Split and Compose — with Split selected](../images/guide/the-stack-editor-views.png)
-
-Three buttons switch how you see the same file.
-
-| View | Shows |
-|---|---|
-| Form | Only the form. |
-| Split | The form on one side, the raw compose file on the other. |
-| Compose | Only the raw file, as text. |
-
-![The bar between the form and the compose file in Split view, outlined, with a small grip mark in its middle](../images/guide/the-stack-editor-divider.png)
-
-In Split, drag the bar between the two panes to give one side more room, or double-click it to put
-it back in the middle. Its position is remembered in your browser: the editor reopens where you
-left it.
-
-A file other than the compose file itself, such as a `.env` file, opens beside the form. With the
-`.env` tab open, click a setting whose value uses one of its variables and the line that defines
-that variable lights up, the same way the compose file's lines do.
-
-Two orange buttons sit at the left of the file tab strip: **New file** adds a new, empty file to
-the stack, and the upload button beside it adds a file from your computer. Every file's tab also
-carries its own menu arrow. Press it to rename, download or delete that file.
-
-![The file tab strip in the editor: the orange New file and upload buttons at the left, the compose.yaml and .env tabs, and the .env tab's menu open with Rename, Delete and Download](../images/guide/the-stack-editor-file-menu.png)
 
 ## The four tabs
 
@@ -57,75 +30,12 @@ carries its own menu arrow. Press it to rename, download or delete that file.
 
 | Tab | What it holds |
 |---|---|
-| Configure | The form, the compose file, or both — the three views above. |
-| Manage | A live console for the running container: a shell, a log, a file browser. |
-| History | Earlier saved versions of this file. See [recovery and redundancy](recovery-and-redundancy.md). |
-| Versions | Which build of each image has actually run, and a way to put an older one back. See [recovery and redundancy](recovery-and-redundancy.md). |
+| Configure | The form, the compose file, or both. See the [Configure tab](editor-configure.md). |
+| Manage | A live console for the running container: a shell, a log, a file browser. See the [Manage tab](the-manage-tab.md). |
+| History | Earlier saved versions of this file. See the [History tab](editor-history.md). |
+| Versions | Which build of each image has actually run, and a way to put an older one back. See the [Versions tab](editor-versions.md). |
 
 Turn Sanitise off to open History. Versions stays available with Sanitise on.
-
-## The form, section by section
-
-![The Stack section opened, showing its four groups — Networks, Volumes, Secrets and Configs — each with an add button on the right](../images/guide/the-stack-editor-stack-section.png)
-
-The form opens with a **Stack** section — settings that belong to the whole file, not to one
-service — then one section per service.
-
-| Group | For |
-|---|---|
-| Networks | Named networks declared for the whole stack to share. |
-| Volumes | Named volumes declared for the whole stack to share. |
-| Secrets | Secrets declared for the whole stack to share. |
-| Configs | Configs declared for the whole stack to share. |
-
-![A service's section: its name with a pencil to rename it, its description, then the Container group with Image, Container name, Restart policy and Web page port, a Sections button, and the Ports group heading below](../images/guide/the-stack-editor-service-section.png)
-
-Each service then gets its own set of groups. Press a service's **Sections** button to choose which
-of them to show; a tick marks each one already showing.
-
-Press the arrow beside a section's heading, or the heading itself, to fold the section away. Press
-it again to open it. Every section except **Container** folds. StaXX remembers which kinds of
-section you folded, in this browser, so folding **Ports** folds it on every stack you open.
-
-![Two section headings in the editor: Updates folded, with its arrow pointing right, and Proxy and DNS open below it, with its arrow pointing down](../images/guide/the-stack-editor-fold.png)
-
-| Group | For |
-|---|---|
-| Container | The image, the name and how it restarts. Always shown — every service must have it. |
-| Proxy and DNS | Shown only once Nginx Proxy Manager is set up in [Settings](settings.md). See [proxy and DNS](proxy-and-dns.md). |
-| Networks | Which networks this service joins. |
-| Ports | Which ports it publishes. On by default. |
-| Volumes | Folders and files it shares with the server. On by default. |
-| Variables | Environment variables. On by default. |
-| Devices | Hardware devices handed to it. On by default. |
-| Labels | Docker labels. On by default. |
-| Health check | How Docker decides the container is working. |
-| Resource limits | CPU and memory limits. |
-| Build | Building the image here instead of pulling it. |
-| Depends on | Which other services must start first. |
-| Secrets | Secrets this service can read. |
-| Configs | Configs this service can read. |
-| Profiles | Which profiles start this service. |
-| DNS servers | DNS servers to use instead of the server's own. |
-| Extra permissions | Linux capabilities added. |
-| Dropped permissions | Linux capabilities removed. |
-| Internal ports | Ports open to other containers only, not published. |
-| Variable files | Files environment variables are read from. |
-| Logging | How this service's logs are kept. |
-| Advanced | Anything else the file sets, with no better home. Always shown. |
-
-## What sits on a row
-
-![A Volumes group with two rows: the column captions above the boxes, a folder button to browse the server, a read and write dropdown, and a Notes box with its caption underneath](../images/guide/the-stack-editor-row-parts.png)
-
-| Part | What it is |
-|---|---|
-| Note under a box | A sentence explaining what the file already says, or a warning about it. |
-| Help mark | A small circled "i" beside a label. Click it for a sentence about that setting. |
-| Remove | A cross at the end of a row. Removes that one entry. |
-| Reorder grip | On a port row only. Drag it, or focus it and use the up and down arrow keys, to change the order ports are tried in. |
-| "more settings" fold | A row's own extra, less common settings, folded away until opened. |
-| Pickers | A small button beside a box, for choosing a value instead of typing it: **Choose a folder** browses the server, **Choose a timezone** picks one from a map, **Choose a device** lists the server's own devices. |
 
 ## The buttons along the bottom
 

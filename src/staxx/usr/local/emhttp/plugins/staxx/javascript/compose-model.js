@@ -10498,6 +10498,56 @@
     }
   }
 
+  /**
+   * pinNoteText(existingNote, oldRef) -> string
+   *
+   * The words the Pinned choice (PLAN_188 part D) adds beside the image
+   * line: what it was pinned from, e.g. "was nginx:1.25.3". An existing
+   * note is never overwritten — it is kept and this is joined after it —
+   * because the note is something the author wrote (rule 2, CLAUDE.md).
+   * Pure, so the join can be proved from node rather than eyeballed; see
+   * tests/pin_image.js.
+   */
+  function pinNoteText(existingNote, oldRef) {
+    var was = 'was ' + String(oldRef || '').trim();
+    var existing = String(existingNote || '').trim();
+    return existing ? existing + ' — ' + was : was;
+  }
+
+  /**
+   * unpinNoteText(existingNote) -> string
+   *
+   * The mirror of pinNoteText() above: removes exactly the "was <ref>"
+   * fragment a Pinned choice added there (rule 2, CLAUDE.md — releasing
+   * takes back only what StaXX itself wrote in, never anything an author
+   * put beside it). Recognises only the two shapes pinNoteText() can ever
+   * produce — the whole note is "was <ref>", or an author's own note has
+   * " — was <ref>" joined onto the end of it — and leaves anything else
+   * exactly as it stands, since a note this cannot confidently read as its
+   * own addition is the author's to keep, not StaXX's to guess at.
+   */
+  function unpinNoteText(existingNote) {
+    var note = String(existingNote || '');
+    var m = /^(.*) — was \S+$/.exec(note);
+    if (m) return m[1];
+    if (/^was \S+$/.test(note)) return '';
+    return note;
+  }
+
+  /**
+   * pinnedRefFromNote(existingNote) -> string
+   *
+   * The reference a "was <ref>" note (pinNoteText()) names — "nginx:alpine"
+   * out of "ops pin — was nginx:alpine" — or '' when the note carries no
+   * such fragment. Used only to offer the tag a service was pinned from at
+   * the top of the release picker; never trusted for anything the file
+   * itself must agree with, since a hand-edited comment could say anything.
+   */
+  function pinnedRefFromNote(existingNote) {
+    var m = /(?:^|— )was (\S+)$/.exec(String(existingNote || ''));
+    return m ? m[1] : '';
+  }
+
   /* =====================================================================
    * Exports
    * ===================================================================== */
@@ -10696,6 +10746,9 @@
     // here rather than in the front end.
     pinnedImageRef: pinnedImageRef,
     unpinnedImageRef: unpinnedImageRef,
+    pinNoteText: pinNoteText,
+    unpinNoteText: unpinNoteText,
+    pinnedRefFromNote: pinnedRefFromNote,
     // PLAN_104: the commented `# ports:` note a macvlan/ipvlan service
     // carries instead of a live ports: block — see the section comment
     // above findPortsNote() for the shape and why this is line-based.

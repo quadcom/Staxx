@@ -48,12 +48,12 @@ corrects itself once the array finishes starting.
 |---|---|
 | `stacks` | Every stack, each in its own folder. |
 | `archives` | A zip of every stack you have removed. |
-| `config` | StaXX's own settings and the container icons it has downloaded. |
+| `config` | StaXX's own settings and other state. |
 
 A plain-text note inside `config` explains what each folder is, if you open the store directly.
 
 You choose the store's location the first time you open StaXX, and can move it later. See
-[first run](first-run.md) and [Settings](settings.md).
+[first run](first-run.md) and [the Storage tab](settings-storage.md).
 
 ## Inside a stack's folder
 
@@ -61,7 +61,7 @@ A stack's folder holds its compose file. Alongside it may sit whatever else that
 `.env` file, a data folder, anything the author wrote.
 
 One thing is hidden: a small folder holding the stack's own saved history. See
-[version history](recovery-and-redundancy.md) for what it keeps and how to use it.
+[the History tab](editor-history.md) for what it keeps and how to use it.
 
 ## Flash drive settings
 
@@ -75,7 +75,7 @@ The three lines sit in a small settings file, alongside every other plugin's own
 
 ## Moving the data store
 
-Open [Settings](settings.md) and press **Move the data store**. It copies everything to the new
+Open [the Storage tab](settings-storage.md) and press **Move the data store**. It copies everything to the new
 place and checks it byte for byte before removing the old folder. If the move fails, your data is
 still exactly where it was.
 

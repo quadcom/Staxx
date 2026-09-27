@@ -1002,99 +1002,111 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   return staxx_start_job($stack, $needsPull ? 'rollback-pull' : 'recreate', $error, array_keys($targets));
 }
 
-/**
- * Release a pin: put a service's image back to plain "repo:tag", with
- * everything from the first "@" removed. The mirror of
- * staxx_update_rollback() above, minus the parts that pin something — no
- * history lookup, and deliberately no job at the end. See point 6 below for
- * why.
+/* staxx_update_unpin() (release a pin by stripping "@sha256:…" back to plain
+ * "repo:tag") and the 'update-unpin' action were removed 2026-09-26 (PLAN_188
+ * part D): a pin is now released by picking a tag — any tag, not only the
+ * one it was pinned from — through the image field or the tag picker, saved
+ * through the ordinary 'save'/'file-save' actions like any other edit. That
+ * function's own exact-match check (the release must land on precisely the
+ * pre-pin "repo:tag", nothing else) is incompatible with picking a
+ * different tag on purpose, which is the whole point of the new door — see
+ * PLAN_188's own text. staxx_pin_resolve() above is what feeds a pin now;
+ * nothing left in this file writes one back off.
  *
- * As with a rollback, the file is the authority: the browser has already
- * rewritten the image line and this function's job is to check that edit,
- * not to write YAML itself.
- *
- * @return bool true on success, false with $error set on refusal
+ * KNOWN GAP: the old function also cleared a stale "don't offer this again"
+ * fingerprint left under an image's unpinned key once released (see
+ * tests/server/pinned_due.php's own header for the detail) — the new,
+ * generic save path has no hook to run that cleanup from. Rare, and a
+ * decision for later rather than a guess made here.
  */
-function staxx_update_unpin(string $stack, string $service, string $yaml, string &$error, ?string &$note = null): bool {
+
+/**
+ * PLAN_188 part D — what the Pinned choice needs: the exact build one
+ * service is (or last was) on, as a registry digest.
+ *
+ * A container, running or stopped, answers off Docker's own record of what
+ * it actually runs — staxx_service_container_any_state()'s own {{.Image}}
+ * (the image ID, not the reference: a tag can be re-pulled to a newer build
+ * without the container moving, so reading the ID is what makes this the
+ * build really on this container rather than whatever the tag now means)
+ * via staxx_image_id_digest(). No container at all (never started, or
+ * removed) falls back to the compose file's own image reference through
+ * staxx_image_local() — the plan's own "no container" case, answered the
+ * same way every other reader of a not-yet-running service's image already
+ * is.
+ *
+ * Deliberately does NOT go through staxx_cfile_container()/
+ * staxx_exec_resolve_container(): those refuse a stopped container outright
+ * (the shell's own rule — there is no live session to open into one), and
+ * FILES_ENABLED's own gate (PLAN_188 part C) has nothing to do with pinning
+ * an image either way, so a server with the file manager switched off, or a
+ * service that merely is not running right now, must not also lose the
+ * ability to pin.
+ *
+ * Refuses in a sentence for the two shapes with nothing to point at: an
+ * image built on this server (no registry digest exists to pin to) and one
+ * never pulled here (nothing local to read a digest off).
+ *
+ * @return array{ok:true, image:string, digest:string}|array{ok:false, error:string}
+ */
+function staxx_pin_resolve(string $stack, string $service, string &$error): array {
   $error = '';
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ['ok' => false, 'error' => $error]; }
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return false; }
-
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  if (!staxx_docker_running()) {
+    $error = 'The Docker service is not running.';
+    return ['ok' => false, 'error' => $error];
   }
-  if ($file === '') { $error = 'No compose file found in this stack.'; return false; }
+
+  $file = staxx_find_compose_file(staxx_stack_dir($stack));
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ['ok' => false, 'error' => $error]; }
 
   $meta = staxx_compose_meta($file);
   if (!$meta['ok'] || !isset($meta['services'][$service])) {
     $error = 'No service called "'.$service.'" in this stack.';
-    return false;
+    return ['ok' => false, 'error' => $error];
   }
 
-  $image = trim((string)($meta['services'][$service]['image'] ?? ''));
-  if ($image === '') {
-    $error = 'This service has no image set, so there is nothing to release.';
-    return false;
+  // Discarded on purpose when empty — "no container at all" is the plan's
+  // own fallback case here, not a refusal of staxx_pin_resolve()'s own.
+  $containerError = '';
+  $container = staxx_service_container_any_state($file, staxx_path_leaf($stack), $service, $containerError);
+
+  if ($container !== '') {
+    $ref = trim(staxx_sh(
+      escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
+      ' --format '.escapeshellarg('{{.Config.Image}}'),
+      10
+    ));
+    $imageId = trim(staxx_sh(
+      escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
+      ' --format '.escapeshellarg('{{.Image}}'),
+      10
+    ));
+    if ($ref === '' || $imageId === '') {
+      $error = 'Could not read what this container is running.';
+      return ['ok' => false, 'error' => $error];
+    }
+    $local = staxx_image_id_digest($imageId, $ref);
+  } else {
+    $ref = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($ref === '') {
+      $error = 'This service has no image set, so there is no build to pin to.';
+      return ['ok' => false, 'error' => $error];
+    }
+    $local = staxx_image_local($ref);
   }
 
-  $at = strpos($image, '@');
-  if ($at === false) {
-    $error = 'This service is not pinned to a version, so there is nothing to release.';
-    return false;
+  if (!empty($local['built'])) {
+    $error = 'This service is built here from a recipe, so there is no fixed build to pin to.';
+    return ['ok' => false, 'error' => $error];
   }
-  $unpinned = substr($image, 0, $at);
-
-  // The supplied text must turn the pin into exactly the same image with the
-  // "@sha256:..." removed — nothing else. Without this, "release" would be a
-  // way to change a service's image to anything at all, under cover of an
-  // action whose confirmation dialog only ever tells the person a pin is
-  // being lifted. As with a rollback, the text is parsed properly rather
-  // than trusted, so a digest (or anything else) hiding inside a comment
-  // cannot pass a plain string search.
-  $tmp = tempnam(sys_get_temp_dir(), 'staxx-up-');
-  if ($tmp === false) {
-    $error = 'Could not check the supplied file, so nothing was changed.';
-    return false;
-  }
-  file_put_contents($tmp, $yaml);
-  $checkMeta = staxx_compose_meta($tmp);
-  @unlink($tmp);
-
-  if (!$checkMeta['ok'] || !isset($checkMeta['services'][$service])) {
-    $error = 'The supplied file could not be checked, so nothing was changed.';
-    return false;
-  }
-  $checkImage = trim((string)($checkMeta['services'][$service]['image'] ?? ''));
-  if ($checkImage !== $unpinned) {
-    $error = 'The supplied file does not release this service to its unpinned image, so nothing was changed.';
-    return false;
+  if (empty($local['digest'])) {
+    $error = 'This image has never been downloaded here, so there is no build to pin to.';
+    return ['ok' => false, 'error' => $error];
   }
 
-  if (!staxx_save_stack($stack, $yaml, $error, $note)) {
-    return false;
-  }
-
-  // The "don't offer me that version again" fingerprint written at pin time
-  // sits under the image key as it existed BEFORE the pin — see
-  // staxx_update_state()['images'] in Updates.php, keyed by the image string
-  // exactly as the compose file reads. Pinning added a fresh entry under the
-  // pinned name and left this one behind; releasing puts the file back to
-  // the unpinned name, so if this stale entry is not cleared here it comes
-  // back to life and silently suppresses the very update the release was
-  // meant to resume. Cleared under $unpinned, deliberately not $image.
-  $state  = staxx_update_state();
-  $images = (array)$state['images'];
-  if (isset($images[$unpinned]['skip'])) {
-    unset($images[$unpinned]['skip']);
-    staxx_update_state_save(['images' => $images]);
-  }
-
-  // No pull, no recreate, no job: releasing a pin changes only the file. The
-  // next check pass decides on its own whether the now-unpinned image is
-  // due anything, on the normal clock and policy — this function does not
-  // pre-empt that.
-  return true;
+  return ['ok' => true, 'image' => $ref, 'digest' => (string)$local['digest']];
 }
 
 /* ------------------------------------------------------------- keep-set -- */

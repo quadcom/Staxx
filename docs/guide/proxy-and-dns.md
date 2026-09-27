@@ -23,7 +23,8 @@ Under **Settings**, on the **Integrations** tab, fill in the address of Nginx Pr
 you want local DNS names as well. Press **Save**, then **Test connection** to check both.
 
 If either service only answers on plain http, or its certificate cannot be checked, turn on
-**Allow insecure connections** first. Every setting on this tab is described in [Settings](settings.md).
+**Allow insecure connections** first. Every setting on this tab is described in
+[the Integrations tab](settings-integrations.md).
 
 **Pi-hole passwords.** If your Pi-hole has no admin password set, leave the **App password** box
 blank. That Pi-hole ignores app passwords and reports any you try as incorrect. If

@@ -319,6 +319,26 @@ function staxx_update_notify_map(array $cfg): array {
 }
 
 /**
+ * Whether the container file manager is on (PLAN_188 part C). Same trick as
+ * staxx_update_notify_map() above: default.cfg deliberately omits
+ * FILES_ENABLED, so its absence from the merged config means "never saved,
+ * follow SHELL_ENABLED" — the setting a store already had before this switch
+ * existed, so nobody who had turned shells off finds the file manager back
+ * on. The moment the settings page saves once, FILES_ENABLED lands
+ * explicitly and this stops looking at SHELL_ENABLED at all. Every
+ * file-manager gate (staxx_cfile_container()) and the settings panel's own
+ * read (staxx_settings_read()) both call this, so the panel never shows a
+ * value the server does not act on.
+ */
+function staxx_files_enabled(): bool {
+  $cfg = staxx_cfg();
+  if (array_key_exists('FILES_ENABLED', $cfg)) {
+    return (string)$cfg['FILES_ENABLED'] === 'true';
+  }
+  return staxx_cfg_bool('SHELL_ENABLED');
+}
+
+/**
  * Where a request that wants StaXX's own view of the world should land —
  * '/StaXX' once either the header-menu button or the Docker-tab takeover is
  * on, '/Docker/Stacks' otherwise. Matches the marker-file test Stacks.page
@@ -703,7 +723,19 @@ function staxx_hub_repo_path(string $image): string {
  * surfacing a registry error in the middle of typing would be noise for a
  * field that still works perfectly well as free text.
  *
- * @return string[] up to 50 tag names, most recently updated first
+ * PLAN_188 part D follow-up, 2026-09-26: the top page is ordered by
+ * last_updated, and a tag pushed once and rarely touched again — nginx's
+ * own "latest" — can fall clean out of the top 50 despite existing and
+ * mattering to the Pinned release picker more than most of what did make
+ * the cut. Rather than a second, unbounded paginated fetch, whichever of
+ * the plan's own named "moving" tags is not already in the page is asked
+ * for BY NAME, one request each, against Hub's own single-tag endpoint —
+ * 200 if it exists, and curl's `-f` turns a 404 into no output at all, so
+ * a tag this repository does not have costs one quick, empty answer rather
+ * than a error. Bounded to that short list either way.
+ *
+ * @return string[] up to 50 tag names, most recently updated first, plus
+ *   any of the plan's own moving tags Hub confirms exist
  */
 function staxx_image_tags(string $repo): array {
   $repo = staxx_hub_repo_path($repo);
@@ -719,6 +751,19 @@ function staxx_image_tags(string $repo): array {
     $tags[] = $result['name'];
     if (count($tags) >= 50) break;
   }
+
+  // The same nine names askTagPick() (stacks.js) lists first, in its own
+  // order — kept as its own copy rather than shared, since one lives in
+  // PHP and the other in JS with no common file to hold it.
+  $moving = ['latest', 'main', 'master', 'develop', 'dev', 'stable', 'beta', 'nightly', 'edge'];
+  foreach ($moving as $tag) {
+    if (in_array($tag, $tags, true)) continue;
+    $found = staxx_hub_json(
+      'https://hub.docker.com/v2/repositories/'.$repo.'/tags/'.rawurlencode($tag), [], 4, 6
+    );
+    if (is_array($found) && ($found['name'] ?? null) === $tag) $tags[] = $tag;
+  }
+
   return $tags;
 }
 

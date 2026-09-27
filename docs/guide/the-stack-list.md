@@ -33,7 +33,7 @@ bottom, part by part.
 ## Notifications
 
 A line to the left of that button row carries any message StaXX has for you: a check that could not
-run, an update that failed, an icon it found and saved on your behalf. It stays empty until there is
+run or an update that failed. It stays empty until there is
 something to say, and shows a count when more than one is waiting. Press it to open the full list.
 
 Each entry can carry a button of its own for wherever it points, and a small **×** to dismiss it.
@@ -205,7 +205,7 @@ columns: what you can do to the stack on the left, where it lives on the right.
 | Has no file | Start a compose file here |
 | Folders | Move to folder (a list), New folder…, Remove from folder (if filed) |
 | Boot | Autostart (on/off switch), Delay |
-| Updates | Updates (Default/Manual/Automatic), then a Notifications box with three switches, New image, Image installed and Installation failed, each on or off, starting at the server's own answers until you change one. See [choosing how a container updates](update-policy.md). |
+| Updates | Updates — Pinned/Default/Manual/Automatic on a container's own menu, or on a stack's own menu when it holds only one container; Default/Manual/Automatic when it holds several — then a Notifications box with three switches, New image, Image installed and Installation failed, each on or off, starting at the server's own answers until you change one. See [choosing how a container updates](update-policy.md). |
 | Profiles | One switch per profile the file declares. See below. |
 | Reference | What do these marks mean? |
 | Last | Remove stack |
@@ -267,10 +267,12 @@ A row of buttons slides open under **Select** once something is chosen: **Start*
 **Restart**, **Check for updates**, **Update**, **Updates…** and **Notifications…**.
 
 **Updates…** and **Notifications…** open a small window under that row with the same controls the
-editor has. Choose **Default**, **Manual** or **Automatic** for when updates install, with
-**Immediate** or **Delayed** under Automatic; or set the three notification switches, which start
-from the server's own answers, then press **Apply**. The choice is written to every service in every
-chosen stack, and the window reports how many stacks changed and names any that refused.
+editor has. Choose **Default**, **Manual** or **Automatic** for when updates install — not
+**Pinned**: this window can set several services at once, and a pin fixes each one to its own build
+— with **Immediate** or **Delayed** under Automatic; or set the three notification switches, which
+start from the server's own answers, then press **Apply**. The choice is written to every service in
+every chosen stack except one already pinned to a build, which is left alone with no message, and the
+window reports how many stacks changed and names any that refused.
 
 Press a button and each chosen stack runs on its own row, exactly as it does anywhere else on the
 page. One stack failing does not stop the rest, and the bar keeps a running tally as they finish,

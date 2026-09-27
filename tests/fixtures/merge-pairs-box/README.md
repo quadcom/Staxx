@@ -51,7 +51,7 @@ that's a real merge fault — note which pair and what `config` said.
 
 A note on `r2-secret-clash`: if `docker compose config -q` fails on `r2m-secret-clash` because one
 of the two `secrets/*-creds.txt` files is missing from the merged folder, that means the merge's
-file-copy step doesn't carry a `secrets:` file target across the way it does an icon — copy the
+file-copy step doesn't carry a `secrets:` file target across the way it does other stack files — copy the
 missing placeholder into the merged folder by hand to keep walking, and record it as a finding
 distinct from R2-3 (which only checks the *name* gets renamed, not that the file itself travels).
 

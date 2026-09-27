@@ -18,7 +18,7 @@ A check runs on the schedule you set, and whenever you press **Check for updates
 
 ![The Updates tab: Check for image updates with how often and time of day, the Updates tick between Manual and Automatic, a greyed-out When to install box, and three Notify me switches](../images/guide/settings-image-updates.png)
 
-A pass runs every hour and asks only the images that are due. [Settings](settings.md#image-updates)
+A pass runs every hour and asks only the images that are due. [The Updates tab](settings-updates.md)
 sets how often StaXX gives every image a full look, whether due or not. How often one particular
 image is asked follows the table below, checked every hour regardless of that setting.
 
@@ -38,7 +38,12 @@ headers, never the build itself, and only downloading an image spends the allowa
 Nothing is ever asked about more than four times a day, or left longer than a fortnight between
 checks. An image not yet downloaded to your server is not asked about at all.
 
-Turning the schedule off in [settings](settings.md#image-updates) stops all of this. Left on, these
+A version number such as `nginx:1.25.3` is only a label — its publisher can move it to a new build
+later, most often a routine rebuild of the same underlying system, so checking it still makes sense.
+Only **Pinned** (see [choosing how a container updates](update-policy.md)) fixes a service to one
+exact build for good, which is why it is never checked at all.
+
+Turning the schedule off in [the Updates tab](settings-updates.md) stops all of this. Left on, these
 rules decide only which images get asked during a pass.
 
 ## Author example findings
@@ -125,7 +130,7 @@ it.
 
 ![A running pill beside an update ready pill that carries a countdown chip reading 1h 41m](../images/guide/updates-countdown-chip.png)
 
-A countdown appears only when [settings](settings.md#updates-tab) has **Updates** set to
+A countdown appears only when [the Updates tab](settings-updates.md) has **Updates** set to
 **Automatic**, either for the whole server or for this one container from its own page or its row
 menu; see [choosing how a container updates](update-policy.md). It starts the moment the new build
 was first seen. Reloading the page does not restart it.
@@ -147,9 +152,12 @@ says why:
 - **Skip this version** turns down one particular new build without cancelling future ones.
 - **Rolling back** puts a service back on the build it ran before, and remembers the declined
   version so it is never offered again as new. See
-  [recovery and redundancy](recovery-and-redundancy.md).
-- **Pinning** fixes a service to one exact build for good. A pinned build is never asked about; see
-  the cadence table above.
+  [the Versions tab](editor-versions.md).
+- **Pinning** fixes a service to one exact build for good. Choose **Pinned** from the row menu or
+  from the service's own **When to update** box to pin whatever build it is running right now; a
+  pinned build is never asked about, see the cadence table above. The only way off a pin is picking a
+  tag — in the image field, or in the tag-picker window reached from the row menu or from
+  [the Versions tab](editor-versions.md).
 
 See [Update items on the row menu](#update-items-on-the-row-menu) above for exactly when each of
 these appears.
@@ -188,7 +196,7 @@ done and naming the one it is updating now. Press **Stop** to end the run once t
 
 Docker Hub lets one address download only so many images an hour: about a hundred from a server
 that has not signed in, and about two hundred signed in with an access token. Add the token under
-[settings](settings.md#docker-hub-sign-in).
+[the Integrations tab](settings-integrations.md).
 
 A check spends none of that. StaXX asks Docker Hub only for a build's headers, never the build
 itself, and only downloading an image spends the allowance: installing an update, or anything else
@@ -201,7 +209,7 @@ simply no answer at all. A check that keeps failing eventually shows how long it
 A refusal from Docker Hub means something else spent the download allowance on your address, such
 as one of your own pulls or another device on the same network. Checking itself never costs
 anything. StaXX tries again within the hour rather than waiting for the next scheduled pass.
-**Settings → [Image updates](settings.md#image-updates)** shows what each registry has actually been
+**[The Updates tab](settings-updates.md)** shows what each registry has actually been
 asked and what, if anything, it cost, worth a look if `could not check` keeps turning up. See
 [Hovering the pill](#hovering-the-pill) above for when that image was last asked, when it is next
 due, and why.

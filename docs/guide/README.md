@@ -22,8 +22,16 @@ This guide is written in English only.
 - **[The stacks page](the-stack-list.md)** — a walk round the page you land on: every button along
   the top, every part of a row, and every item in the menus.
 - **[The stack editor](the-stack-editor.md)** — a walk round the window that opens when you open a
-  stack: the three ways to see the same file, the tabs, the form's sections, and the buttons along
-  the bottom.
+  stack: the header row across the top, its four tabs, and the buttons along the bottom.
+- **[Configure tab](editor-configure.md)** — the three ways to see a stack's file, the form's
+  sections, and what sits on a row inside them.
+- **[The Manage tab](the-manage-tab.md)** — what the Manage tab is for, how to open it, and what
+  each of its three panes — log, shell and file browser — does and refuses to do.
+- **[History tab](editor-history.md)** — undoing your own edits to a stack's file, what the list of
+  kept versions holds, naming one to keep it for good, and what to do when the compose file is
+  missing.
+- **[Versions tab](editor-versions.md)** — undoing an app's own update, reading a build's row,
+  pinning a service to one exact build and releasing it again.
 - **[Update checking](updates.md)** — answers what a check does, why images are asked about at
   different rates, what N to look at means, and how the countdown to an automatic install works.
 - **[Choosing how a container updates](update-policy.md)** — letting one container update itself, or
@@ -33,8 +41,6 @@ This guide is written in English only.
   what each one means and what to do about it.
 - **[File locations and the data store](where-things-live.md)** — what is in the data store, what is
   on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page.
-- **[The Manage tab](the-manage-tab.md)** — what the Manage tab is for, how to open it, and what
-  each of its three panes — log, shell and file browser — does and refuses to do.
 - **[Editing a stack](editing-a-stack.md)** — changing a setting and saving it, tidying a file into
   StaXX's layout, being offered a health check, and ports on a container with its own address.
 - **[Password generator and hashing tool](passwords-and-hashes.md)** — the Password button in a
@@ -65,11 +71,23 @@ This guide is written in English only.
   to it, and how to get it back.
 - **[Export and import a stack](sharing-a-stack.md)** — how Export blanks your passwords and paths
   out of a copy, what it refuses to send, and what the other person has to fill in.
-- **[Recovery and redundancy](recovery-and-redundancy.md)** — how to return to an earlier version of
-  a stack's file, or to an earlier build of one of its images, what each list holds, why some things
-  cannot be gone back to, and bringing every stack back if the data store is lost.
-- **[Settings](settings.md)** — every setting behind the cog, group by group, plus the self-test and
-  the first-run screen.
+- **[Recovery and redundancy](recovery-and-redundancy.md)** — undoing your own edits or an app's own
+  update from the stack editor's History and Versions tabs, and bringing every stack back if the
+  data store is lost.
+- **[Settings](settings.md)** — how to open the settings panel, what its six tabs are, and how to
+  save or cancel a change.
+- **[General tab](settings-general.md)** — where StaXX appears, installing apps, and switching
+  container shells and file browsing on or off.
+- **[Storage tab](settings-storage.md)** — the Storage tab: the data store, moving it, checking your
+  backup, flash-drive copies, image clean-up and archived stacks.
+- **[Icons and images tab](settings-icons-and-images.md)** — the Icons and images tab: container
+  icons, reading an image's documentation and StaXX fields.
+- **[Updates tab](settings-updates.md)** — the Updates tab: the check schedule, the default action,
+  install timing, notifications and the update-check activity table.
+- **[Integrations tab](settings-integrations.md)** — Docker Hub sign-in, your own registries,
+  StaXXCrypt, and connecting to Nginx Proxy Manager and Pi-hole.
+- **[Self-test tab](settings-self-test.md)** — the health check on the Settings panel, and what its
+  backup line does and does not tell you
 
 <!-- pages:end -->
 

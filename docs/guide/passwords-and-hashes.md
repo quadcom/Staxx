@@ -107,7 +107,8 @@ password half of the panel works either way.
 ![The Hash section of the password tool before the hashing container exists: the Format picker, the Hash button, and the outlined note explaining that StaXXCrypt is built on your server, with its Build it link](../images/guide/passwords-and-hashes-build-it.png)
 
 A hash takes a second or two to come back, and the panel shows a message while you wait. StaXXCrypt's
-own state, and buttons to build, recreate or rebuild it, are on the [settings panel](settings.md).
+own state, and buttons to build, recreate or rebuild it, are on
+[the Integrations tab](settings-integrations.md).
 
 ## Doubling a dollar sign
 

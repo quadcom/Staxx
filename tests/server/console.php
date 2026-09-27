@@ -43,9 +43,11 @@
  * staxx_cfile_delete(), staxx_cfile_mkdir() and staxx_cfile_home() —
  * covered further down under "container files". Every one of them calls
  * staxx_cfile_container() first, which shares staxx_exec_start()'s own
- * refusal chain, so the same never-really-runs-docker guarantee applies:
- * each case below is refused at path validation or at that shared chain
- * before any staxx_sh() call is built. The command-builder helpers
+ * refusal chain EXCEPT the switch itself (PLAN_188 part C gave the file
+ * manager its own, FILES_ENABLED, checked through staxx_files_enabled()
+ * rather than SHELL_ENABLED), so the same never-really-runs-docker guarantee
+ * applies: each case below is refused at path validation or at that shared
+ * chain before any staxx_sh() call is built. The command-builder helpers
  * (staxx_cfile_ls_cmd() and friends) are asserted on as plain strings,
  * never executed, which is what proves the `--`-before-path and
  * escapeshellarg() rules without touching a container at all.
@@ -53,26 +55,38 @@
  * PLAN_44 phase 6 adds staxx_cstat() and staxx_cenv() — the restart-count/
  * health line above the panes and the "show the environment" job, covered
  * further down under "PLAN_44 D6". Both call staxx_cfile_container() first,
- * so the same never-really-runs-docker guarantee applies to every case below
- * except the "not running" one, which only asks read-only docker/compose
- * questions about a stack deliberately never started.
+ * so they follow FILES_ENABLED the same way the container-files section
+ * does (PLAN_188 part C — both share the file manager's own reach into a
+ * running container, not the shell's), and the same never-really-runs-docker
+ * guarantee applies to every case below except the "not running" one, which
+ * only asks read-only docker/compose questions about a stack deliberately
+ * never started.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine.
  *
  *     pscp tests/server/console.php root@<box>:/tmp/
- *     plink … "php /tmp/console.php"
- *     plink … "STAXX_SHELL_ENABLED=false php /tmp/console.php"   # second run, other branch
+ *     plink … "php /tmp/console.php"                                          # both on (today's default)
+ *     plink … "STAXX_SHELL_ENABLED=false php /tmp/console.php"                # shell off, files follows it off too (unsaved)
+ *     plink … "STAXX_SHELL_ENABLED=true STAXX_FILES_ENABLED=false php /tmp/console.php"  # files off on its own, shell stays on
+ *     plink … "STAXX_SHELL_ENABLED=false STAXX_FILES_ENABLED=true php /tmp/console.php"  # shell off, files switched back on of its own
  *
  * SHELL_ENABLED is seeded by this script itself, into the scratch store's own
  * config file, before its first require — see the comment just above that
  * require for why (it is not one of the three keys the flash pointer file
- * carries). No other config value needs forcing here.
+ * carries). FILES_ENABLED is seeded the same way, but only when
+ * STAXX_FILES_ENABLED is actually given: left unset, no FILES_ENABLED key
+ * lands in the scratch config at all, which is what proves the "never saved,
+ * follows SHELL_ENABLED" default (staxx_files_enabled(), Defines.php) — the
+ * second run above exercises exactly that, since it sets the shell off and
+ * leaves files unset. No other config value needs forcing here.
  *
  * With the shell off, several cases whose whole point is a refusal reason
  * FURTHER DOWN the chain (a review lock, an unknown service) can never reach
  * it — the SHELL_ENABLED gate answers first — so those print "skip" and are
  * not counted as failures; the switched-off refusal itself is what the
- * SHELL_ENABLED=true/false pairs beside each gate check instead.
+ * SHELL_ENABLED=true/false pairs beside each gate check instead. The
+ * container-files and PLAN_44 D6 sections mirror this with
+ * staxx_files_enabled() in place of SHELL_ENABLED, for the same reason.
  *
  * Prints one line per case and exits non-zero on any failure.
  *
@@ -101,8 +115,15 @@
 // second run that proves the refusal branch instead.
 $shellEnabled = getenv('STAXX_SHELL_ENABLED');
 if ($shellEnabled === false) $shellEnabled = 'true';
+$cfgLines = "SHELL_ENABLED=\"$shellEnabled\"\n";
+// FILES_ENABLED (PLAN_188 part C) is seeded ONLY when STAXX_FILES_ENABLED is
+// actually given — leaving it unset writes no FILES_ENABLED key at all, so
+// staxx_files_enabled() falls back to SHELL_ENABLED above, proving the
+// "never saved" default rather than a value this script chose for it.
+$filesEnabled = getenv('STAXX_FILES_ENABLED');
+if ($filesEnabled !== false) $cfgLines .= "FILES_ENABLED=\"$filesEnabled\"\n";
 @mkdir('/tmp/zzc69-store/config', 0755, true);
-file_put_contents('/tmp/zzc69-store/config/staxx.cfg', "SHELL_ENABLED=\"$shellEnabled\"\n");
+file_put_contents('/tmp/zzc69-store/config/staxx.cfg', $cfgLines);
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -637,13 +658,16 @@ $err = '';
 $r = staxx_cfile_container('a/b/c', 'a', $err);
 ok('an invalid stack path is refused', $r === '' && stripos($err, 'invalid') !== false, $err);
 
+// PLAN_188 part C: the file manager's own switch, FILES_ENABLED — checked
+// through staxx_files_enabled() rather than the raw config key, since an
+// unsaved FILES_ENABLED is meant to read as whatever SHELL_ENABLED is.
 $err = '';
 $r = staxx_cfile_container($none, 'a', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
-  ok('SHELL_ENABLED=true lets a request through to the next check',
+if (staxx_files_enabled()) {
+  ok('FILES_ENABLED=true lets a request through to the next check',
      $r === '' && stripos($err, 'turned off') === false, $err);
 } else {
-  ok('SHELL_ENABLED=false refuses, and says so in words',
+  ok('FILES_ENABLED=false refuses, and says so in words',
      $r === '' && stripos($err, 'turned off') !== false, $err);
 }
 
@@ -654,14 +678,15 @@ mkdir($cLockedDir, 0755, true);
 file_put_contents($cLockedDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
 file_put_contents($cLockedDir.'/'.STAXX_REVIEW_FILE, "imported\n");
 
-// Same SHELL_ENABLED-gate reasoning as the exec section above: with the
-// shell off, the review lock this case exists to prove is never reached.
+// Same gate reasoning as the exec section above, but FILES_ENABLED rather
+// than SHELL_ENABLED: with files off, the review lock this case exists to
+// prove is never reached.
 $err = '';
 $r = staxx_cfile_container($cLockedRel, 'a', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   ok('a review-locked stack is refused', $r === '' && stripos($err, 'review') !== false, $err);
 } else {
-  skip('a review-locked stack is refused', 'shell switched off');
+  skip('a review-locked stack is refused', 'files switched off');
 }
 
 $cPlainRel = 'zzc2cplain';
@@ -672,22 +697,22 @@ file_put_contents($cPlainDir.'/compose.yaml', "services:\n  a:\n    image: alpin
 
 $err = '';
 $r = staxx_cfile_container($cPlainRel, 'nosuchservice', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   ok('a service not in the compose file is refused',
      $r === '' && stripos($err, 'no service called') !== false, $err);
 } else {
-  skip('a service not in the compose file is refused', 'shell switched off');
+  skip('a service not in the compose file is refused', 'files switched off');
 }
 
 // The same read-only "not running" proof staxx_exec_start() relies on —
 // nothing here starts, stops or execs anything either.
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   $err = '';
   $r = staxx_cfile_container($cPlainRel, 'a', $err);
   ok('a stack whose containers are not running is refused',
      $r === '' && stripos($err, 'does not appear to be running') !== false, $err);
 } else {
-  skip('a stack whose containers are not running is refused', 'shell switched off');
+  skip('a stack whose containers are not running is refused', 'files switched off');
 }
 
 @exec('rm -rf '.escapeshellarg($cLockedDir));
@@ -782,11 +807,11 @@ ok('cenv refuses an invalid stack path', $r === null && stripos($err, 'invalid')
 
 $err = '';
 $r = staxx_cstat($none, 'a', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
-  ok('cstat: SHELL_ENABLED=true lets a request through to the next check',
+if (staxx_files_enabled()) {
+  ok('cstat: FILES_ENABLED=true lets a request through to the next check',
      $r === null && stripos($err, 'turned off') === false, $err);
 } else {
-  ok('cstat: SHELL_ENABLED=false refuses, and says so in words',
+  ok('cstat: FILES_ENABLED=false refuses, and says so in words',
      $r === null && stripos($err, 'turned off') !== false, $err);
 }
 
@@ -797,21 +822,21 @@ mkdir($dLockedDir, 0755, true);
 file_put_contents($dLockedDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
 file_put_contents($dLockedDir.'/'.STAXX_REVIEW_FILE, "imported\n");
 
-// Same SHELL_ENABLED-gate reasoning as the exec and cfile sections above.
+// Same FILES_ENABLED-gate reasoning as the container-files section above.
 $err = '';
 $r = staxx_cstat($dLockedRel, 'a', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   ok('cstat: a review-locked stack is refused', $r === null && stripos($err, 'review') !== false, $err);
 } else {
-  skip('cstat: a review-locked stack is refused', 'shell switched off');
+  skip('cstat: a review-locked stack is refused', 'files switched off');
 }
 
 $err = '';
 $r = staxx_cenv($dLockedRel, 'a', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   ok('cenv: a review-locked stack is refused', $r === null && stripos($err, 'review') !== false, $err);
 } else {
-  skip('cenv: a review-locked stack is refused', 'shell switched off');
+  skip('cenv: a review-locked stack is refused', 'files switched off');
 }
 
 $dPlainRel = 'zzc2dplain';
@@ -822,25 +847,25 @@ file_put_contents($dPlainDir.'/compose.yaml', "services:\n  a:\n    image: alpin
 
 $err = '';
 $r = staxx_cstat($dPlainRel, 'nosuchservice', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   ok('cstat: a service not in the compose file is refused',
      $r === null && stripos($err, 'no service called') !== false, $err);
 } else {
-  skip('cstat: a service not in the compose file is refused', 'shell switched off');
+  skip('cstat: a service not in the compose file is refused', 'files switched off');
 }
 
 $err = '';
 $r = staxx_cenv($dPlainRel, 'nosuchservice', $err);
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   ok('cenv: a service not in the compose file is refused',
      $r === null && stripos($err, 'no service called') !== false, $err);
 } else {
-  skip('cenv: a service not in the compose file is refused', 'shell switched off');
+  skip('cenv: a service not in the compose file is refused', 'files switched off');
 }
 
 // The same read-only "not running" proof the exec and cfile sections above
 // rely on — nothing here starts, stops or execs anything either.
-if (staxx_cfg_bool('SHELL_ENABLED')) {
+if (staxx_files_enabled()) {
   $err = '';
   $r = staxx_cstat($dPlainRel, 'a', $err);
   ok('cstat: a stack whose containers are not running is refused',
@@ -851,8 +876,8 @@ if (staxx_cfg_bool('SHELL_ENABLED')) {
   ok('cenv: a stack whose containers are not running is refused',
      $r === null && stripos($err, 'does not appear to be running') !== false, $err);
 } else {
-  skip('cstat: a stack whose containers are not running is refused', 'shell switched off');
-  skip('cenv: a stack whose containers are not running is refused', 'shell switched off');
+  skip('cstat: a stack whose containers are not running is refused', 'files switched off');
+  skip('cenv: a stack whose containers are not running is refused', 'files switched off');
 }
 
 @exec('rm -rf '.escapeshellarg($dLockedDir));
@@ -1010,8 +1035,9 @@ if ($profRoot !== '/tmp/zzc69-store/stacks') {
   @exec('rm -rf '.escapeshellarg($profDir).' '.escapeshellarg($noneDir));
 }
 
-// The config file this script seeded SHELL_ENABLED into at the top is
-// scratch, under /tmp, and belongs to nobody once this run is over.
+// The config file this script seeded SHELL_ENABLED (and, when given,
+// FILES_ENABLED) into at the top is scratch, under /tmp, and belongs to
+// nobody once this run is over.
 @unlink('/tmp/zzc69-store/config/staxx.cfg');
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";

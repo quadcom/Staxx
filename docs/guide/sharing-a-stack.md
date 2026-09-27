@@ -85,9 +85,8 @@ For a value that needs a real password, see [making a password or passphrase](pa
 
 ## The icon
 
-An icon lives in a hidden folder tucked inside the stack, alongside every earlier saved copy of the
-compose file, including the passwords those old copies still hold. Export takes only the picture
-your compose file names from that folder; nothing else in it leaves.
+Export includes each service's icon from the stack's `.staxx` folder, and nothing else from that
+folder.
 
 ## Import a bundle
 
