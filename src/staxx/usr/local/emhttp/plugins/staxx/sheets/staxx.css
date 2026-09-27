@@ -10705,6 +10705,32 @@ div.title.staxx-has-titlebar {
   gap: 0.5rem;
 }
 
+/* PLAN_188 part F — the two folded groups (Other rolling tags, Version
+   numbers) below the always-visible top row. The heading is a plain text
+   button, not .staxx-chevron's fixed square, since it carries the group's
+   name and count rather than sitting beside one. */
+.staxx-tagpick-group {
+  margin-bottom: 0.8rem;
+}
+
+.staxx-tagpick-groupbtn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--sm-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-tagpick-groupbtn:hover {
+  color: var(--sm-accent);
+}
+
 .staxx-tagpick-type {
   display: flex;
   gap: 0.6rem;

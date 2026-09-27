@@ -56,11 +56,13 @@ choice in [choosing how a container updates](update-policy.md), or typed into th
 A pin is written into whichever file sets that service's image (the main file or its override), and
 the value it replaced is kept in a comment on the same line, for example `# was nginx:1.25.3`.
 
-Press **Release this pin** and StaXX opens a window listing the image's tags. Moving tags such as
-**latest** come first, then version numbers, newest first. Where no tags can be read, a box lets you
-type one instead.
+Press **Release this pin** and StaXX opens a window listing the image's tags. The top row always
+shows the tag it was pinned from, marked **(before the pin)**, together with any of **latest**,
+**main**, **master**, **develop**, **dev**, **stable**, **beta**, **nightly** or **edge** the image
+has. Below that, **Other rolling tags** and **Version numbers** each fold shut behind a count; tap
+either heading to open it. Where no tags can be read, a box lets you type one instead.
 
-![The Choose a tag for nginx window open over the editor: alpine (before the pin) first, then latest, stable and the other named tags, then version numbers from newest down, with a box to type a tag, Use this tag, and Cancel](../images/guide/editor-versions-tag-picker.png)
+![The Choose a tag for nginx window open over the editor: a top row with alpine (before the pin), then latest and stable; below it the folded headings Other rolling tags (11) and Version numbers (38); a box to type a tag, Use this tag, and Cancel](../images/guide/editor-versions-tag-picker.png)
 
 Click a tag to put it into that service's image field on the **Configure** tab, and StaXX switches
 you there. Press **Save** to keep it. Where an override file sets the image, the change is written

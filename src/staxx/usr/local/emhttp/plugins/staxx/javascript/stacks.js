@@ -24076,6 +24076,36 @@
   var confirmBusy    = false;
   var confirmResolve = null;
 
+  // PLAN_188 part D follow-up, 2026-09-26 — a question token. Bumped every
+  // time askConfirm()/askText()/askTagPick()/showInfo() takes the shared
+  // dialog over for a NEW question (claimConfirm(), just below). The bug
+  // this guards against: closeConfirm() calls the dialog's own close(),
+  // which does not fire its 'close' event inline — the event is a QUEUED
+  // task, so a slow enough gap between that call and the task actually
+  // running can let a LATER question open in between. When that stale
+  // event finally arrives, the generic listener used to call
+  // settleConfirm(false) unconditionally, resolving whatever question now
+  // owns confirmResolve — the LATER one — with a Cancel nobody actually
+  // gave it (measured: pinning a service, then releasing its pin from the
+  // Versions tab a few seconds later, closed the release picker within
+  // about a second with the previous question's own Go label still on the
+  // button). confirmClosingEpoch records which epoch a closeConfirm() call
+  // was made under; the listener drops the event as a stale echo when a
+  // newer question has since claimed the dialog, rather than settling it.
+  var confirmEpoch        = 0;
+  var confirmClosingEpoch = -1;
+
+  // Called by askConfirm()/askText()/askTagPick()/showInfo() at the top of
+  // each call, before anything else touches the dialog — every one of
+  // those bumps the epoch even when it is only restyling an already-open
+  // dialog for a follow-up question (the row menu's own release: tag
+  // picker, then a confirm repeating the chosen tag), since that follow-up
+  // is exactly the kind of newer question a stale close must not reach
+  // past.
+  function claimConfirm() {
+    return ++confirmEpoch;
+  }
+
   function confirmSetBusy(busy) {
     confirmBusy = busy;
     confirmCancel.disabled = busy;
@@ -24084,6 +24114,7 @@
   }
 
   function closeConfirm() {
+    confirmClosingEpoch = confirmEpoch;
     if (confirmModal.open) confirmModal.close();
   }
 
@@ -24114,6 +24145,7 @@
   // "unsaved changes" question (PLAN_44 C2) is the only caller that passes
   // it, so every existing two-answer question is untouched by this.
   function askConfirm(opts) {
+    claimConfirm();
     confirmSetBusy(false);
     confirmMsg.textContent = '';
     confirmTitle.textContent = opts.title;
@@ -24155,6 +24187,7 @@
   function showInfo(title, bodyHtml, opts) {
     opts = opts || {};
     if (!confirmModal) { noDialogFallback(title); return Promise.resolve(); }
+    claimConfirm();
     confirmSetBusy(false);
     confirmMsg.textContent = '';
     confirmTitle.textContent = title;
@@ -24177,6 +24210,7 @@
   // awaiting this instead.
   function askText(title, label, value) {
     if (!confirmModal) return Promise.resolve(window.prompt(label, value || ''));
+    claimConfirm();
     confirmSetBusy(false);
     confirmMsg.textContent = '';
     confirmTitle.textContent = title;
@@ -24235,13 +24269,19 @@
 
   // `beforePinTag` (PLAN_188 part D follow-up) is the bare tag the service
   // was pinned from — tagFromPinnedRef() reading its own "was <ref>" note —
-  // or '' when there is none to offer. Order: that tag first of all,
-  // marked; then the plan's own moving-tag list, in its own order, for
-  // whichever of them the image actually has; then every OTHER tag with no
-  // digit in it at all (nginx's own "alpine", "mainline", "perl" and so
-  // on — a real image's rolling tags are rarely limited to the plan's
-  // named nine), alphabetically; then every tag that does carry a version
-  // number, newest first.
+  // or '' when there is none to offer.
+  //
+  // PLAN_188 part F (2026-09-26, Adrian from the phone: the flat list "is a
+  // big list of noise"). A top row always shows that before-pin tag, then
+  // whichever of the plan's named nine the image actually has, in their own
+  // order. Everything else sits behind two folded headings so the dialog
+  // opens short: every OTHER tag with no digit in it at all (nginx's own
+  // "alpine", "mainline", "perl" and so on — a real image's rolling tags are
+  // rarely limited to the plan's named nine), alphabetically; then every tag
+  // that does carry a version number, newest first, as before. A group with
+  // nothing in it is not rendered, and both start folded — unless the top
+  // row itself is empty, in which case the first group that has anything
+  // opens already, so the dialog is never one tap away from looking blank.
   function askTagPick(repo, tags, beforePinTag) {
     var MOVING = ['latest', 'main', 'master', 'develop', 'dev', 'stable', 'beta', 'nightly', 'edge'];
     var movingIndex = {};
@@ -24257,31 +24297,66 @@
     otherMoving.sort();
     versions.sort(compareTagsNewestFirst);
 
-    var ordered = planListed.concat(otherMoving, versions);
+    var top = planListed.slice();
     if (beforePinTag) {
-      ordered = [beforePinTag].concat(ordered.filter(function (t) { return t !== beforePinTag; }));
+      top = [beforePinTag].concat(top.filter(function (t) { return t !== beforePinTag; }));
     }
 
-    var listHtml = ordered.length
-      ? '<ul class="staxx-tagpick-list">' + ordered.map(function (t, i) {
-          var label = (beforePinTag && i === 0) ? t + ' (before the pin)' : t;
-          return '<li><button type="button" class="staxx-btn staxx-btn--small" data-tag-pick="' +
-                 esc(repo + ':' + t) + '">' + esc(label) + '</button></li>';
-        }).join('') + '</ul>'
+    function tagButtonsHtml(list, markFirstAsBeforePin) {
+      return '<ul class="staxx-tagpick-list">' + list.map(function (t, i) {
+        var label = (markFirstAsBeforePin && i === 0) ? t + ' (before the pin)' : t;
+        return '<li><button type="button" class="staxx-btn staxx-btn--small" data-tag-pick="' +
+               esc(repo + ':' + t) + '">' + esc(label) + '</button></li>';
+      }).join('') + '</ul>';
+    }
+
+    var topHtml = top.length ? tagButtonsHtml(top, !!beforePinTag) : '';
+
+    var groupDefs = [
+      { key: 'other', heading: 'Other rolling tags', list: otherMoving },
+      { key: 'versions', heading: 'Version numbers', list: versions }
+    ].filter(function (g) { return g.list.length; });
+
+    // Same fold shape the import list's own groups use (.staxx-chevron,
+    // fa-chevron-right/down, aria-expanded/aria-controls) — a heading button
+    // beside a list it shows or hides, nothing purpose-built.
+    var firstOpenIdx = topHtml ? -1 : 0;
+    var groupsHtml = groupDefs.map(function (g, i) {
+      var open = i === firstOpenIdx;
+      var listId = 'staxx-tagpick-group-' + g.key;
+      return '<div class="staxx-tagpick-group">' +
+        '<button type="button" class="staxx-tagpick-groupbtn" data-tag-pick-fold ' +
+          'aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + listId + '">' +
+          '<i class="fa fa-chevron-' + (open ? 'down' : 'right') + '"></i> ' +
+          esc(g.heading) + ' (' + g.list.length + ')' +
+        '</button>' +
+        '<div id="' + esc(listId) + '"' + (open ? '' : ' hidden') + '>' + tagButtonsHtml(g.list, false) + '</div>' +
+      '</div>';
+    }).join('');
+
+    var listHtml = (topHtml || groupsHtml)
+      ? topHtml + groupsHtml
       : '<p class="staxx-form-empty">StaXX could not read a list of tags for this image.</p>';
     var typeHtml = '<div class="staxx-tagpick-type">' +
       '<input type="text" class="staxx-input" data-tag-pick-box placeholder="or type a tag" ' + NOFILL + '>' +
       '<button type="button" class="staxx-btn" data-tag-pick-go>Use this tag</button>' +
       '</div>';
 
+    claimConfirm();
     confirmSetBusy(false);
     confirmMsg.textContent = '';
     confirmTitle.textContent = 'Choose a tag for ' + repo;
     confirmBody.innerHTML = listHtml + typeHtml;
     // Neither of this dialog's own buttons answers the question here — a
     // tag button or "Use this tag" does, through the delegated click
-    // handler below — so Go is hidden rather than repurposed.
+    // handler below — so Go is hidden rather than repurposed. Its label is
+    // cleared too, not only hidden: a stale close landing here from a much
+    // earlier question (see confirmEpoch's own comment) used to reveal the
+    // PREVIOUS question's own Go label the instant this cleanup ran, since
+    // nothing had ever overwritten it — belt and braces alongside the
+    // epoch guard itself, not a replacement for it.
     confirmGo.hidden = true;
+    confirmGo.textContent = '';
     confirmCancel.hidden = false;
     confirmCancel.textContent = confirmCancelDefault;
     if (confirmBadicon) confirmBadicon.hidden = true;
@@ -24290,6 +24365,16 @@
     confirmCancel.focus({ preventScroll: true });
 
     function onBodyClick(event) {
+      var fold = event.target.closest('[data-tag-pick-fold]');
+      if (fold) {
+        var willOpen = fold.getAttribute('aria-expanded') !== 'true';
+        fold.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        var icon = fold.querySelector('i');
+        if (icon) icon.className = 'fa fa-chevron-' + (willOpen ? 'down' : 'right');
+        var listEl = document.getElementById(fold.getAttribute('aria-controls'));
+        if (listEl) listEl.hidden = !willOpen;
+        return;
+      }
       var pick = event.target.closest('[data-tag-pick]');
       if (pick) { settleConfirm(pick.dataset.tagPick); return; }
       var go = event.target.closest('[data-tag-pick-go]');
@@ -24336,7 +24421,16 @@
     });
 
     confirmModal.addEventListener('close', function () {
-      settleConfirm(false);
+      // A close whose own epoch no longer matches the current one is a
+      // stale echo of an earlier closeConfirm() call (see confirmEpoch's
+      // own comment above) — a newer question has since taken over the
+      // dialog, and this event is not a real dismissal of THAT one, so
+      // nothing here is settled. `-1` (never armed by closeConfirm() at
+      // all — Escape's own default action, or a backdrop click reaching
+      // native close some other way) always settles normally.
+      var stale = confirmClosingEpoch !== -1 && confirmClosingEpoch !== confirmEpoch;
+      confirmClosingEpoch = -1;
+      if (!stale) settleConfirm(false);
     });
 
     // A request in flight must finish before Escape can close the dialog —
@@ -33553,7 +33647,16 @@
    * menu's heading names the row it is acting on, so it still cannot act on
    * the wrong thing — and closing every menu on every scroll to tidy up that
    * one case is the trade that was just undone. */
-  window.addEventListener('resize', closeMenu);
+  // On a phone, scrolling shows/hides the browser's address bar, which fires 'resize' with only
+  // the height changing — that was closing the row menu the moment someone scrolled to reach its
+  // lower items. Only react when the width has actually changed (a real resize or rotation).
+  var staxxMenuResizeWidth = window.innerWidth;
+  window.addEventListener('resize', function() {
+    if (window.innerWidth !== staxxMenuResizeWidth) {
+      staxxMenuResizeWidth = window.innerWidth;
+      closeMenu();
+    }
+  });
 
   /* -------------------------------------------------------- keyboard nav -- */
 
