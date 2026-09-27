@@ -27,6 +27,11 @@ which is what lets it be handed to a web server elsewhere. It lands in `.preview
 normal way he looks at anything before it is pushed:
 
 ```sh
+**Superseded, 2026-09-27:** the site now keeps one folder per project (`stx/` for StaXX) and only the
+shared skill's script writes into it — `bash ~/.claude/skills/preview-site/publish.sh`, same
+arguments, no `guide` shorthand. The commands below still work but write the site's root, which the
+site's own index no longer points at, so a page published this way is not seen.
+
 bash tools/publish-preview.sh              # everything, from scratch
 bash tools/publish-preview.sh guide        # just the user guide (and the glossary)
 bash tools/publish-preview.sh readme       # just the readme

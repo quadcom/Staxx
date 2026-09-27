@@ -169,11 +169,17 @@ matter every day:
   on his approval — a page he can look at is worth more than a description of it.
 
   ```sh
-  bash tools/publish-preview.sh guide        # just the user guide (and the glossary)
-  bash tools/publish-preview.sh readme       # just the readme
-  bash tools/publish-preview.sh review       # just the front page and the review history
-  bash tools/publish-preview.sh <file.md>…   # just those files
+  bash ~/.claude/skills/preview-site/publish.sh readme       # just the readme
+  bash ~/.claude/skills/preview-site/publish.sh review       # just the front page and the review history
+  bash ~/.claude/skills/preview-site/publish.sh <file.md>…   # just those files; for the guide, pass
+                                                             # docs/README.md docs/glossary.md docs/guide/*.md
   ```
+
+  **Only the shared skill's script publishes where Adrian looks.** The site keeps one folder per
+  project, `stx/` for this one, and that script is the only thing that writes into it. The older
+  `tools/publish-preview.sh` writes the site's root instead, which nobody reads any more; on
+  2026-09-27 a review published with it looked fine from the command line and never reached
+  `stx/index.html`. A page that is not at `http://<preview host>:8099/stx/` is not published.
 
 **Re-read the list of available skills before starting a different kind of work.** The list is handed
 over once, at the start of a session, and a long session drifts a long way from it — which is exactly
