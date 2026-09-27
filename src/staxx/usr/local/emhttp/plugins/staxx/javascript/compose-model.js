@@ -3953,11 +3953,33 @@
     // would rewrite the line it came from. Nothing here needs to decide what the
     // value means when the answer is "leave it exactly as it was".
     if (String(value) === String(p.value)) return true;
+    // Clearing a network map entry's own fixed address or hardware address
+    // (PLAN_203) must remove the line, not just blank the box — the file is
+    // a map here, so its pairs are ordinary key/value lines a spliceBlock()
+    // can take out cleanly, unlike the list items below. Refuses rather than
+    // risks it when the entry is no longer a plain block map (an anchor, an
+    // alias, a flow map…), when the pair cannot be found, when it sits on
+    // the entry's own key line (only a flow entry does that, and that shape
+    // is already refused by the block-map check — kept as belt and braces),
+    // or when the spot has moved since the form was read.
+    if (f.binder === 'list' && f.listKey === 'networks' && f.longForm &&
+        which !== 'value' && NETWORK_ENTRY_EXTRAS.indexOf(which) >= 0 &&
+        p.spot && !String(value).trim()) {
+      if (spotStale(doc, p.spot)) return false;   // see writeScalar / PLAN_66
+      var netEntry2 = networkEntryPair(doc, f.service, f.target);
+      if (!netEntry2 || !netEntry2.value || netEntry2.value.kind !== 'map') return false;
+      var extraPair = netEntry2.value.pairs[which];
+      if (!extraPair || extraPair.start === netEntry2.start) return false;
+      spliceBlock(doc, extraPair.leadStart, extraPair.end);
+      return true;
+    }
     // A long-form entry's parts are each their own line, and compose refuses
     // an empty one exactly as it refuses "interval: ''" — but there is no
     // removeKey() for a line inside a numbered list item, only for a key
     // under a service, so a blank edit here can only write nothing and
     // report success. Deleting the line itself is the Compose view's job.
+    // A networks: map entry's extras are the one long-form exception — they
+    // are removed above instead of just left blank.
     if (f.longForm && !String(value).trim()) return true;
     // A list entry cleared to nothing leaves its dash with nothing after it —
     // the shape the Add button already writes — rather than "- ''", which is a

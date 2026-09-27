@@ -8123,6 +8123,161 @@ console.log('\nAE. PLAN_34 Phase 3 — the three new Add paths');
      Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
 })();
 
+/* ---- 4b. clearing a fixed address or hardware address removes the line
+             (PLAN_203) — the form showed the box blank but the file kept the
+             value, so it came back on the next open. ------------------------ */
+
+(function () {
+  // Clearing one extra removes exactly its own line; the other stays.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('clearing the fixed IPv4 address reports success',
+     !!row && Y.setPart(doc, form, row.id, 'ipv4_address', ''));
+
+  var want = src.replace('        ipv4_address: 10.0.0.5\n', '');
+  ok('only the ipv4_address line is gone; the hardware address line stays',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // Clearing both extras leaves a bare "name:" — the same shape a fresh
+  // entry already offers blank boxes on — never an empty map key.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  Y.setPart(doc, form, row.id, 'ipv4_address', '');
+
+  var form2 = Y.buildForm(doc);
+  var row2 = form2.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('clearing the hardware address too reports success',
+     !!row2 && Y.setPart(doc, form2, row2.id, 'mac_address', ''));
+
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n      backend:\n';
+  ok('both extras gone leaves a bare "backend:" and nothing else moves',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The same clearing works after the entry has been renamed first — the
+  // report that opened this plan renamed the network before clearing the
+  // two boxes.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('renaming the entry reports success',
+     !!row && Y.setPart(doc, form, row.id, 'value', 'mybridge'));
+
+  var form2 = Y.buildForm(doc);
+  var row2 = form2.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('clearing the fixed IPv4 address after the rename reports success',
+     !!row2 && Y.setPart(doc, form2, row2.id, 'ipv4_address', ''));
+
+  var form3 = Y.buildForm(doc);
+  var row3 = form3.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('clearing the hardware address after the rename reports success',
+     !!row3 && Y.setPart(doc, form3, row3.id, 'mac_address', ''));
+
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n      mybridge:\n';
+  ok('the renamed entry ends up bare, with both stale addresses gone',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // A comment sitting on the line directly above the extra travels with it
+  // when the extra is cleared; a comment elsewhere in the service does not.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        # fixed for the router',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    '    # leave this alone',
+    '    restart: unless-stopped',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('clearing the fixed IPv4 address reports success',
+     !!row && Y.setPart(doc, form, row.id, 'ipv4_address', ''));
+
+  var want = src
+    .replace('        # fixed for the router\n', '')
+    .replace('        ipv4_address: 10.0.0.5\n', '');
+  ok('the address\u2019s own comment goes with it; the unrelated comment below stays',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // An entry written as a flow map refuses the removal and leaves the file
+  // untouched — splicing lines out of one would break it. Built from a real
+  // field (with a real spot) taken from the block-map parse of the same
+  // file, then handed to setPart against the flow-map parse instead — the
+  // same "the structure moved since the form was read" shape as PLAN_66's
+  // stale-spot tests, here via a mismatched doc rather than an edited one.
+  var blockSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var blockForm = Y.buildForm(Y.parse(blockSrc));
+  var blockRow = blockForm.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  var flowSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend: {',
+    '        ipv4_address: 10.0.0.5,',
+    '        mac_address: 02:42:ac:11:00:02 }',
+    ''
+  ].join('\n');
+  var flowDoc = Y.parse(flowSrc);
+
+  ok('clearing the address on a flow-style entry is refused',
+     !!blockRow && Y.setPart(flowDoc, blockForm, blockRow.id, 'ipv4_address', '') === false);
+  ok('the flow-style file is byte-identical after the refusal',
+     Y.serialise(flowDoc) === flowSrc, firstDiff(flowSrc, Y.serialise(flowDoc)));
+})();
+
 /* ---- 5. scope guard: ports and secrets gained no blank extras ---------- */
 
 (function () {

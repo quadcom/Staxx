@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- Clearing a network's fixed address or hardware address in the editor now removes it from the compose file, instead of it coming back when the editor is reopened or the stack restarts.
 - On a phone, a stack's menu no longer closes when you scroll the page to reach its lower items.
 - The container file manager has its own switch in Settings, Container files, beside Container shells in a box now called Container access. Until you change it, it follows your shell setting, so if you had shells switched off the file manager stays off too. On the Manage tab, a tool that is switched off is no longer shown: the other one takes its space, and with both off the log fills the whole tab.
 - A service can now be pinned to the exact build it is running. Pinned is the first of the update choices on a container's menu and in the editor's Updates box. StaXX writes that build's fingerprint on the image line, in whichever file sets the image, with the old value kept in a comment beside it, and a pinned service is never checked for updates. To release a pin, pick a tag from the list that opens (the usual choices on top, with other rolling tags and version numbers folded away below): from the menu the new tag is downloaded and the container recreated straight away; from the Versions tab it goes into the image field for you to save. Bulk updates leave pinned services alone. Nothing already written reads differently: a pin is the same shape a roll-back has always written.
