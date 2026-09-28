@@ -4592,6 +4592,22 @@
     return call('save', { name: name, body: body, 'new': '0', fingerprint: owner.fingerprint });
   }
 
+  // Reads a stack's compose file, hands its text to edit(), and saves the
+  // result against the fingerprint the read carried, so a change made in the
+  // meantime is refused rather than overwritten. edit(body) returns the new
+  // text, null to leave the file alone, or { error } to refuse. Resolves to
+  // { ok: true }, { ok: true, skipped: true }, or { ok: false, error }.
+  function rewriteStack(name, edit) {
+    return call('read', { name: name }).then(function (res) {
+      if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'Could not read the stack.' };
+      var text = edit(res.body);
+      if (text === null) return { ok: true, skipped: true };
+      if (typeof text !== 'string') return { ok: false, error: text.error };
+      return call('save', { name: res.name, body: text, 'new': '0', fingerprint: res.fingerprint })
+        .then(function (r) { return r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'Save failed.' }; });
+    });
+  }
+
   // Puts a just-saved owner's new text on screen IF the editor open right
   // now is showing exactly that file — never otherwise, since `newText` is
   // only ever the file the write actually targeted (main or override) and
@@ -22722,16 +22738,14 @@
       return;
     }
 
-    call('read', { name: name }).then(function (res) {
-      if (!res.ok) { fail(res.error); return; }
-      var built = buildDetailWriteText(res.body, decisions);
-      if (!built.ok) { fail(built.error); return; }
-      call('save', { name: res.name, body: built.yaml, 'new': '0',
-                      fingerprint: res.fingerprint }).then(function (r) {
-        if (!r.ok) { fail(r.error); return; }
-        refreshRows();
-        done(built.applied);
-      });
+    var built = null;
+    rewriteStack(name, function (body) {
+      built = buildDetailWriteText(body, decisions);
+      return built.ok ? built.yaml : { error: built.error };
+    }).then(function (r) {
+      if (!r.ok) { fail(r.error); return; }
+      refreshRows();
+      done(built.applied);
     });
   }
 
@@ -22749,16 +22763,13 @@
       setComposeText(scaffolded.yaml, 'Added the StaXX fields for icon, links and description.');
       return;
     }
-    call('read', { name: name }).then(function (res) {
-      if (!res.ok) { failed('Could not add the StaXX fields', res.error); return; }
-      var scaffolded = window.StaxxMeta.scaffold(res.body);
-      if (scaffolded.error) { failed('Could not add the StaXX fields', scaffolded.error); return; }
-      if (!scaffolded.changed) return;
-      call('save', { name: res.name, body: scaffolded.yaml, 'new': '0',
-                      fingerprint: res.fingerprint }).then(function (r) {
-        if (!r.ok) { failed('Could not add the StaXX fields', r.error); return; }
-        refreshRows();
-      });
+    rewriteStack(name, function (body) {
+      var s = window.StaxxMeta.scaffold(body);
+      if (s.error) return { error: s.error };
+      return s.changed ? s.yaml : null;
+    }).then(function (r) {
+      if (!r.ok) { failed('Could not add the StaXX fields', r.error); return; }
+      if (!r.skipped) refreshRows();
     });
   }
 
@@ -23368,9 +23379,8 @@
   // hashes) — which is why this sweep never marks a running stack "restart
   // to apply".
   function iconAdoptWrite(item) {
-    return call('read', { name: item.stack }).then(function (res) {
-      if (!res || !res.ok) return;
-      var doc = YAML.parse(res.body);
+    return rewriteStack(item.stack, function (body) {
+      var doc = YAML.parse(body);
       // form: null, the same as writeProjectLink() above — this write never
       // has a live editor form to hand, since it may not even be the stack
       // the editor has open right now.
@@ -23387,17 +23397,16 @@
       } else {
         ok = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) >= 0;
       }
-      if (!ok) return;   // could not write safely — skip, never force it
-
-      return call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
-                             fingerprint: res.fingerprint }).then(function (r) {
-        // A moved fingerprint means someone else changed the file meanwhile —
-        // drop it silently, per PLAN_86; it is offered again next round.
-        if (!r || !r.ok) return;
-        iconAdoptStacks[item.stack] = true;
-        iconAdoptCount++;
-        if (item.was) iconAdoptHadUrl = true;
-      });
+      if (!ok) return null;   // could not write safely — skip, never force it
+      return YAML.serialise(doc);
+    }).then(function (r) {
+      // A read failure, a refused write or a moved fingerprint — someone
+      // else changed the file meanwhile, or it could not be read at all —
+      // drop it silently, per PLAN_86; it is offered again next round.
+      if (!r.ok || r.skipped) return;
+      iconAdoptStacks[item.stack] = true;
+      iconAdoptCount++;
+      if (item.was) iconAdoptHadUrl = true;
     });
   }
 
