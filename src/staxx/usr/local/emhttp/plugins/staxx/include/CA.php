@@ -365,22 +365,29 @@ function staxx_ca_home(): array {
  * and this is asked for every time someone opens one result.
  */
 function staxx_ca_app(int $i): ?array {
+  // Remembered per ordinal: a single image's detail view asks for its own
+  // app entry about five times over the several places that display it.
+  // The catalogue file is replaced only by the separate index job, never
+  // mid-request, so a request-lifetime memo cannot go stale under it.
+  static $memo = [];
+  if (array_key_exists($i, $memo)) return $memo[$i];
+
   $entry = staxx_ca_index_data()['apps'][$i] ?? null;
-  if (!is_array($entry)) return null;
+  if (!is_array($entry)) return $memo[$i] = null;
 
   $offset = (int)($entry['o'] ?? -1);
   $length = (int)($entry['len'] ?? 0);
-  if ($offset < 0 || $length <= 0) return null;
+  if ($offset < 0 || $length <= 0) return $memo[$i] = null;
 
   $fh = @fopen(STAXX_CA_APPS, 'rb');
-  if ($fh === false) return null;
+  if ($fh === false) return $memo[$i] = null;
 
   $line = '';
   if (@fseek($fh, $offset) === 0) $line = (string)@fread($fh, $length);
   fclose($fh);
 
   $app = json_decode($line, true);
-  return is_array($app) ? $app : null;
+  return $memo[$i] = (is_array($app) ? $app : null);
 }
 
 /** The categories that actually occur in the catalogue, sorted — never the

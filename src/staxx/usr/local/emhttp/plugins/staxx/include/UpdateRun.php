@@ -1019,23 +1019,23 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
  * service is (or last was) on, as a registry digest.
  *
  * A container, running or stopped, answers off Docker's own record of what
- * it actually runs — staxx_service_container_any_state()'s own {{.Image}}
- * (the image ID, not the reference: a tag can be re-pulled to a newer build
- * without the container moving, so reading the ID is what makes this the
- * build really on this container rather than whatever the tag now means)
- * via staxx_image_id_digest(). No container at all (never started, or
- * removed) falls back to the compose file's own image reference through
+ * it actually runs — one `docker inspect` reading both {{.Config.Image}}
+ * (the reference) and {{.Image}} (the image ID: a tag can be re-pulled to a
+ * newer build without the container moving, so reading the ID is what makes
+ * this the build really on this container rather than whatever the tag now
+ * means) via staxx_image_id_digest(). No container at all (never started,
+ * or removed) falls back to the compose file's own image reference through
  * staxx_image_local() — the plan's own "no container" case, answered the
  * same way every other reader of a not-yet-running service's image already
  * is.
  *
- * Deliberately does NOT go through staxx_cfile_container()/
- * staxx_exec_resolve_container(): those refuse a stopped container outright
- * (the shell's own rule — there is no live session to open into one), and
- * FILES_ENABLED's own gate (PLAN_188 part C) has nothing to do with pinning
- * an image either way, so a server with the file manager switched off, or a
- * service that merely is not running right now, must not also lose the
- * ability to pin.
+ * Resolves its container through staxx_service_container() with
+ * $runningOnly false, unlike the shell and file manager, which pass true:
+ * the pin wants whatever build a service's container last ran, running or
+ * not, and FILES_ENABLED's own gate (PLAN_188 part C) has nothing to do
+ * with pinning an image either way, so a server with the file manager
+ * switched off, or a service that merely is not running right now, must not
+ * also lose the ability to pin.
  *
  * Refuses in a sentence for the two shapes with nothing to point at: an
  * image built on this server (no registry digest exists to pin to) and one
@@ -1064,19 +1064,17 @@ function staxx_pin_resolve(string $stack, string $service, string &$error): arra
   // Discarded on purpose when empty — "no container at all" is the plan's
   // own fallback case here, not a refusal of staxx_pin_resolve()'s own.
   $containerError = '';
-  $container = staxx_service_container_any_state($file, staxx_path_leaf($stack), $service, $containerError);
+  $container = staxx_service_container($file, staxx_path_leaf($stack), $service, false, $containerError);
 
   if ($container !== '') {
-    $ref = trim(staxx_sh(
+    // One inspect for both fields, a real tab between them (see
+    // staxx_container_net()'s own comment on why `docker inspect --format`
+    // must never be given the two characters \t).
+    [$ref, $imageId] = array_pad(explode("\t", trim(staxx_sh(
       escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
-      ' --format '.escapeshellarg('{{.Config.Image}}'),
+      ' --format '.escapeshellarg('{{.Config.Image}}'."\t".'{{.Image}}'),
       10
-    ));
-    $imageId = trim(staxx_sh(
-      escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
-      ' --format '.escapeshellarg('{{.Image}}'),
-      10
-    ));
+    ))), 2, '');
     if ($ref === '' || $imageId === '') {
       $error = 'Could not read what this container is running.';
       return ['ok' => false, 'error' => $error];

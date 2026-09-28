@@ -3022,60 +3022,43 @@ function staxx_stack_containers(array $s): array {
 }
 
 /**
- * PLAN_107 — rolls a stack's containers up into one health word, considering
- * only the ones actually running: a stopped container's stale health means
+ * PLAN_107 — rolls a stack's containers up into one health word, a running
+ * count and a checked count, and the names of anything running and
+ * unhealthy, all from one pass over the containers rather than three
+ * separate loops each caller ran over the same list. Considers only
+ * containers actually running: a stopped container's stale health means
  * nothing, and is already covered by the ordinary running/stopped colour.
- * Unhealthy outranks starting outranks healthy, so one bad container is never
- * hidden behind another that is still coming up.
+ * Unhealthy outranks starting outranks healthy, so one bad container is
+ * never hidden behind another that is still coming up. A stack row shows
+ * one "checked" figure for the lot, so without it "says it is working"
+ * would quietly speak for containers nothing has ever asked — the exact
+ * overclaim PLAN_107 exists to stop. The unhealthy names are what the
+ * tooltip on a sick stack row shows, service name if there is one, else the
+ * container name.
  *
  * Computed only where the caller already has the containers in hand — never
  * from staxx_stack_states(), which is deliberately one `compose ls` and no
  * file reads (see its own docblock).
- */
-function staxx_stack_health(array $containers): string {
-  $any = ['unhealthy' => false, 'starting' => false, 'healthy' => false];
-  foreach ($containers as $c) {
-    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
-    $h = $c['health'] ?? 'none';
-    if (isset($any[$h])) $any[$h] = true;
-  }
-  if ($any['unhealthy']) return 'unhealthy';
-  if ($any['starting'])  return 'starting';
-  if ($any['healthy'])   return 'healthy';
-  return 'none';
-}
-
-/**
- * How many of a stack's running containers check themselves, out of how many
- * are running at all. A stack row shows one pill for the lot, so without this
- * "says it is working" would quietly speak for containers nothing has ever
- * asked — which is the exact overclaim PLAN_107 exists to stop.
  *
- * @return array{running:int, checked:int}
+ * @return array{health:string, unhealthy:string[], running:int, checked:int}
  */
-function staxx_stack_health_counts(array $containers): array {
+function staxx_stack_health_summary(array $containers): array {
+  $any     = ['unhealthy' => false, 'starting' => false, 'healthy' => false];
   $running = 0;
   $checked = 0;
+  $unhealthy = [];
   foreach ($containers as $c) {
     if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
     $running++;
-    if (($c['health'] ?? 'none') !== 'none') $checked++;
+    $h = $c['health'] ?? 'none';
+    if ($h !== 'none') $checked++;
+    if (isset($any[$h])) $any[$h] = true;
+    if ($h === 'unhealthy') $unhealthy[] = (string)(($c['service'] ?? '') !== '' ? $c['service'] : ($c['name'] ?? ''));
   }
-  return ['running' => $running, 'checked' => $checked];
-}
 
-/**
- * The service names — or container names, for one with no service label —
- * that are running and unhealthy. What the tooltip on a sick stack row names.
- */
-function staxx_unhealthy_services(array $containers): array {
-  $out = [];
-  foreach ($containers as $c) {
-    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
-    if (($c['health'] ?? 'none') !== 'unhealthy') continue;
-    $out[] = (string)(($c['service'] ?? '') !== '' ? $c['service'] : ($c['name'] ?? ''));
-  }
-  return $out;
+  $health = $any['unhealthy'] ? 'unhealthy' : ($any['starting'] ? 'starting' : ($any['healthy'] ? 'healthy' : 'none'));
+
+  return ['health' => $health, 'unhealthy' => $unhealthy, 'running' => $running, 'checked' => $checked];
 }
 
 /**
@@ -8134,7 +8117,7 @@ function staxx_log_download(string $stack, string $service, string &$error): str
  * is found afterwards by asking the process table for whoever has this
  * session's socket path on its command line, the same "trust what the
  * process actually says, not what a wrapper claims" pattern
- * staxx_exec_resolve_container() uses for the container name.
+ * staxx_service_container() uses for the container name.
  *
  * Two files per session, under STAXX_EXEC_DIR/<id>/ — half the log
  * follower's shape, because there is no output to buffer or input to relay
@@ -8159,80 +8142,37 @@ function staxx_log_download(string $stack, string $service, string &$error): str
  * belongs to it. This is the difference between an allowlist and a hope: the
  * client sends a stack path and a service name, and nothing else it sends is
  * ever capable of naming a container.
+ *
+ * $runningOnly true is for a shell or file-manager session, which needs a
+ * running container or nothing; false is for a caller such as the pin
+ * resolver that wants whatever build a service's own container last ran,
+ * running or not, and so refuses only when the stack has never been started
+ * at all. Reads staxx_docker_ps_raw()
+ * — already remembered for the request — instead of running its own
+ * `docker ps -a`; a scaled service, or one restarted while an old exited
+ * copy still lingers, can list more than one match for the same project and
+ * service, so every row is checked before giving up, in Docker's own order.
  */
-function staxx_exec_resolve_container(string $file, string $leaf, string $service, string &$error): string {
+function staxx_service_container(string $file, string $leaf, string $service, bool $runningOnly, string &$error): string {
   $state   = staxx_state_for($file, $leaf);
   $project = $state['name'] ?? '';
   if ($project === '') {
     $error = 'This stack does not appear to be running.';
     return '';
   }
-
-  // `.Label "key"` looks up one label by name — the same trick
-  // staxx_containers_by_project() uses, because the obvious-looking
-  // `index .Labels "key"` fails the whole command instead of the one lookup.
-  $fmt = '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t'
-       . '{{.Label "com.docker.compose.service"}}\t{{.State}}';
-  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10);
-
-  // A scaled service, or one restarted while an old exited copy still
-  // lingers, can list more than one match for the same project and service —
-  // an exited leftover must never hide a sibling that is actually running, so
-  // every line is checked before giving up.
-  $foundStopped = false;
-  foreach (explode("\n", trim($out)) as $line) {
-    if ($line === '') continue;
-    [$cname, $proj, $svc, $state2] = array_pad(explode("\t", $line, 4), 4, '');
-    if ($proj !== $project || $svc !== $service) continue;
-    if ($state2 !== 'running') { $foundStopped = true; continue; }
-    return $cname;
-  }
-
-  $error = $foundStopped
-    ? 'That container is not running, so there is nothing to open a shell into.'
-    : 'No running container for service "'.$service.'" in this stack.';
-  return '';
-}
-
-/**
- * Like staxx_exec_resolve_container() above, but for a caller that has no
- * live session to open and so no reason to refuse a stopped container —
- * staxx_pin_resolve() (PLAN_188 part D), which wants whatever build a
- * service's own container last ran, running or not. Prefers a running
- * match; falls back to the first stopped one `docker ps` itself lists.
- * Never used by the shell — staxx_exec_resolve_container()'s own wording
- * and behaviour are untouched by this.
- *
- * $error is set only for "this stack has never been started at all" —
- * callers that mean to fall back to the compose file's own image when no
- * container exists at all should treat an empty return as that, not
- * necessarily as a hard failure of their own.
- *
- * @return string the container name, or '' when none exists for this service
- */
-function staxx_service_container_any_state(string $file, string $leaf, string $service, string &$error): string {
-  $state   = staxx_state_for($file, $leaf);
-  $project = $state['name'] ?? '';
-  if ($project === '') {
-    $error = 'This stack does not appear to be running.';
-    return '';
-  }
-
-  $fmt = '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t'
-       . '{{.Label "com.docker.compose.service"}}\t{{.State}}';
-  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10);
 
   $stopped = '';
-  foreach (explode("\n", trim($out)) as $line) {
-    if ($line === '') continue;
-    [$cname, $proj, $svc, $state2] = array_pad(explode("\t", $line, 4), 4, '');
-    if ($proj !== $project || $svc !== $service) continue;
-    if ($state2 === 'running') return $cname;
-    if ($stopped === '') $stopped = $cname;   // the first Docker lists, its own default order
+  foreach (staxx_docker_ps_raw() as $row) {
+    if ($row['project'] !== $project || $row['service'] !== $service) continue;
+    if ($row['state'] === 'running') return $row['name'];
+    if ($stopped === '') $stopped = $row['name'];   // the first Docker lists, its own default order
   }
 
-  if ($stopped !== '') return $stopped;
-  $error = 'No container for service "'.$service.'" in this stack.';
+  if (!$runningOnly && $stopped !== '') return $stopped;
+
+  $error = $runningOnly && $stopped !== ''
+    ? 'That container is not running, so there is nothing to open a shell into.'
+    : 'No '.($runningOnly ? 'running ' : '').'container for service "'.$service.'" in this stack.';
   return '';
 }
 
@@ -8247,7 +8187,7 @@ function staxx_service_container_any_state(string $file, string $leaf, string $s
  * actually being available; the service being a real member of this stack's
  * own compose file, the same membership rule every other verb checks a
  * service name against; and finally a container that is both resolved
- * server-side (see staxx_exec_resolve_container()) and actually running.
+ * server-side (see staxx_service_container()) and actually running.
  */
 function staxx_exec_start(string $stack, string $service, string &$error): string {
   $error = '';
@@ -8262,7 +8202,7 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
   );
   if ($file === '') return '';
 
-  $container = staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
+  $container = staxx_service_container($file, staxx_path_leaf($stack), $service, true, $error);
   if ($container === '') return ''; // $error already set
 
   // A crashed browser cannot leave a session running forever: every action
@@ -8705,7 +8645,7 @@ function staxx_cfile_container(string $stack, string $service, string &$error): 
   );
   if ($file === '') return '';
 
-  return staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
+  return staxx_service_container($file, staxx_path_leaf($stack), $service, true, $error);
 }
 
 /**
