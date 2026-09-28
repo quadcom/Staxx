@@ -21975,6 +21975,11 @@
   var queueBar        = document.getElementById('staxx-update-queue');
   var updateQueueTimer = null;
   var queueWasLive     = false;
+  // Callbacks waiting for the queue to stop being live — a bulk update's own
+  // per-stack settle functions, fed by the same poll as the page's queue bar
+  // rather than each running a second poll of their own. See
+  // whenQueueSettled() and the drain in applyQueue()'s not-live branch.
+  var queueSettled     = [];
 
   function queueIsLive(queue) {
     return !!(queue && queue.items && queue.items.some(function (item) {
@@ -22026,6 +22031,15 @@
     if (!updateQueueTimer) updateQueueTimer = setInterval(pollQueueOnce, 2000);
   }
 
+  // Registers fn to run once the queue this poller already watches next
+  // settles (stops being live), and makes sure the poll is running so that
+  // happens. Used by a bulk update to learn when its own stack is done
+  // without starting a second poll of the same action.
+  function whenQueueSettled(fn) {
+    queueSettled.push(fn);
+    startQueuePoll();
+  }
+
   // The one place a queue reply is applied, whichever action fetched it —
   // starting, stopping, or the poll itself.
   function applyQueue(queue) {
@@ -22039,11 +22053,22 @@
       // update pill and what state their containers are in — but only on
       // the transition, not on every poll while it was already settled.
       if (queueWasLive) { queueWasLive = false; refreshStateSoon(); }
+      // Callbacks registered by whenQueueSettled() run after that refresh,
+      // so a bulk update's own tally and row painting see the settled state.
+      if (queueSettled.length) {
+        var waiting = queueSettled;
+        queueSettled = [];
+        waiting.forEach(function (fn) { fn(queue); });
+      }
     }
   }
 
   function pollQueueOnce() {
-    if (document.hidden) return;
+    // A bulk update in a background tab still needs the queue moved from
+    // stack to stack, so a poller with something waiting on it keeps
+    // ticking; an ordinary poll with nothing waiting still rests when
+    // nobody is looking.
+    if (document.hidden && !queueSettled.length) return;
     var wasLive = queueWasLive;
     call('update-queue', {}).then(function (res) {
       if (!res.ok) return;
@@ -31136,24 +31161,6 @@
     next(0);
   }
 
-  // Polls the one queue this stack's own single-stack update was started
-  // on, the same poll pollQueueOnce() above already runs, until it is no
-  // longer live — see openUpdateQueueConfirm() for the shape this scope
-  // already takes. Only ever one queue at a time is asked for, since the
-  // caller below waits for this to finish before starting the next stack.
-  function waitForQueueDone(name, cb) {
-    var timer = setInterval(function () {
-      call('update-queue', {}).then(function (res) {
-        if (!res.ok) return;
-        applyQueue(res.queue);
-        if (queueIsLive(res.queue)) return;
-        clearInterval(timer);
-        var item = (res.queue.items || []).filter(function (it) { return it.stack === name; })[0];
-        cb(!!(item && item.state === 'failed'), (item && item.job) || '');
-      });
-    }, 1500);
-  }
-
   // Updating, the same one-at-a-time queue a folder's own "Update this
   // folder" already runs — just started once per chosen stack in turn,
   // since the queue's own scope has no shape for an arbitrary cross-folder
@@ -31175,18 +31182,31 @@
           return;
         }
         applyQueue(res.queue);
-        waitForQueueDone(name, function (itemFailed, jobId) {
-          if (rows.length) clearBusy(rows);
+        // Rows are looked up again here rather than reusing the `rows`
+        // captured above: a rows refresh mid-update (a live-feed message, a
+        // folder change) replaces every row element, so the rows this stack
+        // started with may already be detached by the time it settles.
+        function settle(queue) {
+          var live = stackRows(name);
+          if (live.length) clearBusy(live);
           doneCount++;
-          if (itemFailed) {
+          var item = (queue.items || []).filter(function (it) { return it.stack === name; })[0];
+          if (item && item.state === 'failed') {
             failCount++;
             failedLabels.push(stackLabel(name));
-            markFailed(rows, 'update', jobId);
+            markFailed(live, 'update', item.job || '');
           }
           paintBulkTally(doneCount, total, failCount);
-          refreshStateSoon();
           next(i + 1);
-        });
+        }
+        if (queueIsLive(res.queue)) {
+          whenQueueSettled(settle);
+        } else {
+          // Nothing to update for this stack — applyQueue() above saw no
+          // transition (it was never live), so no refresh happened yet.
+          settle(res.queue);
+          refreshStateSoon();
+        }
       });
     }
     next(0);
