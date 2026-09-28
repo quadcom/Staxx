@@ -15,33 +15,13 @@
 var fs = require('fs');
 var os = require('os');
 var path = require('path');
-var childProcess = require('child_process');
 
 var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
 var ROOT = path.join(__dirname, '..');
 
 var check = require('./lib/check.js'), ok = check.ok;
-
-// Runs the whole compose document written back by `text` through the same
-// jsonschema Draft202012Validator tests/validate_schema.py uses, so a link
-// entry is proven against the real schema rather than a JS re-statement of
-// its rules. Returns the parsed {ok, errors} result of a tiny python script
-// piped the YAML on stdin.
-function validateAgainstSchema(text) {
-  var script = [
-    'import sys, json, yaml',
-    'from jsonschema import Draft202012Validator',
-    'schema = json.load(open(' + JSON.stringify(path.join(ROOT, 'schema', 'x-unraid.schema.json')) + '))',
-    'doc = yaml.safe_load(sys.stdin.read())',
-    'v = Draft202012Validator(schema)',
-    'errors = [str(e.message) + " at /" + "/".join(map(str, e.path)) for e in v.iter_errors(doc)]',
-    'print(json.dumps({"ok": not errors, "errors": errors}))'
-  ].join('\n');
-  var res = childProcess.spawnSync('python', ['-c', script], { input: text, encoding: 'utf8' });
-  if (res.status !== 0) return { ok: false, errors: [res.stderr || 'python failed'] };
-  try { return JSON.parse(res.stdout); } catch (e) { return { ok: false, errors: [res.stdout] }; }
-}
+var SC = require('./lib/schema_check.js');
 
 /* ---- case 1: write, read back, schema-valid ------------------------------ */
 (function () {
@@ -65,8 +45,9 @@ function validateAgainstSchema(text) {
 
   var text = Y.serialise(doc);
   ok('case 1: the compose text still parses', /x-unraid:\n\s+links:/.test(text), text);
-  var v = validateAgainstSchema(text);
-  ok('case 1: the written record validates against the schema', v.ok, JSON.stringify(v.errors));
+  SC.validate(text, function (v) {
+    ok('case 1: the written record validates against the schema', v.ok, JSON.stringify(v.errors));
+  });
 })();
 
 /* ---- case 2: re-confirming updates in place, never a duplicate ----------- */
@@ -236,8 +217,9 @@ function validateAgainstSchema(text) {
   ok('case 10: every original line is still present, untouched',
      beforeLines.every(function (l) { return afterLines.indexOf(l) >= 0; }));
 
-  var v = validateAgainstSchema(after);
-  ok('case 10: the whole rewritten fixture still validates against the schema', v.ok, JSON.stringify(v.errors));
+  SC.validate(after, function (v) {
+    ok('case 10: the whole rewritten fixture still validates against the schema', v.ok, JSON.stringify(v.errors));
+  });
 })();
 
 /* =====================================================================
@@ -462,4 +444,5 @@ function computeOffer(form, mineEp, oldVal, newVal) {
      Y.serialise(doc).indexOf('WouldHaveBeenWritten') < 0);
 })();
 
+SC.flush();
 check.done();

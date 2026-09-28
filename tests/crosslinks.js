@@ -26,34 +26,13 @@
 
 'use strict';
 
-var path = require('path');
-var childProcess = require('child_process');
-
 var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
-var ROOT = path.join(__dirname, '..');
-
 var check = require('./lib/check.js'), ok = check.ok;
+var SC = require('./lib/schema_check.js');
 
 function findKind(list, kind) {
   return list.filter(function (c) { return c.kind === kind; });
-}
-
-// Same helper links_record.js already uses — proves a written record
-// against the real schema rather than a JS restatement of its rules.
-function validateAgainstSchema(text) {
-  var script = [
-    'import sys, json, yaml',
-    'from jsonschema import Draft202012Validator',
-    'schema = json.load(open(' + JSON.stringify(path.join(ROOT, 'schema', 'x-unraid.schema.json')) + '))',
-    'doc = yaml.safe_load(sys.stdin.read())',
-    'v = Draft202012Validator(schema)',
-    'errors = [str(e.message) + " at /" + "/".join(map(str, e.path)) for e in v.iter_errors(doc)]',
-    'print(json.dumps({"ok": not errors, "errors": errors}))'
-  ].join('\n');
-  var res = childProcess.spawnSync('python', ['-c', script], { input: text, encoding: 'utf8' });
-  if (res.status !== 0) return { ok: false, errors: [res.stderr || 'python failed'] };
-  try { return JSON.parse(res.stdout); } catch (e) { return { ok: false, errors: [res.stdout] }; }
 }
 
 /* ---- crossLooksLikeAddress: what actually triggers a server call -------- */
@@ -110,8 +89,9 @@ function validateAgainstSchema(text) {
   ok('the writer accepts a cross-stack reference', res.ok, res.error);
 
   var text = Y.serialise(doc);
-  var v = validateAgainstSchema(text);
-  ok('it validates against the real schema', v.ok, JSON.stringify(v.errors));
+  SC.validate(text, function (v) {
+    ok('it validates against the real schema', v.ok, JSON.stringify(v.errors));
+  });
   ok('the far endpoint carries the other stack\'s path', /stack:\s*Databases\/mariadb/.test(text), text);
 
   var recs = Y.readLinks(doc);
@@ -366,4 +346,5 @@ function validateAgainstSchema(text) {
   ok('once recorded, the editor has nothing left to ask about this pair', visible.length === 0, visible.length);
 })();
 
+SC.flush();
 check.done();

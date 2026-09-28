@@ -33,6 +33,7 @@ var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-w
 var MS = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js');
 var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference between the sources and
                                             // buildMergedText()'s own output must be accounted for.
+var SC = require('./lib/schema_check.js');
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk');
 
@@ -471,23 +472,8 @@ function checkNetworksShared(label, doc, exam) {
 // exactly one x-unraid.links "reference" record behind, naming the FINAL
 // service names (after every rename), so the editor never re-asks a
 // question this wizard already answered. Schema conformance is checked the
-// same way tests/links_record.js checks it — shelling out to python with
-// pyyaml and jsonschema — rather than re-typing the schema's own rules here.
-function validateAgainstSchema(text) {
-  var script = [
-    'import sys, json, yaml',
-    'from jsonschema import Draft202012Validator',
-    'schema = json.load(open(' + JSON.stringify(path.join(__dirname, '..', 'schema', 'x-unraid.schema.json')) + '))',
-    'doc = yaml.safe_load(sys.stdin.read())',
-    'v = Draft202012Validator(schema)',
-    'errors = [str(e.message) + " at /" + "/".join(map(str, e.path)) for e in v.iter_errors(doc)]',
-    'print(json.dumps({"ok": not errors, "errors": errors}))'
-  ].join('\n');
-  var res = require('child_process').spawnSync('python', ['-c', script], { input: text, encoding: 'utf8' });
-  if (res.status !== 0) return { ok: false, errors: [res.stderr || 'python failed'] };
-  try { return JSON.parse(res.stdout); } catch (e) { return { ok: false, errors: [res.stdout] }; }
-}
-
+// same way tests/links_record.js checks it, through the shared batch (see
+// tests/lib/schema_check.js) rather than a Python start of its own.
 function checkLinkRecords(label, doc, exam, text) {
   var records = CM.readLinks(doc).filter(function (r) { return r.kind === 'reference'; });
   exam.findings.forEach(function (f) {
@@ -506,8 +492,9 @@ function checkLinkRecords(label, doc, exam, text) {
     });
   });
 
-  var v = validateAgainstSchema(text);
-  if (!v.ok) fail('160A', 'order ' + label + ': the merged file\'s link records do not validate against the schema — ' + JSON.stringify(v.errors));
+  SC.validate(text, function (v) {
+    if (!v.ok) fail('160A', 'order ' + label + ': the merged file\'s link records do not validate against the schema — ' + JSON.stringify(v.errors));
+  });
 }
 
 if (CHECK) {
@@ -589,6 +576,8 @@ if (CHECK) {
   // PLAN_179 — the two pick orders' own merged configs must agree apart from block order.
   var orderCmp = AUDIT.compareOrders(resultA.sources, resultA.built, resultB.built);
   if (!orderCmp.ok) orderCmp.problems.forEach(function (p) { fail('audit-order', p); });
+
+  SC.flush();
 
   if (checkFails.length) {
     console.log('  FAILED:');
