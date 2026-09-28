@@ -499,8 +499,6 @@ fi
 # token, so it must not be readable by any other login on the box.
 chmod 0600 "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
 
-chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
-
 # Non-fatal on purpose: this is the one call in this block that must not trip
 # set -e. A settings script hiccup here is recoverable at the next settings
 # save or reboot, and should not be reported as a failed plugin install.
