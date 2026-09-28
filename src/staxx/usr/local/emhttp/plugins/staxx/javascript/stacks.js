@@ -2894,6 +2894,15 @@
   // loader used to apply to its own: never mid-edit, never under the device panel.
   function lateRedraw() {
     if (!lateWanted) return;
+    // Never while the Image box's own tag list is open (tagBoxBox, set
+    // further down). reparse() always closes that list (tagBoxClose(), its
+    // own first line) and replaces the whole form — landing here in the
+    // instant after a click just opened the list made the click look like
+    // it had done nothing, since the redraw wiped the box (and the click's
+    // own element) out from under it. Left pending — lateWanted stays true
+    // — so the hardware/network names devLoad()/netLoad()/imgLoad() found
+    // still land on the very next redraw, once the box is closed.
+    if (tagBoxBox) return;
     lateWanted = false;
     if (modal.open && MODEL && !commitTimer && !devPanel) reparse();
   }
@@ -16352,7 +16361,13 @@
   // class alone, the same check imageBoxTagLoad() used before this box got
   // its own list.
   function isImageBox(el) {
-    if (!el || el.dataset.part !== 'value' || !el.dataset.row) return false;
+    // isConnected rules out a click event still carrying a reference to a
+    // box a form redraw already replaced — with lateRedraw() now holding off
+    // while the tag box is open (its own comment, above), this is belt and
+    // braces against any other redraw racing a click the same way, since a
+    // detached element's data-row could otherwise be misread against a
+    // MODEL.fields index that now names an unrelated field.
+    if (!el || !el.isConnected || el.dataset.part !== 'value' || !el.dataset.row) return false;
     var f = MODEL && MODEL.fields[el.dataset.row | 0];
     return !!(f && f.binder === 'setting' && f.target === 'image');
   }

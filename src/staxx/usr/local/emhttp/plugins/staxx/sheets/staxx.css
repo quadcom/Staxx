@@ -10655,17 +10655,29 @@ div.title.staxx-has-titlebar {
  * constraint .staxx-scaffold .staxx-xxx rules exist for) targets real form
  * controls, and nothing in here is one: the box itself is styled as the
  * ordinary .staxx-input it already is, and every row is a plain div. */
+/* Adrian's look, approved in a live mock (2026-09-28): square top corners so
+ * the panel reads as part of the box rather than a separate popover, and a
+ * transparent top border so the box's own bottom border stays the visible
+ * edge — the panel sits flush against it (top = box bottom exactly, no
+ * overlap: Adrian's correction the same day was "try to avoid cutting off
+ * the bottom border", so this never sits a pixel higher than the box ends).
+ * White text throughout — Adrian: "use white text… Gray text looks like it's
+ * disabled" — a literal, since .staxx-input itself has no text-colour token
+ * of its own to borrow (it sets `color: inherit`).
+ */
 .staxx-tagbox {
   position: fixed;
   z-index: 3;
   min-width: 22rem;
   max-height: 24rem;
   overflow-y: auto;
-  padding: 0.4rem 0 0.8rem;
+  scrollbar-width: thin;
+  padding: 0.6rem;
   border: 0.1rem solid var(--sm-line);
-  border-radius: var(--sm-radius);
+  border-top-color: transparent;
+  border-radius: 0 0 1.2rem 1.2rem;
   background-color: var(--sm-bg);
-  box-shadow: var(--sm-pop-shadow);
+  box-shadow: 0 1.4rem 3.6rem rgba(0, 0, 0, 0.5), 0 0.2rem 0.6rem rgba(0, 0, 0, 0.35);
 }
 
 .staxx-tagbox[hidden] {
@@ -10674,18 +10686,25 @@ div.title.staxx-has-titlebar {
 
 .staxx-tagbox-status {
   margin: 0.3rem 1rem 0.6rem;
-  color: var(--sm-muted);
+  color: rgb(242, 242, 242);
+  font-style: italic;
 }
 
 .staxx-tagbox-top {
   margin-bottom: 0.4rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
 }
 
 .staxx-tagbox-row {
-  padding: 0.5rem 1rem;
+  border-radius: 0.8rem;
+  padding: 0.7rem 1rem;
+  margin: 0.1rem 0;
   cursor: pointer;
-  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
-  font-size: 1.2rem;
+  font: inherit;
+  font-size: 1.25rem;
+  color: rgb(242, 242, 242);
+  transition: background 0.12s;
 }
 
 .staxx-tagbox-row:hover {
@@ -10700,8 +10719,45 @@ div.title.staxx-has-titlebar {
   color: var(--sm-accent);
 }
 
+.staxx-tagbox-row--on .staxx-tagbox-tag {
+  color: var(--sm-accent);
+}
+
 .staxx-tagbox-tag {
-  font-weight: 700;
+  font-weight: 600;
+  color: rgb(242, 242, 242);
+}
+
+/* The fold headings reuse .staxx-tagpick-group/-groupbtn's markup (see
+ * tagBoxGroupHtml() in stacks.js) but not the pin window's own look for it —
+ * this scopes to inside .staxx-tagbox only, so the pin window's own headings
+ * are untouched. They are real <button>s, so Unraid's own control reset
+ * beats a plain class here — .staxx-scaffold specificity, with font,
+ * colour, background and radius restated per CLAUDE.md's own constraint. */
+.staxx-scaffold .staxx-tagbox .staxx-tagpick-groupbtn {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  border-radius: 0.8rem;
+  padding: 0.7rem 1rem;
+  border: 0;
+  background: transparent;
+  color: rgb(242, 242, 242);
+  font: inherit;
+  font-size: 1.15rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-tagbox .staxx-tagpick-groupbtn:hover {
+  background: var(--sm-fill);
+}
+
+.staxx-scaffold .staxx-tagbox .staxx-tagpick-groupbtn i {
+  width: 1.2rem;
+  font-size: 0.9em;
+  opacity: 0.7;
 }
 
 @media (max-width: 45rem) {
