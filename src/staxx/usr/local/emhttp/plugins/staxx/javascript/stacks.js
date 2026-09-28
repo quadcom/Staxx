@@ -35483,23 +35483,52 @@
   // `plain` skips window.StaxxYaml.highlight() — a settings file is not
   // YAML, and colouring it as if it were paints comments right but leaves
   // "KEY=value" lines looking like a parse the tokeniser gave up on.
-  function mergePaintCode(container, text, decorate, plain) {
+  //
+  // PLAN_198 9 — `ghosts`, when handed in, is how a "struck" row for a line
+  // the merge removed outright gets drawn at the point it used to sit: an
+  // extra row per real line index, occupying a number of its own rather
+  // than one of the file's real line numbers. `ghosts.at(i)` answers the
+  // items to draw before real line `i` (called once more, with `i` equal
+  // to the line count, for anything removed past the last real line);
+  // `ghosts.paint(row, item)` is handed a bare row (numbered, with an
+  // empty text span) for each and sets whatever the two hand-written
+  // painters used to set themselves — class, colour, key, text, mark,
+  // badge. Without `ghosts` the row numbers are exactly `i + 1`, as before.
+  function mergePaintCode(container, text, decorate, plain, ghosts) {
     container.innerHTML = '';
     var lines = (text || '').split('\n');
     var carry = '';
     var frag = document.createDocumentFragment();
-    lines.forEach(function (line, i) {
+    var dispNum = 1;
+
+    function bareRow() {
       var row = document.createElement('div');
       row.className = 'staxx-merge-codeline';
-      row.dataset.line = i;
-
       var num = document.createElement('span');
       num.className = 'staxx-merge-codenum';
-      num.textContent = String(i + 1);
+      num.textContent = String(dispNum++);
       row.appendChild(num);
-
       var content = document.createElement('span');
       content.className = 'staxx-merge-codetext';
+      row.appendChild(content);
+      return row;
+    }
+
+    for (var i = 0; i <= lines.length; i++) {
+      if (ghosts) {
+        (ghosts.at(i) || []).forEach(function (item) {
+          var row = bareRow();
+          ghosts.paint(row, item);
+          frag.appendChild(row);
+        });
+      }
+      if (i === lines.length) break;   // the extra pass above is ghosts past the last real line
+
+      var line = lines[i];
+      var row = bareRow();
+      row.dataset.line = i;
+
+      var content = row.querySelector('.staxx-merge-codetext');
       if (plain) {
         content.textContent = line;
       } else {
@@ -35508,11 +35537,10 @@
         carry = res.carry || '';
         content.innerHTML = res.html;
       }
-      row.appendChild(content);
 
       if (typeof decorate === 'function') decorate(row, i, line);
       frag.appendChild(row);
-    });
+    }
     container.appendChild(frag);
   }
 
@@ -35887,6 +35915,57 @@
     return Object.keys(painted);
   }
 
+  // PLAN_198 9 — the shape every reason card shares: a title, one or more
+  // paragraphs, and a buttons row already appended as the card's last
+  // child, so a caller only has to fill the row in.
+  function mergeCard(title, paragraphs) {
+    var card = document.createElement('div');
+    card.className = 'staxx-merge-reasoncard';
+    var h = document.createElement('strong');
+    h.textContent = title;
+    card.appendChild(h);
+    (Array.isArray(paragraphs) ? paragraphs : [paragraphs]).forEach(function (text) {
+      var p = document.createElement('p');
+      p.textContent = text;
+      card.appendChild(p);
+    });
+    var buttons = document.createElement('div');
+    buttons.className = 'staxx-merge-reasoncard-buttons';
+    card.appendChild(buttons);
+    return { card: card, buttons: buttons };
+  }
+
+  // A button in a card's buttons row, built in the order every builder
+  // already used: type, class, text, then one data- attribute a click
+  // listener reads to know which change or finding it answers.
+  function mergeCardButton(text, cls, dataName, dataValue) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'staxx-btn ' + cls;
+    btn.textContent = text;
+    btn.dataset[dataName] = dataValue;
+    return btn;
+  }
+
+  // The "Approved" button three of the card builders make, lit when this
+  // change's own key is already in mergeState.approved.
+  function mergeApproveButton(key) {
+    return mergeCardButton('Approved', 'staxx-merge-approve' + (mergeState.approved[key] ? ' staxx-merge-approve--on' : ''),
+      'mergeApprove', key);
+  }
+
+  // The three-way (or two-way) choice a file-clash, unreferenced or combo
+  // card offers — one button per choice, lit when it is the finding's own
+  // stored or recommended answer.
+  function mergeFileChoiceButtons(buttons, key, decision, choices) {
+    choices.forEach(function (pair) {
+      var btn = mergeCardButton(pair[1], 'staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : ''),
+        'mergeFileChoice', key);
+      btn.dataset.mergeFileChoiceValue = pair[0];
+      buttons.appendChild(btn);
+    });
+  }
+
   // Built once and reused two ways: as the content of a hover/focus popover
   // (mergeAttachMark()) for a compose-file line, the shape settled in the
   // third interactive session — the reason cards that used to sit inline
@@ -35900,75 +35979,31 @@
   // start", not merely "left as written" — so it is built here instead of
   // the generic card below, which knows nothing about that consequence.
   function mergePortClashCard(change, finding) {
-    var card = document.createElement('div');
-    card.className = 'staxx-merge-reasoncard';
-    var h = document.createElement('strong');
-    h.textContent = 'Two services publish port ' + finding.facts.port;
-    var p = document.createElement('p');
-    p.textContent = finding.facts.heldBy + ' and ' + finding.facts.service + ' both publish ' + finding.facts.port +
+    var built = mergeCard('Two services publish port ' + finding.facts.port,
+      finding.facts.heldBy + ' and ' + finding.facts.service + ' both publish ' + finding.facts.port +
       ' on this server; only one can. ' + finding.facts.service + '’s moves to ' + finding.facts.freePort +
       ', the next free port StaXX found. Declined, both keep ' + finding.facts.port +
-      ' and the new stack will not start until one of them is changed.';
-    var buttons = document.createElement('div');
-    buttons.className = 'staxx-merge-reasoncard-buttons';
-
-    var approveBtn = document.createElement('button');
-    approveBtn.type = 'button';
-    approveBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.approved[change.key] ? ' staxx-merge-approve--on' : '');
-    approveBtn.textContent = 'Approved';
-    approveBtn.dataset.mergeApprove = change.key;
-
-    var leaveBtn = document.createElement('button');
-    leaveBtn.type = 'button';
-    leaveBtn.className = 'staxx-btn staxx-merge-leave';
-    leaveBtn.textContent = 'Decline';
-    leaveBtn.dataset.mergeLeave = change.key;
-
-    buttons.appendChild(approveBtn);
-    buttons.appendChild(leaveBtn);
-    card.appendChild(h);
-    card.appendChild(p);
-    card.appendChild(buttons);
-    return card;
+      ' and the new stack will not start until one of them is changed.');
+    built.buttons.appendChild(mergeApproveButton(change.key));
+    built.buttons.appendChild(mergeCardButton('Decline', 'staxx-merge-leave', 'mergeLeave', change.key));
+    return built.card;
   }
 
   function mergeReasonCard(change) {
     var finding = mergeFindingByKey(change.key);
     if (finding && finding.kind === 'port-clash') return mergePortClashCard(change, finding);
 
-    var card = document.createElement('div');
-    card.className = 'staxx-merge-reasoncard';
-    var h = document.createElement('strong');
-    h.textContent = change.title;
-    var p = document.createElement('p');
-    p.textContent = change.reason;
-    var buttons = document.createElement('div');
-    buttons.className = 'staxx-merge-reasoncard-buttons';
-
-    var approveBtn = document.createElement('button');
-    approveBtn.type = 'button';
-    approveBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.approved[change.key] ? ' staxx-merge-approve--on' : '');
-    approveBtn.textContent = 'Approved';
-    approveBtn.dataset.mergeApprove = change.key;
-
-    buttons.appendChild(approveBtn);
+    var built = mergeCard(change.title, change.reason);
+    built.buttons.appendChild(mergeApproveButton(change.key));
     // Renamed from "Leave it as it was" in the third interactive session —
     // same key, same handler, just Adrian's own word for it. Hidden
     // outright for a structural change that cannot be left as it was; the
     // card's own sentence says so instead (change.cannotLeave, set by
     // merge-write.js/merge-examine.js, never by anything here).
     if (!change.cannotLeave) {
-      var leaveBtn = document.createElement('button');
-      leaveBtn.type = 'button';
-      leaveBtn.className = 'staxx-btn staxx-merge-leave';
-      leaveBtn.textContent = 'Decline';
-      leaveBtn.dataset.mergeLeave = change.key;
-      buttons.appendChild(leaveBtn);
+      built.buttons.appendChild(mergeCardButton('Decline', 'staxx-merge-leave', 'mergeLeave', change.key));
     }
-    card.appendChild(h);
-    card.appendChild(p);
-    card.appendChild(buttons);
-    return card;
+    return built.card;
   }
 
   // The tick/ring worn at the end of an answered line's own text — painted
@@ -35998,6 +36033,14 @@
     var top = el.scrollTop;
     fn();
     el.scrollTop = top;
+  }
+
+  // "Add the flash class, remove it 1500ms later" — written by hand at
+  // every place that draws a person's eye to a row (a clicked match, the
+  // change navigator, the outstanding-answer walk).
+  function mergeFlash(el) {
+    el.classList.add('staxx-merge-codeline--flash');
+    setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
   }
 
   function mergeRenderMergedPane() {
@@ -36043,82 +36086,50 @@
   }
 
   function mergeRenderMergedPaneInner(codeEl) {
-    codeEl.innerHTML = '';
     var text = mergeState.built.text || '';
     var sourceMap = mergeSourceMapForLines(text);
     var changeMap = mergeChangesByMergedLine();
     var removedByLine = mergeRemovedByMergedLine(false);
-    var lines = text.split('\n');
-    var carry = '';
-    var frag = document.createDocumentFragment();
-    var dispNum = 1;   // a ghost row occupies a display number of its own —
-                        // it is not in the written file, so this never has
-                        // to match the file's real 1-based line numbers.
 
-    // A line removed outright (the emptied ports: key, third interactive
-    // session) is shown as a struck ghost row at the point it used to sit,
-    // rather than left in the file as "ports: []" — the mark still opens
-    // the same popover, whose own wording says the line is gone.
-    function ghostRow(c, rel) {
-      var row = document.createElement('div');
-      row.className = 'staxx-merge-codeline staxx-merge-codeline--changed staxx-merge-codeline--struck staxx-merge-codeline--ghost';
-      row.style.borderLeftColor = rel ? mergeColorFor(rel) : 'transparent';
+    mergePaintCode(codeEl, text, function (row, i, line) {
+      var change = changeMap[i];
+      var rel = sourceMap[i];
+      var stripeColor = rel ? mergeColorFor(rel) : 'transparent';
+      row.style.borderLeftColor = stripeColor;
       // 0.3rem on every row, changed or not (the "indentation error" fault,
       // C17) — the number column's own solid block is what marks a change
       // now, painted by --stripe by the sheet, not by a wider border.
       row.style.borderLeftWidth = '0.3rem';
-      if (rel) row.style.setProperty('--stripe', mergeColorFor(rel));
-      row.dataset.mergeChangeKey = c.key;
-      var num = document.createElement('span');
-      num.className = 'staxx-merge-codenum';
-      num.textContent = String(dispNum++);
-      mergeAttachMark(num, c, mergeReasonCard);
-      row.appendChild(num);
-      var content = document.createElement('span');
-      content.className = 'staxx-merge-codetext';
-      content.textContent = c.removedText || '';
-      mergeAppendAnswerBadge(content, c.key);
-      row.appendChild(content);
-      frag.appendChild(row);
-    }
-
-    for (var i = 0; i <= lines.length; i++) {
-      (removedByLine[i] || []).forEach(function (c) { ghostRow(c, sourceMap[i] || sourceMap[i - 1]); });
-      if (i === lines.length) break;   // trailing ghosts only past the last real line
-
-      var line = lines[i];
-      var change = changeMap[i];
-      var rel = sourceMap[i];
-      var stripeColor = rel ? mergeColorFor(rel) : 'transparent';
-
-      var row = document.createElement('div');
-      row.className = 'staxx-merge-codeline' + (change ? ' staxx-merge-codeline--changed' : '');
-      row.style.borderLeftColor = stripeColor;
-      row.style.borderLeftWidth = '0.3rem';
       if (change) {
+        row.classList.add('staxx-merge-codeline--changed');
         row.dataset.mergeChangeKey = change.key;
         if (rel) row.style.setProperty('--stripe', stripeColor);
       }
       row.dataset.mergeLine = String(i);   // mergeShowSource()'s own services-marker scroll
-
-      var num = document.createElement('span');
-      num.className = 'staxx-merge-codenum';
-      num.textContent = String(dispNum++);
-      if (change) mergeAttachMark(num, change, mergeReasonCard);
-      row.appendChild(num);
-
-      var content = document.createElement('span');
-      content.className = 'staxx-merge-codetext';
-      var res;
-      try { res = window.StaxxYaml.highlight(line, carry); } catch (e) { res = { html: esc(line), carry: '' }; }
-      carry = res.carry || '';
-      content.innerHTML = res.html;
-      if (change) mergeAppendAnswerBadge(content, change.key);
-      row.appendChild(content);
-
-      frag.appendChild(row);
-    }
-    codeEl.appendChild(frag);
+      if (change) mergeAttachMark(row.querySelector('.staxx-merge-codenum'), change, mergeReasonCard);
+      if (change) mergeAppendAnswerBadge(row.querySelector('.staxx-merge-codetext'), change.key);
+    }, false, {
+      // A line removed outright (the emptied ports: key, third interactive
+      // session) is shown as a struck ghost row at the point it used to
+      // sit, rather than left in the file as "ports: []" — the mark still
+      // opens the same popover, whose own wording says the line is gone.
+      at: function (i) {
+        var rel = sourceMap[i] || sourceMap[i - 1];
+        return (removedByLine[i] || []).map(function (c) { return { c: c, rel: rel }; });
+      },
+      paint: function (row, item) {
+        var c = item.c, rel = item.rel;
+        row.classList.add('staxx-merge-codeline--changed', 'staxx-merge-codeline--struck', 'staxx-merge-codeline--ghost');
+        row.style.borderLeftColor = rel ? mergeColorFor(rel) : 'transparent';
+        row.style.borderLeftWidth = '0.3rem';
+        if (rel) row.style.setProperty('--stripe', mergeColorFor(rel));
+        row.dataset.mergeChangeKey = c.key;
+        mergeAttachMark(row.querySelector('.staxx-merge-codenum'), c, mergeReasonCard);
+        var content = row.querySelector('.staxx-merge-codetext');
+        content.textContent = c.removedText || '';
+        mergeAppendAnswerBadge(content, c.key);
+      }
+    });
   }
 
   // C17: one source at a time. Every pane still lives here, side by side
@@ -36493,10 +36504,7 @@
     var mergedRectBefore = mergedRow.getBoundingClientRect();
     mergedPane.scrollTop += (mergedRectBefore.top - srcRect.top);
 
-    [sourceRow, mergedRow].forEach(function (el) {
-      el.classList.add('staxx-merge-codeline--flash');
-      setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
-    });
+    [sourceRow, mergedRow].forEach(mergeFlash);
 
     var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');   // the pane scrolls, not the code block — see mergeAttachScrollLink()
     if (scroller) mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
@@ -36512,9 +36520,9 @@
     var idx = mergeState.changeNavIndex;
     idx = ((idx + dir) % rows.length + rows.length) % rows.length;
     mergeState.changeNavIndex = idx;
-    rows[idx].scrollIntoView({ block: 'center' });
-    rows[idx].classList.add('staxx-merge-codeline--flash');
-    setTimeout(function () { rows[idx].classList.remove('staxx-merge-codeline--flash'); }, 1500);
+    var row = rows[idx];
+    row.scrollIntoView({ block: 'center' });
+    mergeFlash(row);
   }
 
   /* ------------------------------------------ step 3 answer lock + tally -- */
@@ -36570,8 +36578,7 @@
     var scroller = sourceRow.closest && sourceRow.closest('.staxx-merge-sourcepane');   // the pane scrolls, not the code block — see mergeAttachScrollLink()
     if (!mergedPane || !scroller) return;
     scroller.scrollTop += (sourceRow.getBoundingClientRect().top - mergedRow.getBoundingClientRect().top);
-    sourceRow.classList.add('staxx-merge-codeline--flash');
-    setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+    mergeFlash(sourceRow);
     mergeState.scrollLink = { offset: mergedPane.scrollTop - scroller.scrollTop };
   }
 
@@ -36592,8 +36599,7 @@
       var paneRect = mergedPane.getBoundingClientRect();
       var rowRect = mergedRow.getBoundingClientRect();
       mergedPane.scrollTop += (rowRect.top - paneRect.top) - paneRect.height / 3;
-      mergedRow.classList.add('staxx-merge-codeline--flash');
-      setTimeout(function () { mergedRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+      mergeFlash(mergedRow);
       if (sourceRow) mergeAlignSourceToMerged(sourceRow, mergedRow);
     } else if (sourceRow) {
       // A change with no merged line (a dropped stack-level x-unraid) lives
@@ -36606,8 +36612,7 @@
         var sp = srcScroller.getBoundingClientRect(), sr = sourceRow.getBoundingClientRect();
         srcScroller.scrollTop += (sr.top - sp.top) - sp.height / 3;
       }
-      sourceRow.classList.add('staxx-merge-codeline--flash');
-      setTimeout(function () { sourceRow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+      mergeFlash(sourceRow);
     }
 
     mergeReopenMarkForKey(key);
@@ -36643,19 +36648,15 @@
       if (!answered) keys.push({ key: c.key, kind: 'env' });
     });
 
-    var findings = (mergeState.built && mergeState.built.findings) || [];
-    var clashByPath = {};
-    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+    var idx = mergeFileFindingIndex();
     var seenFile = {};
     mergeState.picked.forEach(function (p) {
       var s = mergeState.stacks[p.name];
       var files = ((s && s.filesReply && s.filesReply.files) || []).slice()
         .sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
       files.forEach(function (entry) {
-        var clash = clashByPath[entry.path];
-        var unref = clash ? null : findings.filter(function (f) {
-          return f.kind === 'unreferenced' && f.stack === p.name && f.facts.path === entry.path;
-        })[0];
+        var clash = idx.clashByPath[entry.path];
+        var unref = clash ? null : idx.unrefFor(p.name, entry.path);
         var f = clash || unref;
         if (!f || seenFile[f.key]) return;
         seenFile[f.key] = true;
@@ -36678,8 +36679,7 @@
       var rowEl = mark && mark.closest('.staxx-merge-codeline');
       if (rowEl) {
         rowEl.scrollIntoView({ block: 'center' });
-        rowEl.classList.add('staxx-merge-codeline--flash');
-        setTimeout(function () { rowEl.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+        mergeFlash(rowEl);
       }
       mergeReopenMarkForKey(target.key);
     } else {
@@ -36691,8 +36691,7 @@
       var frow = nameEl && nameEl.closest('.staxx-merge-filerow');
       if (frow) {
         frow.scrollIntoView({ block: 'center' });
-        frow.classList.add('staxx-merge-codeline--flash');
-        setTimeout(function () { frow.classList.remove('staxx-merge-codeline--flash'); }, 1500);
+        mergeFlash(frow);
         // The card opens through the same rest-hover the row answers from —
         // a synthetic mouseenter lands on the very listener mergeAttachFileHover()
         // wired, so this walks exactly like a person's own hover would.
@@ -36786,6 +36785,28 @@
     return ((mergeState.built && mergeState.built.findings) || []).filter(function (f) { return f.key === key; })[0] || null;
   }
 
+  // PLAN_198 9 — "clash by path, unreferenced by stack and path" was built
+  // by hand four times over the merge's own findings. A later clash for a
+  // path replaces an earlier one, matching every one of those four; a
+  // source's own file list cannot name a path twice (merge-examine.js's
+  // findCompanionFindings() makes one "unreferenced" finding per file
+  // entry per source, walked off a real directory tree), so there is at
+  // most one unreferenced finding for a given (stack, path) pair and
+  // "first match" and "a later match" always agree.
+  function mergeFileFindingIndex() {
+    var findings = (mergeState.built && mergeState.built.findings) || [];
+    var clashByPath = {};
+    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+    return {
+      clashByPath: clashByPath,
+      unrefFor: function (stack, path) {
+        return findings.filter(function (f) {
+          return f.kind === 'unreferenced' && f.stack === stack && f.facts.path === path;
+        })[0];
+      }
+    };
+  }
+
   // Mirrors merge-write.js's own decisionValue() (not exported, so read
   // fresh here): an unset decision reads as whichever choice the finding
   // itself marked recommended.
@@ -36852,50 +36873,25 @@
   // settings-join decision today (accept-join/stop-here only) — see
   // mergeFreshState()'s comment on envNames.
   function mergeEnvReasonCard(change) {
-    var card = document.createElement('div');
-    card.className = 'staxx-merge-reasoncard';
-    var h = document.createElement('strong');
-    h.textContent = change.title;
-    var p = document.createElement('p');
-    p.textContent = change.reason;
-    card.appendChild(h);
-    card.appendChild(p);
-
-    var buttons = document.createElement('div');
-    buttons.className = 'staxx-merge-reasoncard-buttons';
-
-    var approveBtn = document.createElement('button');
-    approveBtn.type = 'button';
-    approveBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.approved[change.key] ? ' staxx-merge-approve--on' : '');
-    approveBtn.textContent = 'Approved';
-    approveBtn.dataset.mergeApprove = change.key;
-    buttons.appendChild(approveBtn);
+    var built = mergeCard(change.title, change.reason);
+    built.buttons.appendChild(mergeApproveButton(change.key));
 
     if (change.key.indexOf('|dedupe|') >= 0) {
-      var keepBtn = document.createElement('button');
-      keepBtn.type = 'button';
-      keepBtn.className = 'staxx-btn staxx-merge-approve' + (mergeState.decisions[change.key] === 'keep-both' ? ' staxx-merge-approve--on' : '');
-      keepBtn.textContent = 'Keep both';
-      keepBtn.dataset.mergeEnvKeepboth = change.key;
-      buttons.appendChild(keepBtn);
+      built.buttons.appendChild(mergeCardButton('Keep both',
+        'staxx-merge-approve' + (mergeState.decisions[change.key] === 'keep-both' ? ' staxx-merge-approve--on' : ''),
+        'mergeEnvKeepboth', change.key));
     } else if (mergeState.decisions[change.key] === 'choose-name') {
       var field = document.createElement('input');
       field.type = 'text';
       field.className = 'staxx-merge-envname-input';
       field.value = mergeState.envNames[change.key] || mergeEnvChangeCurrentName(change);
       field.dataset.mergeEnvNameField = change.key;
-      buttons.appendChild(field);
+      built.buttons.appendChild(field);
     } else {
-      var chooseBtn = document.createElement('button');
-      chooseBtn.type = 'button';
-      chooseBtn.className = 'staxx-btn staxx-merge-approve';
-      chooseBtn.textContent = 'Choose a name';
-      chooseBtn.dataset.mergeEnvChoose = change.key;
-      buttons.appendChild(chooseBtn);
+      built.buttons.appendChild(mergeCardButton('Choose a name', 'staxx-merge-approve', 'mergeEnvChoose', change.key));
     }
 
-    card.appendChild(buttons);
-    return card;
+    return built.card;
   }
 
   function mergeEnvSourceEntries() {
@@ -36972,45 +36968,8 @@
     var envText = (mergeState.built && mergeState.built.env) || '';
     var changeMap = mergeEnvChangesByMergedLine();
     var removedByLine = mergeRemovedByMergedLine(true);
-    var lines = envText.split('\n');
-    var frag = document.createDocumentFragment();
-    var dispNum = 1;
 
-    // A duplicate setting (both stacks agreeing) is dropped from the
-    // written file just like step 3's emptied ports: key — shown as a
-    // struck ghost at the point its own line would have sat, not left in
-    // as a comment saying it was skipped.
-    function ghostRow(c) {
-      var lrow = document.createElement('div');
-      lrow.className = 'staxx-merge-codeline staxx-merge-codeline--changed staxx-merge-codeline--struck staxx-merge-codeline--ghost';
-      var num = document.createElement('span');
-      num.className = 'staxx-merge-codenum';
-      num.textContent = String(dispNum++);
-      mergeAttachMark(num, c, mergeEnvReasonCard);
-      lrow.appendChild(num);
-      var content = document.createElement('span');
-      content.className = 'staxx-merge-codetext';
-      content.textContent = c.removedText || '';
-      lrow.appendChild(content);
-      frag.appendChild(lrow);
-    }
-
-    for (var i = 0; i <= lines.length; i++) {
-      (removedByLine[i] || []).forEach(ghostRow);
-      if (i === lines.length) break;
-
-      var line = lines[i];
-      var lrow = document.createElement('div');
-      lrow.className = 'staxx-merge-codeline';
-      var num = document.createElement('span');
-      num.className = 'staxx-merge-codenum';
-      num.textContent = String(dispNum++);
-      lrow.appendChild(num);
-      var content = document.createElement('span');
-      content.className = 'staxx-merge-codetext';
-      content.textContent = line;
-      lrow.appendChild(content);
-
+    mergePaintCode(code, envText, function (lrow, i, line) {
       // ENV_KEY_RE reads past an "export " prefix, so an exported line
       // gets its family stripe too (PLAN_198's bug fix).
       var m = ENV_KEY_RE.exec(line);
@@ -37021,70 +36980,43 @@
       var change = changeMap[i];
       if (change) {
         lrow.classList.add('staxx-merge-codeline--changed');
-        mergeAttachMark(num, change, mergeEnvReasonCard);
+        mergeAttachMark(lrow.querySelector('.staxx-merge-codenum'), change, mergeEnvReasonCard);
       }
-      frag.appendChild(lrow);
-    }
-    code.appendChild(frag);
+    }, true, {
+      // A duplicate setting (both stacks agreeing) is dropped from the
+      // written file just like step 3's emptied ports: key — shown as a
+      // struck ghost at the point its own line would have sat, not left in
+      // as a comment saying it was skipped.
+      at: function (i) { return removedByLine[i] || []; },
+      paint: function (lrow, c) {
+        lrow.classList.add('staxx-merge-codeline--changed', 'staxx-merge-codeline--struck', 'staxx-merge-codeline--ghost');
+        mergeAttachMark(lrow.querySelector('.staxx-merge-codenum'), c, mergeEnvReasonCard);
+        lrow.querySelector('.staxx-merge-codetext').textContent = c.removedText || '';
+      }
+    });
   }
 
   /* -------------------------------------------------------- files pane -- */
 
   function mergeFileClashCard(finding) {
-    var card = document.createElement('div');
-    card.className = 'staxx-merge-reasoncard';
     var names = finding.facts.sources.map(mergeLeafName);
-    var h = document.createElement('strong');
-    h.textContent = 'Same name from more than one stack';
-    var p = document.createElement('p');
     // "Both" is wrong past two sources (C17, third interactive session).
     var bothOrAll = names.length <= 2 ? 'both' : 'all';
-    p.textContent = mergeJoinNames(names) + ' ' + bothOrAll + ' have ' + (finding.facts.isDir ? 'a folder' : 'a file') +
-      ' called “' + finding.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.';
-    card.appendChild(h);
-    card.appendChild(p);
-
-    var buttons = document.createElement('div');
-    buttons.className = 'staxx-merge-reasoncard-buttons';
-    var decision = mergeFindingDecision(finding);
-    [['rename', 'Rename'], ['keep-one', 'Keep one'], ['leave-behind', 'Leave it behind']].forEach(function (pair) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'staxx-btn staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : '');
-      btn.textContent = pair[1];
-      btn.dataset.mergeFileChoice = finding.key;
-      btn.dataset.mergeFileChoiceValue = pair[0];
-      buttons.appendChild(btn);
-    });
-    card.appendChild(buttons);
-    return card;
+    var built = mergeCard('Same name from more than one stack',
+      mergeJoinNames(names) + ' ' + bothOrAll + ' have ' + (finding.facts.isDir ? 'a folder' : 'a file') +
+      ' called “' + finding.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.');
+    mergeFileChoiceButtons(built.buttons, finding.key, mergeFindingDecision(finding),
+      [['rename', 'Rename'], ['keep-one', 'Keep one'], ['leave-behind', 'Leave it behind']]);
+    return built.card;
   }
 
   function mergeUnreferencedCard(finding) {
-    var card = document.createElement('div');
-    card.className = 'staxx-merge-reasoncard';
-    var h = document.createElement('strong');
-    h.textContent = 'Not used by anything in the compose file';
-    var p = document.createElement('p');
-    p.textContent = '“' + finding.facts.path + '” would be copied even though nothing in ' +
-      mergeLeafName(finding.stack) + '’s compose file points at it.';
-    card.appendChild(h);
-    card.appendChild(p);
-
-    var buttons = document.createElement('div');
-    buttons.className = 'staxx-merge-reasoncard-buttons';
-    var decision = mergeFindingDecision(finding);
-    [['copy', 'Copy'], ['leave-behind', 'Leave it behind']].forEach(function (pair) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'staxx-btn staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : '');
-      btn.textContent = pair[1];
-      btn.dataset.mergeFileChoice = finding.key;
-      btn.dataset.mergeFileChoiceValue = pair[0];
-      buttons.appendChild(btn);
-    });
-    card.appendChild(buttons);
-    return card;
+    var built = mergeCard('Not used by anything in the compose file',
+      '“' + finding.facts.path + '” would be copied even though nothing in ' +
+      mergeLeafName(finding.stack) + '’s compose file points at it.');
+    mergeFileChoiceButtons(built.buttons, finding.key, mergeFindingDecision(finding),
+      [['copy', 'Copy'], ['leave-behind', 'Leave it behind']]);
+    return built.card;
   }
 
   // A file that is both a clash AND unreferenced (README.md in t155-db) —
@@ -37092,38 +37024,17 @@
   // behind or kept once needs no separate copy question, and one kept by
   // a rename follows the clash answer (C17).
   function mergeFileComboCard(clash, unref) {
-    var card = document.createElement('div');
-    card.className = 'staxx-merge-reasoncard';
-    var h = document.createElement('strong');
-    h.textContent = 'Same name from more than one stack';
-    card.appendChild(h);
-
     var names = clash.facts.sources.map(mergeLeafName);
     var bothOrAll = names.length <= 2 ? 'both' : 'all';
-    var p1 = document.createElement('p');
-    p1.textContent = mergeJoinNames(names) + ' ' + bothOrAll + ' have ' + (clash.facts.isDir ? 'a folder' : 'a file') +
-      ' called “' + clash.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.';
-    card.appendChild(p1);
-
-    var p2 = document.createElement('p');
-    p2.textContent = '“' + unref.facts.path + '” would also be copied even though nothing in ' +
-      mergeLeafName(unref.stack) + '’s compose file points at it.';
-    card.appendChild(p2);
-
-    var buttons = document.createElement('div');
-    buttons.className = 'staxx-merge-reasoncard-buttons';
-    var decision = mergeFindingDecision(clash);
-    [['rename', 'Rename'], ['keep-one', 'Keep one'], ['leave-behind', 'Leave it behind']].forEach(function (pair) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'staxx-btn staxx-merge-approve' + (decision === pair[0] ? ' staxx-merge-approve--on' : '');
-      btn.textContent = pair[1];
-      btn.dataset.mergeFileChoice = clash.key;
-      btn.dataset.mergeFileChoiceValue = pair[0];
-      buttons.appendChild(btn);
-    });
-    card.appendChild(buttons);
-    return card;
+    var built = mergeCard('Same name from more than one stack', [
+      mergeJoinNames(names) + ' ' + bothOrAll + ' have ' + (clash.facts.isDir ? 'a folder' : 'a file') +
+        ' called “' + clash.facts.path + '”. Renaming keeps both, using each stack’s own name to tell them apart.',
+      '“' + unref.facts.path + '” would also be copied even though nothing in ' +
+        mergeLeafName(unref.stack) + '’s compose file points at it.'
+    ]);
+    mergeFileChoiceButtons(built.buttons, clash.key, mergeFindingDecision(clash),
+      [['rename', 'Rename'], ['keep-one', 'Keep one'], ['leave-behind', 'Leave it behind']]);
+    return built.card;
   }
 
   // PLAN_156 F13: is this file named by the source's own env_file:, so its
@@ -37181,14 +37092,7 @@
       return;
     }
 
-    var clashesByPath = {};
-    ((mergeState.built && mergeState.built.findings) || []).forEach(function (f) {
-      if (f.kind === 'file-clash') clashesByPath[f.facts.path] = f;
-    });
-    var unrefByPath = {};
-    mergeFindingsByKind('unreferenced').forEach(function (f) {
-      if (f.stack === rel) unrefByPath[f.facts.path] = f;
-    });
+    var idx = mergeFileFindingIndex();
 
     var list = document.createElement('div');
     list.className = 'staxx-merge-filelist';
@@ -37252,8 +37156,8 @@
           row.appendChild(envNote);
         }
 
-        var clash = clashesByPath[entry.path];
-        var unrefHere = unrefByPath[entry.path];
+        var clash = idx.clashByPath[entry.path];
+        var unrefHere = idx.unrefFor(rel, entry.path);
         var finding = clash || unrefHere;
         if (finding) {
           if (!mergeState.fileAnswered[finding.key]) {
@@ -37397,16 +37301,12 @@
     entries.push({ path: 'compose.yaml', from: null, note: 'the merged file', isNew: true });
     if (mergeEnvSourceEntries().length) entries.push({ path: '.env', from: null, note: 'the joined settings file', isNew: true });
 
-    var findings = (mergeState.built && mergeState.built.findings) || [];
-    var clashByPath = {};
-    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+    var idx = mergeFileFindingIndex();
 
     ((mergeState.built && mergeState.built.files) || []).forEach(function (f) {
       if (f.to === null) return;   // left behind — not part of the new folder
-      var clash = clashByPath[f.path];
-      var unref = clash ? null : findings.filter(function (u) {
-        return u.kind === 'unreferenced' && u.stack === f.from && u.facts.path === f.path;
-      })[0];
+      var clash = idx.clashByPath[f.path];
+      var unref = clash ? null : idx.unrefFor(f.from, f.path);
       var pendingKey = clash ? clash.key : (unref ? unref.key : null);
       var pending = !!pendingKey && !mergeState.fileAnswered[pendingKey];
       var isRenamedIcon = /^\.staxx\/icon-/.test(f.to) && f.to !== f.path;
@@ -37558,8 +37458,7 @@
 
   function mergeFileMarkCounts() {
     var findings = (mergeState.built && mergeState.built.findings) || [];
-    var clashByPath = {};
-    findings.forEach(function (f) { if (f.kind === 'file-clash') clashByPath[f.facts.path] = f; });
+    var clashByPath = mergeFileFindingIndex().clashByPath;
     var n = 0, a = 0, d = 0;
     var seenClash = {};
     findings.forEach(function (f) {
@@ -39493,10 +39392,7 @@
         var root = envFamilyEl.dataset.mergeEnvFamily;
         var selector = cssEsc(root);
         var familyEls = document.querySelectorAll('#staxx-merge-step4 [data-merge-env-family="' + selector + '"]');
-        familyEls.forEach(function (el) {
-          el.classList.add('staxx-merge-codeline--flash');
-          setTimeout(function () { el.classList.remove('staxx-merge-codeline--flash'); }, 1500);
-        });
+        familyEls.forEach(mergeFlash);
         var mergedMatch = document.querySelector('#staxx-merge-settings-merged-code [data-merge-env-family="' + selector + '"]');
         if (mergedMatch) mergedMatch.scrollIntoView({ block: 'center' });
         return;
