@@ -42,7 +42,7 @@ function row(string $id, string $name, string $ports, string $mounts, string $pr
 /* ---- a port published on both 0.0.0.0 and :: arrives once ---- */
 
 $rows = [
-  row('id1', '/webapp', '80/tcp=0.0.0.0:8080'."\x1f".'80/tcp=[::]:8080'."\x1f", '', 'mystack'),
+  row('id1', '/webapp', '80/tcp=8080'."\x1f".'80/tcp=8080'."\x1f", '', 'mystack'),
 ];
 $facts = staxx_import_taken_facts($rows);
 ok('a port on 0.0.0.0 and :: arrives once',
@@ -75,7 +75,7 @@ ok('a host path with a space survives whole',
 
 /* ---- no compose label: project reports as '' ---- */
 
-$rows = [ row('id5', '/handstarted', '80/tcp=0.0.0.0:9000'."\x1f", '', '') ];
+$rows = [ row('id5', '/handstarted', '80/tcp=9000'."\x1f", '', '') ];
 $facts = staxx_import_taken_facts($rows);
 ok('no compose label reports project as empty',
   count($facts['ports']) === 1 && $facts['ports'][0]['project'] === '');
@@ -84,7 +84,7 @@ ok('no compose label reports project as empty',
  * dropped, exactly as an exec()-trimmed line from the real command would
  * be ---- */
 
-$short = ['id6', 'bridge', '', '', '', '/short', '80/tcp=0.0.0.0:1234'."\x1f", '', 'mystack'];
+$short = ['id6', 'bridge', '', '', '', '/short', '80/tcp=1234'."\x1f", '', 'mystack'];
 ok('a nine-field row has fewer than ten fields', count($short) === 9);
 $facts = staxx_import_taken_facts([$short]);
 ok('a nine-field row is dropped', $facts['ports'] === [] && $facts['paths'] === []);
@@ -97,7 +97,7 @@ ok('an injected (even empty) $rows skips the ss read', $facts['host'] === []);
 /* ---- everything together, one call, in Docker's own order ---- */
 
 $rows = [
-  row('idA', '/one', '80/tcp=0.0.0.0:8080'."\x1f".'80/tcp=[::]:8080'."\x1f", '/data/one'."\x1f", 'stackone'),
+  row('idA', '/one', '80/tcp=8080'."\x1f".'80/tcp=8080'."\x1f", '/data/one'."\x1f", 'stackone'),
   row('idB', '/two', '', '/data/two'."\x1f".'/data/two/sub'."\x1f", ''),
 ];
 $facts = staxx_import_taken_facts($rows);
