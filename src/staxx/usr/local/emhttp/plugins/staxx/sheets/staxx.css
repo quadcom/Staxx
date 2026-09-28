@@ -10669,8 +10669,9 @@ div.title.staxx-has-titlebar {
   position: fixed;
   z-index: 3;
   min-width: 22rem;
-  max-height: 24rem;
+  max-height: 24rem;   /* the usual value; stacks.js's tagBoxPosition() sets its own each render (Fit ruling) */
   overflow-y: auto;
+  overflow-x: hidden;   /* Fit ruling 2026-09-28: a long tag ellipsises rather than scrolling sideways */
   scrollbar-width: thin;
   padding: 0.6rem;
   border: 0.1rem solid var(--sm-line);
@@ -10705,6 +10706,12 @@ div.title.staxx-has-titlebar {
   font-size: 1.25rem;
   color: rgb(242, 242, 242);
   transition: background 0.12s;
+  /* Fit ruling 2026-09-28: one line each, a too-long name ends in an
+     ellipsis — its title attribute (see tagBoxRowHtml()) carries the full
+     "repo:tag" for a hover to show. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .staxx-tagbox-row:hover {

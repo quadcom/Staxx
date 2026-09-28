@@ -8832,8 +8832,52 @@
     redrawDots();
   }
 
+  // A form redraw (reparse(), below — the one place every redraw goes
+  // through) rebuilds formHost.innerHTML wholesale, which drops whatever had
+  // focus: the browser leaves it on <body>, so the first click or keystroke
+  // after a redraw looked like it had done nothing (2026-09-28). data-row
+  // and data-part together are how the form already addresses a box across
+  // renders (see the swap/rename/dollar-fix code above, which reads them
+  // back the same way), so they are what this keys a restore on too.
+  function captureFormFocus() {
+    var el = document.activeElement;
+    if (!el || !formHost.contains(el)) return null;   // focus was elsewhere — never steal it back
+    var row = el.dataset.row;
+    if (row === undefined) return null;   // nothing on it a fresh render can be asked to find again
+    var snap = { tag: el.tagName, row: row, part: el.dataset.part };
+    if (typeof el.selectionStart === 'number') {
+      snap.selStart = el.selectionStart;
+      snap.selEnd = el.selectionEnd;
+    }
+    // Reopening the list itself (below) is what lateRedraw()'s own
+    // tagBoxBox guard was written to avoid needing — see its comment — but
+    // that guard stays too, since it skips the close/reopen flicker
+    // altogether for the one race it targets. This is the general fix,
+    // covering every other redraw a form field can lose focus to.
+    if (tagBoxBox === el) { snap.tagOpen = true; snap.tagOpenValue = tagBoxOpenValue; }
+    return snap;
+  }
+
+  function restoreFormFocus(snap) {
+    if (!snap) return;
+    var sel = snap.tag + '[data-row="' + snap.row + '"]' +
+      (snap.part !== undefined ? '[data-part="' + snap.part + '"]' : '');
+    var el = formHost.querySelector(sel);
+    if (!el) return;   // the field it was on did not survive this render — nowhere to put it back
+    el.focus({ preventScroll: true });
+    if (snap.selStart !== undefined && typeof el.setSelectionRange === 'function') {
+      try { el.setSelectionRange(snap.selStart, snap.selEnd); } catch (e) { /* not a text-ish box */ }
+    }
+    // openValue passed through as it stood, not re-read from the box, so a
+    // filter already typed keeps filtering rather than snapping back to the
+    // full list the moment the box reappears.
+    if (snap.tagOpen) tagBoxOpen(el, snap.tagOpenValue);
+  }
+
   function reparse() {
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
+
+    var focusWas = captureFormFocus();
 
     var doc  = YAML.parse(currentText());
     var form = YAML.buildForm(doc, netDrivers(), envNameList());
@@ -8852,6 +8896,7 @@
     tagBoxClose();               // PLAN_206 — the box it was open for is about to be replaced
     formHost.innerHTML = form.ok ? renderForm(form) : brokenFormHtml(form);
     formHost.scrollTop = scrollWas;
+    restoreFormFocus(focusWas);   // put back whatever the redraw just took focus from, caret and all
     paintServiceIcons();   // PLAN_85 — every render repaints from serviceIcons, set once by openEditor()
     updRevealIn();         // PLAN_155 — ease the Immediate/Delayed reveal in, if this render drew one
 
@@ -16416,22 +16461,30 @@
   // repoOf() already knows where the split falls (a registry port's own
   // colon is not the tag separator) — the tag half is emphasised, the repo
   // is not, since the tag is the part that usually differs between rows.
-  function tagBoxRowHtml(full) {
+  // Fit ruling 2026-09-28: the repository is already sitting in the box, so
+  // a tag-group row (the top row, "Other rolling tags", "Version numbers")
+  // shows only the tag; "On this server" rows are different images, so they
+  // keep the full "repo:tag". Either way the row's own value — what a pick
+  // writes into the box — and its title (for the ellipsis a long name gets,
+  // see staxx.css) stay the full "repo:tag".
+  function tagBoxRowHtml(full, tagOnly) {
     var repo = repoOf(full);
     var tag = full.slice(repo.length + 1);
-    return '<div class="staxx-tagbox-row" role="option" data-tagbox-row="' + esc(full) + '">' +
-             esc(repo) + ':<span class="staxx-tagbox-tag">' + esc(tag) + '</span>' +
-           '</div>';
+    var text = tagOnly
+      ? '<span class="staxx-tagbox-tag">' + esc(tag) + '</span>'
+      : esc(repo) + ':<span class="staxx-tagbox-tag">' + esc(tag) + '</span>';
+    return '<div class="staxx-tagbox-row" role="option" data-tagbox-row="' + esc(full) + '" ' +
+             'title="' + esc(full) + '">' + text + '</div>';
   }
 
-  function tagBoxRowsHtml(list) {
-    return list.map(tagBoxRowHtml).join('');
+  function tagBoxRowsHtml(list, tagOnly) {
+    return list.map(function (full) { return tagBoxRowHtml(full, tagOnly); }).join('');
   }
 
   // Same fold shape askTagPick() draws (.staxx-tagpick-group/-groupbtn), so
   // this list looks exactly like the pin window's without a second copy of
   // those rules (see the stylesheet's own comment on them).
-  function tagBoxGroupHtml(key, heading, list, open) {
+  function tagBoxGroupHtml(key, heading, list, open, tagOnly) {
     var listId = 'staxx-tagbox-group-' + key;
     return '<div class="staxx-tagpick-group">' +
       '<button type="button" class="staxx-tagpick-groupbtn" data-tagbox-fold ' +
@@ -16439,7 +16492,7 @@
         '<i class="fa fa-chevron-' + (open ? 'down' : 'right') + '"></i> ' +
         esc(heading) + ' (' + list.length + ')' +
       '</button>' +
-      '<div id="' + esc(listId) + '"' + (open ? '' : ' hidden') + '>' + tagBoxRowsHtml(list) + '</div>' +
+      '<div id="' + esc(listId) + '"' + (open ? '' : ' hidden') + '>' + tagBoxRowsHtml(list, tagOnly) + '</div>' +
     '</div>';
   }
 
@@ -16494,11 +16547,11 @@
             .filter(function (g) { return g.list.length; });
         }
         var topFull = top.map(function (t) { return repo + ':' + t; });
-        var topHtml = topFull.length ? '<div class="staxx-tagbox-top">' + tagBoxRowsHtml(topFull) + '</div>' : '';
+        var topHtml = topFull.length ? '<div class="staxx-tagbox-top">' + tagBoxRowsHtml(topFull, true) + '</div>' : '';
         var firstOpen = topHtml ? -1 : 0;
         above = topHtml + groups.map(function (g, i) {
           var full = g.list.map(function (t) { return repo + ':' + t; });
-          return tagBoxGroupHtml(g.key, g.heading, full, filtering || i === firstOpen);
+          return tagBoxGroupHtml(g.key, g.heading, full, filtering || i === firstOpen, true);
         }).join('');
       }
     }
@@ -16584,11 +16637,28 @@
   // the box's own viewport rect, reads back where it actually rendered, and
   // corrects by the difference — right whichever coordinate space turns out
   // to be true, and still right if that ever changes again.
+  // Fit ruling 2026-09-28 (live mock, approved): long tags were giving both
+  // scroll bars, so width and height are both worked out here rather than
+  // left to the stylesheet's fixed min/max.
+  var TAGBOX_FLOOR = 160;   // px — never shorter than this, flipped or not
+
   function tagBoxPosition(box) {
     var panel = tagBoxEl();
     var r = box.getBoundingClientRect();
 
-    panel.style.width = r.width + 'px';   // floor is the stylesheet's own min-width
+    // Width: grows with content — max-content asks the browser for the
+    // widest row's natural, unwrapped size (every row is nowrap; see
+    // staxx.css) — then pinned back between the box's own width and about
+    // 1.6 times it (Adrian: "whenever there's content that gets wider, the
+    // whole container expands, that's good"), and never past the dialog's
+    // right edge less a 12px gutter.
+    panel.style.width = 'max-content';
+    var natural = panel.getBoundingClientRect().width;
+    var width = Math.max(r.width, Math.min(natural, r.width * 1.6));
+    var dialogRight = modal.getBoundingClientRect().right;
+    width = Math.min(width, dialogRight - 12 - r.left);
+    panel.style.width = width + 'px';
+
     panel.style.left = r.left + 'px';
     panel.style.top  = r.bottom + 'px';
 
@@ -16599,15 +16669,24 @@
     panel.style.left = (r.left + dx) + 'px';
     panel.style.top  = (r.bottom + dy) + 'px';
 
-    // Flips above the box when there is no room below, the same trick
-    // placeCaretPanel() uses for #staxx-suggest and .staxx-keyhelp — checked
-    // against the real, rendered rect (window.innerHeight is viewport
-    // coordinates, which getBoundingClientRect() always returns regardless
-    // of what is actually acting as the containing block).
-    var placed = panel.getBoundingClientRect();
-    if (placed.bottom > window.innerHeight) {
+    // Height: the room below the box down to just above the editor's own
+    // notice bars and footer — .staxx-modal-foot holds every notice bar
+    // (#staxx-error, #staxx-missing, the note strip and the rest) and the
+    // Tidy/Undo/Save row as one block in that order, so the footer's own
+    // top edge is already above the highest of them. Flips above the box,
+    // the same trick placeCaretPanel() uses for #staxx-suggest and
+    // .staxx-keyhelp, once there is less than the floor's room below.
+    var foot = modal.querySelector('.staxx-modal-foot');
+    var footTop = foot ? foot.getBoundingClientRect().top : window.innerHeight;
+    var roomBelow = footTop - 8 - r.bottom;
+
+    if (roomBelow < TAGBOX_FLOOR) {
+      var placed = panel.getBoundingClientRect();
       var aboveTop = r.top - placed.height;
       panel.style.top = (aboveTop + dy) + 'px';
+      panel.style.maxHeight = Math.max(TAGBOX_FLOOR, r.top - 8) + 'px';
+    } else {
+      panel.style.maxHeight = roomBelow + 'px';
     }
   }
 
