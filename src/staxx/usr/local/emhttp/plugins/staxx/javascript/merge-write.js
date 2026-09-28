@@ -1451,7 +1451,10 @@
       composeText = applied.text;
       overrideChanges = applied.changes;
     }
-    var doc = CM.parse(composeText);
+    // A document the caller already parsed (buildMergedText()'s own
+    // readDocs, PLAN_198 item 3) is reused rather than parsed again — but
+    // only when no override has just changed the text out from under it.
+    var doc = (extra.doc && typeof extra.overrideText !== 'string') ? extra.doc : CM.parse(composeText);
     var plain = toPlain(doc.root) || {};
 
     // This source's own .env, read once — the settings file the wiring
@@ -1552,7 +1555,7 @@
       return out;
     }
 
-    return {
+    var desc = {
       name: name,
       // Kept so examine() can locate the exact lines a finding will change
       // (see its own docCacheFor()) — read-only there, never re-parsed
@@ -1593,6 +1596,11 @@
         // x-unraid block back out of a parsed source.
       }
     };
+    // The doc is kept beside the descriptor (a WeakMap, not a new
+    // property — see merge-examine.js's own DOC_OF), so examine()'s
+    // docCacheFor() can reuse it instead of parsing composeText again
+    // (PLAN_198 item 3).
+    return ME.rememberDoc(desc, doc);
   }
 
   /* =====================================================================
@@ -1677,8 +1685,15 @@
     // file missing whatever line broke, with nothing said. `text: null` is
     // the caller-facing half of the refusal — nothing downstream can
     // mistake this for a normal result and finish writing it out.
-    var unreadable = sources.map(function (s) {
-      var warnings = CM.parse(s.text).warnings || [];
+    // PLAN_198 item 3 — each source is parsed ONCE here for every read-only
+    // use below (this refusal check, each descriptor's own parse, and the
+    // untouched origDoc further down); only the doc that is actually
+    // EDITED (docs, below) gets its own separate parse, since editing it
+    // in place would otherwise corrupt this shared read-only copy.
+    var readDocs = sources.map(function (s) { return CM.parse(s.text); });
+
+    var unreadable = sources.map(function (s, i) {
+      var warnings = readDocs[i].warnings || [];
       return warnings.length ? { stack: s.name, line: warnings[0].line } : null;
     }).filter(Boolean);
     if (unreadable.length) {
@@ -1696,12 +1711,12 @@
       };
     }
 
-    var descs = sources.map(function (s) {
+    var descs = sources.map(function (s, idx) {
       var reply = filesReplies[s.name] || {};
       return descriptorFromText(s.name, s.text, s.envText,
         reply.files || s.files || [], {
           filesLarge: reply.large || s.filesLarge || null, depth: s.depth, rel: s.rel,
-          runningFrom: reply.runningFrom || s.runningFrom
+          runningFrom: reply.runningFrom || s.runningFrom, doc: readDocs[idx]
         });
     });
     // PLAN_155 C15 — a rewire's target lives in whichever source declared
@@ -1791,20 +1806,20 @@
 
     var docs = sources.map(function (s, idx) {
       var doc = CM.parse(s.text);
-      // PLAN_155 F7: a second, untouched parse of this source's own text —
-      // never edited by anything below. The wizard's source pane shows
-      // this same text (the override applied, nothing else), so a change
-      // record that is pinned to a SOURCE line (never carried into the
-      // merged file — a stack's own left-behind x-unraid: block, an
-      // anchor or top-level key rename) has to locate that line here, not
-      // in `doc`. `doc` gets edited in place below (services renamed,
-      // ports removed, paths rewritten…), and a removed line shifts every
-      // line after it — so a position read off the edited doc can name a
-      // line the source pane does not show at all, which is a record with
-      // nowhere to be shown: the exact fault behind the merged heading's
-      // count not matching the marks a person could find, seen live
-      // 2026-09-15.
-      var origDoc = CM.parse(s.text);
+      // PLAN_155 F7: `readDocs[idx]` — untouched, never edited by anything
+      // below — stands in for a second parse of this source's own text.
+      // The wizard's source pane shows this same text (the override
+      // applied, nothing else), so a change record that is pinned to a
+      // SOURCE line (never carried into the merged file — a stack's own
+      // left-behind x-unraid: block, an anchor or top-level key rename)
+      // has to locate that line here, not in `doc`. `doc` gets edited in
+      // place below (services renamed, ports removed, paths rewritten…),
+      // and a removed line shifts every line after it — so a position
+      // read off the edited doc can name a line the source pane does not
+      // show at all, which is a record with nowhere to be shown: the
+      // exact fault behind the merged heading's count not matching the
+      // marks a person could find, seen live 2026-09-15.
+      var origDoc = readDocs[idx];
       var desc = descs[idx];
 
       // Icon files are rewritten by their own scoped pass just below (one

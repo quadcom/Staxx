@@ -372,12 +372,23 @@
     return a === b;
   }
 
+  // The parsed document behind a descriptor merge-write.js built, so it is
+  // not parsed again here. Kept beside the descriptor rather than on it:
+  // the suites compare descriptors, and a new property would show in
+  // every one.
+  var DOC_OF = new WeakMap();
+  function rememberDoc(desc, doc) { DOC_OF.set(desc, doc); return desc; }
+
   // A per-examine() cache of parsed docs, keyed by source name — several
   // finding kinds for the same source each want their own lookup, and
-  // CM.parse() is not free enough to redo per finding.
+  // CM.parse() is not free enough to redo per finding. A source
+  // merge-write.js already parsed (rememberDoc(), above) hands back that
+  // same document instead of a fresh parse (PLAN_198 item 3).
   function docCacheFor(sources) {
     var cache = {};
     sources.forEach(function (s) {
+      var known = s && DOC_OF.get(s);
+      if (known) { cache[s.name] = known; return; }
       if (s && s.text && CM) { try { cache[s.name] = CM.parse(s.text); } catch (e) { /* left undefined */ } }
     });
     return cache;
@@ -1666,7 +1677,11 @@
     findPortsRange: findPortsRange,
     parsePortListLine: parsePortListLine,
     locatePortLine: locatePortLine,
-    locateEnvLine: locateEnvLine
+    locateEnvLine: locateEnvLine,
+    // PLAN_198 item 3 — merge-write.js hands back the document it already
+    // parsed for a descriptor, rather than this file parsing the same
+    // text a second time.
+    rememberDoc: rememberDoc
   };
 
   if (typeof window !== 'undefined') window.StaxxMergeExamine = API;
