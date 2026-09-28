@@ -12535,6 +12535,14 @@
   var checkedText  = null;   // text the last request was sent for, so an unchanged pane asks only once
   var checkVerdict = null;   // what that answer was, so an unchanged pane can put its mark back
 
+  // Forgets the last "does compose accept this" answer; the seq bump makes a
+  // reply still in flight find itself superseded.
+  function resetCheck() {
+    if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
+    checkSeq++;
+    checkedText = null; checkVerdict = null; checkDot = null;
+  }
+
   // Called from reparse(). relint() has just cleared checkDot, so an answer
   // we already have has to be put back rather than merely not re-asked for:
   // reparse() runs on things other than typing — the late redraw after all
@@ -16497,17 +16505,8 @@
     // Yesterday's tabs are meaningless against today's stack — cleared before
     // the fresh listing arrives (or, for a new stack with no folder yet, before
     // renderTabs() below draws the bare compose tab and leaves it at that).
-    fileOpen = null;
-    fileStash = '';
-    fileAtLoad = '';
-    fileEol = '\n';
-    viewBeforeFile = null;
-    FILES = [];
-    envVars = null;   // yesterday's .env answer is meaningless against today's stack
+    resetFileTabs();
     dollarModalOffered = false;   // a fresh session gets its own one-time offer
-    fileDots = {};
-    fileMime = {};
-    hideBinPanel();   // yesterday's stack may have left this showing
     hideYamlNotice(); // ditto for a previous Tidy result — a caller wanting one shown re-shows it below
 
     // Yesterday's history is meaningless against today's stack — bumping the
@@ -16640,11 +16639,7 @@
     // Yesterday's compose-check answer, and any request still in flight for
     // it, are meaningless against today's stack — the seq bump is what stops
     // a late reply for the stack just left from painting over this one.
-    if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
-    checkSeq++;
-    checkedText = null;
-    checkVerdict = null;
-    checkDot = null;
+    resetCheck();
     hideSuggest();   // neither panel may leak from one stack's editor into the next
     hideHover();
     closeOutline();   // yesterday's line numbers are meaningless against today's stack
@@ -16916,16 +16911,7 @@
     // awaited — but the save request it fires still completes over the
     // network after that, which is all a last edit needs.
     flushFileSave();
-    fileOpen = null;
-    fileStash = '';
-    fileAtLoad = '';
-    fileEol = '\n';
-    viewBeforeFile = null;
-    FILES = [];
-    envVars = null;
-    fileDots = {};
-    fileMime = {};
-    hideBinPanel();
+    resetFileTabs();
     // Emptied, never hidden. The strip is permanent — it carries the New file
     // and Add a file buttons whether or not there is a second tab — and
     // nothing anywhere sets `hidden` back to false, so hiding it here was a
@@ -16940,11 +16926,7 @@
     devClose();
     findReset();   // a search must not leak from one stack into the next
     pathsReset();
-    if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
-    checkSeq++;   // a reply landing after close must find itself superseded
-    checkedText = null;
-    checkVerdict = null;
-    checkDot = null;
+    resetCheck();   // a reply landing after close must find itself superseded
     hideSuggest();
     hideHover();
     closeOutline();
@@ -17004,6 +16986,13 @@
   // reading dots back off elements about to be thrown away would lose
   // exactly the ones this exists to keep visible.
   var fileDots = {};
+
+  // No companion tab open and nothing kept from one: a session starting or ending.
+  function resetFileTabs() {
+    fileOpen = null; fileStash = ''; fileAtLoad = ''; fileEol = '\n'; viewBeforeFile = null;
+    FILES = []; envVars = null; fileDots = {}; fileMime = {};
+    hideBinPanel();
+  }
 
   function tabDotHtml(name) {
     var state = fileDots[name];
@@ -17665,11 +17654,7 @@
       // open a moment ago — meaningless the instant the tab moves on, and
       // left alone it would flash back up the moment anything else (setView()
       // among them) repaints the gutter before the next answer lands.
-      if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
-      checkSeq++;
-      checkedText  = null;
-      checkVerdict = null;
-      checkDot     = null;
+      resetCheck();
 
       if (name === '') {
         // Back to the compose tab: hand the box the real text and the view
