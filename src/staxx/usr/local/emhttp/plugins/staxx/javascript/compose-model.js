@@ -10521,12 +10521,10 @@
     // Phase 3 (PLAN_8) calls this from stacks.js to drop a whole
     // healthcheck/deploy block when its tick box is switched off.
     removeKey: removeKey,
-    // Phase 4 (PLAN_8): healthcheck.test read as {mode, command} and written
-    // back as one canonical line. splitQuoted/parseFlowList are exported
-    // because stacks.js's own commandSay() gloss needs the same splitting —
-    // see the comment beside splitQuoted() above for why there is only one
-    // copy of it now.
-    readTest: readTest,
+    // Phase 4 (PLAN_8): healthcheck.test written back as one canonical line.
+    // splitQuoted/parseFlowList are exported because stacks.js's own
+    // commandSay() gloss needs the same splitting — see the comment beside
+    // splitQuoted() above for why there is only one copy of it now.
     writeTest: writeTest,
     // Phase 5 (PLAN_8): stacks.js calls this directly to add a long-form
     // dependency — condition: service_started written explicitly alongside
@@ -10622,7 +10620,6 @@
     interpolates: interpolates,
     escapeDollars: escapeDollars,
     hashNeedsEscaping: hashNeedsEscaping,
-    dollarsNeedEscaping: dollarsNeedEscaping,
     // PLAN_70 stage 5: the two pure decisions behind the cross-stack lookup
     // — see the section comment above crossLooksLikeAddress() for why they
     // live here rather than in stacks.js.

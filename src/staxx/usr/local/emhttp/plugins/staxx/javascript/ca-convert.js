@@ -1116,7 +1116,6 @@
   var API = {
     convert: convert,
     normaliseName: normaliseName,
-    parseExtraParams: parseExtraParams,
     // Those below are string helpers with no CA-specific knowledge in them at
     // all — image-import.js reuses them rather than keeping a second copy of
     // the quoting rules, which is where the anchor and trailing-colon bugs
@@ -1127,7 +1126,6 @@
     scalarOut: scalarOut,
     escapeDollars: escapeDollars,
     wrapText: wrapText,
-    warningCommentLines: warningCommentLines,
     findingsCommentLines: findingsCommentLines,
     importedMetaLines: importedMetaLines
   };
