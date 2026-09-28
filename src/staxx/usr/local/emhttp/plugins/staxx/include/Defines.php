@@ -465,8 +465,9 @@ function staxx_detach(string $cmd, string $log): void {
 }
 
 /** An atomic mkdir lock; one older than $staleAfter seconds was left by a
- *  killed process and is taken over. True when this process now holds it. */
-function staxx_mkdir_lock(string $lock, int $staleAfter = 1800): bool {
+ *  killed process and is taken over. True when this process now holds it.
+ *  Not staxx_mkdir_lock(): that one waits, counts re-entry and reports why. */
+function staxx_mkdir_lock_stale(string $lock, int $staleAfter = 1800): bool {
   if (@mkdir($lock, 0755, true)) return true;
   if (!is_dir($lock) || time() - (int)@filemtime($lock) <= $staleAfter) return false;
   @rmdir($lock);
