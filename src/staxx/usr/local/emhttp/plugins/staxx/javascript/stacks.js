@@ -7859,7 +7859,7 @@
   var crossTimer = null;   // the 800ms debounce handle — one in flight at a time, see the section comment above
   var crossSeq   = 0;      // bumped by every link-match/link-creds request sent, so a superseded reply cannot paint
   var crossState = {};     // crossKey() -> the last known lookup for that box; see runCrossMatch()/startCrossCredentials()
-  var crossSpots = [];     // -> redrawDots(), a gutter dot only — see the note above repaintLink() for why this stops short of an underline
+  var crossSpots = [];     // -> redrawDots(), a gutter dot only — see the note above paintSpots() for why this stops short of an underline
 
   function scheduleCrossLinkCheck(f, value) {
     if (fileOpen !== null || !f || f.locked || f.absent || f.target === undefined) return;
@@ -12267,22 +12267,74 @@
     // dialog resize, caret move) keeps the hits in step for free. Appended
     // after the band, so a hit that falls inside the active field's band is
     // still legible on top of it rather than washed out underneath.
-    repaintHits();
+    //
+    // Where the marks layer sits and which lines are worth drawing, measured
+    // once per repaintMark() pass here rather than once per kind of mark
+    // below — geometry and hit-test share one shape (markView()/paintSpots()/
+    // spotAt()) rather than four near-identical copies of it.
+    var view = markView();
+    repaintHits(view);
 
-    // Bad host paths, same layer and same reasoning — see repaintPaths()
-    // below. Drawn last so a path mark under a search hit still shows
-    // through: the hit is a fill, the path mark only an underline.
-    repaintPaths();
+    // Bad host paths, same layer and same reasoning. Drawn last so a path
+    // mark under a search hit still shows through: the hit is a fill, the
+    // path mark only an underline.
+    paintSpots(view, markedPaths(), pathMarkClass);
     // A moved image's own underline (PLAN_61) — same layer again, drawn last
     // of all for the same reason.
-    repaintMoved();
+    paintSpots(view, movedSpots, 'staxx-badpath staxx-badpath--moved');
     // A clashing port or path (PLAN_65) — same layer again.
-    repaintClash();
+    paintSpots(view, clashSpots, 'staxx-badpath staxx-badpath--clash');
     // A detected connection (PLAN_70 stage 2) — same layer again, drawn
     // last of all so it shows through a clash mark it happens to sit under.
-    repaintLink();
+    paintSpots(view, linkSpots, 'staxx-badpath staxx-badpath--link');
     updateMissingPaths();
     updateInUsePaths();
+  }
+
+  // #staxx-yamlmarks' own box already starts just past the gutter —
+  // paintGutter() offsets its "left" by the gutter's measured width — while
+  // the textarea's box starts there too and then breathes a few pixels
+  // further before its text begins. leftBase is how far into THIS layer a
+  // mark box has to start to land under the first real character of a line.
+  // first/last is the visible line range, plus a small margin either side.
+  function markView() {
+    var markLeft = parseFloat(yamlMarks.style.left) || 0;
+    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
+    return {
+      leftBase: textLeft() - markLeft,
+      first: Math.floor((top - PAD_T) / LINE_H) - 2,
+      last:  Math.ceil((top + viewH - PAD_T) / LINE_H) + 2
+    };
+  }
+
+  // One underline per spot {line, col, len} in view, on the shared marks
+  // layer — the box repaintPaths/repaintMoved/repaintClash/repaintLink each
+  // built by hand. cls is the class string every spot in the list gets, or a
+  // function of the spot for a list (markedPaths()) whose colour varies.
+  function paintSpots(view, list, cls) {
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      if (m.line < view.first || m.line > view.last) continue;
+
+      var box = document.createElement('div');
+      box.className = typeof cls === 'function' ? cls(m) : cls;
+      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
+      box.style.left   = (view.leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.width  = (m.len * CHAR_W) + 'px';
+      box.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(box);
+    }
+  }
+
+  // Hit-test for the hover panel: is (line, col) inside a spot from a list
+  // paintSpots() draws from? Shared by pathMarkAt/movedMarkAt/clashMarkAt/
+  // linkMarkAt's old, near-identical bodies.
+  function spotAt(list, line, col) {
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
+    }
+    return null;
   }
 
   // The visible slice of search hits, drawn into #staxx-yamlmarks. A plain
@@ -12294,28 +12346,15 @@
   // drawing is limited. The current hit is always drawn even if the line math
   // puts it just outside the margin, so stepping to it never looks like it
   // vanished for the instant before the scroll catches up.
-  function repaintHits() {
+  function repaintHits(view) {
     if (!findMatches.length) return;
 
     var text = yamlPane.value;
 
-    // #staxx-yamlmarks' own box already starts just past the gutter —
-    // paintGutter() offsets its "left" by the gutter's measured width — while
-    // the textarea's box starts there too and then breathes a few pixels
-    // further before its text begins. The difference between the two is how
-    // far into THIS layer a hit box has to start to land under the first
-    // real character of a line.
-    var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = textLeft() - markLeft;
-
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
-    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
-    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
-
     for (var i = 0; i < findMatches.length; i++) {
       var m = findMatches[i];
       var isCurrent = i === findCurrent;
-      if (!isCurrent && (m.line < firstLine || m.line > lastLine)) continue;
+      if (!isCurrent && (m.line < view.first || m.line > view.last)) continue;
 
       // A match that spans a newline (only possible with regex on) is drawn
       // only on its first line — this pane assumes one box per source line
@@ -12328,7 +12367,7 @@
       var box = document.createElement('div');
       box.className = 'staxx-hit' + (isCurrent ? ' staxx-hit--current' : '');
       box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.left   = (view.leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
       box.style.width  = (len * CHAR_W) + 'px';
       box.style.height = LINE_H + 'px';
       yamlMarks.appendChild(box);
@@ -12628,57 +12667,29 @@
       });
   }
 
-  // The visible slice of bad host paths, drawn into the same layer as the
-  // active-field band and the search hits above — see repaintMark()'s own
-  // comment for why one layer serves all of them. Only 'missing', 'file',
-  // 'inuse', 'offroot' and 'unreachable' are ever drawn; 'ok', 'skipped', and
-  // any path the server has not answered for yet, are left alone.
-  function repaintPaths() {
-    if (!pathHits.length) return;
-
-    // Same geometry and the same visible-range trim as repaintHits() above.
-    var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = textLeft() - markLeft;
-
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
-    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
-    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
-
+  // The bad host paths that get an underline, each carrying its verdict —
+  // pathHits filtered down to the ones paintSpots()/spotAt() draw and
+  // hover-test, in the shape both expect. 'ok', 'skipped', and any path the
+  // server has not answered for yet, are left out.
+  var PATH_MARKED = ['missing', 'file', 'inuse', 'offroot', 'unreachable'];
+  function markedPaths() {
+    var out = [];
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
       var verdict = pathVerdict(h.path);
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' &&
-          verdict !== 'offroot' && verdict !== 'unreachable') continue;
-      if (h.line < firstLine || h.line > lastLine) continue;
-
-      var box = document.createElement('div');
-      box.className = 'staxx-badpath' +
-        // 'unreachable' draws the same amber as 'file' — neither is the plain
-        // "does not exist" red, since neither means the folder can be created.
-        (verdict === 'file' || verdict === 'unreachable' ? ' staxx-badpath--file'
-          : verdict === 'inuse' ? ' staxx-badpath--inuse' : '');
-      box.style.top    = (PAD_T + h.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (leftBase + h.col * CHAR_W - yamlPane.scrollLeft) + 'px';
-      box.style.width  = (h.len * CHAR_W) + 'px';
-      box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
+      if (PATH_MARKED.indexOf(verdict) < 0) continue;
+      out.push({ line: h.line, col: h.col, len: h.len, path: h.path, verdict: verdict });
     }
+    return out;
   }
 
-  // Hit-test for the hover panel: is (line, col) inside a currently-drawn bad
-  // path mark? Same list repaintPaths() draws from, so a mark is hoverable
-  // exactly where it is visible.
-  function pathMarkAt(line, col) {
-    for (var i = 0; i < pathHits.length; i++) {
-      var h = pathHits[i];
-      var verdict = pathVerdict(h.path);
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' &&
-          verdict !== 'offroot' && verdict !== 'unreachable') continue;
-      if (h.line === line && col >= h.col && col < h.col + h.len) {
-        return { path: h.path, verdict: verdict };
-      }
-    }
-    return null;
+  // The class a path mark draws in, one per verdict — 'unreachable' draws
+  // the same amber as 'file' — neither is the plain "does not exist" red,
+  // since neither means the folder can be created.
+  function pathMarkClass(m) {
+    return 'staxx-badpath' +
+      (m.verdict === 'file' || m.verdict === 'unreachable' ? ' staxx-badpath--file'
+        : m.verdict === 'inuse' ? ' staxx-badpath--inuse' : '');
   }
 
   function pathHoverText(mark) {
@@ -12707,116 +12718,6 @@
         'lost the next time the server restarts — move it under /mnt instead.';
     }
     return 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
-  }
-
-  // The image-moved underline (PLAN_61) — same layer and geometry as
-  // repaintPaths() above, but keyed off movedSpots rather than a path lookup:
-  // the spot comes straight from the field's own value part, via
-  // applyMovedAdvice(), with nothing to ask the server for here.
-  function repaintMoved() {
-    if (!movedSpots.length) return;
-
-    var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = textLeft() - markLeft;
-
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
-    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
-    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
-
-    for (var i = 0; i < movedSpots.length; i++) {
-      var m = movedSpots[i];
-      if (m.line < firstLine || m.line > lastLine) continue;
-
-      var box = document.createElement('div');
-      box.className = 'staxx-badpath staxx-badpath--moved';
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
-      box.style.width  = (m.len * CHAR_W) + 'px';
-      box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
-    }
-  }
-
-  // Hit-test for the hover panel — same shape as pathMarkAt() above, over
-  // movedSpots instead.
-  function movedMarkAt(line, col) {
-    for (var i = 0; i < movedSpots.length; i++) {
-      var m = movedSpots[i];
-      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
-    }
-    return null;
-  }
-
-  // A clashing port or path's own underline (PLAN_65) — same layer and
-  // geometry as repaintMoved() just above, keyed off clashSpots instead.
-  function repaintClash() {
-    if (!clashSpots.length) return;
-
-    var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = textLeft() - markLeft;
-
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
-    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
-    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
-
-    for (var i = 0; i < clashSpots.length; i++) {
-      var m = clashSpots[i];
-      if (m.line < firstLine || m.line > lastLine) continue;
-
-      var box = document.createElement('div');
-      box.className = 'staxx-badpath staxx-badpath--clash';
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
-      box.style.width  = (m.len * CHAR_W) + 'px';
-      box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
-    }
-  }
-
-  // Hit-test for the hover panel — same shape as movedMarkAt() just above,
-  // over clashSpots instead.
-  function clashMarkAt(line, col) {
-    for (var i = 0; i < clashSpots.length; i++) {
-      var m = clashSpots[i];
-      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
-    }
-    return null;
-  }
-
-  // A connection's own underline (PLAN_70 stage 2) — same layer and
-  // geometry as repaintClash() just above, keyed off linkSpots instead.
-  function repaintLink() {
-    if (!linkSpots.length) return;
-
-    var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = textLeft() - markLeft;
-
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
-    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
-    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
-
-    for (var i = 0; i < linkSpots.length; i++) {
-      var m = linkSpots[i];
-      if (m.line < firstLine || m.line > lastLine) continue;
-
-      var box = document.createElement('div');
-      box.className = 'staxx-badpath staxx-badpath--link';
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
-      box.style.width  = (m.len * CHAR_W) + 'px';
-      box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
-    }
-  }
-
-  // Hit-test for the hover panel — same shape as clashMarkAt() just above,
-  // over linkSpots instead.
-  function linkMarkAt(line, col) {
-    for (var i = 0; i < linkSpots.length; i++) {
-      var m = linkSpots[i];
-      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
-    }
-    return null;
   }
 
   function revealLine(line) {
@@ -18802,7 +18703,7 @@
     // A bad host path outranks a key description at the same spot — it is the
     // thing actually wrong here, and the key description would still be true
     // but beside the point.
-    var mark = pathMarkAt(lc.line, lc.col);
+    var mark = spotAt(markedPaths(), lc.line, lc.col);
     if (mark) {
       keyHelp.innerHTML = '<strong>' + esc(mark.path) + '</strong><p>' + esc(pathHoverText(mark)) + '</p>';
       placeCaretPanel(keyHelp, lc.line, lc.col, false);
@@ -18812,7 +18713,7 @@
     // A moved image (PLAN_61) — prose only, no buttons: the Form view is
     // where the fix actually lives, and a tooltip containing buttons closes
     // as the pointer moves toward what it wants to click.
-    var moved = movedMarkAt(lc.line, lc.col);
+    var moved = spotAt(movedSpots, lc.line, lc.col);
     if (moved) {
       keyHelp.innerHTML = '<strong>Image moved</strong><p>' + esc(moved.fact.reason) +
         ' Switch it from the Form view.</p>';
@@ -18822,7 +18723,7 @@
 
     // A clashing port or path (PLAN_65) — same shape as the moved-image
     // tooltip just above.
-    var clash = clashMarkAt(lc.line, lc.col);
+    var clash = spotAt(clashSpots, lc.line, lc.col);
     if (clash) {
       keyHelp.innerHTML = '<strong>Already in use</strong><p>' +
         (clash.kind === 'port'
@@ -18839,7 +18740,7 @@
     // A detected connection (PLAN_70 stage 2) — same shape again. m.text is
     // already the escaped sentence applyLinkAdvice() built for this same
     // spot, so it goes in as-is rather than being escaped a second time.
-    var link = linkMarkAt(lc.line, lc.col);
+    var link = spotAt(linkSpots, lc.line, lc.col);
     if (link) {
       keyHelp.innerHTML = '<strong>Connected</strong><p>' + link.text + '</p>';
       placeCaretPanel(keyHelp, lc.line, lc.col, false);
