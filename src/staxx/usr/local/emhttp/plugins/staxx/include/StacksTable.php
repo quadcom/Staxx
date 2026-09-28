@@ -689,12 +689,7 @@ function staxx_watch_join_names(array $names): string {
 function staxx_watch_for_stack(string $stack): array {
   $empty = ['findings' => [], 'notes' => []];
 
-  // Same cheap lookup staxx_updates_moved_for_stack() uses, rather than
-  // staxx_list_stacks() — see its own comment for why.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
   if (!$meta['ok']) return $empty;
 
@@ -776,12 +771,7 @@ function staxx_watch_for_stack(string $stack): array {
  * @return array<string, array{html: string, q: string}>
  */
 function staxx_service_icons_for_stack(string $stack): array {
-  // Same cheap lookup staxx_watch_for_stack() uses, rather than
-  // staxx_list_stacks() — see its own comment for why.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return [];
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return [];

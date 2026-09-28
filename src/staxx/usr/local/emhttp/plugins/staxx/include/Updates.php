@@ -2893,15 +2893,9 @@ function staxx_updates_aggregate(array $pills): array {
  * the update state file; runs no command of its own.
  */
 function staxx_updates_for_row(string $stack, string $service = ''): array {
-  // staxx_list_stacks() works out compose metadata, run state, the review
-  // lock and more for every stack, just so this could throw all of it away
-  // bar one file path — costly when called once per stack row and once per
-  // container row. staxx_scan_stacks() (request-cached) plus a compose-file
-  // lookup answers the same question far more cheaply.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  // Not staxx_list_stacks(): that builds every stack's full row, record reads
+  // and Docker questions included, just to throw away all of it bar one path.
+  $file = staxx_stack_compose_map()[$stack] ?? '';
 
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
   if (!$meta['ok']) return staxx_updates_aggregate([]);
@@ -3312,12 +3306,7 @@ function staxx_watch_report(): array {
 function staxx_updates_moved_for_stack(string $stack): array {
   if (!function_exists('staxx_links_repo_path')) return [];
 
-  // Same cheap lookup staxx_updates_for_row() uses, rather than
-  // staxx_list_stacks() — see its own comment for why.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
   if (!$meta['ok']) return [];
 

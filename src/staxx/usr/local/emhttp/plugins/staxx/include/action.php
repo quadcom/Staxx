@@ -1468,13 +1468,13 @@ switch ($action) {
     // was stripping every chip after the first refresh. Service rows are
     // left alone — the table never overlays those either.
     $rows = [];
-    foreach (staxx_list_stacks() as $s) {
-      $rows[$s['name']] = staxx_watch_apply_pill(staxx_updates_for_row($s['name']), staxx_watch_count_for_stack($s['name']));
-      if ($s['file'] === '') continue;
-      $meta = staxx_compose_meta($s['file']);
+    foreach (staxx_stack_compose_map() as $rel => $file) {
+      $rows[$rel] = staxx_watch_apply_pill(staxx_updates_for_row($rel), staxx_watch_count_for_stack($rel));
+      if ($file === '') continue;
+      $meta = staxx_compose_meta($file);
       if (!$meta['ok']) continue;
       foreach (array_keys($meta['services']) as $svc) {
-        $rows[$s['name'].'::'.$svc] = staxx_updates_for_row($s['name'], $svc);
+        $rows[$rel.'::'.$svc] = staxx_updates_for_row($rel, $svc);
       }
     }
     $folders = [];
@@ -1504,8 +1504,9 @@ switch ($action) {
    */
   case 'pending':
     $rows = [];
-    foreach (staxx_list_stacks() as $s) {
+    foreach (staxx_stack_states() as $rel => $s) {
       if ($s['file'] === '') continue;
+      $s['services'] = array_keys(staxx_compose_meta($s['file'])['services']);
 
       $p = staxx_restart_pending($s);
       $p['stack'] = $s['name'];
@@ -1880,10 +1881,7 @@ switch ($action) {
     if (!staxx_valid_path($name)) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
-    $file = '';
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $name) { $file = $s['file']; break; }
-    }
+    $file = staxx_stack_compose_map()[$name] ?? '';
     if ($file === '') {
       staxx_reply(['ok' => false, 'error' => 'No compose file found in this stack.']);
     }
@@ -2751,11 +2749,18 @@ switch ($action) {
     $verb  = (string)($_POST['verb'] ?? '');
     $id    = (string)($_POST['folder'] ?? '');
     $jobs  = [];
-    foreach (staxx_list_stacks() as $s) {
-      if (($s['folder'] ?? '') !== $id) continue;
-      if (!$s['parses']) continue;
-      $job = staxx_start_job($s['name'], $verb, $error);
-      if ($job !== '') $jobs[] = ['name' => $s['name'], 'job' => $job];
+    foreach (staxx_stack_compose_map() as $rel => $file) {
+      // The scan's own folder value: everything before the first slash, or
+      // '' for a stack at the top level — so an empty $id still matches only
+      // top-level stacks, exactly as staxx_list_stacks()'s 'folder' did.
+      $at = strpos($rel, '/');
+      if (($at === false ? '' : substr($rel, 0, $at)) !== $id) continue;
+      if ($file === '') continue;
+      $parseError = null;
+      staxx_compose_meta($file, $parseError);
+      if ($parseError !== null) continue;
+      $job = staxx_start_job($rel, $verb, $error);
+      if ($job !== '') $jobs[] = ['name' => $rel, 'job' => $job];
     }
     // 'run' prunes after starting; this case can start just as many jobs
     // (one per stack in the folder) and was missing the same housekeeping.
@@ -2841,7 +2846,7 @@ switch ($action) {
     // button would let somebody silently point StaXX at an empty folder and
     // strand what they already had. Checked before anything else: a store
     // that cannot be replaced needs no path validation to say so.
-    if (staxx_store_reachable() && staxx_list_stacks() !== []) {
+    if (staxx_store_reachable() && staxx_stack_compose_map() !== []) {
       staxx_reply([
         'ok'    => false,
         'error' => 'The current data store already holds a stack, so it cannot be replaced from '

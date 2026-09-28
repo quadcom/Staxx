@@ -455,14 +455,12 @@ function staxx_icon_serve_path(string $stack, string $file): string {
   return $real;
 }
 
-/** The directory staxx_list_stacks() itself reports for $stack, or '' — the
- *  one lookup both staxx_icon_serve_path() and staxx_icon_serve_tree_path()
- *  share, so they can never disagree about which stacks exist. */
+/** The directory of $stack when the folder scan reports it as a stack, or
+ *  '' — the one lookup both staxx_icon_serve_path() and
+ *  staxx_icon_serve_tree_path() share, so they can never disagree about
+ *  which stacks exist. */
 function staxx_icon_stack_dir(string $stack): string {
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) return $s['dir'];
-  }
-  return '';
+  return isset(staxx_stack_compose_map()[$stack]) ? staxx_stack_dir($stack) : '';
 }
 
 /**

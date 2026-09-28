@@ -5708,12 +5708,12 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
  */
 function staxx_unraid_named_containers(): array {
   $map = [];
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['file'] === '') continue;
-    foreach (staxx_compose_meta($s['file'])['services'] as $info) {
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($file === '') continue;
+    foreach (staxx_compose_meta($file)['services'] as $info) {
       $name = trim((string)($info['container_name'] ?? ''));
       if ($name === '' || isset($map[$name])) continue;
-      $map[$name] = $s['name'];
+      $map[$name] = $rel;
     }
   }
   return $map;
@@ -5737,8 +5737,9 @@ function staxx_unraid_templates_at_risk(?array $containers = null): array {
   $dir = STAXX_UNRAID_TEMPLATES_DIR;
   if (!is_dir($dir)) return [];
 
+  $named = staxx_unraid_named_containers();
+  if ($named === []) return [];
   if ($containers === null) $containers = staxx_docker_container_names();
-  $named      = staxx_unraid_named_containers();
   $autoupdate = staxx_autoupdate_read();
   $onAutoupdate = is_array($autoupdate) ? array_keys($autoupdate['containers'] ?? []) : [];
 
