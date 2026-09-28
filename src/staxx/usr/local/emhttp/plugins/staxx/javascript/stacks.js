@@ -34932,8 +34932,20 @@
         // applies it onto the main file before anything else reads either.
         var overrideText = (overrideRes && overrideRes.ok && !overrideRes.binary && typeof overrideRes.text === 'string')
           ? overrideRes.text : null;
+        // PLAN_198 8a — the override (when there is one) is applied here,
+        // once, rather than by every reader of this stack's entry: the
+        // entry is never changed after mergeLoadAllPicked() stores it, so
+        // an applied-text descriptor made now stays correct all wizard long.
+        var desc = null;
+        try {
+          if (window.StaxxMergeWrite) {
+            desc = window.StaxxMergeWrite.descriptorFromText(name, readRes.body, envText, [],
+              { overrideText: overrideText || undefined });
+          }
+        } catch (e) { desc = null; }
         return {
           name: name, label: label, text: readRes.body, envText: envText, overrideText: overrideText,
+          desc: desc,
           fingerprint: readRes.fingerprint,
           // 'read' already resolves each service's own ./.staxx/<file> icon
           // against ITS folder — step 6's own form preview reuses this
@@ -34973,14 +34985,10 @@
   function mergeSourcesForBuild() {
     return mergeState.picked.map(function (p) {
       var s = mergeState.stacks[p.name] || {};
-      var text = s.text || '', overrideChanges = [];
-      if (s.overrideText && window.StaxxMergeWrite) {
-        try {
-          var desc = window.StaxxMergeWrite.descriptorFromText(p.name, text, s.envText, [], { overrideText: s.overrideText });
-          text = desc.text;
-          overrideChanges = desc.overrideChanges || [];
-        } catch (e) { /* left unapplied — mergeRebuild()'s own try/catch reports the real failure */ }
-      }
+      // PLAN_198 8a — the override was already applied once, when the stack
+      // was loaded (mergeLoadStack()); read its answer rather than redoing it.
+      var text = s.desc ? s.desc.text : (s.text || '');
+      var overrideChanges = (s.desc && s.desc.overrideChanges) || [];
       // rel (PLAN_155 C4): p.name already IS the source's own full rel —
       // carried under its own name too so a "../" path is resolved by
       // folder, not merely by depth (see merge-examine.js's own comment).
@@ -35424,8 +35432,14 @@
 
     var folderName = isCreate ? folder.create : folder;
     var rel = folderName ? (folderName + '/' + name) : name;
-    var rels = mergePickerEntries().map(function (e) { return e.name; });
-    var clash = rels.indexOf(rel) >= 0;
+    // PLAN_198 8c — this runs on every rebuild, only to ask "is there
+    // already a stack at this name", so it reads the grid rows' own names
+    // directly rather than building mergePickerEntries()'s fuller answer
+    // (folder, label, reason) and throwing away everything but the name.
+    var clash = Array.prototype.some.call(
+      document.querySelectorAll('.staxx-stack-row[data-stack-row]'),
+      function (row) { return row.dataset.stackRow === rel; }
+    );
     if (!clash && folderName === '') {
       clash = (mergeState.folders || []).some(function (f) { return f.name === name; });
     }
@@ -35685,12 +35699,9 @@
         return;
       }
 
-      var desc;
-      try {
-        desc = window.StaxxMergeWrite.descriptorFromText(p.name, data.text, data.envText, [],
-          { overrideText: data.overrideText || undefined });
-      }
-      catch (e) { desc = null; }
+      // PLAN_198 8a — the applied-text descriptor was already built once,
+      // when the stack was loaded (mergeLoadStack()).
+      var desc = data.desc;
       var services = (desc && desc.compose && desc.compose.services) || {};
       var svcNames = Object.keys(services);
 
@@ -36170,13 +36181,10 @@
       // the second file. Same computation mergeSourcesForBuild() feeds the
       // actual write with, so the line numbers here and in mergeState.built
       // agree.
-      var text = (data && !data.error) ? data.text : '';
-      if (data && !data.error && data.overrideText && window.StaxxMergeWrite) {
-        try {
-          var appliedDesc = window.StaxxMergeWrite.descriptorFromText(rel, text, data.envText, [], { overrideText: data.overrideText });
-          text = appliedDesc.text;
-        } catch (e) { /* left unapplied — the source pane just shows the main file alone */ }
-      }
+      // PLAN_198 8a — the applied-text descriptor was already built once,
+      // when the stack was loaded (mergeLoadStack()), so this pane and
+      // mergeSourcesForBuild() agree on line numbers without redoing it.
+      var text = (data && !data.error) ? (data.desc ? data.desc.text : data.text) : '';
       var changeMap = mergeChangesBySourceLine(rel);
       var struckAbove = {};
       Object.keys(changeMap).forEach(function (li) {
@@ -37856,7 +37864,11 @@
   // marked `fixed: true`: drawn muted, not offered for removal, and never
   // re-added or duplicated by merge-suggest.js's own apply() (its
   // dependsOnAlready() guard already refuses to add a key that is there).
-  function mergeSeededDeps() {
+  // PLAN_198 8b — `doc`, when handed in, is the merged text already parsed
+  // by the caller (mergeEnterStep5()); a trip back to steps 1-4 and forward
+  // again calls this with nothing parsed yet, so the guard below still
+  // covers a merged file that fails to parse.
+  function mergeSeededDeps(doc) {
     var findings = (mergeState.built && mergeState.built.findings) || [];
     var renamed = {};
     findings.forEach(function (f) {
@@ -37872,15 +37884,25 @@
       if (from === to) return;
       if (!deps.some(function (d) { return d.from === from && d.to === to; })) deps.push({ from: from, to: to });
     });
-    if (mergeState.built && mergeState.built.text) {
-      try {
-        var doc = YAML.parse(mergeState.built.text);
-        mergeExistingDeps(doc).forEach(function (d) {
-          if (!deps.some(function (e) { return e.from === d.from && e.to === d.to; })) deps.push(d);
-        });
-      } catch (e) { /* a merged file that fails to parse leaves the board seeded from findings alone */ }
+    if (doc) {
+      mergeExistingDeps(doc).forEach(function (d) {
+        if (!deps.some(function (e) { return e.from === d.from && e.to === d.to; })) deps.push(d);
+      });
     }
     return deps;
+  }
+
+  // The merged file's service names, parsed once per merged text rather
+  // than on every dependency draw, keystroke in a health-check box or
+  // window resize — those all read the same answer until the merge is
+  // rebuilt (a wizard answer changes what mergeState.built.text is).
+  function mergeBuiltServices() {
+    var text = mergeState.built ? mergeState.built.text : '';
+    if (mergeState.servicesFor !== text) {
+      mergeState.servicesFor = text;
+      mergeState.services = text ? mergeSuggestServices(YAML.parse(text)) : [];
+    }
+    return mergeState.services;
   }
 
   // Rebuilt fresh every time step 5 is entered (see mergeFreshState()'s own
@@ -37891,15 +37913,20 @@
   // a round trip and updates the row once it lands, exactly like step 2's
   // own live validator.
   function mergeEnterStep5() {
-    mergeState.suggest = { deps: mergeSeededDeps(), health: {},
+    // PLAN_198 8b — parsed once, here, and primes mergeBuiltServices()'s own
+    // cache so the rest of step 5 (mergeSeededDeps() below, then every
+    // dependency draw and health keystroke) reads this same parse instead
+    // of doing it again.
+    var doc = (mergeState.built && mergeState.built.text) ? YAML.parse(mergeState.built.text) : null;
+    if (doc) { mergeState.servicesFor = mergeState.built.text; mergeState.services = mergeSuggestServices(doc); }
+    mergeState.suggest = { deps: mergeSeededDeps(doc), health: {},
       update: { mode: 'default', immediate: false, notify: mergeDefaultNotify() } };
     mergeState.finalText = mergeState.built ? mergeState.built.text : '';
     mergeState.addedLines = [];
     if (!mergeState.built) { mergeRender(); return; }
 
-    var doc = YAML.parse(mergeState.built.text);
     var form = YAML.buildForm(doc);
-    var services = mergeSuggestServices(doc);
+    var services = mergeBuiltServices();
     var suggest = mergeState.suggest;
 
     services.forEach(function (service) {
@@ -38250,7 +38277,7 @@
     var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('class', 'staxx-merge-demopath');
     var fromService = fromChips[1].dataset.depSvc;
-    var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+    var services = mergeBuiltServices();
     path.setAttribute('stroke', mergeSvcColor(services, fromService));
     svg.appendChild(path);
 
@@ -38589,7 +38616,7 @@
     if (!host) return;
     if (!mergeState.built || !mergeState.suggest) { host.innerHTML = ''; return; }
 
-    var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+    var services = mergeBuiltServices();
 
     var left = host.querySelector('.staxx-merge-step5-left');
     if (!left) {
@@ -38644,7 +38671,7 @@
         });
       });
     }
-    var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+    var services = mergeBuiltServices();
     mergeDrawDepLines(services);
   }
 
@@ -38672,7 +38699,7 @@
       var rect = els.board.getBoundingClientRect();
       var start = mergeChipCenter(rect, chip);
       var fromService = chip.dataset.depSvc;
-      var services = mergeSuggestServices(YAML.parse(mergeState.built.text));
+      var services = mergeBuiltServices();
       var dragLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       dragLine.setAttribute('class', 'staxx-merge-depline staxx-merge-depline--drag');
       dragLine.setAttribute('stroke', mergeSvcColor(services, fromService));
@@ -38808,7 +38835,7 @@
     // removing it on every open and close.
     window.addEventListener('resize', function () {
       if (!mergeState || mergeState.step !== 5 || !mergeModal.open) return;
-      mergeDrawDepLines(mergeSuggestServices(YAML.parse(mergeState.built.text)));
+      mergeDrawDepLines(mergeBuiltServices());
     });
   }
 
@@ -38869,15 +38896,22 @@
   // carry across is, in practice, the database stack itself, and finding
   // the exact mounting service would mean a second copy of merge-write.js's
   // own volume-to-service walk for a wording nicety.
+  // PLAN_198 8e — this used to parse and build a form for the source on
+  // every step 6 render; the answer is remembered on the stack's own entry
+  // once worked out, since it can never change (it reads data.text, the
+  // main file, never the override-applied text, and that entry is never
+  // rewritten after mergeLoadAllPicked() stores it).
   function mergeStorageCarryIsDb(finding) {
     var data = mergeState.stacks[finding.stack];
     if (!data || !data.text || !window.StaxxDbImages) return false;
+    if (typeof data.isDb === 'boolean') return data.isDb;
     var doc;
-    try { doc = YAML.parse(data.text); } catch (e) { return false; }
+    try { doc = YAML.parse(data.text); } catch (e) { return (data.isDb = false); }
     var form = YAML.buildForm(doc);
-    return mergeSuggestServices(doc).some(function (svc) {
+    data.isDb = mergeSuggestServices(doc).some(function (svc) {
       return !!window.StaxxDbImages.lookupImage(mergeSuggestServiceImage(form, svc));
     });
+    return data.isDb;
   }
 
   // The right column's own blocks — verbatim wording from the plan, names
@@ -38897,8 +38931,11 @@
     // — so there is no "whose identity" to name here any more.
     blocks.push({ title: 'New stack ' + leaf + ', ' + mergeFolderPhrase(), sub: 'Its history starts here.' });
 
+    // PLAN_198 8b — the suggestions step only adds lines under services the
+    // merge already made, never a whole new one, so the final text names
+    // the same services as the merged text mergeBuiltServices() caches.
     var serviceCount = 0;
-    try { serviceCount = mergeSuggestServices(YAML.parse(text)).length; } catch (e) { /* unreachable — step 3/4 already refuse an unparsable merge before step 6 */ }
+    try { serviceCount = mergeBuiltServices().length; } catch (e) { /* unreachable — step 3/4 already refuse an unparsable merge before step 6 */ }
     blocks.push({
       title: serviceCount > 2 ? ('All ' + serviceCount + ' containers are built again') : 'Both containers are built again',
       sub: 'Docker cannot move a container between stacks.'
@@ -39166,6 +39203,19 @@
       if (el) el.scrollTop = kept[sel];
     });
     host.scrollTop = hostTop;
+  }
+
+  // PLAN_198 8d — the two switches below are only read by
+  // mergeRenderConsequences() (through mergeStopStartNote() and
+  // mergeRenderStopStartSwitches()), which draws only the right column, so
+  // flipping one no longer has to rebuild the form and code panes too.
+  // Falls back to the full render if the column is not there to find —
+  // step 6 not yet built, say.
+  function mergeRenderStep6Right() {
+    var host = document.getElementById('staxx-merge-step6');
+    var column = host && host.querySelector('.staxx-merge-step6-right');
+    if (!column) { mergeRenderStep6(); return; }
+    keepScroll(column, function () { mergeRenderConsequences(column); });
   }
 
   // Bound fresh on every mergeRenderStep6() call — the three columns it
@@ -39559,7 +39609,8 @@
       } else if (el.dataset.mergeSwitch === 'stop') {
         mergeState.mergeStop = el.checked;
       }
-      if (mergeState.step === 6) mergeRenderStep6();
+      // PLAN_198 8d — only the right column reads these switches.
+      if (mergeState.step === 6) mergeRenderStep6Right();
     });
   }
 
