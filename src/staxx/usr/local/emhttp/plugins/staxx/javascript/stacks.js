@@ -24785,6 +24785,51 @@
   // one target, which is what every real case is — a stack from a single
   // Unraid template — since bending every sentence to agree in number with
   // a rare multi-service clash would cost more clarity than it returns.
+  // PLAN_196 item 7 — the handover's own shared shape: ask a question,
+  // start a job from the answer, and either report the refusal (re-asking
+  // in place) or track the job through to the log dialog. o: ask() ->
+  // promise of the answer; fields(answer) -> the POST fields, or null for
+  // "no job" (Cancel, "decide later"); action; failText; logTitle(answer);
+  // busy(on) optional; done(job) optional (default refreshRows).
+  function confirmThenJob(o) {
+    function step() {
+      o.ask().then(function (answer) {
+        var fields = o.fields(answer);
+        if (!fields) return;
+        if (o.busy) o.busy(true);
+        confirmSetBusy(true);
+        confirmMsg.textContent = '';
+        call(o.action, fields).then(function (r) {
+          if (!r.ok) {
+            confirmSetBusy(false);
+            if (o.busy) o.busy(false);
+            // askConfirm() clears this itself the moment step() reopens
+            // it, so the message is set after that call, not before.
+            step();
+            confirmMsg.textContent = r.error || o.failText;
+            return;
+          }
+          closeConfirm();
+          openLogDialog(o.logTitle(answer), 'Working…');
+          track(r.job, { show: true, done: o.done || function () { refreshRows(); } });
+        });
+      });
+    }
+    step();
+  }
+
+  // The "It works" button is drawn fresh into the dialog's body with every
+  // question (see the two answer doors below), so it has to be found and
+  // wired again each time one opens — this is the one place that does it.
+  function wireWorksButton(focusWorks) {
+    var btn = confirmBody.querySelector('#staxx-handover-works');
+    if (btn) {
+      btn.addEventListener('click', function () { if (confirmBusy) return; settleConfirm('works'); });
+      if (focusWorks) btn.focus({ preventScroll: true });
+    }
+    return btn;
+  }
+
   function openTakeover(name, label, locked) {
     handoverCheck(name).then(function (res) {
       if (!res.ok) { failed('Could not check what "' + label + '" would replace', res.error); return; }
@@ -24869,59 +24914,40 @@
         '<p>' + quotedSafe + ' is not deleted. It is switched off and set aside under another ' +
         'name, and can be put straight back if this does not work out.</p>';
 
-      function step() {
-        askConfirm({ title: 'Take over ' + quoted + '?', bodyHtml: bodyHtml,
-                     goLabel: 'Take over and start' }).then(function (go) {
-          if (!go) return;
-          confirmSetBusy(true);
-          confirmMsg.textContent = '';
-
-          call('handover-start', { name: name }).then(function (r) {
-            if (!r.ok) {
-              confirmSetBusy(false);
-              // askConfirm() clears this itself the moment step() reopens
-              // it, so the message is set after that call, not before.
-              step();
-              confirmMsg.textContent = r.error || 'Could not start the handover.';
-              return;
-            }
-            closeConfirm();
-
-            openLogDialog('Handover — ' + label, 'Working…');
-
-            // A failed handover has already put itself back on the server —
-            // the job's own output says what went wrong, so there is
-            // nothing to ask here beyond refreshing the row's badge either
-            // way. A clean finish used to ask "does it work?" immediately,
-            // right on top of the page a person has to leave this dialog to
-            // go and check — so it only tells them what to do next now; the
-            // row's own badge (below) is what asks the question, once they
-            // come back to answer it.
-            track(r.job, {
-              show: true,
-              done: function (job) {
-                refreshRows();
-                if (job.exit === 0) {
-                  askConfirm({
-                    title: label + ' is now live',
-                    bodyHtml:
-                      '<p>"' + esc(label) + '" has been switched over and is running now.</p>' +
-                      '<p>Go and use it the way you normally would, to check it works.</p>' +
-                      '<p>Its row now carries a "waiting to confirm" marker. Press that when ' +
-                      'you are ready, and it will ask whether to keep this change or put ' +
-                      'everything back — the old container is still there, set aside, until ' +
-                      'you answer.</p>' +
-                      '<p>Nothing is decided until then, so there is no hurry.</p>',
-                    goLabel: 'OK'
-                  }).then(function () { closeConfirm(); });
-                }
-              }
-            });
-          });
-        });
-      }
-
-      step();
+      // A failed handover has already put itself back on the server — the
+      // job's own output says what went wrong, so there is nothing to ask
+      // here beyond refreshing the row's badge either way. A clean finish
+      // used to ask "does it work?" immediately, right on top of the page a
+      // person has to leave this dialog to go and check — so it only tells
+      // them what to do next now; the row's own badge is what asks the
+      // question, once they come back to answer it.
+      confirmThenJob({
+        ask: function () {
+          return askConfirm({ title: 'Take over ' + quoted + '?', bodyHtml: bodyHtml,
+                               goLabel: 'Take over and start' });
+        },
+        fields: function (go) { return go ? { name: name } : null; },
+        action: 'handover-start',
+        failText: 'Could not start the handover.',
+        logTitle: function () { return 'Handover — ' + label; },
+        done: function (job) {
+          refreshRows();
+          if (job.exit === 0) {
+            askConfirm({
+              title: label + ' is now live',
+              bodyHtml:
+                '<p>"' + esc(label) + '" has been switched over and is running now.</p>' +
+                '<p>Go and use it the way you normally would, to check it works.</p>' +
+                '<p>Its row now carries a "waiting to confirm" marker. Press that when ' +
+                'you are ready, and it will ask whether to keep this change or put ' +
+                'everything back — the old container is still there, set aside, until ' +
+                'you answer.</p>' +
+                '<p>Nothing is decided until then, so there is no hurry.</p>',
+              goLabel: 'OK'
+            }).then(function () { closeConfirm(); });
+          }
+        }
+      });
     });
   }
 
@@ -24954,34 +24980,18 @@
       'the containers are left exactly as Docker left them, and the stack stays locked for ' +
       'review.</p>';
 
-    function step() {
-      askConfirm({ title: 'Rebuild ' + quoted + '?', bodyHtml: bodyHtml,
-                   goLabel: 'Rebuild and start' }).then(function (go) {
-        if (!go) return;
-        confirmSetBusy(true);
-        confirmMsg.textContent = '';
-
-        call('takeover-start', { name: name }).then(function (r) {
-          if (!r.ok) {
-            confirmSetBusy(false);
-            // askConfirm() clears this itself the moment step() reopens
-            // it, so the message is set after that call, not before.
-            step();
-            confirmMsg.textContent = r.error || 'Could not start the rebuild.';
-            return;
-          }
-          closeConfirm();
-
-          openLogDialog('Rebuild — ' + label, 'Working…');
-
-          // No follow-up question on this path — a clean finish leaves the
-          // stack simply live, so refreshing the row is all that is left.
-          track(r.job, { show: true, done: function () { refreshRows(); } });
-        });
-      });
-    }
-
-    step();
+    // No follow-up question on this path — a clean finish leaves the stack
+    // simply live, so the default done (refreshRows) is all that is needed.
+    confirmThenJob({
+      ask: function () {
+        return askConfirm({ title: 'Rebuild ' + quoted + '?', bodyHtml: bodyHtml,
+                             goLabel: 'Rebuild and start' });
+      },
+      fields: function (go) { return go ? { name: name } : null; },
+      action: 'takeover-start',
+      failText: 'Could not start the rebuild.',
+      logTitle: function () { return 'Rebuild — ' + label; }
+    });
   }
 
   // Window 2: did it work. `focusWorks` lands the initial focus on whichever
@@ -25094,51 +25104,32 @@
         // cleared somebody's old container away on a press that only meant
         // "yes, use the stack's version of this container".
         function diffStep() {
-          var p = askConfirm({
-            title: 'Does "' + label + '" work?',
-            bodyHtml: diffBodyHtml +
-              '<div class="staxx-buttons"><button type="button" class="staxx-btn staxx-btn--primary" ' +
-              'id="staxx-handover-works">It works</button></div>',
-            goLabel: 'It does not work',
-            cancelLabel: 'Leave everything alone'
-          });
-
-          var worksBtn = confirmBody.querySelector('#staxx-handover-works');
-          if (worksBtn) {
-            worksBtn.addEventListener('click', function () {
-              if (confirmBusy) return;
-              settleConfirm('works');
-            });
-            if (focusWorks) worksBtn.focus({ preventScroll: true });
-          }
-
-          p.then(function (answer) {
+          confirmThenJob({
+            ask: function () {
+              var p = askConfirm({
+                title: 'Does "' + label + '" work?',
+                bodyHtml: diffBodyHtml +
+                  '<div class="staxx-buttons"><button type="button" class="staxx-btn staxx-btn--primary" ' +
+                  'id="staxx-handover-works">It works</button></div>',
+                goLabel: 'It does not work',
+                cancelLabel: 'Leave everything alone'
+              });
+              wireWorksButton(focusWorks);
+              return p;
+            },
             // Only these two are answers. Anything else - the cancel button,
             // Escape, a click outside - is "leave everything alone", which
             // has no side effect at all and leaves the question open.
-            if (answer !== 'works' && answer !== true) return;
-            var works = answer === 'works';
-
-            confirmSetBusy(true);
-            confirmMsg.textContent = '';
-
-            call('handover-finish', { name: name, worked: works ? '1' : '0', force: '1' })
-              .then(function (r) {
-                if (!r.ok) {
-                  confirmSetBusy(false);
-                  // askConfirm() clears this itself the moment diffStep()
-                  // reopens it, so the message is set after that call.
-                  diffStep();
-                  confirmMsg.textContent = r.error || 'Could not answer for "' + label + '".';
-                  return;
-                }
-                closeConfirm();
-
-                openLogDialog((works ? 'Clearing away the old container'
-                                     : 'Putting everything back') + ' — ' + label, 'Working…');
-
-                track(r.job, { show: true, done: function () { refreshRows(); } });
-              });
+            fields: function (answer) {
+              if (answer !== 'works' && answer !== true) return null;
+              return { name: name, worked: answer === 'works' ? '1' : '0', force: '1' };
+            },
+            action: 'handover-finish',
+            failText: 'Could not answer for "' + label + '".',
+            logTitle: function (answer) {
+              return (answer === 'works' ? 'Clearing away the old container'
+                                          : 'Putting everything back') + ' — ' + label;
+            }
           });
         }
 
@@ -25156,48 +25147,26 @@
         '<div class="staxx-buttons"><button type="button" class="staxx-btn staxx-btn--primary" ' +
         'id="staxx-handover-works">It works</button></div>';
 
-      function step() {
-        var p = askConfirm({ title: 'Does "' + label + '" work?', bodyHtml: bodyHtml,
-                              goLabel: 'It does not work' });
-
-        var worksBtn = confirmBody.querySelector('#staxx-handover-works');
-        if (worksBtn) {
-          worksBtn.addEventListener('click', function () {
-            if (confirmBusy) return;
-            settleConfirm('works');
-          });
-          if (focusWorks) worksBtn.focus({ preventScroll: true });
-        }
-
-        p.then(function (answer) {
-          if (answer === false) return;   // decide later — no side effect
-          var worked = answer === 'works';
-
-          if (worksBtn) worksBtn.disabled = true;
-          confirmSetBusy(true);
-          confirmMsg.textContent = '';
-
-          call('handover-finish', { name: name, worked: worked ? '1' : '0' }).then(function (r) {
-            if (!r.ok) {
-              confirmSetBusy(false);
-              if (worksBtn) worksBtn.disabled = false;
-              // askConfirm() clears this itself the moment step() reopens
-              // it, so the message is set after that call, not before.
-              step();
-              confirmMsg.textContent = r.error || 'Could not answer for "' + label + '".';
-              return;
-            }
-            closeConfirm();
-
-            openLogDialog((worked ? 'Clearing away the old container'
-                                   : 'Putting everything back') + ' — ' + label, 'Working…');
-
-            track(r.job, { show: true, done: function () { refreshRows(); } });
-          });
-        });
-      }
-
-      step();
+      var worksBtn = null;
+      confirmThenJob({
+        ask: function () {
+          var p = askConfirm({ title: 'Does "' + label + '" work?', bodyHtml: bodyHtml,
+                                goLabel: 'It does not work' });
+          worksBtn = wireWorksButton(focusWorks);
+          return p;
+        },
+        fields: function (answer) {
+          if (answer === false) return null;   // decide later — no side effect
+          return { name: name, worked: answer === 'works' ? '1' : '0' };
+        },
+        action: 'handover-finish',
+        failText: 'Could not answer for "' + label + '".',
+        logTitle: function (answer) {
+          return (answer === 'works' ? 'Clearing away the old container'
+                                      : 'Putting everything back') + ' — ' + label;
+        },
+        busy: function (on) { if (worksBtn) worksBtn.disabled = on; }
+      });
     });
   }
 
