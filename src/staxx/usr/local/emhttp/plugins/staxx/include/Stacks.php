@@ -5453,20 +5453,9 @@ function staxx_start_handover(string $rel, string &$error): string {
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    // Put both files back — nothing should look started when nothing was.
-    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
-    @unlink($dir.'/'.STAXX_HANDOVER_FILE);
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
   $script = staxx_handover_script(
     $cmd, $files, $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
   );
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   $shown = implode(' && ', array_merge(
@@ -5474,10 +5463,14 @@ function staxx_start_handover(string $rel, string &$error): string {
     array_map(fn($t) => 'docker rename '.$t['original'].' '.$t['setaside'], $setasides),
     ['compose '.$shownFiles.' up -d --remove-orphans']
   ));
-  @file_put_contents($log, '$ '.$shown."\n\n");
-  @chmod($log, 0600);
 
-  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+  $job = staxx_spawn_job($shown, $script, $error);
+  if ($job === '') {
+    // Put both files back — nothing should look started when nothing was.
+    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
+    @unlink($dir.'/'.STAXX_HANDOVER_FILE);
+    return '';
+  }
 
   return $job;
 }
@@ -5674,18 +5667,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
     $shown = implode(' && ', $shownParts);
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-  @file_put_contents($log, '$ '.$shown."\n\n");
-  @chmod($log, 0600);
-  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
-
-  return $job;
+  return staxx_spawn_job($shown, $script, $error);
 }
 
 /* -------------------------------------------------- PLAN_165 §5 sweep -----
@@ -5942,15 +5924,6 @@ function staxx_start_takeover(string $rel, string &$error): string {
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
   // Built the same way staxx_start_job() builds its one 'up' step, so this is
   // not a new verb with its own prefix — just the one line the job runner
   // would already produce for `up`, run through the same detached machinery.
@@ -5958,8 +5931,7 @@ function staxx_start_takeover(string $rel, string &$error): string {
   $step     = $cmd.' '.$fileArgs.' up -d --remove-orphans 2>&1';
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
-  @file_put_contents($log, '$ compose '.$shownFiles." up -d --remove-orphans\n\n");
-  @chmod($log, 0600);
+  $shown      = 'compose '.$shownFiles.' up -d --remove-orphans';
 
   // $? is captured into $ec straight after the one real step, before the
   // rollback's own commands get a chance to overwrite it — the same reason
@@ -5975,7 +5947,11 @@ function staxx_start_takeover(string $rel, string &$error): string {
           . $restoreNote
           . 'echo "'.STAXX_JOB_END.' $ec"';
 
-  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+  $job = staxx_spawn_job($shown, $script, $error);
+  if ($job === '') {
+    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
+    return '';
+  }
 
   return $job;
 }
@@ -7589,19 +7565,8 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // split below, so a locked stack is refused for the right reason — and at
   // every scope, whole-stack or single-service — even when compose or docker
   // also happen to be unavailable.
-  $retiredInto = staxx_retired_into($name);
-  if ($retiredInto !== '') {
-    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
-           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
-           . 'and the "retired" profile lines to bring it back.';
-    return '';
-  }
-  if (staxx_review_locked($name)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before starting it.';
-    return '';
-  }
+  $error = staxx_stack_locked($name, 'starting it');
+  if ($error !== '') return '';
 
   // A container Docker knows under a name this stack pins, and belonging to
   // no compose project, is a template's own container: compose cannot create
@@ -7747,14 +7712,6 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
     $steps  = array_map(fn($step) => $step.' '.$quoted, $steps);
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
   // Each step becomes its own `compose -f <file> <step>` invocation, and the
   // chain below is what actually runs — `restart` is `up -d` and `restart`
   // back to back in the same shell command, not two separate jobs. Two things
@@ -7800,8 +7757,6 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // `$ compose -f compose.yaml pull 'demo-cache' && compose -f compose.yaml up -d 'demo-cache'`.
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   $shown = implode(' && ', array_map(fn($step) => 'compose '.$shownFiles.$profileFlags.' '.$step, $steps));
-  @file_put_contents($log, '$ '.$shown."\n\n");
-  @chmod($log, 0600);
 
   // PLAN_103 addendum, Phase 2: a verb that puts this compose file into use
   // is the common case the shelf copy needs never be behind for — refreshing
@@ -7816,16 +7771,7 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
     }
   }
 
-  // setsid detaches the command into its own session, and stdin/stdout/stderr
-  // are all redirected away from this request. Without that, the background
-  // command inherits the web server's connection and PHP waits for it to
-  // finish — which is exactly what "run it in the background" was meant to
-  // avoid, and what leaves a worker stuck when the command never ends.
-  @exec(
-    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
-  );
-
-  return $job;
+  return staxx_spawn_job($shown, $inner, $error);
 }
 
 /**
@@ -8013,9 +7959,7 @@ function staxx_log_start(string $stack, string $service, string &$error): string
   // MEANT to keep running for as long as somebody is watching — so its
   // lifetime is governed by the heartbeat above and staxx_log_reap() below,
   // never by a fixed clock. Do not "fix" this by adding a timeout.
-  @exec(
-    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
-  );
+  staxx_detach($inner, $log);
 
   return $id;
 }

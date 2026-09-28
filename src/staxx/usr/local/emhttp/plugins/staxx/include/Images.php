@@ -32,21 +32,6 @@ if (defined('STAXX_IMAGES_LOADED')) return;
 define('STAXX_IMAGES_LOADED', true);
 
 /**
- * Its own resolved php binary, the same three lines Crypt.php carries for
- * the same reason (see staxx_crypt_php_bin()): PHP's environment here is not
- * a login shell, so PATH cannot be trusted, and three duplicated lines are
- * cheaper than a dependency on a file this one has no other reason to need.
- */
-function staxx_images_php_bin(): string {
-  static $bin = null;
-  if ($bin !== null) return $bin;
-  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
-    if (is_file($path) && is_executable($path)) return $bin = $path;
-  }
-  return $bin = 'php';
-}
-
-/**
  * Docker's own data root ("docker info"'s DockerRootDir) — needed for the
  * capacity bar's figures (item 9) and to find a broken container's own
  * files under <root>/containers/<id>/, which `docker inspect` cannot read
@@ -1211,28 +1196,18 @@ function staxx_images_remove_job(array $ids, string &$error): string {
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) { $error = 'Could not create '.STAXX_JOB_DIR; return ''; }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
   // Handed to the detached process as plain data via var_export(), the same
   // pattern staxx_crypt_start_job() uses to run one of this plugin's own
   // functions in the background — never shell arguments built from user
   // input, since the ids were already checked against the server's own
   // list above.
-  $php = staxx_images_php_bin().' -r '.escapeshellarg(
+  $php = staxx_php_bin().' -r '.escapeshellarg(
     'require '.var_export(__DIR__.'/Images.php', true).'; '
     .'exit(staxx_images_do_remove('.var_export($rows, true).') ? 0 : 1);'
   );
   $inner = $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"';
 
-  @file_put_contents($log, '$ removing the selected images'."\n\n");
-  @chmod($log, 0600);
-
-  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
-
-  return $job;
+  return staxx_spawn_job('removing the selected images', $inner, $error);
 }
 
 /**

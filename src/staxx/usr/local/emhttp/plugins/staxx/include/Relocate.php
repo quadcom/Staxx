@@ -687,23 +687,10 @@ function staxx_relocate_start(string $destInput, string &$error): string {
   $dest = staxx_relocate_refuse($destInput, $error);
   if ($dest === '') return '';
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
-  $phpCmd = 'php '.escapeshellarg(STAXX_ROOT.'/scripts/relocate.php').' '.escapeshellarg($dest);
+  $phpCmd = staxx_php_bin().' '.escapeshellarg(STAXX_ROOT.'/scripts/relocate.php').' '.escapeshellarg($dest);
   $inner  = $phpCmd.'; echo "'.STAXX_JOB_END.' $?"';
 
-  @file_put_contents($log, '$ '.$phpCmd."\n\n");
-  @chmod($log, 0600);
-
-  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
-
-  return $job;
+  return staxx_spawn_job($phpCmd, $inner, $error);
 }
 
 /* -------------------------------------------------------- storage options -- */

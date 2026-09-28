@@ -1576,14 +1576,7 @@ function staxx_update_lock(string &$error): bool {
     return false;
   }
 
-  $lock = STAXX_UPDATE_DIR.'/lock';
-  if (@mkdir($lock, 0755)) return true;
-
-  $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
-  if ($age > 1800) {
-    @rmdir($lock);
-    if (@mkdir($lock, 0755)) return true;
-  }
+  if (staxx_mkdir_lock_stale(STAXX_UPDATE_DIR.'/lock')) return true;
 
   $error = 'An update check is already running.';
   return false;
@@ -2444,17 +2437,6 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
-  @file_put_contents($log, '$ checking updates for '.$scope."\n\n");
-  @chmod($log, 0600);
-
   // Watch.php, not __FILE__ — it requires Links.php, which requires this
   // file, so the detached process also gets staxx_links_move_candidate()
   // (PLAN_61) and staxx_watch_check() (PLAN_62), and neither check inside
@@ -2485,11 +2467,7 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
 
   $inner = $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"';
 
-  @exec(
-    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
-  );
-
-  return $job;
+  return staxx_spawn_job('checking updates for '.$scope, $inner, $error);
 }
 
 /* ------------------------------------------------------------- Part H: the grid --

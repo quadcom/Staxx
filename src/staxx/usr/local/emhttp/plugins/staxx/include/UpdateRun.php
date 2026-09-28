@@ -1254,14 +1254,7 @@ function staxx_update_queue_lock(string &$error): bool {
     return false;
   }
 
-  $lock = STAXX_UPDATE_DIR.'/queue.lock';
-  if (@mkdir($lock, 0755)) return true;
-
-  $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
-  if ($age > 1800) {
-    @rmdir($lock);
-    if (@mkdir($lock, 0755)) return true;
-  }
+  if (staxx_mkdir_lock_stale(STAXX_UPDATE_DIR.'/queue.lock')) return true;
 
   $error = 'The queue is already being updated.';
   return false;

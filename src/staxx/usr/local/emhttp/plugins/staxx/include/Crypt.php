@@ -699,17 +699,13 @@ function staxx_crypt_do_rebuild(string &$error): bool {
 function staxx_crypt_start_job(bool $rebuild, string &$error): string {
   $error = '';
   if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-  if (!staxx_private_dir(STAXX_JOB_DIR)) { $error = 'Could not create '.STAXX_JOB_DIR; return ''; }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
 
   // php -r with var_export(), the same pattern staxx_update_check_start()
   // (Updates.php) uses to run one of this plugin's own functions as a
   // detached process — never a password anywhere near this string, since
   // building involves none.
   $fn = $rebuild ? 'staxx_crypt_do_rebuild' : 'staxx_crypt_do_build';
-  $php = staxx_crypt_php_bin().' -r '.escapeshellarg(
+  $php = staxx_php_bin().' -r '.escapeshellarg(
     'require '.var_export(__DIR__.'/Crypt.php', true).'; '
     .'$e = ""; '
     .'$ok = '.$fn.'($e); '
@@ -718,30 +714,9 @@ function staxx_crypt_start_job(bool $rebuild, string &$error): string {
   );
   $inner = $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"';
 
-  @file_put_contents($log, '$ '.($rebuild ? 'rebuilding' : 'building').' the cryptography container'."\n\n");
-  @chmod($log, 0600);
-
-  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
-
-  return $job;
+  return staxx_spawn_job(($rebuild ? 'rebuilding' : 'building').' the cryptography container', $inner, $error);
 }
 
 function staxx_crypt_build(string &$error): string   { return staxx_crypt_start_job(false, $error); }
 function staxx_crypt_rebuild(string &$error): string  { return staxx_crypt_start_job(true, $error); }
-
-/**
- * Local copy of staxx_php_bin() (Updates.php): resolving the interpreter's
- * own absolute path, since PHP's environment here is not a login shell and
- * PATH cannot be relied on. Not shared with Updates.php on purpose — this
- * file has no other reason to require anything that heavy, and three lines
- * duplicated is cheaper than a dependency on an unrelated file.
- */
-function staxx_crypt_php_bin(): string {
-  static $bin = null;
-  if ($bin !== null) return $bin;
-  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
-    if (is_file($path) && is_executable($path)) return $bin = $path;
-  }
-  return $bin = 'php';
-}
 ?>
