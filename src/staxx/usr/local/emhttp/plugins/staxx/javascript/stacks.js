@@ -16548,27 +16548,40 @@
     }
   }
 
-  // .staxx-modal's own layout containment (container-type: inline-size,
-  // PLAN_145's own comment on that rule) makes it the containing block for
-  // any fixed-position descendant, this panel included, since nothing sits
-  // between it and the dialog. A plain box.getBoundingClientRect() is still
-  // viewport coordinates, so the dialog's own rect has to be subtracted
-  // back out, or the panel would land offset by wherever the dialog itself
-  // sits on screen.
+  // .staxx-modal's own layout containment (container-type: inline-size)
+  // reads, on paper, as making it the containing block for a fixed-position
+  // descendant — but checked live on the box (2026-09-28, Split view), the
+  // panel did not land at the box's own rect even after subtracting the
+  // dialog's: box left 236/bottom 417, panel left 164/top 389.5, a plain
+  // 72px/27.5px offset neither figure explains. Rather than chase which
+  // ancestor is really the containing block here, this aims the panel at
+  // the box's own viewport rect, reads back where it actually rendered, and
+  // corrects by the difference — right whichever coordinate space turns out
+  // to be true, and still right if that ever changes again.
   function tagBoxPosition(box) {
     var panel = tagBoxEl();
     var r = box.getBoundingClientRect();
-    var m = modal.getBoundingClientRect();
-    var left = r.left - m.left;
-    var below = r.bottom - m.top;
-    panel.style.left = left + 'px';
-    panel.style.top = below + 'px';
-    panel.style.width = NARROW.matches ? r.width + 'px' : '';
+
+    panel.style.width = r.width + 'px';   // floor is the stylesheet's own min-width
+    panel.style.left = r.left + 'px';
+    panel.style.top  = r.bottom + 'px';
+
+    var got = panel.getBoundingClientRect();
+    var dx = r.left - got.left;
+    var dy = r.bottom - got.top;
+
+    panel.style.left = (r.left + dx) + 'px';
+    panel.style.top  = (r.bottom + dy) + 'px';
+
     // Flips above the box when there is no room below, the same trick
-    // placeCaretPanel() uses for #staxx-suggest and .staxx-keyhelp.
-    if (below + panel.offsetHeight > m.height) {
-      var above = (r.top - m.top) - panel.offsetHeight;
-      panel.style.top = Math.max(0, above) + 'px';
+    // placeCaretPanel() uses for #staxx-suggest and .staxx-keyhelp — checked
+    // against the real, rendered rect (window.innerHeight is viewport
+    // coordinates, which getBoundingClientRect() always returns regardless
+    // of what is actually acting as the containing block).
+    var placed = panel.getBoundingClientRect();
+    if (placed.bottom > window.innerHeight) {
+      var aboveTop = r.top - placed.height;
+      panel.style.top = (aboveTop + dy) + 'px';
     }
   }
 
@@ -16620,17 +16633,21 @@
   // asking the registry about — delegated, since the box is redrawn whenever
   // the form is (adding a service, undo, reparse...).
   //
-  // Opening tracks a real user gesture rather than plain focus: 'focus' does
-  // not bubble so this uses 'focusin', but a script putting focus on the box
-  // itself (nothing does today, but a future redraw might) would otherwise
-  // open the list without anyone having asked for it. tagBoxGestureTarget is
-  // set in a capture-phase mousedown, and tagBoxTabPending on a Tab keydown
-  // — both consumed (reset) the instant a focusin checks them, so a later
-  // scripted focus with no fresh gesture right behind it never opens the
-  // list (PLAN_206 item 3).
-  var tagBoxGestureTarget = null;
+  // Opening tracks a real user gesture rather than plain focus, so a script
+  // putting focus on the box itself (nothing does today, but a future
+  // redraw might) never opens the list unasked. A real mouse click is
+  // caught on the box's own 'click', never on 'focusin': checked live on
+  // the box (2026-09-28) a genuine click DID focus the box (activeElement,
+  // orange border) but never opened the list — 'focusin' fires as part of
+  // mousedown's default action and had already run and been read by the
+  // time anything could tell a real click apart from a script's .focus(),
+  // whatever the exact reason. 'click' always follows a real mousedown+
+  // mouseup on the same element and is never fired by .focus() alone, so it
+  // needs no gesture-tracking at all — simpler and, on the box, correct.
+  // Tab still has no 'click' behind it, so that path keeps its own
+  // capture-phase flag, consumed (reset) the instant the next focusin reads
+  // it (PLAN_206 item 3).
   var tagBoxTabPending = false;
-  document.addEventListener('mousedown', function (event) { tagBoxGestureTarget = event.target; }, true);
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Tab') tagBoxTabPending = true;
   }, true);
@@ -16639,10 +16656,15 @@
     var el = event.target;
     if (!isImageBox(el)) return;
     scheduleTagLoad(el);
-    var byGesture = tagBoxTabPending || tagBoxGestureTarget === el;
+    var byTab = tagBoxTabPending;
     tagBoxTabPending = false;
-    tagBoxGestureTarget = null;
-    if (byGesture) tagBoxOpen(el);
+    if (byTab) tagBoxOpen(el);
+  }
+
+  function imageBoxClick(event) {
+    var el = event.target;
+    if (!isImageBox(el)) return;
+    tagBoxOpen(el);   // a no-op if it is already open for this box
   }
 
   function imageBoxInput(event) {
@@ -16656,6 +16678,7 @@
   }
 
   formHost.addEventListener('focusin', imageBoxFocusIn);
+  formHost.addEventListener('click', imageBoxClick);
   formHost.addEventListener('input', imageBoxInput);
 
   // Arrow keys, Enter and Right/Left fold navigation — delegated the same
