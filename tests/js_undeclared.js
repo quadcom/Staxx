@@ -33,7 +33,9 @@ var FILES = [
   // an undeclared name here kills the editor's offer bar silently (PLAN_84).
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/meta-scaffold.js',
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/health-offer.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js'
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js',
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-examine.js',
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-write.js'
 ];
 
 var KEYWORD = /^(?:if|for|while|do|else|return|case|switch|try|catch|typeof|new|delete|void|in|of|instanceof|null|true|false|this|function|var|let|const)$/;
