@@ -20750,40 +20750,91 @@
    * the page (paintAbandoned() no longer draws it), so it has no row here
    * either; a row that loses track of a job now shows its ordinary state.
    */
+  // PLAN_204 — every row now carries the same `title` its real chip carries
+  // (a real click handler picks up `data-legend-sample` before any of these
+  // reach staxx-pill--offer/--busy/--fail, so the class match on a pressable
+  // row is safe to keep), so hovering a sample shows the same card hovering
+  // the real row would. Text copied verbatim from the PHP that draws the
+  // real chip (see PLAN_204's own table for the source of each one); the
+  // one row with no server title (a job merely running has none) gets a
+  // plain made-up sentence in its place rather than being left blank.
   var LEGEND_STATE = [
     { tag: 'span', cls: 'staxx-pill staxx-pill--up', mark: 'play', text: '3',
+      title: 'Up 3 days\nEverything here checks itself, and every check says it is working.',
       desc: 'Running, and every check that exists says it is working — nothing to do. ' +
         'The slow pulse is that check running and passing.' },
     { tag: 'button', cls: 'staxx-pill staxx-pill--up staxx-pill--offer', mark: 'play', text: '',
+      title: 'Up 3 days\nDocker says this is running. Nothing here checks itself, so nothing has ' +
+        'confirmed the apps inside are working. Click to see if StaXX can work out a check for it.',
+      key: 'offer',
       desc: 'Running, but nothing checks it — press to see if StaXX can work a check out.' },
     { tag: 'span', cls: 'staxx-pill staxx-pill--warn', mark: 'play', text: '2',
+      title: 'Up 3 days\nThe container is running. Its own check has not finished deciding yet.',
       desc: 'Running, its own check has not finished deciding yet — give it a moment.' },
     { tag: 'span', cls: 'staxx-pill staxx-pill--bad', mark: 'play', text: '1',
+      title: 'Up 3 days\nThe container is running, but the image’s own check says the app ' +
+        'inside is not working: web.',
       desc: 'Running, but the app inside says it is not working — worth a look.' },
     { tag: 'span', cls: 'staxx-pill staxx-pill--down', mark: 'stop', text: '',
+      title: 'stopped',
       desc: 'Stopped, or never built from the file yet — start it when you are ready.' },
     { tag: 'button', cls: 'staxx-pill staxx-pill--busy', mark: 'refresh', text: 'Starting…',
+      title: 'Starting example-app. Click to watch it as it happens.',
+      key: 'busy',
       desc: 'A command you asked for is still running — wait, or press to watch it as it happens.' },
     // PLAN_168 decision B — this mark and colour also mean "the update check
     // keeps failing" and "templates left on flash", below; the hover text is
     // what tells the three apart, so it is carried here too, not left off.
     { tag: 'button', cls: 'staxx-pill staxx-pill--fail', mark: 'warn', text: '',
       title: 'That command failed. Click to see what happened.',
+      key: 'fail',
       desc: 'That command failed — press to read what happened.' }
   ];
 
+  // Every update-column row also carries an `upd` object: its keys become
+  // data-update-* attributes (legendChipHtml() below), so the shared hover
+  // card draws the same lead sentence and fact table a real update chip
+  // gets, through the unchanged updCardLead()/updCardFacts() — nothing
+  // legend-specific in either of those two functions. Clock facts are fixed
+  // words ("2 hours ago") rather than live times, so the legend never needs
+  // the clock.
+  // Each row stays a flat object with no braces nested inside it — the same
+  // shape every legend row has always had, and the one tests/chip_
+  // vocabulary.js's row scanner depends on — so the update facts below are
+  // separate `upd*` properties rather than one nested `upd: {...}` object.
   var LEGEND_UPDATE = [
     { tag: 'button', cls: 'staxx-updatepill ' + CHIP_LOOK.update.cls, mark: CHIP_LOOK.update.mark, text: '1.2 → 1.3',
+      key: 'update',
+      updState: 'update', updRunning: '1.2', updAvailable: '1.3', updAsked: '2 hours ago',
       desc: 'A newer image has been published — update when you are ready.' },
+    // 'newbuild' meaning: a locally-built image whose base has moved on
+    // (state 'rebuild'). staxx_updates_apply_service_state() promotes
+    // 'built' to 'rebuild' without touching the tip it already carried, so
+    // the real hover text is still the plain "built here" sentence, not one
+    // that mentions a build moving — copied verbatim, quirk and all.
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.newbuild.cls, mark: CHIP_LOOK.newbuild.mark, text: '',
+      updState: 'rebuild',
+      updTip: 'This image was built on this server rather than pulled, so it cannot yet be compared against a registry.',
       desc: 'The image moved under a build — rebuild when you are ready.' },
     { tag: 'button', cls: 'staxx-pendingchip', mark: 'refresh', text: '',
+      title: 'The running containers do not yet reflect what is on screen. Restarting rebuilds them ' +
+        'from the file as it stands; nothing is wrong until then.',
+      key: 'pending',
       desc: 'The compose file has moved on but the container has not caught up — restart to apply it.' },
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.waiting.cls, mark: CHIP_LOOK.waiting.mark, text: 'in 3 days',
+      updState: 'update',
+      updTip: 'A newer version, 1.3, is available; this is currently running 1.2. Press this to fetch it and rebuild the container on it.',
+      updRunning: '1.2', updAvailable: '1.3',
+      updWhy: 'Automatic updates are paused for every stack. Turn the pause switch off to let them run again.',
+      updNext: 'in 3 days',
       desc: 'An update is waiting, and why — nothing to do yet; the figure shown is when.' },
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.notfound.cls, mark: CHIP_LOOK.notfound.mark, text: '',
+      updState: 'tagmissing',
+      updTip: 'The tag "1.2" is no longer published for this image. Open the row menu to pick a different one.',
       desc: 'The image or its tag is gone from the registry — check the repository.' },
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.watch.cls, mark: CHIP_LOOK.watch.mark, text: '2',
+      updState: 'watch',
+      updTip: 'The author’s published example does 2 things differently here that this file does not. Open the stack to see them.',
       desc: 'The author’s own published example does things this file does not — open the stack to see what.' },
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.failing.cls, mark: CHIP_LOOK.failing.mark, text: '',
       title: 'Checking this image for updates keeps failing.',
@@ -20791,11 +20842,20 @@
   ];
 
   var LEGEND_TOPBAR = [
+    // No card: the real "Checked" chip's title sits on the whole bar
+    // (paintUpdatesLine() sets updatesLine.title, not this span's own), so
+    // the chip itself carries none — a sample must never show a card its
+    // real chip does not.
     { tag: 'span', cls: 'staxx-pill staxx-pill--down', mark: '', text: 'Checked 5 minutes ago',
       desc: 'When the last update check ran — a quiet notice, nothing to do.' },
+    // No card either, for the same reason — paintUpdatesLine() gives this
+    // span no title of its own.
     { tag: 'span', cls: 'staxx-pill staxx-pill--warn', mark: 'cloud', text: '3 updates waiting',
       desc: 'How many updates are waiting across every stack — update when you are ready.' },
+    // No card: paintUpdatesLine() gives the real findings button no title
+    // either, only a click handler.
     { tag: 'button', cls: 'staxx-pill staxx-pill--busy', mark: 'page', text: '2 author-example findings',
+      key: 'findings',
       desc: 'How many of the author’s own example findings there are to look at — press to see them.' },
     { tag: 'span', cls: 'staxx-pill staxx-pill--bad', mark: 'warn', text: '1 Unraid template to move',
       title: 'Templates left in Unraid’s folder can rebuild the old container behind a taken-over stack. Open Settings to move them.',
@@ -20816,9 +20876,28 @@
   // built from: the outer element and its class, the mark span, and the text
   // span — a plain top-bar chip with no mark (the "when checked" notice)
   // skips both spans and carries its words directly, matching paintUpdatesLine().
+  //
+  // PLAN_204 — two more things every real chip can carry, both optional:
+  // an `upd*` property (updState, updTip, updRunning, updAvailable,
+  // updAsked, updNext, updWhy — flat, not nested, so the row stays the
+  // brace-free shape tests/chip_vocabulary.js's row scanner depends on)
+  // becomes the matching data-update-* attribute staxx_update_pill_html()
+  // writes, so the shared hover card (updCardLead()/updCardFacts()) draws
+  // the same lead and fact table for a sample as it would for the real
+  // pill; `row.key`, present only on a row whose real chip is pressable,
+  // becomes data-legend-sample so the page's one click guard (see the
+  // delegated click handler's first check) can send a press to
+  // openLegendSample() instead of whatever that class would otherwise do.
+  var LEGEND_UPD_KEYS = ['State', 'Tip', 'Running', 'Available', 'Asked', 'Next', 'Why'];
   function legendChipHtml(row) {
     var attrs = ' class="' + row.cls + '"';
     if (row.title) attrs += ' title="' + esc(row.title) + '"';
+    LEGEND_UPD_KEYS.forEach(function (k) {
+      var val = row['upd' + k];
+      if (val !== undefined) attrs += ' data-update-' + k.toLowerCase() + '="' + esc(val) + '"';
+    });
+    var tag = row.tag === 'button' ? 'button' : 'span';
+    if (tag === 'button' && row.key) attrs += ' data-legend-sample="' + esc(row.key) + '"';
     var inner;
     if (row.mark) {
       inner = '<span class="staxx-chipmark" data-mark="' + row.mark + '" aria-hidden="true"></span>' +
@@ -20826,7 +20905,6 @@
     } else {
       inner = esc(row.text || '');
     }
-    var tag = row.tag === 'button' ? 'button' : 'span';
     return '<' + tag + (tag === 'button' ? ' type="button"' : '') + attrs + '>' + inner + '</' + tag + '>';
   }
 
@@ -20869,6 +20947,69 @@
     if (!legendDlg) return;
     renderLegend();
     if (!legendDlg.open) legendDlg.showModal();
+  }
+
+  // PLAN_204 — what each pressable legend sample opens: the same window its
+  // real chip opens, filled with the one made-up stack every sample speaks
+  // for (example-app, service web, image nginx:1.2 → 1.3, second service
+  // db), titled like the real one plus " (example)" so nobody mistakes it
+  // for their own stack. Never calls the server and never acts — the three
+  // functions this reuses (healthOfferBody(), pendingPanelHtml(),
+  // watchReportHtml()) are pure text builders with no request of their own,
+  // and openLogDialog()/showInfo() only ever display what they are given.
+  function openLegendSample(key) {
+    switch (key) {
+      case 'offer': {
+        var probe = { note: 'Working this out asked the container once with curl, and it answered normally.' };
+        var choice = {
+          claim: 'a check that proves the web server is answering requests',
+          offer: { test: ['CMD-SHELL', 'curl -f http://localhost/'], interval: '30s', timeout: '10s', retries: 3 }
+        };
+        showInfo('Add a health check for "web"? (example)', healthOfferBody('web', choice, probe, false));
+        return;
+      }
+      case 'busy':
+        openLogDialog(BUSY_LABEL.up + ' (example)',
+          'Network example-app_default  Created\n' +
+          'Container example-app-db-1  Created\n' +
+          'Container example-app-web-1  Created\n' +
+          'Container example-app-db-1  Starting\n' +
+          'Container example-app-web-1  Starting\n' +
+          'Container example-app-web-1  Started');
+        return;
+      case 'fail':
+        openLogDialog(FAIL_LABEL.up + ' (example)',
+          'Network example-app_default  Created\n' +
+          'Container example-app-db-1  Created\n' +
+          'Container example-app-web-1  Created\n' +
+          'Container example-app-db-1  Starting\n' +
+          'Container example-app-web-1  Starting\n' +
+          'Error response from daemon: driver failed programming external connectivity: ' +
+          'Bind for 0.0.0.0:8080 failed: port is already allocated');
+        return;
+      case 'update':
+        // An update's visible result is its log, the same as any other job —
+        // it starts at once on a real row, with no window of its own.
+        openLogDialog(BUSY_LABEL.update + ' (example)',
+          'Pulling web (nginx:1.3)...\n' +
+          '1.3: Pulling from library/nginx\n' +
+          'Status: Downloaded newer image for nginx:1.3\n' +
+          'Container example-app-web-1  Recreate\n' +
+          'Container example-app-web-1  Starting\n' +
+          'Container example-app-web-1  Started');
+        return;
+      case 'pending':
+        showInfo('example-app — restart pending (example)',
+          pendingPanelHtml(Math.floor(Date.now() / 1000) - 7200, ['web'], ['db'], [],
+            'web: image nginx:1.2 → nginx:1.3\nweb: environment TZ added'));
+        return;
+      case 'findings':
+        showInfo('Author-example findings (example)', watchReportHtml([
+          { stack: 'example-app', service: 'web', image: 'nginx:1.2', side: 'added',   setting: 'healthcheck' },
+          { stack: 'example-app', service: 'web', image: 'nginx:1.2', side: 'missing', setting: 'read_only' }
+        ]));
+        return;
+    }
   }
 
   // `source` is a stranger's text, off a registry label — opened only when
@@ -21626,6 +21767,50 @@
   // rather than being carried on every poll. Now bound to the findings chip
   // itself (see paintUpdatesLine below) rather than to a click anywhere on
   // the line, since the line is several separate chips now.
+  // One block per stack, and inside it one block per service (named only
+  // when it differs from the stack), each with at most two rows: the
+  // settings the author's example also sets, and the ones it does not.
+  // One sentence per finding read as a wall of repeated words — Adrian,
+  // 2026-09-11 — so the sentence is said once at the top and the rows
+  // carry nothing but the setting names. Order is first-seen throughout.
+  // Split out of openWatchReport() (PLAN_204) so the legend can show the
+  // same list a real findings button shows, through
+  // openLegendSample('findings'), without a second copy to keep in step.
+  function watchReportHtml(items) {
+    var order = [];
+    var byStack = {};
+    items.forEach(function (it) {
+      var label = stackLabel(it.stack);
+      if (!byStack[label]) { byStack[label] = { order: [], svc: {} }; order.push(label); }
+      var s = byStack[label];
+      var key = it.service + '\0' + it.image;
+      if (!s.svc[key]) { s.svc[key] = { service: it.service, image: it.image, added: [], missing: [] }; s.order.push(key); }
+      s.svc[key][it.side === 'added' ? 'added' : 'missing'].push(it.setting);
+    });
+    var settingsHtml = function (list) {
+      return list.map(function (name) { return '<span class="staxx-findings__chip">' + esc(name) + '</span>'; }).join('');
+    };
+    var html = '<p>What each author’s own published example does differently from your file. ' +
+      'Open the stack to change a setting or dismiss the finding.</p>';
+    order.forEach(function (label) {
+      var s = byStack[label];
+      html += '<div class="staxx-findings">' +
+        '<h4 class="staxx-findings__stack">' + esc(label) + '</h4>';
+      s.order.forEach(function (key) {
+        var v = s.svc[key];
+        html += '<div class="staxx-findings__svc">' +
+          (v.service !== label ? esc(v.service) + ' ' : '') +
+          '<span class="staxx-findings__image">' + esc(v.image) + '</span></div>' +
+          '<dl class="staxx-findings__facts">' +
+          (v.added.length ? '<dt>Also sets</dt><dd>' + settingsHtml(v.added) + '</dd>' : '') +
+          (v.missing.length ? '<dt>Does not set</dt><dd>' + settingsHtml(v.missing) + '</dd>' : '') +
+          '</dl>';
+      });
+      html += '</div>';
+    });
+    return html;
+  }
+
   function openWatchReport() {
     call('watch-report', {}, 15000).then(function (res) {
       if (!res.ok) {
@@ -21636,44 +21821,7 @@
         showInfo('Author-example findings', '<p>Nothing to look at.</p>');
         return;
       }
-      // One block per stack, and inside it one block per service (named only
-      // when it differs from the stack), each with at most two rows: the
-      // settings the author's example also sets, and the ones it does not.
-      // One sentence per finding read as a wall of repeated words — Adrian,
-      // 2026-09-11 — so the sentence is said once at the top and the rows
-      // carry nothing but the setting names. Order is first-seen throughout.
-      var order = [];
-      var byStack = {};
-      res.items.forEach(function (it) {
-        var label = stackLabel(it.stack);
-        if (!byStack[label]) { byStack[label] = { order: [], svc: {} }; order.push(label); }
-        var s = byStack[label];
-        var key = it.service + '\0' + it.image;
-        if (!s.svc[key]) { s.svc[key] = { service: it.service, image: it.image, added: [], missing: [] }; s.order.push(key); }
-        s.svc[key][it.side === 'added' ? 'added' : 'missing'].push(it.setting);
-      });
-      var settingsHtml = function (list) {
-        return list.map(function (name) { return '<span class="staxx-findings__chip">' + esc(name) + '</span>'; }).join('');
-      };
-      var html = '<p>What each author’s own published example does differently from your file. ' +
-        'Open the stack to change a setting or dismiss the finding.</p>';
-      order.forEach(function (label) {
-        var s = byStack[label];
-        html += '<div class="staxx-findings">' +
-          '<h4 class="staxx-findings__stack">' + esc(label) + '</h4>';
-        s.order.forEach(function (key) {
-          var v = s.svc[key];
-          html += '<div class="staxx-findings__svc">' +
-            (v.service !== label ? esc(v.service) + ' ' : '') +
-            '<span class="staxx-findings__image">' + esc(v.image) + '</span></div>' +
-            '<dl class="staxx-findings__facts">' +
-            (v.added.length ? '<dt>Also sets</dt><dd>' + settingsHtml(v.added) + '</dd>' : '') +
-            (v.missing.length ? '<dt>Does not set</dt><dd>' + settingsHtml(v.missing) + '</dd>' : '') +
-            '</dl>';
-        });
-        html += '</div>';
-      });
-      showInfo('Author-example findings', html);
+      showInfo('Author-example findings', watchReportHtml(res.items));
     });
   }
 
@@ -21911,6 +22059,27 @@
   // exactly as it opened, since neither is an error worth interrupting for.
   var pendingSeq = 0;
 
+  // Split out of openPendingPanel() (PLAN_204) so the legend can show the
+  // same panel text a real restart-pending chip shows, through
+  // openLegendSample('pending'), without a second copy to keep in step.
+  function pendingPanelHtml(edited, changed, absent, leftover, detail) {
+    var parts = [];
+    parts.push('The file was last changed ' + pendingEditedWhen(edited) + '.');
+    if (changed.length)  parts.push('These services no longer match the file: ' + changed.join(', ') + '.');
+    if (absent.length)   parts.push('These services have not started yet: ' + absent.join(', ') + '.');
+    if (leftover.length) parts.push('These services are no longer in the file: ' + leftover.join(', ') + '.');
+    var html = parts.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('');
+    if (detail) {
+      // The per-service diff lines are indented plain text, not further
+      // sentences — kept on their own lines with <br> rather than folded
+      // into one run-on paragraph.
+      html += '<p>What changed:<br>' + esc(detail).replace(/\n/g, '<br>') + '</p>';
+    }
+    html += '<p>Restarting the stack rebuilds these from the file as it stands now — ' +
+            'nothing is wrong until you do.</p>';
+    return html;
+  }
+
   function openPendingPanel(chip) {
     var stack   = chip.dataset.stack || '';
     var edited  = parseInt(chip.dataset.edited || '0', 10) || 0;
@@ -21918,25 +22087,7 @@
     var absent   = pendingNames(chip.dataset.absent);
     var leftover = pendingNames(chip.dataset.leftover);
 
-    function build(detail) {
-      var parts = [];
-      parts.push('The file was last changed ' + pendingEditedWhen(edited) + '.');
-      if (changed.length)  parts.push('These services no longer match the file: ' + changed.join(', ') + '.');
-      if (absent.length)   parts.push('These services have not started yet: ' + absent.join(', ') + '.');
-      if (leftover.length) parts.push('These services are no longer in the file: ' + leftover.join(', ') + '.');
-      var html = parts.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('');
-      if (detail) {
-        // The per-service diff lines are indented plain text, not further
-        // sentences — kept on their own lines with <br> rather than folded
-        // into one run-on paragraph.
-        html += '<p>What changed:<br>' + esc(detail).replace(/\n/g, '<br>') + '</p>';
-      }
-      html += '<p>Restarting the stack rebuilds these from the file as it stands now — ' +
-              'nothing is wrong until you do.</p>';
-      return html;
-    }
-
-    showInfo(stackLabel(stack) + ' — restart pending', build(''));
+    showInfo(stackLabel(stack) + ' — restart pending', pendingPanelHtml(edited, changed, absent, leftover, ''));
 
     pendingSeq++;
     var mySeq = pendingSeq;
@@ -21948,7 +22099,7 @@
       if (!res || !res.ok) return;   // a refusal leaves the panel exactly as it opened
       var detail = buildPendingDetail(res.services);
       if (!detail) return;           // nothing to report — the normal case, not an error
-      confirmBody.innerHTML = build(detail);
+      confirmBody.innerHTML = pendingPanelHtml(edited, changed, absent, leftover, detail);
     });
   }
 
@@ -26325,13 +26476,15 @@
     return YAML.serialise(doc);
   }
 
-  // The confirmation itself — the claim in full, the exact command, the
-  // timing, and the plan's two required disclosures: that working this out
-  // ran a short command inside the container (probe.note), and, only where
-  // it applies, that another service is written to wait for this one.
-  function confirmHealthOffer(service, choice, probe, bodyText) {
+  // The claim in full, the exact command, the timing, and the plan's two
+  // required disclosures: that working this out ran a short command inside
+  // the container (probe.note), and, only where it applies, that another
+  // service is written to wait for this one. Split out of
+  // confirmHealthOffer() (PLAN_204) so the legend can show the same body a
+  // real offer shows, through openLegendSample('offer'), without a second
+  // copy of this text to keep in step.
+  function healthOfferBody(service, choice, probe, waited) {
     var offer = choice.offer;
-    var waited = anotherServiceWaitsOn(bodyText, service);
     // The claims are written as fragments in the table they come from, so
     // they read correctly after "...a check that proves". Standing alone as
     // the first sentence of the offer they need a capital, which is cheaper
@@ -26351,9 +26504,13 @@
         '" to become healthy before it starts. Right now that wait always passes at once — adding this ' +
         'check turns it into a real gate.</p>');
     }
+    return lines.join('');
+  }
+
+  function confirmHealthOffer(service, choice, probe, bodyText) {
     return askConfirm({
       title: 'Add a health check for "' + service + '"?',
-      bodyHtml: lines.join(''),
+      bodyHtml: healthOfferBody(service, choice, probe, anotherServiceWaitsOn(bodyText, service)),
       goLabel: 'Add it'
     });
   }
@@ -32727,6 +32884,14 @@
   /* -------------------------------------------------------------- wiring -- */
 
   scaffold.addEventListener('click', function (event) {
+    // PLAN_204 — a legend sample carries the same classes as a real chip
+    // (so its hover card cannot drift from the real one), which means it
+    // would otherwise fall into every case below and act on a stack named
+    // '' or nothing at all. Checked before any of them: a sample's click
+    // goes to openLegendSample() and nowhere else.
+    var sample = event.target.closest && event.target.closest('[data-legend-sample]');
+    if (sample) { openLegendSample(sample.dataset.legendSample); return; }
+
     // A folder's icon strip is decoration (aria-hidden, plain <span>s — see
     // the accessibility note on .staxx-fstrip in the stylesheet), so it is
     // handled ahead of the closest('button') below rather than folded into
@@ -32828,6 +32993,11 @@
     // there by staxx_pending_chip_html(), so this reads them straight off
     // the element that was clicked rather than off the row.
     if (el.classList.contains('staxx-pendingchip')) {
+      // No pending chip on a real row is ever drawn without a stack name
+      // (staxx_pending_chip_html() always writes data-stack), but a nameless
+      // one asking the server for '' is a request worth refusing outright
+      // rather than trusting every future caller to guard it upstream.
+      if (!el.dataset.stack) return;
       openPendingPanel(el);
       return;
     }

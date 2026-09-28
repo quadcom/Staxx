@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- In the marks legend, every sample chip now shows the same explanation as the real one when you hover over it, and pressing one opens an example of the window the real chip opens.
 - StaXX's windows now fade in and out the same way for everyone. A fade moves nothing, so it is kept even when your system asks for less motion; real movement, such as sliding or spinning, still stops.
 - On the Manage tab, Download all now saves the container's whole log as a file.
 - The Save and Cancel buttons at the bottom of StaXX's windows now always sit on the right, instead of jumping across when a message appears.
