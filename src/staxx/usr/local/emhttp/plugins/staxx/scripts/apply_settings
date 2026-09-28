@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+# The last KEY="value" line of a settings file, quotes removed.
+cfg_get() {
+  sed -n 's/^[[:space:]]*'"$1"'[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$2" | tail -n1
+}
+
 PLUGIN="staxx"
 CFG_DIR="/boot/config/plugins/${PLUGIN}"
 CFG="${CFG_DIR}/${PLUGIN}.cfg"
@@ -24,7 +29,7 @@ mkdir -p "${CFG_DIR}"
 header_menu="false"
 if [[ -f "${CFG}" ]]; then
   # Values may or may not be quoted; strip quotes and surrounding whitespace.
-  header_menu=$(sed -n 's/^[[:space:]]*HEADER_MENU[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  header_menu=$(cfg_get HEADER_MENU "${CFG}")
   header_menu="${header_menu:-false}"
 fi
 
@@ -41,7 +46,7 @@ fi
 # everything under it, reappears untouched.
 takeover_docker_tab="false"
 if [[ -f "${CFG}" ]]; then
-  takeover_docker_tab=$(sed -n 's/^[[:space:]]*TAKEOVER_DOCKER_TAB[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  takeover_docker_tab=$(cfg_get TAKEOVER_DOCKER_TAB "${CFG}")
   takeover_docker_tab="${takeover_docker_tab:-false}"
 fi
 
@@ -61,7 +66,7 @@ fi
 # below now lives in the store's own config file, because that is where the
 # rest of the settings moved. STORE_ROOT itself has to stay on flash: you
 # cannot read the house's address from inside the house.
-store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+store_root=$(cfg_get STORE_ROOT "${CFG}" 2>/dev/null || true)
 
 # The store's two fixed-name folders must exist before anything tries to
 # enumerate them — but only once the store itself is actually there. A pool
@@ -99,7 +104,7 @@ fi
 # installed for true AND prompt, and removed only for false.
 catch_installs="true"
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  catch_installs=$(sed -n 's/^[[:space:]]*CATCH_INSTALLS[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  catch_installs=$(cfg_get CATCH_INSTALLS "${store_cfg}")
   catch_installs="${catch_installs:-true}"
 fi
 
@@ -156,8 +161,8 @@ fi
 hub_user=""
 hub_token=""
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  hub_user=$(sed -n 's/^[[:space:]]*HUB_USER[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
-  hub_token=$(sed -n 's/^[[:space:]]*HUB_TOKEN[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  hub_user=$(cfg_get HUB_USER "${store_cfg}")
+  hub_token=$(cfg_get HUB_TOKEN "${store_cfg}")
 fi
 
 if [[ "${store_cfg_readable}" != "true" ]]; then
@@ -206,9 +211,9 @@ skip_cron_rewrite="false"
 update_check="daily"
 update_check_time="04:00"
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  update_check=$(cfg_get UPDATE_CHECK "${store_cfg}")
   update_check="${update_check:-daily}"
-  update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  update_check_time=$(cfg_get UPDATE_CHECK_TIME "${store_cfg}")
   update_check_time="${update_check_time:-04:00}"
 elif [[ -n "${store_root}" ]]; then
   skip_cron_rewrite="true"
@@ -222,9 +227,9 @@ fi
 boot_copy="true"
 boot_copy_mode="scheduled"
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  boot_copy=$(sed -n 's/^[[:space:]]*BOOT_COPY[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  boot_copy=$(cfg_get BOOT_COPY "${store_cfg}")
   boot_copy="${boot_copy:-true}"
-  boot_copy_mode=$(sed -n 's/^[[:space:]]*BOOT_COPY_MODE[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  boot_copy_mode=$(cfg_get BOOT_COPY_MODE "${store_cfg}")
   boot_copy_mode="${boot_copy_mode:-scheduled}"
 fi
 
