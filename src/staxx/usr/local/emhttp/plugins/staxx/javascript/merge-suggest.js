@@ -40,10 +40,9 @@
   var MW = (typeof window !== 'undefined' && window.StaxxMergeWrite) ||
            (typeof module !== 'undefined' && require('./merge-write.js'));
 
-  function servicesMapOf(doc) {
-    var svc = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    return svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
-  }
+  // The one services map (compose-model.js's own, PLAN_199 phase 1) —
+  // this file no longer keeps a third copy of the same lookup.
+  var servicesMapOf = CM.servicesMap;
 
   function serviceOwnMap(doc, name) {
     var svcs = servicesMapOf(doc);

@@ -51,6 +51,13 @@
   // exist). `stack` fields and `files[].from` are the only things that
   // keep the rel, since the server needs it to find the folder again.
   var leaf = ME.leaf;
+  // PLAN_198 item 1 — the services/declared-block map and the four line
+  // helpers below them are read here exactly as merge-examine.js's own
+  // finders read them; this file no longer keeps its own second copy of
+  // any of them. The many existing calls to these four names stay as
+  // written.
+  var servicesMapOf = CM.servicesMap, declMapOf = ME.declMapOf,
+      findKeyChildRange = ME.findKeyChildRange, parsePortListLine = ME.parsePortListLine;
 
   /* =====================================================================
    * Small line-level helpers — deliberately simpler than compose-model.js's
@@ -155,16 +162,6 @@
     var m = /^(\s*)([^:\s][^:]*):(.*)$/.exec(body[idx]);
     if (m) body[idx] = m[1] + newKey + ':' + m[3];
     return idx;
-  }
-
-  function servicesMapOf(doc) {
-    var svc = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    return svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
-  }
-
-  function declMapOf(doc, kind) {
-    var d = doc.root && doc.root.kind === 'map' ? doc.root.pairs[kind] : null;
-    return d && d.value && d.value.kind === 'map' ? d.value : null;
   }
 
   /* =====================================================================
@@ -382,39 +379,18 @@
     return out;
   }
 
-  // The same search rewriteEnvAddressTracked() below uses, without editing
-  // anything — a declined rewire needs to point its change record's marker
-  // at the exact line that stays, not at a line it just rewrote.
-  function findEnvAddressLine(doc, serviceKey, envVar, addr) {
-    var svcMap = servicesMapOf(doc);
-    var p = svcMap && svcMap.pairs[serviceKey];
-    if (!p) return null;
-    for (var i = p.start; i < p.end; i++) {
-      var line = doc.lines[i];
-      if (line.indexOf(envVar) === -1 || line.indexOf(addr) === -1) continue;
-      return i;
-    }
-    return null;
-  }
-
   // Substring replace inside whichever line names both the env var and the
   // old address — safe because the examiner already matched that exact
   // "host:port" text on that exact variable, so there is nothing to
   // re-derive here, only to apply. Strikes a falsified lead comment first.
   // Returns { line, struckComment } on success, null when nothing matched.
   function rewriteEnvAddressTracked(doc, serviceKey, envVar, oldAddr, newAddr) {
-    var svcMap = servicesMapOf(doc);
-    var p = svcMap && svcMap.pairs[serviceKey];
-    if (!p) return null;
-    for (var i = p.start; i < p.end; i++) {
-      var line = doc.lines[i];
-      if (line.indexOf(envVar) === -1 || line.indexOf(oldAddr) === -1) continue;
-      var struck = stripCommentAbove(doc, i, [oldAddr]);
-      var idx = i - (struck ? struck.shift : 0);
-      doc.lines[idx] = doc.lines[idx].split(oldAddr).join(newAddr);
-      return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
-    }
-    return null;
+    var i = ME.locateEnvLine(doc, serviceKey, envVar, oldAddr);
+    if (i < 0) return null;
+    var struck = stripCommentAbove(doc, i, [oldAddr]);
+    var idx = i - (struck ? struck.shift : 0);
+    doc.lines[idx] = doc.lines[idx].split(oldAddr).join(newAddr);
+    return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
   }
 
   // PLAN_179 P2 — the line the network_mode rewrite below both finds and
@@ -452,45 +428,13 @@
    * the same shape is never mistaken for one.
    * ===================================================================== */
 
-  function findKeyChildRange(doc, mapStart, mapEnd, keyRegex) {
-    for (var i = mapStart; i < mapEnd; i++) {
-      var m = keyRegex.exec(doc.lines[i]);
-      if (!m) continue;
-      var indent = m[1].length;
-      var j = i + 1;
-      while (j < mapEnd) {
-        var lm = /^(\s*)\S/.exec(doc.lines[j]);
-        if (lm && lm[1].length <= indent) break;
-        j++;
-      }
-      return { start: i + 1, end: j };
-    }
-    return null;
-  }
-
   // Same range findKeyChildRange() already gives, plus the key LINE itself
   // (findKeyChildRange only ever returns its children) — removePortPublishTracked
   // needs it to rewrite "ports:" to "ports: []" when the last entry goes,
-  // and to give the change record a line to point at either way.
-  function findPortsRange(doc, serviceKey) {
-    var svcMap = servicesMapOf(doc);
-    var p = svcMap && svcMap.pairs[serviceKey];
-    if (!p) return null;
-    for (var i = p.start; i < p.end; i++) {
-      if (!/^(\s*)ports:\s*(#.*)?$/.test(doc.lines[i])) continue;
-      var range = findKeyChildRange(doc, p.start, p.end, /^(\s*)ports:\s*(#.*)?$/);
-      if (!range) return null;
-      range.keyLine = i;
-      return range;
-    }
-    return null;
-  }
-
-  function parsePortListLine(line) {
-    var m = /^(\s*-\s*)(['"]?)([^'"]*)\2\s*$/.exec(line);
-    if (!m) return null;
-    return { prefix: m[1], quote: m[2], body: m[3] };
-  }
+  // and to give the change record a line to point at either way. Read from
+  // merge-examine.js: its own findKeyChildRange already returns `keyLine`,
+  // so there is nothing left for a second search here to add.
+  var findPortsRange = ME.findPortsRange;
 
   // F3 — a thin alias for merge-examine.js's own parsePortSpec(), so a
   // "ports:" list line is read the same way here (locating/rewriting one
@@ -499,28 +443,13 @@
   // parser, kept in ME so it is never accidentally forked into two.
   function parsePortBody(body) { return ME.parsePortSpec(body); }
 
-  // The bare lookup rewritePortHost() (below) uses — split out so a decline
-  // can point a change record's marker at the SAME line without rewriting
-  // it (a decline leaves the port exactly as the author wrote it).
-  function findPortLine(doc, serviceKey, hostPort) {
-    var range = findPortsRange(doc, serviceKey);
-    if (!range) return null;
-    for (var i = range.start; i < range.end; i++) {
-      var parsed = parsePortListLine(doc.lines[i]);
-      if (!parsed) continue;
-      var pb = parsePortBody(parsed.body);
-      if (pb.host === String(hostPort)) return i;
-    }
-    return null;
-  }
-
   // Returns { line, text } (the SAME shape rewritePathOccurrenceTracked() and
   // friends use) so the port-clash change record below can be resolved by
   // marker text like every other rewrite, rather than by a bare boolean that
   // left this one kind of change with no line to point a mark at at all.
   function rewritePortHost(doc, serviceKey, oldHostPort, newHostPort) {
-    var i = findPortLine(doc, serviceKey, oldHostPort);
-    if (i === null) return null;
+    var i = ME.locatePortLine(doc, serviceKey, oldHostPort);
+    if (i < 0) return null;
     var parsed = parsePortListLine(doc.lines[i]);
     var pb = parsePortBody(parsed.body);
     // F3 — an address prefix (an IPv4/hostname, or a bracketed IPv6
@@ -2057,8 +1986,8 @@
           // still marked, so the count and the ring stay honest and the
           // decision can be reversed (CLAUDE.md rule 2).
           if (f.facts.split) {
-            var declHostLine = findEnvAddressLine(doc, finalSvc, f.facts.hostVar, f.facts.fromHost);
-            if (declHostLine !== null) {
+            var declHostLine = ME.locateEnvLine(doc, finalSvc, f.facts.hostVar, f.facts.fromHost);
+            if (declHostLine >= 0) {
               changes.push({
                 key: f.key, part: 'host', declined: true, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[declHostLine],
                 title: 'Now reaches ' + f.facts.toService + ' inside the stack',
@@ -2066,8 +1995,8 @@
                 struckComment: null
               });
             }
-            var declPortLine = findEnvAddressLine(doc, finalSvc, f.facts.portVar, f.facts.fromPort);
-            if (declPortLine !== null) {
+            var declPortLine = ME.locateEnvLine(doc, finalSvc, f.facts.portVar, f.facts.fromPort);
+            if (declPortLine >= 0) {
               changes.push({
                 key: f.key, part: 'port', declined: true, stack: s.name, sourceLine: sourceLineFor(f, 1), marker: doc.lines[declPortLine],
                 title: 'Now uses ' + f.facts.toService + '’s own port',
@@ -2076,8 +2005,8 @@
               });
             }
           } else {
-            var declLine = findEnvAddressLine(doc, finalSvc, f.facts.envVar, f.facts.from);
-            if (declLine !== null) {
+            var declLine = ME.locateEnvLine(doc, finalSvc, f.facts.envVar, f.facts.from);
+            if (declLine >= 0) {
               changes.push({
                 key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declLine],
                 title: 'Now reaches ' + f.facts.toService + ' inside the stack',
@@ -2186,8 +2115,8 @@
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
 
         if (decision === 'leave') {
-          var lineIdx = findPortLine(doc, finalSvc, f.facts.port);
-          if (lineIdx === null) return;
+          var lineIdx = ME.locatePortLine(doc, finalSvc, f.facts.port);
+          if (lineIdx < 0) return;
           changes.push({
             key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[lineIdx],
             title: 'Two services publish port ' + f.facts.port,
@@ -2257,8 +2186,8 @@
         }
 
         if (!decisionValue(decisions, f)) {
-          var declPortLine = findPortLine(doc, finalSvc, f.facts.port);
-          if (declPortLine === null) return;
+          var declPortLine = ME.locatePortLine(doc, finalSvc, f.facts.port);
+          if (declPortLine < 0) return;
           changes.push({
             key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declPortLine],
             title: title,
@@ -3139,13 +3068,15 @@
     descriptorFromText: descriptorFromText,
     buildMergedText: buildMergedText,
     retireText: retireText,
-    // Exposed for tests — the block-splicing primitive on its own.
-    computeBlocks: computeBlocks,
     // PLAN_155 C15 — merge-suggest.js's depends_on writer calls these two
     // for the exact same "must share a network" rule, on the one merged
     // doc where both ends already live together.
     serviceNetworkInfo: serviceNetworkInfo,
-    joinNetworkIfNeeded: joinNetworkIfNeeded
+    joinNetworkIfNeeded: joinNetworkIfNeeded,
+    // PLAN_198 item 6 — the wizard page reads a finding's decision through
+    // this, rather than keeping its own copy of the rule (stacks.js's
+    // mergeFindingDecision).
+    decisionValue: decisionValue
   };
 
   if (typeof window !== 'undefined') window.StaxxMergeWrite = API;
