@@ -121,6 +121,7 @@ Four rules run through the whole set:
 | `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the compose-profile flags, the job-log tailer, the log follower and the shell — no real session is ever opened | `STORE_ROOT` at `/tmp`; `SHELL_ENABLED` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file), from `STAXX_SHELL_ENABLED` (default `true`) |
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`; `IMAGE_LOOKUP=false` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
+| `devices` | The two compose readers behind the device badge and the GPU column: device paths, reservations, runtime and gpus keys | — |
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
 | `expose` | Nginx Proxy Manager and Pi-hole (PLAN_176): certificate resolution, the proxy host payload's owned fields, the create/adopt/refusal plan built against in-memory hosts and records, and the plain-http refusal | store's own `config/staxx.cfg` (not the flash file) forced to `EXPOSE_ALLOW_INSECURE="no"`; live half **opt-in** `STAXX_EXPOSE_LIVE=1`, against whichever NPM/Pi-hole are already configured |
 | `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
