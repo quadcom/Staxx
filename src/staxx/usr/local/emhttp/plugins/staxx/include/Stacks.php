@@ -4464,7 +4464,22 @@ define('STAXX_REVIEW_FILE', 'NEEDS-REVIEW.md');
  * name the filesystem actually holds, not the one we would have written.
  */
 function staxx_review_file(string $dir): string {
-  return staxx_stack_notes($dir)['review'];
+  // Per-directory, for the render loop that asks this once per stack row and
+  // once per container row — a scandir() each time on a 64-stack server adds
+  // up. Safe to keep for the whole request: nothing that moves or removes
+  // this file re-checks it afterwards in the same request (see
+  // staxx_scan_stacks_reset()'s comment for why that pattern holds here).
+  static $cache = [];
+  if (array_key_exists($dir, $cache)) return $cache[$dir];
+
+  $found = '';
+  foreach ((array)@scandir($dir) as $entry) {
+    if (strcasecmp($entry, STAXX_REVIEW_FILE) === 0 && is_file($dir.'/'.$entry)) {
+      $found = $entry;
+      break;
+    }
+  }
+  return $cache[$dir] = $found;
 }
 
 /**
@@ -5021,42 +5036,21 @@ function staxx_handover_restart_policy(string $original): string {
   return $policy !== '' ? $policy : 'no';
 }
 
-/**
- * The review-lock and handover-state file names actually present in $dir,
- * by their real names on disk (or '' for either that is not there), from
- * one scandir() rather than the one staxx_review_file() and one
- * staxx_handover_file() each ran on their own.
- *
- * Per-directory, for the render loop that asks this once per stack row and
- * once per container row — a scandir() each time on a 64-stack server adds
- * up. Safe to keep for the whole request: nothing that moves or removes
- * either file re-checks it afterwards in the same request (see
- * staxx_scan_stacks_reset()'s comment for why that pattern holds here). The
- * only flow that writes one of these files mid-request — starting a
- * handover — asks for the handover state first and the review note second,
- * and asks neither again after writing, so both halves still answer as
- * they would from a fresh scandir() at the point each is first asked for.
- *
- * @return array{review:string, handover:string}
- */
-function staxx_stack_notes(string $dir): array {
+/** The handover state file actually present in $dir, by its real name, or ''. */
+function staxx_handover_file(string $dir): string {
+  // Same per-directory memoisation and the same reasoning as
+  // staxx_review_file() just above.
   static $cache = [];
   if (array_key_exists($dir, $cache)) return $cache[$dir];
 
-  $review = ''; $handover = '';
+  $found = '';
   foreach ((array)@scandir($dir) as $entry) {
-    if ($review === '' && strcasecmp($entry, STAXX_REVIEW_FILE) === 0 && is_file($dir.'/'.$entry)) {
-      $review = $entry;
-    } elseif ($handover === '' && strcasecmp($entry, STAXX_HANDOVER_FILE) === 0 && is_file($dir.'/'.$entry)) {
-      $handover = $entry;
+    if (strcasecmp($entry, STAXX_HANDOVER_FILE) === 0 && is_file($dir.'/'.$entry)) {
+      $found = $entry;
+      break;
     }
   }
-  return $cache[$dir] = ['review' => $review, 'handover' => $handover];
-}
-
-/** The handover state file actually present in $dir, by its real name, or ''. */
-function staxx_handover_file(string $dir): string {
-  return staxx_stack_notes($dir)['handover'];
+  return $cache[$dir] = $found;
 }
 
 /** Is a handover on this stack waiting to be confirmed right now? */
