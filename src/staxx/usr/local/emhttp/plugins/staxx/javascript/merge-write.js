@@ -27,13 +27,12 @@
  *
  * A service's own raw span (its lead comment, its own lines, and the gap up
  * to the next entry) is found the same way compose-model.js's own tidy()
- * pass finds one — buildSpans() there is not exported, because tidy() also
- * needs the refusal machinery around REORDERING a scope, which this has no
- * need of: nothing here reorders anything inside a single source's own
- * file, it only appends whole blocks from several sources one after
- * another. computeBlocks() below is the same idea (a key's own lead
- * comment plus its trailing gap travels as one block) kept to the narrower
- * job this actually has.
+ * pass finds one — computeBlocks() below calls that same buildSpans()
+ * directly, since the two need the identical span (a key's own lead
+ * comment plus its trailing gap, travelling as one block); this file just
+ * never needs tidy()'s own refusal machinery around REORDERING a scope,
+ * since nothing here reorders anything inside a single source's own file,
+ * it only appends whole blocks from several sources one after another.
  *
  * Same dual shape as merge-examine.js: `window.StaxxMergeWrite` in the
  * browser, `module.exports` under Node.
@@ -120,30 +119,19 @@
   // never duplicated). `starts` gives each block's own first DOC line —
   // the write pass needs it to work out where an edit it already applied
   // (in doc-line terms) lands once the block is pasted into the merged
-  // text.
+  // text. Built on compose-model.js's own buildSpans() (PLAN_198 item 7)
+  // — the same idea tidy() already uses for reordering a scope's keys —
+  // rather than a second, hand-classified copy of it; leadStart/lineKind
+  // above stay, since stripCommentAbove/leadingCommentLinesOf/
+  // renameBlockKeyLine and several passes below still use them directly.
   function computeBlocks(doc, mapNode) {
-    var keys = mapNode.keys, spans = [];
-    for (var i = 0; i < keys.length; i++) {
-      var p = mapNode.pairs[keys[i]];
-      spans.push({ key: keys[i], indent: p.indent, start: leadStart(doc.lines, p.start, p.indent), contentEnd: p.end });
-    }
-    for (i = 0; i < spans.length; i++) {
-      var limit = i + 1 < spans.length ? spans[i + 1].start : mapNode.end;
-      var j = spans[i].contentEnd, last = j;
-      while (j < limit) {
-        var c = lineKind(doc.lines[j]);
-        if (c.kind === 'blank') { j++; continue; }
-        if (c.kind === 'comment' && c.indent > spans[i].indent) { j++; last = j; continue; }
-        break;
-      }
-      spans[i].contentEnd = last;
-    }
+    var spans = CM.buildSpans(doc, mapNode);
     var order = [], blocks = {}, contentEnds = {}, starts = {};
-    for (i = 0; i < spans.length; i++) {
+    for (var i = 0; i < spans.length; i++) {
       var to = i + 1 < spans.length ? spans[i + 1].start : mapNode.end;
       order.push(spans[i].key);
       blocks[spans[i].key] = doc.lines.slice(spans[i].start, to);
-      contentEnds[spans[i].key] = spans[i].contentEnd - spans[i].start;
+      contentEnds[spans[i].key] = spans[i].end - spans[i].start;
       starts[spans[i].key] = spans[i].start;
     }
     return { order: order, blocks: blocks, contentEnds: contentEnds, starts: starts };

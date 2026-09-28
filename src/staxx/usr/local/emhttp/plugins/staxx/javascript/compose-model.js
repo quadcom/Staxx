@@ -10685,7 +10685,12 @@
     portsNote: portsNote,
     setPortsNote: setPortsNote,
     commentOutPorts: commentOutPorts,
-    restorePorts: restorePorts
+    restorePorts: restorePorts,
+    // PLAN_198 item 7 — merge-write.js's own computeBlocks() (the same
+    // idea, a key's own lead comment plus its trailing gap travelling as
+    // one block) is built on this rather than keeping a second, hand-
+    // classified copy of it.
+    buildSpans: buildSpans
   };
 
   if (typeof window !== 'undefined') window.StaxxYaml = API;
