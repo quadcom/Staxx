@@ -358,6 +358,12 @@
   cursor: col-resize;
 }
 
+/* During a drag the pointer passes through the terminal instead of being
+   captured by it, so the page keeps receiving the move and the release. */
+.staxx-manage-dragging .staxx-manage-shell-iframe {
+  pointer-events: none;
+}
+
 
 /* min-width alongside min-height because these panes sit in a row as well as
    in a column. A flex item defaults to min-width:auto, which refuses to

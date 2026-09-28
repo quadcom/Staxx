@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- On the Manage tab, the handles between the log, shell and files panes no longer stay stuck to the mouse after a quick drag across the shell.
 - Clearing a network's fixed address or hardware address in the editor now removes it from the compose file, instead of it coming back when the editor is reopened or the stack restarts.
 - On a phone, a stack's menu no longer closes when you scroll the page to reach its lower items.
 - The container file manager has its own switch in Settings, Container files, beside Container shells in a box now called Container access. Until you change it, it follows your shell setting, so if you had shells switched off the file manager stays off too. On the Manage tab, a tool that is switched off is no longer shown: the other one takes its space, and with both off the log fills the whole tab.

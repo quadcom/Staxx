@@ -422,6 +422,14 @@
       var dragging = false;
 
       function onMove(ev) {
+        // A release over the shell's iframe, or outside the window entirely,
+        // never reaches this page as a pointerup, so the window keeps sending
+        // moves with dragging still true. The next move with no button held
+        // is really the release arriving late — treat it as one.
+        if (ev.buttons === 0) {
+          endDrag();
+          return;
+        }
         var box = column.getBoundingClientRect();
         var size = opts.vertical ? column.clientWidth : column.clientHeight;
         var handleSize = opts.vertical ? el.offsetWidth : el.offsetHeight;
