@@ -3,14 +3,14 @@
  *
  *   node tests/js_undeclared.js
  *
- * Both browser files are one 'use strict' IIFE, where assigning to a name
+ * Every browser script is strict mode, where assigning to a name
  * nothing declared throws a ReferenceError instead of quietly making a global.
  * One such line inside a function every page render calls — reparse(), say —
  * kills every behaviour on the page and leaves no trace but a silent console.
  *
  * `node --check` cannot see it: the file parses perfectly, and the error only
- * exists at run time. There is no browser on this machine to find it the honest
- * way, so it is found here by reading the source instead.
+ * exists at run time, so it is found here by reading the source, which needs
+ * no page loaded.
  *
  * A text scan, not a parser, so it is deliberately conservative — it looks only
  * at assignments in statement position and stays quiet about anything subtler.
@@ -20,23 +20,9 @@
 
 var fs = require('fs');
 
-var FILES = [
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/first-run.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/unraid-templates.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/manage.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/ca-convert.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/image-import.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/db-images.js',
-  // Strict mode like the rest, and it splices lines into a live document —
-  // an undeclared name here kills the editor's offer bar silently (PLAN_84).
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/meta-scaffold.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/health-offer.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-examine.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-write.js'
-];
+var DIR = 'src/staxx/usr/local/emhttp/plugins/staxx/javascript';
+var FILES = fs.readdirSync(DIR).filter(function (f) { return /\.js$/.test(f); })
+  .sort().map(function (f) { return DIR + '/' + f; });
 
 var KEYWORD = /^(?:if|for|while|do|else|return|case|switch|try|catch|typeof|new|delete|void|in|of|instanceof|null|true|false|this|function|var|let|const)$/;
 
