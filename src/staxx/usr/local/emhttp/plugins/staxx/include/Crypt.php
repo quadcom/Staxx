@@ -129,10 +129,36 @@ function staxx_crypt_images(): array {
     .' --format '.escapeshellarg('{{.ID}}'),
     10
   );
+  $ids = [];
+  foreach (preg_split('/\r?\n/', trim($out)) as $id) { if ($id !== '') $ids[] = $id; }
+  if (!$ids) return [];
+
+  // Every match's labels in one inspect call, matched back to the short id
+  // `docker images` just printed — its own id is docker images' own
+  // "sha256:<hex>" id, truncated to the first 12 hex digits, which is
+  // exactly what --format '{{.ID}}' above already returned. Kept in
+  // `docker images`' own order, so $rows[0] stays the newest build, whose
+  // recipe staxx_crypt_state() reads. An id with no matching line (the
+  // inspect failed for it) gets [], the same as a failed per-id call did.
+  $labelsByShortId = [];
+  $fmt = '{{.Id}}'."\t".'{{json .Config.Labels}}';
+  $inspectOut = staxx_sh(
+    staxx_docker_bin().' inspect --format '.escapeshellarg($fmt)
+    .' '.implode(' ', array_map('escapeshellarg', $ids)),
+    10
+  );
+  foreach (preg_split('/\r?\n/', trim($inspectOut)) as $line) {
+    $tab = strpos($line, "\t");
+    if ($tab === false) continue;
+    $fullId = trim(substr($line, 0, $tab));
+    $shortId = strncmp($fullId, 'sha256:', 7) === 0 ? substr($fullId, 7, 12) : substr($fullId, 0, 12);
+    $labels  = json_decode(trim(substr($line, $tab + 1)), true);
+    $labelsByShortId[$shortId] = is_array($labels) ? $labels : [];
+  }
+
   $rows = [];
-  foreach (preg_split('/\r?\n/', trim($out)) as $id) {
-    if ($id === '') continue;
-    $labels = staxx_crypt_image_labels($id);
+  foreach ($ids as $id) {
+    $labels = $labelsByShortId[$id] ?? [];
     $rows[] = [
       'id'      => $id,
       'recipe'  => (string)($labels['staxx.crypt.recipe'] ?? ''),
@@ -233,8 +259,13 @@ function staxx_crypt_selftest_write(array $result): bool {
  * been rebuilt correctly keeps offering only what the running container has
  * actually proven, while 'recipeCurrent' below is what tells Settings a
  * newer recipe is waiting.
+ *
+ * @param string|null $status the container's status, when the caller has
+ *   just asked Docker for it and would otherwise be asking again in the
+ *   same request (staxx_crypt_hash()); null asks Docker itself, as every
+ *   other caller still does.
  */
-function staxx_crypt_state(): array {
+function staxx_crypt_state(?string $status = null): array {
   $recipeId      = staxx_crypt_recipe_id();
   $images        = staxx_crypt_images();
   $builtRecipeId = $images[0]['recipe'] ?? '';
@@ -261,7 +292,7 @@ function staxx_crypt_state(): array {
     'builtRecipeId' => $builtRecipeId,
     'built'         => $images !== [],
     'recipeCurrent' => $builtRecipeId !== '' && $builtRecipeId === $recipeId,
-    'container'     => staxx_crypt_container_status(),
+    'container'     => $status ?? staxx_crypt_container_status(),
     'mode'          => (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'always' : 'ondemand',
     'formats'       => $formats,
     'checkedAt'     => $selftest['recipeId'] === $builtRecipeId ? $selftest['at'] : 0,
@@ -382,7 +413,7 @@ function staxx_crypt_hash(string $password, string $format, string &$error): str
   }
 
   $passing = [];
-  foreach (staxx_crypt_state()['formats'] as $f) if ($f['ok']) $passing[$f['id']] = true;
+  foreach (staxx_crypt_state($status)['formats'] as $f) if ($f['ok']) $passing[$f['id']] = true;
   if (!isset($passing[$format])) {
     $error = 'That hash format has not been confirmed to work on this container, so it is not offered.';
     return '';
