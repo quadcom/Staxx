@@ -25782,15 +25782,31 @@
   // a hand-typed pin will usually not be in that list at all — the short
   // fingerprint is shown instead, and that is the ordinary case, not a
   // missing value, so it is never spelled out as "unknown".
+  // PLAN_196 item 8 — the two lookups the Versions tab makes over and over:
+  // which of versionsServices carries this name, and which of a service's
+  // own entries carries this digest. Each a plain loop, null when nothing
+  // matches.
+  function versionsServiceNamed(name) {
+    for (var i = 0; i < versionsServices.length; i++) {
+      if (versionsServices[i].service === name) return versionsServices[i];
+    }
+    return null;
+  }
+
+  function versionEntryFor(svc, digest) {
+    if (!svc) return null;
+    for (var i = 0; i < svc.entries.length; i++) {
+      if (svc.entries[i].digest === digest) return svc.entries[i];
+    }
+    return null;
+  }
+
   function pinnedBandHtml(svc) {
     var image = svc.image || '';
     var atIdx = image.indexOf('@');
     if (atIdx === -1) return '';
     var fingerprint = image.slice(atIdx + 1);
-    var entry = null;
-    for (var i = 0; i < svc.entries.length; i++) {
-      if (svc.entries[i].digest === fingerprint) { entry = svc.entries[i]; break; }
-    }
+    var entry = versionEntryFor(svc, fingerprint);
     var label;
     if (entry && entry.version) {
       label = entry.version;
@@ -25829,10 +25845,7 @@
 
   function versionsContentHtml() {
     var toggle = versionsMultiToggleHtml();
-    var svc = null;
-    for (var i = 0; i < versionsServices.length; i++) {
-      if (versionsServices[i].service === versionsSelected) { svc = versionsServices[i]; break; }
-    }
+    var svc = versionsServiceNamed(versionsSelected);
     var footer = versionsMulti ? versionsMultiFooterHtml() : '';
     if (!svc) return toggle + '<p class="staxx-form-empty">Pick a service on the left.</p>' + footer;
     var band = pinnedBandHtml(svc);
@@ -25941,58 +25954,35 @@
   // throwaway parse of currentText(), not on the live MODEL, so a refusal
   // from the server below leaves the real editor state untouched — only a
   // confirmed write is allowed to reach the box.
-  function pinServiceImage(service, digest, text) {
-    if (!YAML || typeof YAML.pinnedImageRef !== 'function') {
+  // `withNote` adds the "was <old image>" note pinServiceToDigest() below
+  // wants; a plain rollback (withNote falsy) never does — "put this version
+  // back" is a different claim from "pin the build running now", so only
+  // the Pinned choice adds this note (rule 2, CLAUDE.md — never lose what
+  // the author wrote; an existing note is kept and this is added beside it,
+  // never over it).
+  function pinServiceImage(service, digest, text, withNote) {
+    if (!YAML || typeof YAML.pinnedImageRef !== 'function' ||
+        (withNote && typeof YAML.pinNoteText !== 'function')) {
       return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
     }
     var doc = YAML.parse(text);
     var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
-    var field = null;
-    for (var i = 0; i < form.fields.length; i++) {
-      var f = form.fields[i];
-      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
-    }
+    var field = imageFieldFor(form.fields, service);
     var image = field && field.parts.value ? field.parts.value.value : '';
     var pinned = YAML.pinnedImageRef(image, digest);
     if (!pinned.ok) return pinned;
     if (!field || !YAML.setValue(doc, form, field.id, pinned.ref)) {
       return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
     }
-    return { ok: true, yaml: YAML.serialise(doc) };
-  }
+    if (!withNote) return { ok: true, yaml: YAML.serialise(doc) };
 
-  // PLAN_188 part D — the "Pinned" choice's own edit: the same rewrite
-  // pinServiceImage() above makes, plus a "was <old image>" note beside it
-  // (rule 2, CLAUDE.md — never lose what the author wrote; an existing note
-  // is kept and this is added beside it, never over it). Never used by a
-  // rollback's own pin — "put this version back" is a different claim from
-  // "pin the build running now", so only the Pinned choice adds this note.
-  //
-  // The form is rebuilt after setValue() before the note is written, rather
-  // than reusing the field found above: a longer "@sha256:…" value can shift
-  // where a trailing comment on the same line sits, so the comment's spot has
-  // to be read fresh off the document setValue() just changed, the same trap
-  // applyHealthOfferToText() rebuilds its form to avoid.
-  function pinServiceToDigest(service, digest, text) {
-    if (!YAML || typeof YAML.pinnedImageRef !== 'function' || typeof YAML.pinNoteText !== 'function') {
-      return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
-    }
-    var doc = YAML.parse(text);
-    var form = YAML.buildForm(doc, netDrivers());
-    form.doc = doc;
-    var field = null;
-    for (var i = 0; i < form.fields.length; i++) {
-      var f = form.fields[i];
-      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
-    }
-    var image = field && field.parts.value ? field.parts.value.value : '';
-    var pinned = YAML.pinnedImageRef(image, digest);
-    if (!pinned.ok) return pinned;
-    if (!field || !YAML.setValue(doc, form, field.id, pinned.ref)) {
-      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
-    }
-
+    // The form is rebuilt after setValue() before the note is written,
+    // rather than reusing the field found above: a longer "@sha256:…" value
+    // can shift where a trailing comment on the same line sits, so the
+    // comment's spot has to be read fresh off the document setValue() just
+    // changed, the same trap applyHealthOfferToText() rebuilds its form to
+    // avoid.
     var freshForm = YAML.buildForm(doc, netDrivers());
     var freshField = null;
     for (var j = 0; j < freshForm.fields.length; j++) {
@@ -26003,6 +25993,12 @@
       YAML.setComment(doc, freshForm, freshField.id, note, !!freshField.secret, !!freshField.required);
     }
     return { ok: true, yaml: YAML.serialise(doc), oldImage: image };
+  }
+
+  // PLAN_188 part D — the "Pinned" choice's own edit: the same rewrite
+  // pinServiceImage() makes, plus its "was <old image>" note.
+  function pinServiceToDigest(service, digest, text) {
+    return pinServiceImage(service, digest, text, true);
   }
 
   // The tail shared by a single rollback and a several-at-once one, once the
@@ -26077,6 +26073,22 @@
     renderVersionsPane();
   }
 
+  // PLAN_196 item 8 — the two rollback confirms differ only in number:
+  // `many` picks "each service names its exact version" over "it names
+  // that exact version", "a pin" over "this pin", and "versions... their
+  // own" over "version... its own".
+  function rollbackBodyHtml(many, hasOverride) {
+    return '<p>This edits the compose file so ' +
+      (many ? 'each service names its exact version' : 'it names that exact version') +
+      ', which is what makes it stick — a pull will not move off it. The file as it stands now is kept ' +
+      'in History, so this can be undone.' +
+      (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
+        (many ? 'a pin' : 'this pin') + ' and make it look as though nothing happened.' : '') +
+      '</p>' +
+      '<p>The version' + (many ? 's' : '') + ' you are moving away from will not come back on ' +
+      (many ? 'their' : 'its') + ' own.</p>';
+  }
+
   // The go button for "several at once": one confirmation naming every
   // chosen service and version, then one file edit built by pinning each
   // choice in turn onto the previous one's result, and one call. Mirrors
@@ -26088,15 +26100,7 @@
     var hasOverride = FILES.some(function (f) { return isStackOverride(f.name); });
     var picks = services.map(function (service) {
       var digest = versionsChoices[service];
-      var svc = null, entry = null;
-      for (var i = 0; i < versionsServices.length; i++) {
-        if (versionsServices[i].service === service) { svc = versionsServices[i]; break; }
-      }
-      if (svc) {
-        for (var j = 0; j < svc.entries.length; j++) {
-          if (svc.entries[j].digest === digest) { entry = svc.entries[j]; break; }
-        }
-      }
+      var entry = versionEntryFor(versionsServiceNamed(service), digest);
       return { service: service, digest: digest, label: entry ? (entry.version || historyWhen(entry.at)) : digest };
     });
     var listHtml = '<ul>' + picks.map(function (p) {
@@ -26104,14 +26108,7 @@
     }).join('') + '</ul>';
     askConfirm({
       title: 'Put ' + picks.length + (picks.length === 1 ? ' version' : ' versions') + ' back?',
-      bodyHtml: listHtml +
-        '<p>This edits the compose file so each service names its exact version, which is what makes it ' +
-        'stick — a pull will not move off it. The file as it stands now is kept in History, so this can ' +
-        'be undone.' +
-        (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
-          'a pin and make it look as though nothing happened.' : '') +
-        '</p>' +
-        '<p>The versions you are moving away from will not come back on their own.</p>',
+      bodyHtml: listHtml + rollbackBodyHtml(true, hasOverride),
       goLabel: 'Put them back'
     }).then(function (go) {
       closeConfirm();
@@ -26425,13 +26422,7 @@
     var hasOverride = FILES.some(function (f) { return isStackOverride(f.name); });
     askConfirm({
       title: 'Put ' + label + ' back for ' + service + '?',
-      bodyHtml: '<p>This edits the compose file so it names that exact version, which is what makes it ' +
-        'stick — a pull will not move off it. The file as it stands now is kept in History, so this can ' +
-        'be undone.' +
-        (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
-          'this pin and make it look as though nothing happened.' : '') +
-        '</p>' +
-        '<p>The version you are moving away from will not come back on its own.</p>',
+      bodyHtml: rollbackBodyHtml(false, hasOverride),
       goLabel: 'Put it back'
     }).then(function (go) {
       closeConfirm();
@@ -26475,16 +26466,8 @@
       if (rollbackBtn) {
         var svcName = rollbackBtn.dataset.versionService;
         var digest = rollbackBtn.dataset.versionRollback;
-        var svc = null;
-        for (var i = 0; i < versionsServices.length; i++) {
-          if (versionsServices[i].service === svcName) { svc = versionsServices[i]; break; }
-        }
-        var entry = null;
-        if (svc) {
-          for (var j = 0; j < svc.entries.length; j++) {
-            if (svc.entries[j].digest === digest) { entry = svc.entries[j]; break; }
-          }
-        }
+        var svc = versionsServiceNamed(svcName);
+        var entry = versionEntryFor(svc, digest);
         if (svc && entry) performRollback(svcName, entry);
         return;
       }
