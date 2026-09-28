@@ -13,41 +13,61 @@ the server and run there.
 ## Local suites
 
 ```sh
-python tests/validate_schema.py     # x-unraid schema self-test (needs pyyaml, jsonschema)
-node tests/yaml_roundtrip.js        # the compose model — parse, edit, write back
-node tests/ca_convert.js            # Community Applications template -> compose conversion
-node tests/image_import.js          # Docker Hub / local image -> starting compose file
-node tests/stash_guard.js           # a set-aside may only hold the block it claims to
-node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
-node tests/tidy.js                  # the service-scope layout pass — key spans, refusals, idempotence
-node tests/js_undeclared.js         # names assigned but declared nowhere
-node tests/line_endings.js          # every file on disk uses LF — --fix rewrites any that do not
-node tests/chip_vocabulary.js       # the PHP and JS chip lookups agree, the palette stays five colours, every mark used has a glyph
-node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
-node tests/registry_note.js         # the registry-behaviour note generator's own cases
-node tests/links_detect.js          # spotting that two services need to know about each other
-node tests/links_record.js          # the connection record — writing it, matching it, noticing it is stale
-node tests/merge_examine.js         # the merge wizard's reading pass — storage, files, .env join, name/port/shorthand clashes, wiring
-node tests/merge_suggest.js         # the merge suggestions writer — depends_on, health check and update policy written onto the merged text
-node tests/crosslinks.js            # the browser half of the same: wording, and the confirmed-link write
-node tests/db_images.js             # the table of well-known database images
-node tests/health_offer.js          # picking a health check, and the narrow door for one found elsewhere
-node tests/pin_image.js             # pinning an image to one exact build
-node tests/export_redact.js         # what export blanks out before a stack leaves the machine
-node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
-node tests/pull_progress.js         # the row overlay's parser — layer/container progress, byte units, failures
-node tests/merge_walk_dryrun.js     # the merge walkthrough's dry run: examine()/buildMergedText()/apply() against the four-stack fixture, off the box; --check asserts the phase 4 shape AND runs merge_audit.js's own audit()/compareOrders() over both pick orders (PLAN_179)
-                                    # the walk itself — four running stacks merged into one, the same page checked before and after — is tests/fixtures/merge-walk/README.md
-node tests/merge_walk_six_dryrun.js # the second walkthrough's dry run: six stacks behind a Traefik front door, thirteen planted traps, two pick orders; --check asserts every trap (PLAN_169) AND the PLAN_179 audit
-                                    # the round-two torture run — every merge-pairs/r2-* pair walked through the actual wizard on the box, not just buildMergedText() — is tests/fixtures/merge-pairs-box/README.md
-                                    # the same six stacks installed and walked on the box, before and after: tests/fixtures/merge-walk-six/README.md
-node tests/merge_walk_ta_dryrun.js  # the third walkthrough's dry run: three Community Applications templates (Tube Archivist, its Elasticsearch and its Redis), no traps planted, two pick orders; --check asserts the two address rewires, the surviving ports and mounts, a clean parse (PLAN_178) AND the PLAN_179 audit
-node tests/merge_trip.js            # round two: small source pairs under merge-pairs/r2-*, each a way to trip the merge (sidecars, CRLF, port ranges, proxy labels, unreadable files…); SKIP lines are proven on the box; every buildMergedText() call here is also run through merge_audit.js's own audit() (PLAN_179)
-node tests/merge_audit_all.js       # PLAN_179 part 1: the audit (tests/merge_audit.js) run over every merge fixture this project has — the three walks, every merge-pairs/ pair, every tests/fixtures/ca-corpus/ family, both pick orders — checking that every difference between the sources and the merged file is accounted for by a change record, rather than predicting one trap at a time
-node tests/merge_corpus.js          # PLAN_179 part 3: merges every family under tests/fixtures/ca-corpus/ (real Community Applications templates, converted by tests/tools/build_ca_corpus.js) in both pick orders — parse, wiring, and merge_audit.js's own audit()
-node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
-node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node tests/run-local.js
 ```
+
+Runs the same set CI runs, found by listing rather than named so a branch that lacks one of them
+still gates cleanly: `node --check` on every browser script in `javascript/`, every suite at the top
+level of `tests/` run bare, in order, even after one fails, then the schema self-test. Each line
+shows the pass/fail count the suite itself printed; a failing one shows its whole output, indented.
+
+| Suite | What it covers |
+|---|---|
+| `ca_convert` | Community Applications template -> compose conversion |
+| `chip_vocabulary` | the PHP and JS chip lookups agree, the palette stays five colours, every mark used has a glyph |
+| `crosslinks` | the browser half of the same: wording, and the confirmed-link write |
+| `db_images` | the table of well-known database images |
+| `export_redact` | what export blanks out before a stack leaves the machine |
+| `guide_coverage` | which shipped features the user guide still says nothing about |
+| `health_offer` | picking a health check, and the narrow door for one found elsewhere |
+| `image_import` | Docker Hub / local image -> starting compose file |
+| `js_undeclared` | names assigned but declared nowhere |
+| `line_endings` | every file on disk uses LF — `--fix` rewrites any that do not |
+| `links_detect` | spotting that two services need to know about each other |
+| `links_record` | the connection record — writing it, matching it, noticing it is stale |
+| `merge_audit` | PLAN_179 part 1: `audit(sources, built, opts)`, the check every other merge suite calls; nothing to print on its own |
+| `merge_audit_all` | PLAN_179 part 1: the audit (`merge_audit.js`) run over every merge fixture this project has — the three walks, every `merge-pairs/` pair, every `tests/fixtures/ca-corpus/` family, both pick orders — checking that every difference between the sources and the merged file is accounted for by a change record, rather than predicting one trap at a time |
+| `merge_corpus` | PLAN_179 part 3: merges every family under `tests/fixtures/ca-corpus/` (real Community Applications templates, converted by `tests/tools/build_ca_corpus.js`) in both pick orders — parse, wiring, and `merge_audit.js`'s own `audit()` |
+| `merge_examine` | the merge wizard's reading pass — storage, files, `.env` join, name/port/shorthand clashes, wiring |
+| `merge_suggest` | the merge suggestions writer — `depends_on`, health check and update policy written onto the merged text |
+| `merge_trip` | round two: small source pairs under `merge-pairs/r2-*`, each a way to trip the merge (sidecars, CRLF, port ranges, proxy labels, unreadable files…); SKIP lines are proven on the box; every `buildMergedText()` call here is also run through `merge_audit.js`'s own `audit()` (PLAN_179) |
+| `merge_walk_dryrun` | the merge walkthrough's dry run: `examine()`/`buildMergedText()`/`apply()` against the four-stack fixture, off the box; `--check` asserts the phase 4 shape AND runs `merge_audit.js`'s own `audit()`/`compareOrders()` over both pick orders (PLAN_179). The walk itself — four running stacks merged into one, the same page checked before and after — is `tests/fixtures/merge-walk/README.md` |
+| `merge_walk_six_dryrun` | the second walkthrough's dry run: six stacks behind a Traefik front door, thirteen planted traps, two pick orders; `--check` asserts every trap (PLAN_169) AND the PLAN_179 audit. The round-two torture run — every `merge-pairs/r2-*` pair walked through the actual wizard on the box, not just `buildMergedText()` — is `tests/fixtures/merge-pairs-box/README.md`; the same six stacks installed and walked on the box, before and after: `tests/fixtures/merge-walk-six/README.md` |
+| `merge_walk_ta_dryrun` | the third walkthrough's dry run: three Community Applications templates (Tube Archivist, its Elasticsearch and its Redis), no traps planted, two pick orders; `--check` asserts the two address rewires, the surviving ports and mounts, a clean parse (PLAN_178) AND the PLAN_179 audit |
+| `meta_scaffold` | the commented x-unraid fields a new stack starts with |
+| `pin_image` | pinning an image to one exact build |
+| `pull_progress` | the row overlay's parser — layer/container progress, byte units, failures |
+| `registry_note` | the registry-behaviour note generator's own cases |
+| `stash_guard` | a set-aside may only hold the block it claims to |
+| `tidy` | the service-scope layout pass — key spans, refusals, idempotence |
+| `vocab-snapshot` | not a check — the value lists photographed out of `stacks.js` before PLAN_15 moved them, that `yaml_roundtrip.js` compares its own rebuilt lists against; running it alone prints nothing |
+| `words` | the passphrase generator's word list — count, shape, uniqueness |
+| `yaml_roundtrip` | the compose model — parse, edit, write back |
+| `validate_schema.py` | x-unraid schema self-test (needs pyyaml, jsonschema) |
+
+Run by hand, for what the runner does not do:
+
+```sh
+node tests/merge_walk_dryrun.js --check       # fixture README: tests/fixtures/merge-walk/README.md
+node tests/merge_walk_six_dryrun.js --check   # fixture README: tests/fixtures/merge-walk-six/README.md
+node tests/merge_walk_ta_dryrun.js --check    # fixture README: tests/fixtures/merge-walk-ta/README.md
+node tests/line_endings.js --fix
+node tests/registry_note.js <quirks.json> <selfhosted.json>
+```
+
+`tests/lib/` holds shared helpers, not suites (`check.js`, `dryrun.js`, `schema_check.js`);
+`tests/tools/` holds the corpus builder (`build_ca_corpus.js`). The runner enters neither. A new
+top-level `tests/*.js` file is a suite, and runs everywhere, by being there.
 
 `stacks.js` is one big IIFE, so a single typo kills the whole page's behaviour silently —
 `node --check` is the cheapest guard there is. There is no PHP linter locally; run `php -l` on the
@@ -79,7 +99,8 @@ Four rules run through the whole set:
   config file *before* php starts — it cannot be changed from inside the script.
 - **A suite that redirects `STORE_ROOT` points it at `/tmp` and restores the real value on every exit
   path, including a fatal error.** `STORE_ROOT` is the one key both the stacks folder and the archive
-  folder derive from, so redirecting it moves both. Never point it at the real store.
+  folder derive from, so redirecting it moves both. Never point it at the real store. Such a suite is
+  run through `tests/server/run-with-store.sh`, whose header is the whole routine (part C).
 - **Some suites deliberately do not redirect it**, and hand explicit `/tmp` paths to the function
   under test instead. Moving the store even for one command makes every real stack vanish from the
   webGUI for as long as it is moved, which is not acceptable on Adrian's box.
