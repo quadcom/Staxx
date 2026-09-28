@@ -805,6 +805,19 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
     $oldFolder = staxx_path_folder($stack);
     $start['stacks'][$oldFolder] = staxx_start_list_remove($start['stacks'][$oldFolder] ?? [], $leaf);
     $newList = $start['stacks'][$folder] ?? [];
+
+    // staxx_start_sort() lists stored names first, then every unnamed member
+    // after — so appending onto an empty (or partial) stored list puts this
+    // stack ahead of siblings the list never named, landing it at the TOP
+    // instead of the bottom. Filling the gaps with the folder's current
+    // display order first means the append lands after everyone already
+    // there, same as staxx_folder_layout() would show them.
+    $siblings = [];
+    foreach (staxx_scan_stacks()['stacks'] as $s) {
+      if ($s['folder'] === $folder && $s['leaf'] !== $leaf) $siblings[] = $s['leaf'];
+    }
+    if (array_diff($siblings, $newList)) $newList = staxx_start_sort($siblings, $newList);
+
     $newList[] = $leaf;
     $start['stacks'][$folder] = $newList;
 

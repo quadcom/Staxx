@@ -517,8 +517,7 @@
       domDropped: 0,    // how much of `dropped` the DOM has already trimmed for — see appendNewLines()
       pollTimer: null,
       pollDelay: LOG_POLL_FAST, // current gap between reads; see LOG_POLL_FAST
-      pollSeq:  0,      // bumped on every start/stop; a stale reply checks this before landing
-      downloadText: null
+      pollSeq:  0       // bumped on every start/stop; a stale reply checks this before landing
     };
 
     function mkLogBtn(label, cls) {
@@ -586,9 +585,8 @@
       copyBtn.addEventListener('click', copyVisible);
 
       var downloadBtn = mkLogBtn('Download all', 'staxx-manage-log-download');
-      downloadBtn.title = 'This plugin cannot hand the browser a file directly — this loads the ' +
-        'whole log into a box below so it can be selected and copied.';
-      downloadBtn.addEventListener('click', toggleDownload);
+      downloadBtn.title = 'Save this container\'s whole log as a file.';
+      downloadBtn.addEventListener('click', downloadLog);
 
       [pauseBtn, jumpBtn, searchInput, filterBtn, tsBtn, wrapBtn, copyBtn, downloadBtn]
         .forEach(function (el) { bar.appendChild(el); });
@@ -607,21 +605,13 @@
       linesWrap.appendChild(linesEl);
       linesWrap.appendChild(emptyEl);
 
-      var downloadWrap = document.createElement('div');
-      downloadWrap.className = 'staxx-manage-log-download-wrap staxx-manage-log-download-wrap--hidden';
-      var downloadArea = document.createElement('textarea');
-      downloadArea.className = 'staxx-manage-log-download-area';
-      downloadArea.readOnly = true;
-      downloadWrap.appendChild(downloadArea);
-
       bodyEl.appendChild(bar);
       bodyEl.appendChild(linesWrap);
-      bodyEl.appendChild(downloadWrap);
 
       els.logUI = {
         linesEl: linesEl, emptyEl: emptyEl,
         pauseBtn: pauseBtn, filterBtn: filterBtn, tsBtn: tsBtn, wrapBtn: wrapBtn,
-        downloadBtn: downloadBtn, downloadWrap: downloadWrap, downloadArea: downloadArea
+        downloadBtn: downloadBtn
       };
     }
 
@@ -767,7 +757,6 @@
     // changed nothing, since it is only a string compare, and it is the one
     // place that notices the selected tab or stack has moved on.
     function syncLogFollower() {
-      if (log.downloadText !== null) return; // showing the download box; leave the live view as it was
       var key = logTargetKey();
       if (key === log.target) return;
       restartFollower();
@@ -900,35 +889,42 @@
       document.body.removeChild(ta);
     }
 
-    // "Download" here cannot mean a file — action.php answers JSON, always,
-    // and a sandboxed page cannot hand the browser one either. This loads the
-    // whole capped log into a selectable box instead, and says so honestly in
-    // the button's own title rather than promising something it cannot do.
-    function toggleDownload() {
+    // Builds a file name from the stack, the service and the current local
+    // time, keeping only characters a filesystem never chokes on.
+    function logDownloadName(service) {
+      var leaf = state.stack.split('/').pop();
+      var now = new Date();
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      var stamp = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+        '-' + pad(now.getHours()) + pad(now.getMinutes());
+      var raw = leaf + '-' + (service || 'all') + '-' + stamp + '.log';
+      return raw.replace(/[^A-Za-z0-9._-]/g, '-');
+    }
+
+    // Hands the whole log to the browser as a real file, rather than a box
+    // to select and copy from — the browser can save a Blob URL through a
+    // throwaway link even though action.php only ever answers JSON.
+    function downloadLog() {
       var ui = els.logUI;
-      if (log.downloadText !== null) {
-        log.downloadText = null;
-        ui.downloadWrap.classList.add('staxx-manage-log-download-wrap--hidden');
-        ui.downloadBtn.textContent = 'Download all';
-        syncLogFollower(); // resume following if the tab moved on while this was open
-        return;
-      }
       var service = state.selected === 'all' ? '' : state.selected;
       ui.downloadBtn.disabled = true;
       ui.downloadBtn.textContent = 'Loading…';
       call('log-download', { name: state.stack, service: service }).then(function (res) {
         ui.downloadBtn.disabled = false;
+        ui.downloadBtn.textContent = 'Download all';
         if (!res.ok) {
           noteLine('could not load the full log: ' + (res.error || 'unknown error.'));
-          ui.downloadBtn.textContent = 'Download all';
           return;
         }
-        log.downloadText = res.text || '';
-        ui.downloadArea.value = log.downloadText;
-        ui.downloadWrap.classList.remove('staxx-manage-log-download-wrap--hidden');
-        ui.downloadBtn.textContent = 'Back to live log';
-        ui.downloadArea.focus();
-        ui.downloadArea.select();
+        var blob = new Blob([res.text || ''], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = logDownloadName(service);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
       });
     }
 
@@ -2686,7 +2682,6 @@
       note: function (text) { noteLine(String(text == null ? '' : text)); },
       unmount: function () {
         stopFollower();
-        log.downloadText = null;
         closeAllShellSessions();
         host.innerHTML = '';
         host.classList.remove('staxx-manage');

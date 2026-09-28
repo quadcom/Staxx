@@ -5122,6 +5122,9 @@
         applyUpdatePolicyLocally([service], policyField, value,
                                   saveRes.fingerprint || readRes.fingerprint, diskText);
         paintServiceIcons();
+        // The write already reached disk — repaint the row now rather than
+        // leaving its image line and thumbtack mark stale (Adrian, 2026-09-28).
+        refreshRows();
       });
     });
   }
@@ -5222,6 +5225,10 @@
         (r.owner.isOverride ? ', in ' + r.owner.fileName : '') +
         '. The file it replaces is kept in History.');
       paintServiceIcons();
+      // The row's own thumbtack mark and image line are drawn by the server
+      // from the file this just wrote — repaint the row now rather than
+      // leaving it stale until the next reload (Adrian, 2026-09-28).
+      refreshRows();
     });
   }
 
@@ -5305,6 +5312,9 @@
           // rollbackToVersion()/finishRollback()'s own reasoning for
           // the same reset.
           versionsLoaded = false;
+          // The write already reached disk (an override file, not the open
+          // document) — repaint the row now, same as choosePinnedInEditor().
+          refreshRows();
         });
         return;
       }
@@ -12617,15 +12627,24 @@
     return 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
   }
 
-  function revealLine(line) {
-    if (!LINE_H) measure();
-    var top  = PAD_T + line * LINE_H;
-    var view = yamlPane.clientHeight;
-    if (top < yamlPane.scrollTop + LINE_H || top > yamlPane.scrollTop + view - LINE_H * 2) {
+  // The math half of revealLine() below, pulled out so the merge wizard's
+  // own code panes (steps 5 and 6, PLAN_198 addendum) can follow a field
+  // being edited the same way the split view's compose pane does, without a
+  // second copy of it — those panes are not yamlPane and measure their own
+  // line height rather than sharing LINE_H/PAD_T.
+  function scrollPaneToLine(pane, line, lineH, padT) {
+    var top  = padT + line * lineH;
+    var view = pane.clientHeight;
+    if (top < pane.scrollTop + lineH || top > pane.scrollTop + view - lineH * 2) {
       // A third down rather than hard against the top, so the lines above it
       // are visible too. Never smooth — on every caret move it races itself.
-      yamlPane.scrollTop = Math.max(0, top - view / 3);
+      pane.scrollTop = Math.max(0, top - view / 3);
     }
+  }
+
+  function revealLine(line) {
+    if (!LINE_H) measure();
+    scrollPaneToLine(yamlPane, line, LINE_H, PAD_T);
   }
 
   // Form field -> compose pane.
@@ -14016,7 +14035,7 @@
   // and only when a real original request survives behind this. Neither
   // caImport() nor caAdd() below ever pass one, so a plain Community
   // Applications import (never a caught install) never shows it.
-  function caOpenConverted(app, label, intro, handoffId, kind, escapeUrl) {
+  function caOpenConverted(app, label, intro, handoffId, kind, escapeUrl, alreadyRunning) {
     if (!window.StaxxCA) {
       showPageNotice('The app converter has not loaded. Reload the page and try again.');
       return;
@@ -14069,6 +14088,12 @@
     // its own paragraph rather than one overwriting the other.
     var bannerLines = [];
     if (intro) bannerLines.push('<p>' + esc(intro) + '</p>');
+    // CATCH_INSTALLS=true skips AddContainer.page.tmpl's own offer page (the
+    // only other place this sentence appears), so this caught install would
+    // otherwise land here with no word that a stack by this name already
+    // runs — same sentence, verbatim, computed server-side in
+    // staxx_handoff_write() rather than a second endpoint call.
+    if (alreadyRunning) bannerLines.push('<p>StaXX already runs an app by this name.</p>');
     if (result.dollarsEscaped && result.dollarsEscaped.length) {
       bannerLines.push('<p>' + dollarsEscapedBannerHtml(result.dollarsEscaped) + '</p>');
     }
@@ -26048,6 +26073,9 @@
     adoptRolledBackText(yaml);
     fingerprintAtOpen = res.fingerprint || '';
     showPageNotice(res.historyNote || noticeHtml);
+    // The compose file just changed on disk — repaint the row now rather
+    // than leaving its image line and thumbtack mark stale (Adrian, 2026-09-28).
+    refreshRows();
     var rows = [];
     services.forEach(function (service) { rows = rows.concat(containerRows(openedName, service)); });
     if (rows.length) setBusy(rows, 'Rolling back…');
@@ -34383,7 +34411,7 @@
       // handoffId (id) is passed through so the save that follows can ask the
       // server to stamp this same handoff's original XML into an Unraid
       // template — see staxx_import_stamp_template() in Import.php.
-      caOpenConverted(res.app, 'This app', intro, id, kind, escapeUrl);
+      caOpenConverted(res.app, 'This app', intro, id, kind, escapeUrl, res.alreadyRunning);
 
       if (alwaysSaved) {
         alwaysSaved.then(function (ok) {
@@ -34706,6 +34734,24 @@
       open();
     });
     numEl.appendChild(mark);
+  }
+
+  // Step 4's own joined-settings pane (Adrian, walk 2026-09-28): only the
+  // tiny number opened its question, and hovering the rest of a highlighted
+  // line did nothing. This forwards a hover or a click anywhere on the row
+  // onto its own mark — reusing mergeAttachMark()'s own open()/hide()
+  // exactly, never a second copy of the popover logic. Keyboard focus is
+  // untouched: the number stays the only Tab stop, since the row itself is
+  // not one.
+  function mergeWireRowToMark(lrow) {
+    var mark = lrow.querySelector('.staxx-merge-gmark');
+    if (!mark) return;
+    lrow.addEventListener('mouseenter', function () { mark.dispatchEvent(new Event('mouseenter')); });
+    lrow.addEventListener('mouseleave', function () { mark.dispatchEvent(new Event('mouseleave')); });
+    lrow.addEventListener('click', function (e) {
+      if (e.target === mark || (mark.contains && mark.contains(e.target))) return;   // the mark's own handler already ran
+      mark.click();
+    });
   }
 
   // Focusing the mark opens its own popover (see mergeAttachMark() above) —
@@ -35141,15 +35187,46 @@
     });
     // No backdrop-click close, unlike the page's other dialogs: the wizard
     // holds six steps of decisions, and a stray click beside a wide pane
-    // threw them all away (Adrian, 2026-09-16). Cancel and Escape remain.
+    // threw them all away (Adrian, 2026-09-16). Cancel and Escape remain —
+    // and now ask first past step 1, see mergeAskThenClose() below.
+    //
+    // <dialog>'s own Escape default fires 'cancel' before 'close' — this is
+    // what lets that be intercepted the same way the Cancel button below is,
+    // rather than only guarding the button and leaving Escape to close
+    // outright regardless.
+    mergeModal.addEventListener('cancel', function (event) {
+      if (!mergeState || mergeState.step === 1) return;   // nothing decided yet — close as before
+      event.preventDefault();
+      mergeAskThenClose();
+    });
   }
 
   // Merge's own trigger is now the "Merge stacks…" item in buildAddMenu()
   // (PLAN_173), which calls mergeOpen() directly rather than keeping a
   // click listener on a toolbar button that no longer exists.
 
+  // Adrian, walk 2026-09-28: Cancel (and Escape, wired above) used to close
+  // the wizard outright, mid-merge, in one click — six steps of decisions
+  // gone with nothing to undo them. Step 1 has picked no stacks and written
+  // nothing, so it alone still closes without asking; every later step asks
+  // through the same #staxx-confirm dialog every other question in this file
+  // uses. "Keep working" is Cancel's own slot, so it is what askConfirm()
+  // already focuses by default — the safe answer needs no extra care here.
+  function mergeAskThenClose() {
+    if (!mergeState || mergeState.step === 1) { mergeClose(); return; }
+    askConfirm({
+      title: 'Throw away this merge?',
+      bodyHtml: '<p>Nothing has been written yet.</p>',
+      goLabel: 'Throw it away',
+      cancelLabel: 'Keep working'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) mergeClose();
+    });
+  }
+
   var mergeCancelBtn = document.getElementById('staxx-merge-cancel');
-  if (mergeCancelBtn) mergeCancelBtn.addEventListener('click', mergeClose);
+  if (mergeCancelBtn) mergeCancelBtn.addEventListener('click', mergeAskThenClose);
 
   // Wired once, here, rather than re-bound on every mergeRenderStep1() —
   // the box sits outside the container that function clears, so it is never
@@ -36956,15 +37033,28 @@
     head.className = 'staxx-merge-pane-head staxx-merge-pane-head--neutral';
     head.textContent = 'The joined settings file';
     host.appendChild(head);
-    var code = document.createElement('div');
-    code.className = 'staxx-merge-code';
-    code.id = 'staxx-merge-settings-merged-code';
-    host.appendChild(code);
 
     var nameToRoot = mergeEnvNameToRoot();
     var envText = (mergeState.built && mergeState.built.env) || '';
     var changeMap = mergeEnvChangesByMergedLine();
     var removedByLine = mergeRemovedByMergedLine(true);
+
+    // Adrian, walk 2026-09-28: a highlighted line's question only opened on
+    // the line NUMBER, and nothing said pointing at the number was the way
+    // in. Said once here, only when there is something to point at.
+    var hasHighlight = Object.keys(changeMap).some(function (k) { return !!changeMap[k]; }) ||
+      Object.keys(removedByLine).some(function (k) { return removedByLine[k] && removedByLine[k].length; });
+    if (hasHighlight) {
+      var lead = document.createElement('p');
+      lead.className = 'staxx-merge-help';
+      lead.textContent = 'Some settings clash. Point at a highlighted line to choose which one to keep.';
+      host.appendChild(lead);
+    }
+
+    var code = document.createElement('div');
+    code.className = 'staxx-merge-code';
+    code.id = 'staxx-merge-settings-merged-code';
+    host.appendChild(code);
 
     mergePaintCode(code, envText, function (lrow, i, line) {
       // ENV_KEY_RE reads past an "export " prefix, so an exported line
@@ -36978,6 +37068,7 @@
       if (change) {
         lrow.classList.add('staxx-merge-codeline--changed');
         mergeAttachMark(lrow.querySelector('.staxx-merge-codenum'), change, mergeEnvReasonCard);
+        mergeWireRowToMark(lrow);
       }
     }, true, {
       // A duplicate setting (both stacks agreeing) is dropped from the
@@ -36988,6 +37079,7 @@
       paint: function (lrow, c) {
         lrow.classList.add('staxx-merge-codeline--changed', 'staxx-merge-codeline--struck', 'staxx-merge-codeline--ghost');
         mergeAttachMark(lrow.querySelector('.staxx-merge-codenum'), c, mergeEnvReasonCard);
+        mergeWireRowToMark(lrow);
         lrow.querySelector('.staxx-merge-codetext').textContent = c.removedText || '';
       }
     });
@@ -38559,7 +38651,37 @@
   // mergeRenderStep5(), which would rebuild the input the person is
   // mid-keystroke in and drop focus (the same reasoning mergeUpdateStep2Live()
   // gives for its own live pane).
-  function mergeRepaintStep5Code() {
+  // Finds the line a health-check field's own key sits on in the built
+  // text, the same way lineFromPath() points a schema complaint at the
+  // right line in the live editor — reused here rather than copied, just
+  // against this pane's own parse instead of MODEL.doc.
+  function mergeHealthFieldLine(text, svc, key) {
+    if (!YAML || typeof YAML.lineOfPath !== 'function') return -1;
+    var doc;
+    try { doc = YAML.parse(text); } catch (e) { return -1; }
+    if (!doc) return -1;
+    return YAML.lineOfPath(doc, 'services.' + svc + '.healthcheck.' + key);
+  }
+
+  // scrollPaneToLine() needs a pane's own line height and top padding —
+  // yamlPane's are cached in LINE_H/PAD_T, but these code panes are a
+  // different element with their own font metrics, so they are measured
+  // fresh rather than assumed to match.
+  function mergeScrollCodeToLine(pane, line) {
+    if (!pane || line == null || line < 0) return;
+    var cs = window.getComputedStyle(pane);
+    var lineH = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.45;
+    var padT  = parseFloat(cs.paddingTop) || 0;
+    scrollPaneToLine(pane, line, lineH, padT);
+  }
+
+  // `svc`/`key` are only given when a health-check field's own edit is what
+  // triggered this repaint (PLAN_198 addendum, Adrian's walk 2026-09-28) —
+  // every other caller keeps the old "repaint in place" behaviour. Scrolling
+  // happens AFTER keepScroll() has put its own saved position back, not
+  // inside it, since keepScroll() would otherwise overwrite this with the
+  // position from before the edit.
+  function mergeRepaintStep5Code(svc, key) {
     mergeSuggestRecompute();
     var codeEl = document.getElementById('staxx-merge-step5-code');
     if (codeEl) {
@@ -38568,6 +38690,10 @@
           if (mergeState.addedLines.indexOf(i) >= 0) row.classList.add('staxx-merge-codeline--added');
         });
       });
+      if (svc && key) {
+        mergeState.lastHealthLine = mergeHealthFieldLine(mergeState.finalText, svc, key);
+        mergeScrollCodeToLine(codeEl, mergeState.lastHealthLine);
+      }
     }
     var services = mergeBuiltServices();
     mergeDrawDepLines(services);
@@ -38712,7 +38838,7 @@
       } else {
         h[el.dataset.healthField] = el.value;
       }
-      mergeRepaintStep5Code();
+      mergeRepaintStep5Code(el.dataset.healthSvc, el.dataset.healthField);
     });
 
     // The board's own width decides where its curves land (mergeChipCenter
@@ -38951,6 +39077,15 @@
 
     var note = document.createElement('p');
     note.className = 'staxx-merge-help';
+    // Adrian, walk 2026-09-28: the three sentences mergeStopStartNote() picks
+    // between are not all the same length, so flipping a switch could
+    // reflow everything below it and move the switches — and this column's
+    // own buttons — out from under the pointer mid-click. Reserved here at
+    // the longest of the three (the default note, plus its bind-mount
+    // addendum) rather than measured live, since all three are known ahead
+    // of time and a live measurement would still flash the shorter ones
+    // narrower for a frame.
+    note.style.minHeight = '4.5em';
     note.textContent = mergeStopStartNote();
     wrap.appendChild(note);
 
@@ -39081,6 +39216,11 @@
     codeCol.className = 'staxx-merge-step6-code staxx-merge-code';
     host.appendChild(codeCol);
     mergePaintCode(codeCol, text, function () {});
+    // A health-check field edited on step 5 carries its line over here too
+    // (PLAN_198 addendum) — this pane is a fresh snapshot built just above,
+    // so it can only ever follow the LAST edit, not every keystroke that led
+    // to it.
+    mergeScrollCodeToLine(codeCol, mergeState.lastHealthLine);
 
     var right = document.createElement('div');
     right.className = 'staxx-merge-step6-right';

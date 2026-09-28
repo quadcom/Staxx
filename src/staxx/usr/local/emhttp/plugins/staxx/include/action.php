@@ -3067,6 +3067,10 @@ switch ($action) {
       'kind' => (string)($app['kind'] ?? 'default'),
       'xmlTemplate' => $xmlTemplate,
       'xmlTemplateAvailable' => $xmlTemplate !== '' && staxx_handoff_template_available($xmlTemplate),
+      // Computed at handoff-write time (staxx_import_name_taken()) — the
+      // same fact AddContainer.page.tmpl's own offer page shows, for the
+      // CATCH_INSTALLS=true route that skips that page entirely.
+      'alreadyRunning' => (bool)($app['alreadyRunning'] ?? false),
     ]);
 
   /* ---- PLAN_68 Part A piece 3: list one stack's kept history ----

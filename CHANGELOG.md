@@ -6,6 +6,12 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- On the Manage tab, Download all now saves the container's whole log as a file.
+- The Save and Cancel buttons at the bottom of StaXX's windows now always sit on the right, instead of jumping across when a message appears.
+- When an app you install from Unraid's Apps page opens straight in StaXX's editor, it now says so if StaXX already runs an app by that name.
+- A change the editor saves by itself, such as pinning a service or changing its update choice, now shows on the stack list straight away, without reloading the page.
+- A stack moved into a folder now always lands at the bottom of that folder.
+- In the merge wizard, the joined settings step says what to do, and pointing anywhere on a highlighted line opens its question; the code follows the health-check box you are editing; the last step's switches no longer move under the mouse; and Cancel asks before throwing a merge away.
 - On the Manage tab, the handles between the log, shell and files panes no longer stay stuck to the mouse after a quick drag across the shell.
 - When you merge stacks, a line in a stack's settings file written as `export NAME=value` is now read the way Docker Compose reads it, so an address set that way is carried into the new stack instead of coming out empty.
 - When a start, update, rebuild or roll-back fails while the stack list is redrawing, its red failure marker now appears on the row straight away instead of waiting for the next refresh.

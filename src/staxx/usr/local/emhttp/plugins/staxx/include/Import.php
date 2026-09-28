@@ -1700,7 +1700,16 @@ function staxx_handoff_write(
   $id   = bin2hex(random_bytes(16));
   $path = STAXX_HANDOFF_DIR.'/'.$id.'.json';
 
-  $json = json_encode(['app' => $record, 'xml' => $xml, 'kind' => $kind, 'xmlTemplate' => $xmlTemplate]);
+  // Computed once, here, rather than handed a fresh endpoint call from the
+  // New Stack editor: this is the same request that already has the app's
+  // name in hand, and staxx_import_name_taken() is cheap. Read back by
+  // handoff-read and shown as the same sentence AddContainer.page.tmpl's own
+  // CATCH_INSTALLS=prompt offer uses, so a caught install (CATCH_INSTALLS=true,
+  // which skips that offer entirely) still says so.
+  $alreadyRunning = staxx_import_name_taken((string)($record['Name'] ?? ''));
+
+  $json = json_encode(['app' => $record, 'xml' => $xml, 'kind' => $kind, 'xmlTemplate' => $xmlTemplate,
+                        'alreadyRunning' => $alreadyRunning]);
   if ($json === false) {
     $error = 'Could not write the handoff file.';
     return '';

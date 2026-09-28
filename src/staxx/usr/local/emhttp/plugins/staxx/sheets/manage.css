@@ -701,29 +701,6 @@
   display: none;
 }
 
-.staxx-manage-log-download-wrap {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  padding: 0.5rem;
-}
-
-.staxx-manage-log-download-wrap--hidden {
-  display: none;
-}
-
-.staxx-manage-log-download-area {
-  flex: 1 1 auto;
-  resize: none;
-  border: 1px solid var(--sm-line);
-  border-radius: var(--sm-radius);
-  background-color: var(--sm-fill-0, var(--sm-fill));
-  color: inherit;
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.8rem;
-  padding: 0.5rem;
-}
-
 /* ---- D4: the shell -------------------------------------------------------
  * Same "own column layout, not the pane body's padding" reasoning as the
  * log pane above: the message/warning text and the terminal screen need

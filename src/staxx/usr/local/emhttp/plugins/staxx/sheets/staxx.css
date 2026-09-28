@@ -11954,6 +11954,21 @@ dialog::backdrop {
   border-top: 0.1rem solid var(--sm-line);
 }
 
+/* Unraid's default-base.css hides an empty <p> (`p:empty { display: none }`),
+   so with no status message the button group is the only item in this row
+   and space-between pushes it left; once a message appears it jumps right.
+   Pin the button group to the right regardless, so it never moves. Covers
+   every footer built the same way (picker, timezone, community-apps, import,
+   confirm/detail, settings/storage/backup/images). */
+.staxx-scaffold .staxx-picker-foot > :last-child,
+.staxx-scaffold .staxx-tz-foot > :last-child,
+.staxx-scaffold .staxx-ca-foot > :last-child,
+.staxx-scaffold .staxx-import-footrow > :last-child,
+.staxx-scaffold .staxx-confirm-foot > :last-child,
+.staxx-scaffold .staxx-settings-foot > :last-child {
+  margin-left: auto;
+}
+
 .staxx-settings-msg {
   margin: 0;
   min-width: 0;
