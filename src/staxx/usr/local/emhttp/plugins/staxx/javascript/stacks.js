@@ -25363,18 +25363,26 @@
   // One `compose ls` for the whole machine is about 90ms (see refreshState's
   // own note), and this stops the moment Manage is not what is on screen.
   var manageStateTimer = null;
+  // True while Manage is on screen, so pollStats() below can force itself
+  // without Manage running its own second stats poll on top of the page's
+  // 3s timer, and the visibilitychange handler knows to refresh state on
+  // the way back in.
+  var manageOpen = false;
 
   function manageStatePoll(on) {
+    manageOpen = on;
     if (on) {
       if (manageStateTimer) return;
       refreshState();                                   // do not wait for the first tick
-      pollStats(true);                                  // and its own figures, see pollStats
+      pollStats();                                      // manageOpen now forces its own figures
       manageStateTimer = setInterval(function () {
         // Belt and braces against a timer outliving what it was feeding.
         if (!modal.open || modal.dataset.tab !== 'manage') { manageStatePoll(false); return; }
-        if (document.hidden) return;
+        // The live feed already turns every state change Manage cares about
+        // into a refresh (see startPush()'s comment); a state poll on top of
+        // it is only needed while that feed is down or still connecting.
+        if (document.hidden || pushLive()) return;
         refreshState();
-        pollStats(true);
       }, 5000);
       return;
     }
@@ -33934,6 +33942,9 @@
   // inside a stack. Without it Manage's container tabs showed a dash for
   // processor and memory for as long as the editor was open.
   function pollStats(force) {
+    // Manage forces its own figures the same way an explicit force does, so
+    // the page's own 3s timer carries them and Manage needs no second timer.
+    force = force || manageOpen;
     // A hidden tab does not need updating, and stopping the asking is also
     // what lets the server-side collector shut itself down (it gives up
     // after 45s and gets re-exec'd on return — see the visibilitychange
@@ -34019,6 +34030,13 @@
   var pushRowsTimer   = null;   // set while a burst is being coalesced
   var pushRowsBusy    = false;  // set while a push-triggered refreshRows() is in flight
   var pushOwed        = '';     // a message that arrived while the tab was hidden
+
+  // A source still connecting or retrying does not count as live — only an
+  // open one is actually delivering events. Used by Manage to decide whether
+  // its own belt-and-braces state poll is needed on top of the feed.
+  function pushLive() {
+    return !!(pushSource && pushSource.readyState === EventSource.OPEN);
+  }
 
   // How long to wait before trying the live feed again, and how often to
   // poll in the meantime. 30s is several times over an nginx reload's own
@@ -34149,22 +34167,25 @@
     if (pushFallbackTimer) { clearInterval(pushFallbackTimer); pushFallbackTimer = null; }
   });
 
-  // A hidden tab stops all four pollers on this page — each checks
+  // A hidden tab stops every poller on this page — each checks
   // document.hidden itself — so returning to it can leave figures, jobs and
-  // the update queue looking stale until their own next tick, up to 5s for
-  // Manage. Poll every
-  // one of them once, immediately, rather than waiting. Only the ones with a
-  // timer actually running are worth asking; a poller that stopped itself for
-  // its own reason (no jobs, no queue, Manage closed) should stay stopped.
+  // the update queue looking stale until their own next tick. Poll every one
+  // of them once, immediately, rather than waiting. Only the ones with a
+  // timer actually running are worth asking; a poller that stopped itself
+  // for its own reason (no jobs, no queue, Manage closed) should stay
+  // stopped. Manage gets no poll of its own here: pollStats() already forces
+  // itself while Manage is open, and its state is refreshed below only when
+  // the paid message did not already cover it.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) return;
     // Pay whatever arrived while nobody was looking. One refresh covers any
     // number of events missed, however long the tab sat in the background.
-    if (pushOwed) { var owed = pushOwed; pushOwed = ''; pushApply(owed); }
+    var owed = pushOwed;
+    if (owed) { pushOwed = ''; pushApply(owed); }
     pollStats();
     if (jobTicker) tickJobs();
     if (updateQueueTimer) pollQueueOnce();
-    if (manageStateTimer) { refreshState(); pollStats(true); }
+    if (manageOpen && !owed) refreshState();
   });
 
   // The signpost page (Settings → StaXX) links here to open the
