@@ -323,13 +323,6 @@ function staxx_expose_json_write(string $rel, array $data): bool {
   return staxx_atomic_write(staxx_expose_json_path($rel), $encoded);
 }
 
-/** Replaces one service's entry and writes the whole file back. */
-function staxx_expose_json_update(string $rel, string $service, array $record): void {
-  $all = staxx_expose_json_read($rel);
-  $all[$service] = $record;
-  staxx_expose_json_write($rel, $all);
-}
-
 /**
  * A service's x-unraid.expose block, read from staxx_compose_meta()'s own
  * flattened x['expose.*'] keys (Stacks.php's flattener widens one dotted
@@ -963,7 +956,13 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
       // services already queued still get their turn.
       if (!$ok) break;
     }
-    staxx_expose_json_update($rel, $svcName, $record);
+    // $records is already up to date from the read at the top of this loop,
+    // so it is kept current in memory and written back here rather than
+    // re-read from disk before every service's write. Still written after
+    // each service, so a failure part way through keeps the services
+    // already done.
+    $records[$svcName] = $record;
+    staxx_expose_json_write($rel, $records);
     $out[$svcName] = ['steps' => $applied];
   }
 
@@ -1085,7 +1084,10 @@ function staxx_expose_remove(string $rel, string $onlyService, string $npmChoice
   }
 
   $out = [];
-  $remaining = staxx_expose_json_read($rel);
+  // $records was already read above (before the NPM/Pi-hole logins), and
+  // nothing here changes the file in between, so it stands in for a
+  // second read.
+  $remaining = $records;
 
   foreach ($targets as $svcName => $rec) {
     $entry = ['service' => $svcName];

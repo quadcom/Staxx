@@ -1757,14 +1757,26 @@ const STAXX_META_VERSION = 9;   // 9: a profiled service's own fields are read t
  * Returns null to mean "never cache this stack": when any file mentions
  * `include:` or `extends:`, the answer depends on a file this key cannot
  * see, because compose does not report what it read in.
+ *
+ * Remembered for the request, keyed the same way staxx_compose_meta() and
+ * staxx_service_hashes() key their own memos, since both read this file set
+ * afresh in the same render. $reset clears every stack's entry for a caller
+ * that has just changed a file mid-request — staxx_compose_meta()'s own
+ * reset calls this with $reset true so the next read here sees it too.
  */
-function staxx_meta_cache_key(array $files): ?string {
+function staxx_meta_cache_key(array $files, bool $reset = false): ?string {
+  static $cache = [];
+  if ($reset) { $cache = []; return null; }
+
+  $key = implode("\0", $files);
+  if (array_key_exists($key, $cache)) return $cache[$key];
+
   $parts = [(string)STAXX_META_VERSION];
 
   foreach ($files as $f) {
     $text = @file_get_contents($f);
-    if ($text === false) return null;
-    if (preg_match('/(?:^|\n)\s*(?:include|extends)\s*:/', $text)) return null;
+    if ($text === false) return $cache[$key] = null;
+    if (preg_match('/(?:^|\n)\s*(?:include|extends)\s*:/', $text)) return $cache[$key] = null;
     $parts[] = md5($text);
   }
 
@@ -1772,7 +1784,7 @@ function staxx_meta_cache_key(array $files): ?string {
   $envText = is_file($envFile) ? @file_get_contents($envFile) : '';
   $parts[] = md5((string)$envText);
 
-  return md5(implode("\0", $parts));
+  return $cache[$key] = md5(implode("\0", $parts));
 }
 
 /**
@@ -1827,7 +1839,9 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // $reset empties the in-process memory for a caller that has just changed
   // a file mid-request — the import back-fill — and needs the next read to
   // see it. The on-disk copy needs nothing: it is keyed on the contents.
-  if ($reset) $cache = [];
+  // staxx_meta_cache_key() keeps its own memo of the same file set, so it is
+  // reset too, or a stale key would be reused straight after.
+  if ($reset) { $cache = []; staxx_meta_cache_key([], true); }
 
   // Keyed on the whole pair, not just $file, so an override's settings are
   // reflected in what this reports. Safe as a cache key: for a single file
@@ -1866,9 +1880,14 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // keeps `config` from hiding a service just because nothing switched its
   // profile on — a service still not running has always been read from what
   // the file declares, never from what is currently active.
+  // Read once, before the config call: staxx_service_profiles() is run
+  // over each file's raw text here and again for the rawProfiles pass
+  // below, so both share this one read and parse per file.
+  $perFile = array_map(fn($f) => staxx_service_profiles((string)@file_get_contents($f)), $files);
+
   $declaredProfileNames = [];
-  foreach ($files as $srcFile) {
-    foreach (staxx_service_profiles((string)@file_get_contents($srcFile)) as $profiles) {
+  foreach ($perFile as $profilesByService) {
+    foreach ($profilesByService as $profiles) {
       foreach ($profiles as $p) $declaredProfileNames[$p] = true;
     }
   }
@@ -2002,8 +2021,8 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // is exactly the one place a profile can never be found (measured on the
   // box, 2026-09-11 — a two-profile file rendered as one service).
   $rawProfiles = [];
-  foreach ($files as $srcFile) {
-    foreach (staxx_service_profiles((string)@file_get_contents($srcFile)) as $service => $profiles) {
+  foreach ($perFile as $profilesByService) {
+    foreach ($profilesByService as $service => $profiles) {
       $rawProfiles[$service] = array_values(array_unique(array_merge($rawProfiles[$service] ?? [], $profiles)));
     }
   }
@@ -2711,27 +2730,10 @@ function staxx_webui_try(string $url, ?int &$code = null): bool {
  * @return array<string,string> network name => driver
  */
 function staxx_network_drivers(): array {
-  static $drivers = null;
-  if ($drivers !== null) return $drivers;
-
-  $drivers = [];
-  if (!staxx_docker_running()) return $drivers;
-
-  // `docker network ls` shares the formatter used by `docker ps`, which does
-  // translate \t. The trailing "end" guards against exec() trimming a line
-  // whose last field is empty — see staxx_container_net().
-  $out = staxx_sh(
-    escapeshellarg(staxx_docker_bin()).' network ls --format '
-    .escapeshellarg('{{.Name}}\t{{.Driver}}\tend'), 15
-  );
-
-  foreach (explode("\n", $out) as $line) {
-    $c = explode("\t", $line);
-    if (count($c) < 2 || $c[0] === '') continue;
-    $drivers[$c[0]] = $c[1];
-  }
-
-  return $drivers;
+  // staxx_docker_networks() already runs and remembers the same
+  // `docker network ls`; a repeated name keeps the last driver seen either
+  // way, so array_column() gives the same map this used to build itself.
+  return array_column(staxx_docker_networks(), 'driver', 'name');
 }
 
 /**
@@ -4479,22 +4481,7 @@ define('STAXX_REVIEW_FILE', 'NEEDS-REVIEW.md');
  * name the filesystem actually holds, not the one we would have written.
  */
 function staxx_review_file(string $dir): string {
-  // Per-directory, for the render loop that asks this once per stack row and
-  // once per container row — a scandir() each time on a 64-stack server adds
-  // up. Safe to keep for the whole request: nothing that moves or removes
-  // this file re-checks it afterwards in the same request (see
-  // staxx_scan_stacks_reset()'s comment for why that pattern holds here).
-  static $cache = [];
-  if (array_key_exists($dir, $cache)) return $cache[$dir];
-
-  $found = '';
-  foreach ((array)@scandir($dir) as $entry) {
-    if (strcasecmp($entry, STAXX_REVIEW_FILE) === 0 && is_file($dir.'/'.$entry)) {
-      $found = $entry;
-      break;
-    }
-  }
-  return $cache[$dir] = $found;
+  return staxx_stack_notes($dir)['review'];
 }
 
 /**
@@ -5051,21 +5038,42 @@ function staxx_handover_restart_policy(string $original): string {
   return $policy !== '' ? $policy : 'no';
 }
 
-/** The handover state file actually present in $dir, by its real name, or ''. */
-function staxx_handover_file(string $dir): string {
-  // Same per-directory memoisation and the same reasoning as
-  // staxx_review_file() just above.
+/**
+ * The review-lock and handover-state file names actually present in $dir,
+ * by their real names on disk (or '' for either that is not there), from
+ * one scandir() rather than the one staxx_review_file() and one
+ * staxx_handover_file() each ran on their own.
+ *
+ * Per-directory, for the render loop that asks this once per stack row and
+ * once per container row — a scandir() each time on a 64-stack server adds
+ * up. Safe to keep for the whole request: nothing that moves or removes
+ * either file re-checks it afterwards in the same request (see
+ * staxx_scan_stacks_reset()'s comment for why that pattern holds here). The
+ * only flow that writes one of these files mid-request — starting a
+ * handover — asks for the handover state first and the review note second,
+ * and asks neither again after writing, so both halves still answer as
+ * they would from a fresh scandir() at the point each is first asked for.
+ *
+ * @return array{review:string, handover:string}
+ */
+function staxx_stack_notes(string $dir): array {
   static $cache = [];
   if (array_key_exists($dir, $cache)) return $cache[$dir];
 
-  $found = '';
+  $review = ''; $handover = '';
   foreach ((array)@scandir($dir) as $entry) {
-    if (strcasecmp($entry, STAXX_HANDOVER_FILE) === 0 && is_file($dir.'/'.$entry)) {
-      $found = $entry;
-      break;
+    if ($review === '' && strcasecmp($entry, STAXX_REVIEW_FILE) === 0 && is_file($dir.'/'.$entry)) {
+      $review = $entry;
+    } elseif ($handover === '' && strcasecmp($entry, STAXX_HANDOVER_FILE) === 0 && is_file($dir.'/'.$entry)) {
+      $handover = $entry;
     }
   }
-  return $cache[$dir] = $found;
+  return $cache[$dir] = ['review' => $review, 'handover' => $handover];
+}
+
+/** The handover state file actually present in $dir, by its real name, or ''. */
+function staxx_handover_file(string $dir): string {
+  return staxx_stack_notes($dir)['handover'];
 }
 
 /** Is a handover on this stack waiting to be confirmed right now? */

@@ -614,14 +614,21 @@ function staxx_docker_running(): bool {
  * @return array<int, array{name:string, driver:string, project:string}>
  */
 function staxx_docker_networks(): array {
-  if (!staxx_docker_running()) return [];
+  // Remembered for the request: a table render and a state poll both ask,
+  // and nothing in one request creates a network and then asks for the
+  // list again — the start-time check in staxx_missing_external_networks()
+  // runs before the detached job, never after it.
+  static $networks = null;
+  if ($networks !== null) return $networks;
+
+  $networks = [];
+  if (!staxx_docker_running()) return $networks;
 
   $fmt = '{{.Name}}|{{.Driver}}|{{.Labels}}';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' network ls --format '.escapeshellarg($fmt), 10
   );
 
-  $networks = [];
   foreach (explode("\n", trim($out)) as $line) {
     if ($line === '') continue;
     [$name, $driver, $labels] = array_pad(explode('|', $line, 3), 3, '');

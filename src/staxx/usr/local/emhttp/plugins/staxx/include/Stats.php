@@ -339,9 +339,19 @@ function staxx_gpu_support(): array {
 }
 
 function staxx_have(string $binary): bool {
+  // No shell: this runs on every stats poll. The fallback list is for a PHP
+  // process started with no PATH, where `sh` would use its own default.
   static $seen = [];
   if (!isset($seen[$binary])) {
-    $seen[$binary] = staxx_sh('command -v '.escapeshellarg($binary), 5) !== '';
+    $path = (string)getenv('PATH');
+    if ($path === '') $path = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+    $found = false;
+    foreach (explode(':', $path) as $dir) {
+      if ($dir === '') continue;
+      $candidate = $dir.'/'.$binary;
+      if (is_file($candidate) && is_executable($candidate)) { $found = true; break; }
+    }
+    $seen[$binary] = $found;
   }
   return $seen[$binary];
 }

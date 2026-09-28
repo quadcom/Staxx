@@ -662,6 +662,14 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
           if ($targetLoose === '') continue;
           foreach (array_keys($nameCandidates) as $i) {
             if ($nameLoose[$i] === '') continue;
+            // Test first, resolve second: a compose read of the candidate
+            // stack's networks (staxx_crosslinks_service_networks()) is only
+            // worth paying for a name that could match at all.
+            $loose = $nameLoose[$i] === $targetLoose;
+            // The THREE-OR-FEWER rule is on the name itself, separators
+            // stripped — "d_b" is really a two-letter name, and two
+            // characters' difference is most of it either way.
+            if (!$loose && !(strlen($nameLoose[$i]) > 3 && levenshtein($nameLoose[$i], $targetLoose) <= 2)) continue;
             if ($fuzzyShared === null) {
               $fuzzyShared = array_values(array_intersect(
                 $sourceNets, staxx_crosslinks_service_networks($file)[$svcName] ?? []
@@ -669,14 +677,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
             }
             $entry = ['stack' => $rel, 'service' => $svcName, 'via' => $vk,
                       'network' => $fuzzyShared[0] ?? null];
-            if ($nameLoose[$i] === $targetLoose) {
-              $fuzzyLoose[] = $entry;
-            } elseif (strlen($nameLoose[$i]) > 3 && levenshtein($nameLoose[$i], $targetLoose) <= 2) {
-              // The THREE-OR-FEWER rule is on the name itself, separators
-              // stripped — "d_b" is really a two-letter name, and two
-              // characters' difference is most of it either way.
-              $fuzzyNear[] = $entry;
-            }
+            if ($loose) $fuzzyLoose[] = $entry; else $fuzzyNear[] = $entry;
           }
         }
       }
