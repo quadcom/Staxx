@@ -2116,18 +2116,12 @@
       var scaffolded = window.StaxxMeta.scaffold(currentText());
       if (scaffolded.error || !scaffolded.changed) return;
       pushUndo('adding the StaXX fields');
-      yamlPane.value = scaffolded.yaml;
+      setComposeText(scaffolded.yaml, 'Added the StaXX fields for icon, links and description.');
       // The new lines can land anywhere in the file (a root block goes in
       // before "services:"), so recovering the exact caret spot the paste
       // left behind is not worth chasing — landing at the end of the file
       // is the same trade-off pushUndo()'s own callers already make.
       yamlPane.selectionStart = yamlPane.selectionEnd = yamlPane.value.length;
-      paintGutter();
-      paintInk();
-      activeField = null;
-      reparse();
-      updateUndo();
-      setYamlStatus('Added the StaXX fields for icon, links and description.');
     }, 0);
   });
 
@@ -5003,10 +4997,7 @@
       }
     }
 
-    yamlPane.value = YAML.serialise(MODEL.doc);
-    paintGutter();
-    paintInk();
-    reparse();
+    reloadPane(YAML.serialise(MODEL.doc));
     if (savedFingerprint) {
       fingerprintAtOpen = savedFingerprint;
       textAtOpen = savedText;
@@ -5265,10 +5256,7 @@
             return;
           }
           stripPinNoteAfterEdit(MODEL.doc, YAML.buildForm(MODEL.doc, netDrivers(), envNameList()), imgField.id);
-          yamlPane.value = YAML.serialise(MODEL.doc);
-          paintGutter();
-          paintInk();
-          reparse();
+          reloadPane(YAML.serialise(MODEL.doc));
           setTab('configure');
           versionsLoaded = false;
         });
@@ -9093,16 +9081,13 @@
     pointers.forEach(function (it) { propMsgs.push(propagationPointerMessage(it)); });
 
     setYamlStatus(propMsgs.join('  '));
-    yamlPane.value = YAML.serialise(MODEL.doc);   // assigning .value fires no
-    paintGutter();                                // input event, so this cannot
-    paintInk();                                   // loop back round
     // Same gate propEp above already computed — a plain setting/environment
     // value box, never a bind-mount path — reused rather than re-derived
     // (PLAN_70 stage 5). Debounced on its own 800ms timer; see the section
     // comment above scheduleCrossLinkCheck() for exactly what has to be true
     // of the typed value before this asks the server anything at all.
     if (propEp) scheduleCrossLinkCheck(f, el.value);
-    refreshRanges();
+    quietEdit();
   }
 
   // Single mechanism behind every box swap — the network name box's
@@ -9629,23 +9614,31 @@
   // the current text and this is a no-op.
   function restoreUndo() {
     var back = undoStack.pop();
-    if (back) {
-      yamlPane.value = back.text;
-      paintGutter();
-      paintInk();
-      reparse();
-    }
+    if (back) reloadPane(back.text);
+    updateUndo();
+  }
+
+  // Puts text in the compose box and repaints its gutter and colours.
+  // Assigning .value fires no input event, so this never loops back round.
+  function setPaneText(text) { yamlPane.value = text; paintGutter(); paintInk(); }
+  // ...then rebuilds the form from it.
+  function reloadPane(text) { setPaneText(text); reparse(); }
+  // A form edit already on screen: the file follows it, the form is not
+  // redrawn (see the note above refreshRanges()).
+  function quietEdit() { setPaneText(YAML.serialise(MODEL.doc)); refreshRanges(); }
+
+  // The whole compose text replaced (the undo entry is the caller's, pushed
+  // before): box, form, Undo button, and the status line when one is given.
+  function setComposeText(text, status) {
+    setPaneText(text);
+    activeField = null;   // whatever was highlighted may have just gone
+    reparse();
+    if (status) setYamlStatus(status);
     updateUndo();
   }
 
   function structuralEdit(line, say) {
-    yamlPane.value = YAML.serialise(MODEL.doc);
-    paintGutter();
-    paintInk();
-    activeField = null;          // whatever was highlighted may have just gone
-    reparse();
-    if (say) setYamlStatus(say);
-    updateUndo();
+    setComposeText(YAML.serialise(MODEL.doc), say);
     if (line < 0) return;
 
     var id  = YAML.fieldAtLine(MODEL, line);
@@ -10291,10 +10284,7 @@
         return;
       }
       setYamlStatus('');
-      yamlPane.value = YAML.serialise(MODEL.doc);
-      paintGutter();
-      paintInk();
-      refreshRanges();
+      quietEdit();
       return;
     }
 
@@ -10351,10 +10341,7 @@
         setYamlStatus('That could not be written — set it in the Compose view instead.');
         return;
       }
-      yamlPane.value = YAML.serialise(MODEL.doc);
-      paintGutter();
-      paintInk();
-      refreshRanges();
+      quietEdit();
       return;
     }
 
@@ -12158,14 +12145,10 @@
   closeOnOutside(pwgenOpen, '.staxx-pwgenwrap', closePwgen, function () { pwgenBtn.focus(); });
 
   undoBtn.addEventListener('click', function () {
-    var step = undoStack.pop();
-    if (!step) return;
-    yamlPane.value = step.text;
-    paintGutter();
-    paintInk();
-    reparse();
-    setYamlStatus('Undid ' + step.what + '.');
-    updateUndo();
+    var top = undoStack[undoStack.length - 1];
+    if (!top) return;
+    restoreUndo();
+    setYamlStatus('Undid ' + top.what + '.');
   });
 
   // PLAN_67 step 4 — the one place both the Tidy button and every arrival
@@ -12213,10 +12196,7 @@
     // the ordinary reparse a programmatic edit always gets. Never saved here —
     // the person decides whether to keep it.
     pushUndo('tidying the file');
-    yamlPane.value = outcome.text;
-    paintGutter();
-    paintInk();
-    reparse();
+    reloadPane(outcome.text);
     showYamlNotice(outcome.message, outcome.bad);
     updateUndo();
   });
@@ -14160,10 +14140,7 @@
       var f = YAML.fieldById(form, t.id);
       if (f) YAML.setValue(doc, form, f.id, t.escaped);
     });
-    yamlPane.value = YAML.serialise(doc);
-    paintGutter();
-    paintInk();
-    reparse();
+    reloadPane(YAML.serialise(doc));
   }
 
   // The shared tail of the import path: convert an already-fetched record and
@@ -19123,17 +19100,11 @@
     }
     out.push(text.slice(at));
 
-    // The same sequence structuralEdit() runs after a model edit, except the
-    // new text here already IS the finished string — this was a plain splice
-    // over the buffer, not a change to MODEL.doc, so there is no document to
-    // re-serialise.
-    yamlPane.value = out.join('');
-    paintGutter();
-    paintInk();
-    activeField = null;
-    reparse();
-    updateUndo();
-    setYamlStatus('Replaced ' + count + ' match' + (count === 1 ? '' : 'es') + '.');
+    // The same whole-file replacement setComposeText() does after a model
+    // edit, except the new text here already IS the finished string — this
+    // was a plain splice over the buffer, not a change to MODEL.doc, so
+    // there is no document to re-serialise.
+    setComposeText(out.join(''), 'Replaced ' + count + ' match' + (count === 1 ? '' : 'es') + '.');
     // reparse() already calls findRecompute(); findRun() on top of that lands
     // the selection on the (now empty, until searched again) match list.
     findRun();
@@ -22853,13 +22824,7 @@
       var built = buildDetailWriteText(currentText(), decisions);
       if (!built.ok) { fail(built.error); return; }
       pushUndo('filling in this stack’s details');
-      yamlPane.value = built.yaml;
-      paintGutter();
-      paintInk();
-      activeField = null;
-      reparse();
-      updateUndo();
-      setYamlStatus('Filled in this stack’s details.');
+      setComposeText(built.yaml, 'Filled in this stack’s details.');
       done(built.applied);
       return;
     }
@@ -22888,13 +22853,7 @@
       var scaffolded = window.StaxxMeta.scaffold(currentText());
       if (scaffolded.error || !scaffolded.changed) { updateScaffoldNote(); return; }
       pushUndo('adding the StaXX fields');
-      yamlPane.value = scaffolded.yaml;
-      paintGutter();
-      paintInk();
-      activeField = null;
-      reparse();
-      updateUndo();
-      setYamlStatus('Added the StaXX fields for icon, links and description.');
+      setComposeText(scaffolded.yaml, 'Added the StaXX fields for icon, links and description.');
       return;
     }
     call('read', { name: name }).then(function (res) {
@@ -25864,10 +25823,7 @@
       // before this writes into it directly.
       return openFile('').then(function () {
         pushUndo('restoring version ' + n + ' from history');
-        yamlPane.value = text;
-        paintGutter();
-        paintInk();
-        reparse();
+        reloadPane(text);
         setYamlStatus('Restored version ' + n + ' from history — Save keeps it, or Undo puts the ' +
           'previous version back.');
         setTab('configure');
@@ -26195,9 +26151,7 @@
     } else if (sanitised) {
       realText = newText;
     } else {
-      yamlPane.value = newText;
-      paintGutter();
-      paintInk();
+      setPaneText(newText);
     }
     textAtOpen = newText;
     reparse();
@@ -26664,10 +26618,7 @@
                 // into the box the same way any other structural edit does,
                 // then save() through the same button every other edit uses.
                 pushUndo('adding a health check for ' + service);
-                yamlPane.value = newText;
-                paintGutter();
-                paintInk();
-                reparse();
+                reloadPane(newText);
                 save(false);
               } else {
                 // No editor open to write into — save() reads its payload
