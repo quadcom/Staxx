@@ -674,15 +674,7 @@ function staxx_detail_template_match(string $image, string $dir = STAXX_IMPORT_T
   if (array_key_exists($key, $cache)) return $cache[$key];
 
   $found = null;
-  foreach ((array)@scandir($dir) as $file) {
-    // *.xml only — the folder also holds a .bak of whatever was last
-    // overwritten, and it would parse just as happily as a real template.
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $xml) {
     if (strtolower(staxx_links_repo_path((string)($xml->Repository ?? ''))) !== $repo) continue;
 
     $found = [

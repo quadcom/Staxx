@@ -1895,4 +1895,38 @@ function staxx_containers_by_project(): array {
   ksort($projects);
   return $projects;
 }
+
+/**
+ * PLAN_190 item 9 — one parsed reading of an Unraid template folder,
+ * shared by every scanner that walks it (staxx_detail_template_match(),
+ * staxx_watch_template_claims(), staxx_unraid_template_for(),
+ * staxx_unraid_templates_at_risk()) instead of each running its own
+ * scandir()/simplexml_load_file() pass, remembered per request. On
+ * Adrian's box that folder holds about 85 XML files, so a request that
+ * reaches more than one of these scanners used to re-parse the whole
+ * folder for each.
+ *
+ * *.xml only — the folder also holds a .bak of whatever template was last
+ * overwritten, and it parses just as happily as a real one.
+ *
+ * @return array<string, SimpleXMLElement> path => parsed template, in
+ *   scandir()'s own order, for every regular *.xml file in $dir that
+ *   actually parses.
+ */
+function staxx_unraid_template_xml(string $dir, bool $reset = false): array {
+  static $cache = [];
+  if ($reset) { $cache = []; return []; }
+  if (array_key_exists($dir, $cache)) return $cache[$dir];
+
+  $found = [];
+  foreach ((array)@scandir($dir) as $file) {
+    if (!preg_match('/\.xml$/i', $file)) continue;
+    $path = $dir.'/'.$file;
+    if (!is_file($path)) continue;
+    $xml = @simplexml_load_file($path);
+    if ($xml === false) continue;
+    $found[$path] = $xml;
+  }
+  return $cache[$dir] = $found;
+}
 ?>

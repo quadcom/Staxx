@@ -197,14 +197,7 @@ function staxx_watch_template_claims(string $dir = STAXX_IMPORT_TEMPLATES_DIR): 
   if (isset($cache[$dir])) return $cache[$dir];
 
   $claims = [];
-  foreach ((array)@scandir($dir) as $file) {
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
-
+  foreach (staxx_unraid_template_xml($dir) as $xml) {
     $repo    = strtolower(staxx_links_repo_path((string)($xml->Repository ?? '')));
     $project = staxx_links_url((string)($xml->Project ?? ''));
     if ($repo === '' || $project === '' || isset($claims[$repo])) continue;

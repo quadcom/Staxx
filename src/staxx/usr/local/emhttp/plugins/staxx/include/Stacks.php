@@ -4577,16 +4577,7 @@ function staxx_unraid_template_for(string $containerName): array {
   if (!is_dir($dir)) return ['path' => '', 'count' => 0];
 
   $matches = [];
-  foreach ((array)@scandir($dir) as $file) {
-    // Matches staxx_import_templates()'s own filter — the folder also holds
-    // a .bak of whatever was last overwritten, which parses just as happily
-    // as a real template.
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $path => $xml) {
     if (trim((string)($xml->Name ?? '')) === $containerName) $matches[] = $path;
   }
 
@@ -4691,6 +4682,10 @@ function staxx_handover_unraid_hold(array $targets, array &$notes) {
 
       $dest = $dir.'/'.basename($found['path']);
       if (!@rename($found['path'], $dest)) return false;
+      // The folder just changed under a name a later scan in this same
+      // request must not still see — staxx_unraid_templates_at_risk() runs
+      // straight after a handover, in the same review-note build.
+      staxx_unraid_template_xml('', true);
 
       $template = $found['path'];
       $held     = $dest;
@@ -4730,6 +4725,9 @@ function staxx_handover_unraid_release(array $unraid): array {
       $sentences[] = 'Its Unraid template is still in StaXX\'s own folder, because '
                    . 'another file has appeared at its old location since.';
     } elseif (@rename($held, $template)) {
+      // Put back into the folder every scanner reads — a later scan in this
+      // same request must see it there again.
+      staxx_unraid_template_xml('', true);
       $sentences[] = 'Its Unraid template is back where it was.';
     } else {
       $sentences[] = 'Its Unraid template could not be moved back, and is still in '
@@ -5702,13 +5700,7 @@ function staxx_unraid_templates_at_risk(?array $containers = null): array {
   $onAutoupdate = is_array($autoupdate) ? array_keys($autoupdate['containers'] ?? []) : [];
 
   $rows = [];
-  foreach ((array)@scandir($dir) as $file) {
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $path => $xml) {
     $name = trim((string)($xml->Name ?? ''));
     if ($name === '' || !isset($named[$name])) continue;
 
@@ -5765,6 +5757,10 @@ function staxx_unraid_templates_reclaim(array $names, string &$error, ?array $co
       $error = 'Could not move '.basename($r['template']).'.';
       continue;
     }
+    // A later at_risk() scan in this same request — including the one
+    // tests/server/unraid_templates.php runs straight after this — must
+    // see the folder as it now is.
+    staxx_unraid_template_xml('', true);
     staxx_autoupdate_entry_remove($r['name']);
     $moved[] = $r['name'];
   }
