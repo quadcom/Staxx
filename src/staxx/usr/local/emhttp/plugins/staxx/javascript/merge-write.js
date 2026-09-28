@@ -981,6 +981,26 @@
     return String(value);
   }
 
+  // "A list of KEY=VALUE strings, or a map" into something keyed — a list
+  // becomes a map, split at the first "=", entries with no "=" skipped, a
+  // later key replacing an earlier one; a map is returned as the SAME
+  // object (not copied, not stringified). Used for descriptorFromText()'s
+  // own `environment`/`labels` reading below. Kept apart from
+  // overrideKVEntries() just below, which answers a different question —
+  // it keeps repeated keys as separate list entries and turns every value
+  // into a string, both needed for what the override pass writes back out.
+  function kvToMap(value) {
+    var out = {};
+    if (Array.isArray(value)) {
+      value.forEach(function (kv) {
+        var eq = String(kv).indexOf('=');
+        if (eq >= 0) out[kv.slice(0, eq)] = kv.slice(eq + 1);
+      });
+      return out;
+    }
+    return (value && typeof value === 'object') ? value : out;
+  }
+
   function overrideKVEntries(value) {
     var out = [];
     if (Array.isArray(value)) {
@@ -1477,15 +1497,7 @@
         return null;
       }).filter(Boolean);
 
-      var environment = {};
-      if (Array.isArray(raw.environment)) {
-        raw.environment.forEach(function (kv) {
-          var eq = String(kv).indexOf('=');
-          if (eq >= 0) environment[kv.slice(0, eq)] = kv.slice(eq + 1);
-        });
-      } else if (raw.environment && typeof raw.environment === 'object') {
-        environment = raw.environment;
-      }
+      var environment = kvToMap(raw.environment);
 
       // C2 — each value as the author wrote it, resolved once against this
       // source's own .env (see resolveEnvValue()'s own comment). The two
@@ -1503,15 +1515,7 @@
       // a map (key: value directly) — findLabelClashes() (merge-examine.js)
       // only ever needs to ask "what is this label's own value", never how
       // it was shaped.
-      var labels = {};
-      if (Array.isArray(raw.labels)) {
-        raw.labels.forEach(function (kv) {
-          var eq = String(kv).indexOf('=');
-          if (eq >= 0) labels[kv.slice(0, eq)] = kv.slice(eq + 1);
-        });
-      } else if (raw.labels && typeof raw.labels === 'object') {
-        labels = raw.labels;
-      }
+      var labels = kvToMap(raw.labels);
 
       services[svcName] = {
         image: raw.image || '',
