@@ -7876,45 +7876,20 @@ function staxx_prune_jobs(): void {
 function staxx_log_start(string $stack, string $service, string &$error): string {
   $error = '';
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  // staxx_stack_gate() covers the valid-name check, the retired and review
+  // locks, compose and Docker being present, the compose file and $service
+  // being one of its actual services, in that order.
+  $file = staxx_stack_gate($stack, 'viewing its logs', $service, $error);
+  if ($file === '') return '';
 
-  // Checked before anything about the environment or the service, exactly as
-  // staxx_start_job() orders it: a locked stack is refused for the right
-  // reason even when compose or docker also happen to be unavailable.
-  $retiredInto = staxx_retired_into($stack);
-  if ($retiredInto !== '') {
-    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
-           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
-           . 'and the "retired" profile lines to bring it back.';
-    return '';
-  }
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before viewing its logs.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $cmd   = staxx_compose_cmd();
+  $dir   = staxx_stack_dir($stack);
   $files = staxx_compose_files($file);
 
   $tail = 'logs --follow --tail 200 --timestamps';
   if ($service !== '') {
-    // Membership against the compose file's own services, the same rule and
-    // the same reason staxx_start_job() checks a service name against —
-    // a regex on shape would accept a name this stack does not have.
-    // escapeshellarg() on top of that, belt and braces, same as there.
-    $services = staxx_compose_meta($file)['services'];
-    if (!isset($services[$service])) {
-      $error = 'No service called "'.$service.'" in this stack.';
-      return '';
-    }
+    // escapeshellarg() belt and braces on top of staxx_stack_gate()'s
+    // membership check, same as staxx_start_job().
     $tail .= ' --no-log-prefix '.escapeshellarg($service);
   }
 
@@ -8101,38 +8076,17 @@ function staxx_log_reap(): void {
 function staxx_log_download(string $stack, string $service, string &$error): string {
   $error = '';
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  // staxx_stack_gate() covers the valid-name check, the retired and review
+  // locks, compose and Docker being present, the compose file and $service
+  // being one of its actual services, in that order.
+  $file = staxx_stack_gate($stack, 'viewing its logs', $service, $error);
+  if ($file === '') return '';
 
-  $retiredInto = staxx_retired_into($stack);
-  if ($retiredInto !== '') {
-    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
-           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
-           . 'and the "retired" profile lines to bring it back.';
-    return '';
-  }
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before viewing its logs.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $cmd   = staxx_compose_cmd();
   $files = staxx_compose_files($file);
 
   $args = 'logs --tail 2000 --timestamps';
   if ($service !== '') {
-    $services = staxx_compose_meta($file)['services'];
-    if (!isset($services[$service])) {
-      $error = 'No service called "'.$service.'" in this stack.';
-      return '';
-    }
     $args .= ' --no-log-prefix '.escapeshellarg($service);
   }
 
@@ -8299,40 +8253,15 @@ function staxx_service_container_any_state(string $file, string $leaf, string $s
 function staxx_exec_start(string $stack, string $service, string &$error): string {
   $error = '';
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
-
-  if (!staxx_cfg_bool('SHELL_ENABLED')) {
-    $error = 'Shell access to containers is turned off in Settings.';
-    return '';
-  }
-
-  $retiredInto = staxx_retired_into($stack);
-  if ($retiredInto !== '') {
-    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
-           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
-           . 'and the "retired" profile lines to bring it back.';
-    return '';
-  }
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before opening a shell.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
-
-  $services = staxx_compose_meta($file)['services'];
-  if (!isset($services[$service])) {
-    $error = 'No service called "'.$service.'" in this stack.';
-    return '';
-  }
+  // staxx_stack_gate() covers the valid-name check, the shell-enabled
+  // switch, the retired and review locks, compose and Docker being present,
+  // the compose file and $service being one of its actual services, in
+  // that order.
+  $file = staxx_stack_gate(
+    $stack, 'opening a shell', $service, $error,
+    staxx_cfg_bool('SHELL_ENABLED') ? '' : 'Shell access to containers is turned off in Settings.'
+  );
+  if ($file === '') return '';
 
   $container = staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
   if ($container === '') return ''; // $error already set
@@ -8766,40 +8695,16 @@ function staxx_health_trial(string $container, $test, string &$why): bool {
  */
 function staxx_cfile_container(string $stack, string $service, string &$error): string {
   $error = '';
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
 
-  if (!staxx_files_enabled()) {
-    $error = 'Container file access is turned off in Settings.';
-    return '';
-  }
-
-  $retiredInto = staxx_retired_into($stack);
-  if ($retiredInto !== '') {
-    $error = 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
-           . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
-           . 'and the "retired" profile lines to bring it back.';
-    return '';
-  }
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before browsing files inside a container.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
-
-  $services = staxx_compose_meta($file)['services'];
-  if (!isset($services[$service])) {
-    $error = 'No service called "'.$service.'" in this stack.';
-    return '';
-  }
+  // staxx_stack_gate() covers the valid-name check, the files-enabled
+  // switch, the retired and review locks, compose and Docker being present,
+  // the compose file and $service being one of its actual services, in
+  // that order.
+  $file = staxx_stack_gate(
+    $stack, 'browsing files inside a container', $service, $error,
+    staxx_files_enabled() ? '' : 'Container file access is turned off in Settings.'
+  );
+  if ($file === '') return '';
 
   return staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
 }

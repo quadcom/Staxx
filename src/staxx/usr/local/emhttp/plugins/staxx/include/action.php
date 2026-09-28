@@ -92,6 +92,12 @@ function staxx_reply(array $payload, int $status = 200): void {
   exit;
 }
 
+// The endpoint's one shape for a refusal, and the guard nearly every case
+// opens with — a valid stack name, or the same "Invalid stack name." reply
+// every one of them already gave.
+function staxx_fail(string $error): void { staxx_reply(['ok' => false, 'error' => $error]); }
+function staxx_need_stack(string $name): void { if (!staxx_valid_path($name)) staxx_fail('Invalid stack name.'); }
+
 /* ----------------------------------------------------------- events push -- */
 
 define('STAXX_EVENTS_DIR', '/tmp/staxx/events');
@@ -273,7 +279,7 @@ switch ($action) {
   // ---- read one stack's compose file, for the editor ----
   case 'read':
     $body = staxx_read_stack($name, $error);
-    if ($body === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($body === null) staxx_fail($error);
     // PLAN_102 5a — a compose file dropped into the folder by hand has no
     // history until something is saved over it, and until then the file is
     // its own only copy. Somebody opening the editor is the earliest moment
@@ -360,7 +366,7 @@ switch ($action) {
 
     $historyNote = '';
     if (!staxx_save_stack($name, $body, $error, $historyNote)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
 
     // Phase D — the exit route. Only a brand-new stack can be a caught
@@ -424,9 +430,7 @@ switch ($action) {
    * the list just to offer the last one.
    */
   case 'adopt-check':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $adoptDir      = staxx_stack_dir($name);
     $overridePath  = staxx_compose_files($adoptDir.'/compose.yaml')[1] ?? '';
     $overrideName  = $overridePath !== '' ? basename($overridePath) : '';
@@ -514,7 +518,7 @@ switch ($action) {
     $confirmed = ($_POST['confirm'] ?? '') === '1';
     if (!$confirmed) {
       $extras = staxx_stack_extras($name, $error);
-      if ($extras === null) staxx_reply(['ok' => false, 'error' => $error]);
+      if ($extras === null) staxx_fail($error);
 
       // PLAN_181 Part B — the confirmation names the roll-back copies this
       // stack's own history holds that removing it will also remove, worked
@@ -542,7 +546,7 @@ switch ($action) {
       ]);
     }
     if (!staxx_archive_stack($name, $error, $confirmed, $archive, $note)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
 
     // Nothing left on disk to keep a place for — drop the stack from the
@@ -679,7 +683,7 @@ switch ($action) {
   // brand new stack — see staxx_merge_files()'s own comment in Merge.php ----
   case 'merge-files':
     $listing = staxx_merge_files($name, $error);
-    if ($listing === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($listing === null) staxx_fail($error);
     staxx_reply([
       'ok' => true, 'files' => $listing['files'], 'large' => $listing['large'],
       'override' => $listing['override'],
@@ -728,7 +732,7 @@ switch ($action) {
    */
   case 'export-sort':
     $sorted = staxx_export_sort($name, $error);
-    if ($sorted === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($sorted === null) staxx_fail($error);
     staxx_reply(['ok' => true, 'files' => $sorted]);
 
   /* ---- export-pack: build a zip from name-and-contents pairs, not a folder --
@@ -759,7 +763,7 @@ switch ($action) {
     }
 
     $zip = staxx_export_pack($decoded, $name, $error);
-    if ($zip === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($zip === '') staxx_fail($error);
 
     // .staxx rather than .zip: this is an ordinary zip underneath (renaming
     // it back to .zip is how anyone can look inside), but the extension
@@ -783,7 +787,7 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'That bundle did not arrive intact.']);
     }
     $bundle = staxx_bundle_read($zipBytes, $error);
-    if ($bundle === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($bundle === null) staxx_fail($error);
 
     // The covering note every export writes into its own compose file, read
     // back rather than re-summarised here — so the preview and the export
@@ -837,10 +841,10 @@ switch ($action) {
     // person who may have sat on it, and this is the point nothing may be
     // written on a stale or tampered say-so.
     $bundle = staxx_bundle_read($zipBytes, $error);
-    if ($bundle === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($bundle === null) staxx_fail($error);
 
     if (!staxx_bundle_write($bundle, $name, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true, 'name' => $name]);
 
@@ -855,13 +859,13 @@ switch ($action) {
 
   case 'files':
     $files = staxx_list_files($name, $error);
-    if ($files === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($files === null) staxx_fail($error);
     staxx_reply(['ok' => true, 'files' => $files]);
 
   case 'file-read':
     $file = (string)($_POST['file'] ?? '');
     $read = staxx_read_file($name, $file, $error);
-    if ($read === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($read === null) staxx_fail($error);
     staxx_reply(['ok' => true, 'name' => $name, 'file' => $file] + $read);
 
   case 'file-save':
@@ -905,25 +909,25 @@ switch ($action) {
     $isOverrideSave = $existingOverride !== '' ? $file === $existingOverride : staxx_is_override_name($file);
     if ($isOverrideSave && trim($body) !== '') {
       if (!staxx_validate_compose($body, $error, $dir, $warnings, $main, '')) {
-        staxx_reply(['ok' => false, 'error' => $error]);
+        staxx_fail($error);
       }
     }
 
     if (!staxx_write_file($name, $file, $body, $encoding !== 'base64', $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   case 'file-delete':
     if (!staxx_delete_file($name, (string)($_POST['file'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   case 'file-rename':
     if (!staxx_rename_file($name, (string)($_POST['file'] ?? ''),
                               (string)($_POST['to'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -932,7 +936,7 @@ switch ($action) {
     $verb    = (string)($_POST['verb'] ?? '');
     $service = (string)($_POST['service'] ?? '');
     $job     = staxx_start_job($name, $verb, $error, $service);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_prune_jobs();
     staxx_reply([
       'ok'    => true,
@@ -991,7 +995,7 @@ switch ($action) {
   case 'log-start':
     $service = (string)($_POST['service'] ?? '');
     $id      = staxx_log_start($name, $service, $error);
-    if ($id === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($id === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'id' => $id]);
 
   case 'log-read':
@@ -1005,7 +1009,7 @@ switch ($action) {
   case 'log-download':
     $service = (string)($_POST['service'] ?? '');
     $text    = staxx_log_download($name, $service, $error);
-    if ($text === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($text === '' && $error !== '') staxx_fail($error);
     staxx_reply(['ok' => true, 'text' => $text]);
 
   /* ---- the shell: open, poll and close a real terminal (ttyd) in a running
@@ -1019,7 +1023,7 @@ switch ($action) {
   case 'exec-open':
     $service = (string)($_POST['service'] ?? '');
     $id      = staxx_exec_start($name, $service, $error);
-    if ($id === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($id === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'id' => $id]);
 
   case 'exec-alive':
@@ -1037,14 +1041,14 @@ switch ($action) {
     $service = (string)($_POST['service'] ?? '');
     $dir     = (string)($_POST['dir'] ?? '');
     $listing = staxx_cfile_list($name, $service, $dir, $error);
-    if ($listing === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($listing === null) staxx_fail($error);
     staxx_reply(['ok' => true] + $listing);
 
   case 'cfile-read':
     $service = (string)($_POST['service'] ?? '');
     $path    = (string)($_POST['path'] ?? '');
     $read    = staxx_cfile_read($name, $service, $path, $error);
-    if ($read === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($read === null) staxx_fail($error);
     staxx_reply(['ok' => true, 'path' => $path] + $read);
 
   case 'cfile-save':
@@ -1065,7 +1069,7 @@ switch ($action) {
     }
 
     if (!staxx_cfile_write($name, $service, $path, $body, $encoding !== 'base64', $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -1073,7 +1077,7 @@ switch ($action) {
     $service = (string)($_POST['service'] ?? '');
     if (!staxx_cfile_rename($name, $service, (string)($_POST['path'] ?? ''),
                                 (string)($_POST['to'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -1081,7 +1085,7 @@ switch ($action) {
     $service = (string)($_POST['service'] ?? '');
     $recurse = (string)($_POST['recurse'] ?? '') === '1';
     if (!staxx_cfile_delete($name, $service, (string)($_POST['path'] ?? ''), $recurse, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -1108,24 +1112,24 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'Permissions have to be three or four digits from 0 to 7, like 755 — not u+x.']);
     }
     if ($owner !== '' && !staxx_cfile_chown($name, $service, $path, $owner, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     if ($mode !== '' && !staxx_cfile_chmod($name, $service, $path, $mode, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   case 'cfile-mkdir':
     $service = (string)($_POST['service'] ?? '');
     if (!staxx_cfile_mkdir($name, $service, (string)($_POST['path'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   case 'cfile-home':
     $service = (string)($_POST['service'] ?? '');
     $home    = staxx_cfile_home($name, $service, $error);
-    if ($home === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($home === '' && $error !== '') staxx_fail($error);
     staxx_reply(['ok' => true, 'home' => $home]);
 
   /* ---- PLAN_44 D6: the line above the panes, and "show the environment" -
@@ -1136,13 +1140,13 @@ switch ($action) {
   case 'cstat':
     $service = (string)($_POST['service'] ?? '');
     $stat    = staxx_cstat($name, $service, $error);
-    if ($stat === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($stat === null) staxx_fail($error);
     staxx_reply(['ok' => true] + $stat);
 
   case 'cenv':
     $service = (string)($_POST['service'] ?? '');
     $text    = staxx_cenv($name, $service, $error);
-    if ($text === null) staxx_reply(['ok' => false, 'error' => $error]);
+    if ($text === null) staxx_fail($error);
     staxx_reply(['ok' => true, 'text' => $text]);
 
   /* ---- PLAN_108 step 2 — the facts a health-check chooser needs ----
@@ -1159,7 +1163,7 @@ switch ($action) {
   case 'health-probe':
     $service = (string)($_POST['service'] ?? '');
     $container = staxx_cfile_container($name, $service, $error);
-    if ($container === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($container === '') staxx_fail($error);
 
     $file = staxx_find_compose_file(staxx_stack_dir($name));
     $meta = staxx_compose_meta($file);
@@ -1234,7 +1238,7 @@ switch ($action) {
     }
 
     $container = staxx_cfile_container($name, $service, $error);
-    if ($container === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($container === '') staxx_fail($error);
 
     $why = '';
     $canRun = staxx_health_trial($container, $test, $why);
@@ -1331,13 +1335,13 @@ switch ($action) {
   // ---- begin a handover: set the old container aside, start this one ----
   case 'handover-start':
     $job = staxx_start_handover($name, $error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   // ---- begin a takeover: bring the stack up in place of a running project ----
   case 'takeover-start':
     $job = staxx_start_takeover($name, $error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   /* ---- answer whether the handover worked ----
@@ -1353,7 +1357,7 @@ switch ($action) {
     $worked = ($_POST['worked'] ?? '') === '1';
     $force  = ($_POST['force'] ?? '') === '1';
     $job    = staxx_finish_handover($name, $worked, $error, $force);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   /* ---- PLAN_165 §5 — the sweep for stacks taken over before this plan ----
@@ -1538,9 +1542,7 @@ switch ($action) {
   // expensive docker-inspect-per-service comparison. See Pending.php's own
   // header for why the two must never merge.
   case 'pending-detail':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     staxx_reply(staxx_pending_detail($name));
 
   // ---- start a check pass; the page follows it with the existing 'job' action ----
@@ -1555,7 +1557,7 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'Invalid scope.']);
     }
     $job = staxx_update_check_start($scope, true, $error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   /* ---- resolve one service's project and support links, for the row menu --
@@ -1569,9 +1571,7 @@ switch ($action) {
    */
   case 'links':
     $service = (string)($_POST['service'] ?? '');
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $dir  = staxx_stack_dir($name);
     $file = staxx_find_compose_file($dir);
     if ($file === '') {
@@ -1613,9 +1613,7 @@ switch ($action) {
    * because stacks.js still calls it and another agent owns that file.
    */
   case 'detail':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     staxx_reply(staxx_detail_discover($name));
 
   /* ---- PLAN_70 stage 5 — what could a typed value be pointing at? ----
@@ -1629,9 +1627,7 @@ switch ($action) {
   case 'link-match':
     $service = (string)($_POST['service'] ?? '');
     $value   = (string)($_POST['value']   ?? '');
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     staxx_reply(['ok' => true] + staxx_crosslinks_match($name, $service, $value));
 
   /* ---- PLAN_70 stage 5 — credentials for ONE confirmed target ----
@@ -1665,22 +1661,20 @@ switch ($action) {
   // ---- dismiss the version currently on offer for one image ----
   case 'update-skip':
     if (!staxx_update_skip((string)($_POST['image'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   // ---- dismiss the registry-move hint currently on offer for one image ----
   case 'update-skip-move':
     if (!staxx_update_skip_move((string)($_POST['image'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   // ---- dismiss one author-example finding for one stack (PLAN_62 Stage 4) ----
   case 'watch-skip':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     if (!staxx_watch_skip(
       $name,
       (string)($_POST['image'] ?? ''),
@@ -1688,7 +1682,7 @@ switch ($action) {
       (string)($_POST['setting'] ?? ''),
       $error
     )) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -1712,7 +1706,7 @@ switch ($action) {
    */
   case 'update-hold':
     if (!staxx_update_hold((string)($_POST['image'] ?? ''), ($_POST['on'] ?? '') === '1', $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -1724,9 +1718,7 @@ switch ($action) {
    * stack's own compose services; nothing here needs to repeat that check.
    */
   case 'update-apply':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $service = (string)($_POST['service'] ?? '');
 
     // Update must never be the thing that starts a container or a stack the
@@ -1779,7 +1771,7 @@ switch ($action) {
     staxx_update_record_before_pull($name, is_array($service) ? '' : $service);
 
     $job = staxx_start_job($name, $verb, $error, $service);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_prune_jobs();
     staxx_reply(['ok' => true, 'job' => $job]);
 
@@ -1793,9 +1785,7 @@ switch ($action) {
    * same shape every other verb here takes.
    */
   case 'update-rebuild':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $service = (string)($_POST['service'] ?? '');
     $dir  = staxx_stack_dir($name);
     $file = staxx_find_compose_file($dir);
@@ -1813,7 +1803,7 @@ switch ($action) {
       staxx_rebuild_baseline_reset($name, $svc);
     }
     $job = staxx_start_job($name, 'rebuild', $error, $service);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_prune_jobs();
     staxx_reply(['ok' => true, 'job' => $job]);
 
@@ -1829,9 +1819,7 @@ switch ($action) {
    * back in a single save and a single recreate job.
    */
   case 'update-rollback':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     if (isset($_POST['services']) || isset($_POST['digests'])) {
       $svcList    = array_filter(explode(';', (string)($_POST['services'] ?? '')), fn($v) => $v !== '');
       $digestList = array_filter(explode(';', (string)($_POST['digests'] ?? '')), fn($v) => $v !== '');
@@ -1848,7 +1836,7 @@ switch ($action) {
     $job = staxx_update_rollback(
       $name, $targets, $error, (string)($_POST['yaml'] ?? ''), $rbNote
     );
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     // A pin is only acceptable because it can be undone from the file history,
     // so a save that kept no previous version cannot stay quiet about it.
     //
@@ -1870,7 +1858,7 @@ switch ($action) {
    */
   case 'pin-resolve':
     $pinRes = staxx_pin_resolve($name, (string)($_POST['service'] ?? ''), $error);
-    if (!$pinRes['ok']) staxx_reply(['ok' => false, 'error' => $error]);
+    if (!$pinRes['ok']) staxx_fail($error);
     staxx_reply(['ok' => true, 'digest' => $pinRes['digest']]);
 
   /* ---- what a stack's Versions tab needs: every service's image, what is on
@@ -1880,9 +1868,7 @@ switch ($action) {
    * reads that key, and getting it wrong is a silent empty reply, not an error.
    */
   case 'image-versions':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $file = staxx_stack_compose_map()[$name] ?? '';
     if ($file === '') {
       staxx_reply(['ok' => false, 'error' => 'No compose file found in this stack.']);
@@ -1919,7 +1905,7 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'Invalid scope.']);
     }
     $qid = staxx_update_queue_start($scope, ($_POST['stopped'] ?? '') === '1', $error);
-    if ($qid === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($qid === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state()]);
 
   // ---- advance the queue one step, and say where it now stands ----
@@ -1943,7 +1929,7 @@ switch ($action) {
   // here, the page only ever displays what it is sent.
   case 'images_unused':
     $listing = staxx_images_unused($error);
-    if (!$listing['ok']) staxx_reply(['ok' => false, 'error' => $error]);
+    if (!$listing['ok']) staxx_fail($error);
     staxx_reply([
       'ok'      => true,
       'groups'  => $listing['groups'],
@@ -1962,13 +1948,13 @@ switch ($action) {
       if ($id !== '') $ids[] = $id;
     }
     $job = staxx_images_remove_job($ids, $error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   // ---- PLAN_181 item 10 — clearing one broken container's own record ----
   case 'images_remove_broken':
     $id = trim((string)($_POST['id'] ?? ''));
-    if (!staxx_images_remove_broken($id, $error)) staxx_reply(['ok' => false, 'error' => $error]);
+    if (!staxx_images_remove_broken($id, $error)) staxx_fail($error);
     staxx_reply(['ok' => true]);
 
   // ---- the browser saying an editor on this stack still has unsaved changes --
@@ -1977,9 +1963,7 @@ switch ($action) {
   // simply stops touching it, and the mark goes stale on its own after 15
   // minutes rather than freezing the stack's clock for ever.
   case 'update-editing':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     staxx_update_editing_mark($name);
     staxx_reply(['ok' => true]);
 
@@ -2033,9 +2017,7 @@ switch ($action) {
    * browser's job once this returns.
    */
   case 'icon-drop':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $filename = (string)($_POST['filename'] ?? '');
     $dataB64  = (string)($_POST['data'] ?? '');
     $body     = $dataB64 === '' ? false : base64_decode($dataB64, true);
@@ -2044,7 +2026,7 @@ switch ($action) {
     }
 
     $file = staxx_icon_adopt_drop(staxx_stack_dir($name), $filename, $body, $error);
-    if ($file === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($file === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'file' => $file]);
 
   // ---- self-test: pure PHP, runs no commands, cannot hang ----
@@ -2422,7 +2404,7 @@ switch ($action) {
   // ---- try one service's web address, exactly as its row's link would open it ----
   case 'webui-test':
     $url = staxx_webui_for($name, (string)($_POST['service'] ?? ''), $error);
-    if ($url === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($url === '') staxx_fail($error);
 
     $answered = staxx_webui_try($url, $code);
     if (!$answered) {
@@ -2576,7 +2558,7 @@ switch ($action) {
    * archive dialog (B5) knows whether to show its Proxy and DNS part at
    * all, and what to offer per service, without applying anything. ---- */
   case 'expose-records':
-    if (!staxx_valid_path($name)) staxx_reply(['ok' => false, 'error' => 'That stack name is not valid.']);
+    if (!staxx_valid_path($name)) staxx_fail('That stack name is not valid.');
     staxx_reply(['ok' => true, 'records' => staxx_expose_json_read($name)]);
 
   /* ---- switching one service's tick off, or archiving a stack: acts only
@@ -2609,19 +2591,19 @@ switch ($action) {
   // else it could be called.
   case 'folder-create':
     $id = staxx_folder_create((string)($_POST['folderName'] ?? ''), $error);
-    if ($id === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($id === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'id' => $id]);
 
   case 'folder-rename':
     if (!staxx_folder_rename((string)($_POST['folder'] ?? ''),
                                 (string)($_POST['folderName'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
   case 'folder-delete':
     if (!staxx_folder_delete((string)($_POST['folder'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -2629,11 +2611,9 @@ switch ($action) {
   // changes with it. The new one goes back to the page, which would otherwise
   // still be holding the old path the next time it acted on that row.
   case 'folder-assign':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $moved = staxx_folder_assign($name, (string)($_POST['folder'] ?? ''), $error);
-    if ($moved === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($moved === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'name' => $moved]);
 
   // Renaming a stack moves its directory, so its identity changes with it —
@@ -2641,34 +2621,11 @@ switch ($action) {
   // same way. The page sequences down/rename/up itself for a running stack;
   // this action is only ever the instant directory move.
   case 'stack-rename':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $renamed = staxx_rename_stack($name, (string)($_POST['stackName'] ?? ''), $error);
-    if ($renamed === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($renamed === '') staxx_fail($error);
 
-    // staxx_rename_stack() lives in Stacks.php, which sits below Folders.php
-    // in the include order and must not depend on it — so the stored order
-    // is kept pointed at the new name here instead, or the drag position a
-    // rename inherits would silently be lost.
-    if ($renamed !== $name) {
-      $folder = staxx_path_folder($name);
-      staxx_folders_update(function (array $data) use ($folder, $name, $renamed): array {
-        $start = $data['start'];
-        $list  = $start['stacks'][$folder] ?? [];
-        $pos   = array_search(staxx_path_leaf($name), $list, true);
-        if ($pos !== false) $list[$pos] = staxx_path_leaf($renamed);
-        $start['stacks'][$folder] = $list;
-        // A loose stack's top-level token carries its leaf name too.
-        if ($folder === '') {
-          $ridx = array_search('stack:'.staxx_path_leaf($name), $start['root'], true);
-          if ($ridx !== false) $start['root'][$ridx] = 'stack:'.staxx_path_leaf($renamed);
-        }
-        staxx_start_rekey($start, $name, $renamed);
-        $data['start'] = $start;
-        return $data;
-      });
-    }
+    if ($renamed !== $name) staxx_folders_follow_rename($name, $renamed);
 
     staxx_reply(['ok' => true, 'name' => $renamed]);
 
@@ -2677,7 +2634,7 @@ switch ($action) {
   case 'folder-collapse':
     if (!staxx_folder_collapse((string)($_POST['folder'] ?? ''),
                                   ($_POST['collapsed'] ?? '') === '1', $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -2697,7 +2654,7 @@ switch ($action) {
     ));
     if (!staxx_start_order_set((string)($_POST['scope'] ?? ''),
                                (string)($_POST['parent'] ?? ''), $names, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     // The stored order is only half the job — Unraid boots from its own file,
     // so that has to follow. A refusal here still leaves the order saved,
@@ -2710,7 +2667,7 @@ switch ($action) {
     if (!staxx_autostart_set(staxx_list_stacks(), $name,
                              (string)($_POST['service'] ?? ''),
                              ($_POST['on'] ?? '') === '1', $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -2720,7 +2677,7 @@ switch ($action) {
     if (!staxx_autostart_wait(staxx_list_stacks(), (string)($_POST['scope'] ?? ''),
                               (string)($_POST['key'] ?? ''),
                               (int)($_POST['wait'] ?? 0), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true]);
 
@@ -2729,9 +2686,7 @@ switch ($action) {
   // file no longer names is never offered back; set narrows whatever it is
   // given to that same declared list, so a stale name cannot be written.
   case 'profiles':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $file     = staxx_find_compose_file(staxx_stack_dir($name));
     $declared = $file !== '' ? staxx_declared_profiles($file) : [];
 
@@ -2795,7 +2750,7 @@ switch ($action) {
     $reload = false;
     $saved  = null;
     if (!staxx_settings_save($_POST, $error, $reload, $saved)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     // A saved CRYPT_MODE must take effect without a rebuild — restart policy
     // and, for always-running, actually starting it. Cheap when the
@@ -2861,7 +2816,7 @@ switch ($action) {
     // pre-save value straight after the write. Using $norm avoids that.
     $norm = staxx_settings_validate_path('STORE_ROOT', (string)($_POST['path'] ?? ''), $error);
     if ($norm === '' || !staxx_store_create($norm, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true, 'path' => $norm]);
 
@@ -2984,7 +2939,7 @@ switch ($action) {
   // ---- start moving the stacks folder to a new location ----
   case 'relocate':
     $job = staxx_relocate_start((string)($_POST['dest'] ?? ''), $error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   /* ---- everything that could be imported: templates, projects, loose ----
@@ -3053,7 +3008,7 @@ switch ($action) {
     if (!is_array($about)) $about = [];
 
     if (!staxx_import_write($name, $body, $about, $error, $bodyAsIs)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true, 'name' => $name]);
 
@@ -3071,7 +3026,7 @@ switch ($action) {
     if (!is_array($about)) $about = [];
 
     if (!staxx_import_write_project($name, $id, $about, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     staxx_reply(['ok' => true, 'name' => $name]);
 
@@ -3115,9 +3070,7 @@ switch ($action) {
    * them.
    */
   case 'history-list':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $versions = array_map(fn($v) => [
       'n'    => $v['n'],
       'at'   => $v['at'],
@@ -3136,9 +3089,7 @@ switch ($action) {
    * index is checked first so the right one of those two is reported.
    */
   case 'history-read':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $n = (int)($_POST['n'] ?? 0);
     if ($n < 1) {
       staxx_reply(['ok' => false, 'error' => 'Invalid version number.']);
@@ -3169,16 +3120,14 @@ switch ($action) {
    * can never end up drawing a stale one after the change.
    */
   case 'history-name':
-    if (!staxx_valid_path($name)) {
-      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
-    }
+    staxx_need_stack($name);
     $n     = (int)($_POST['n'] ?? 0);
     $label = (string)($_POST['label'] ?? '');
     if ($n < 1) {
       staxx_reply(['ok' => false, 'error' => 'Invalid version number.']);
     }
     if (!staxx_record_name($name, $n, $label, $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
+      staxx_fail($error);
     }
     $versions = array_map(fn($v) => [
       'n'    => $v['n'],
@@ -3209,13 +3158,13 @@ switch ($action) {
   // ---- build the container for the first time; only ever called by a button press ----
   case 'crypt-build':
     $job = staxx_crypt_build($error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   // ---- rebuild from a newer recipe; same shape, see staxx_crypt_do_rebuild() ----
   case 'crypt-rebuild':
     $job = staxx_crypt_rebuild($error);
-    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
   /* ---- hash a password ----

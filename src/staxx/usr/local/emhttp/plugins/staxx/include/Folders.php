@@ -465,6 +465,32 @@ function staxx_start_rekey(array &$start, string $from, string $to): void {
   $start['delay'] = $delay;
 }
 
+/**
+ * staxx_rename_stack() lives in Stacks.php, which sits below Folders.php in
+ * the include order and must not depend on it — so the endpoint's
+ * 'stack-rename' case calls this instead, to keep the stored order pointed
+ * at the new name. Without it the drag position a rename inherits would
+ * silently be lost.
+ */
+function staxx_folders_follow_rename(string $from, string $to): void {
+  $folder = staxx_path_folder($from);
+  staxx_folders_update(function (array $data) use ($folder, $from, $to): array {
+    $start = $data['start'];
+    $list  = $start['stacks'][$folder] ?? [];
+    $pos   = array_search(staxx_path_leaf($from), $list, true);
+    if ($pos !== false) $list[$pos] = staxx_path_leaf($to);
+    $start['stacks'][$folder] = $list;
+    // A loose stack's top-level token carries its leaf name too.
+    if ($folder === '') {
+      $ridx = array_search('stack:'.staxx_path_leaf($from), $start['root'], true);
+      if ($ridx !== false) $start['root'][$ridx] = 'stack:'.staxx_path_leaf($to);
+    }
+    staxx_start_rekey($start, $from, $to);
+    $data['start'] = $start;
+    return $data;
+  });
+}
+
 /** Drop every start-block entry that belongs to one stack, root and branch. */
 function staxx_start_drop(array &$start, string $stack): void {
   unset($start['services'][$stack]);
