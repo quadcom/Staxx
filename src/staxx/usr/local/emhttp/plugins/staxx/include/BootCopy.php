@@ -17,9 +17,11 @@
  *      done for two narrow reasons, both added by the PLAN_103 addendum: to
  *      describe the shelf to a person (how many stacks, from when) so they
  *      can decide whether to restore, and to decide whether a copy needs
- *      rewriting at all (staxx_boot_sweep() compares bytes before writing).
+ *      rewriting at all (staxx_boot_sweep() compares bytes before writing,
+ *      and staxx_boot_write_file() does the same for every other caller).
  *      Neither reads happen while the store itself can answer the same
- *      question — see staxx_boot_shelf_summary() and staxx_boot_sweep().
+ *      question — see staxx_boot_shelf_summary(), staxx_boot_sweep() and
+ *      staxx_boot_write_file().
  *   2. Nothing here compares a copy's timestamp with the store's. The only
  *      timestamp involved is the filesystem's own mtime on the copy, and it
  *      is never read here — see the note on staxx_boot_write_file() below.
@@ -171,9 +173,13 @@ function staxx_boot_read_source(string $path, string &$error): ?string {
  * separate stamp file is written, because the copy's own filesystem
  * modification time already records when it landed here, one per file, for
  * free — inventing a second place to store the same fact would be a second
- * thing that could disagree with the first.
+ * thing that could disagree with the first, which is why identical content is
+ * left untouched below rather than rewritten: the modification time records
+ * when this copy's content last changed, not when it was last asked for
+ * (D4, PLAN_197 item 7, ruled 2026-09-28).
  */
 function staxx_boot_write_file(string $target, string $content, string &$error): bool {
+  if (is_file($target) && @file_get_contents($target) === $content) return true;
   if (!staxx_atomic_write($target, $content, null, $failed)) {
     $error = $failed === 'write' ? 'Could not write "'.$target.'" on the boot drive.'
                                   : 'Could not put "'.$target.'" in place on the boot drive.';

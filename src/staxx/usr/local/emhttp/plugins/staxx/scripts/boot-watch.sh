@@ -100,9 +100,10 @@ PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
 
 # Resolve the project to a stack and refresh its copy. Not coalesced across
 # several containers of the same project firing at once (a compose "up"
-# recreating three services fires this three times for one project) — the
-# write is idempotent and comparing first would cost the same php process
-# startup anyway, so the simpler shape is the lighter one here.
+# recreating three services fires this three times for one project) — an
+# unchanged copy is left untouched (staxx_boot_write_file() compares bytes
+# before writing), so the repeats cost a php process startup each but no
+# extra flash write, and coalescing them here would save only that startup.
 refresh() {
   project="$1"
   [ -n "$project" ] || return 0

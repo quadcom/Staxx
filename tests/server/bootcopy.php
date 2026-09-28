@@ -68,6 +68,30 @@ ok('the shelf copy matches the store byte for byte',
    is_file($bootFile) && file_get_contents($bootFile) === $compose);
 ok('the shelf has its README', is_file($bootScratch.'/README.txt'));
 
+/* ---------------------------------------- unchanged copy is not rewritten -- */
+// D4 (PLAN_197 item 7, ruled 2026-09-28): the shelf copy's modification time
+// is meant to say when its content last changed, not when it was last asked
+// for — so a copy of unchanged content must leave that time alone, and only
+// a real content change may move it.
+
+touch($bootFile, time() - 3600); // back-date it so "untouched" cannot pass by luck
+$mtimeBackdated = @filemtime($bootFile);
+$sameCopyErr = '';
+ok('copying a stack whose store content has not changed succeeds',
+   staxx_boot_copy_stack($rel, $sameCopyErr), $sameCopyErr);
+ok('...and leaves the unchanged copy\'s modification time exactly where it was backdated to',
+   @filemtime($bootFile) === $mtimeBackdated);
+
+$composeChanged = "services:\n  a:\n    image: alpine:3.22\n";
+file_put_contents($root.'/'.$rel.'/compose.yaml', $composeChanged);
+$changedCopyErr = '';
+ok('copying the same stack once its store content has actually changed succeeds',
+   staxx_boot_copy_stack($rel, $changedCopyErr), $changedCopyErr);
+ok('...the shelf copy now holds the changed content',
+   @file_get_contents($bootFile) === $composeChanged);
+ok('...and its modification time has moved on from the backdated one',
+   @filemtime($bootFile) > $mtimeBackdated);
+
 /* ------------------------------------------------------- override too -- */
 
 $override = "services:\n  a:\n    image: alpine:3.21\n";
