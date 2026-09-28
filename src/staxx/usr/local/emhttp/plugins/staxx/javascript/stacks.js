@@ -13508,29 +13508,21 @@
   // resetScroll is true only for a genuinely new search settling (the
   // ca-search reply, a category change) — a Docker Hub or local-image update
   // filling in underneath must not yank the list back to the top on the user.
+  // One search-results group: a heading with its count, then the rows in
+  // whichever wrapper class this group uses. '' when the list is empty, so
+  // callers can drop it from the page without a separate length check.
+  function caGroupHtml(title, list, wrapClass, rowHtml) {
+    if (!list.length) return '';
+    return '<h4 class="staxx-ca-group">' + title + ' <span class="staxx-ca-count">' + list.length + '</span></h4>' +
+           '<div class="' + wrapClass + '">' + list.map(rowHtml).join('') + '</div>';
+  }
+
   function caRenderAll(resetScroll) {
-    var blocks = [];
-
-    if (caApps.length) {
-      blocks.push(
-        '<h4 class="staxx-ca-group">Community Applications ' +
-        '<span class="staxx-ca-count">' + caApps.length + '</span></h4>' +
-        '<div class="staxx-ca-cards">' + caApps.map(caCardHtml).join('') + '</div>');
-    }
-
-    if (caHubHits.length) {
-      blocks.push(
-        '<h4 class="staxx-ca-group">Docker Hub ' +
-        '<span class="staxx-ca-count">' + caHubHits.length + '</span></h4>' +
-        '<div class="staxx-ca-rows">' + caHubHits.map(caHubRowHtml).join('') + '</div>');
-    }
-
-    if (caLocalHits.length) {
-      blocks.push(
-        '<h4 class="staxx-ca-group">Images on this server ' +
-        '<span class="staxx-ca-count">' + caLocalHits.length + '</span></h4>' +
-        '<div class="staxx-ca-rows">' + caLocalHits.map(caImgRowHtml).join('') + '</div>');
-    }
+    var blocks = [
+      caGroupHtml('Community Applications', caApps, 'staxx-ca-cards', caCardHtml),
+      caGroupHtml('Docker Hub', caHubHits, 'staxx-ca-rows', caHubRowHtml),
+      caGroupHtml('Images on this server', caLocalHits, 'staxx-ca-rows', caImgRowHtml)
+    ].filter(function (b) { return b !== ''; });
 
     caList.innerHTML = blocks.length
       ? blocks.join('')
@@ -13800,6 +13792,31 @@
     caRenderAll(true);   // a settled ca-search reply is a genuinely new search
   }
 
+  // The three answers a catalogue fetch can give that are not "here are the
+  // apps" — a plain error, still downloading (polled every 3s via retry),
+  // or the download having failed outright (searching again is what retries
+  // that, once the server has stopped reporting the failure as recent).
+  // Returns true when it handled the reply, leaving the caller nothing more
+  // to do; false means res.state is 'ready' and the caller renders it.
+  function caNotReady(res, retry) {
+    if (!res.ok) { caMsg.textContent = res.error; return true; }
+    if (res.state === 'building') {
+      caMsg.textContent = res.message || 'Fetching the applications catalogue. This happens the first time only…';
+      caList.innerHTML = '';
+      caStopPoll();
+      caPoll = setTimeout(retry, 3000);
+      return true;
+    }
+    if (res.state === 'failed') {
+      caStopPoll();
+      caList.innerHTML = '';
+      caMsg.textContent = res.message ||
+        'The app catalogue could not be downloaded. Check this server can reach the internet, then search again.';
+      return true;
+    }
+    return false;
+  }
+
   function caSearch() {
     caSearched = true;   // so the Search tab knows not to run another one just to avoid a blank list
     var stamp = ++caSearchStamp;
@@ -13814,27 +13831,7 @@
         return;
       }
 
-      if (!res.ok) { caMsg.textContent = res.error; return; }
-
-      if (res.state === 'building') {
-        caMsg.textContent = res.message || 'Fetching the applications catalogue. This happens the first time only…';
-        caList.innerHTML = '';
-        caStopPoll();
-        caPoll = setTimeout(caSearch, 3000);
-        return;
-      }
-
-      // The download failed, and polling for it to succeed on its own would
-      // be waiting for something that is not going to happen. Say why and
-      // stop; searching again is what retries it, once the server has stopped
-      // reporting the failure as recent.
-      if (res.state === 'failed') {
-        caStopPoll();
-        caList.innerHTML = '';
-        caMsg.textContent = res.message ||
-          'The app catalogue could not be downloaded. Check this server can reach the internet, then search again.';
-        return;
-      }
+      if (caNotReady(res, caSearch)) return;
 
       // Kept for caFooterMsg()'s full-browse wording — res.count is the whole
       // 4,000-odd catalogue, only ever worth saying when nothing narrowed it.
@@ -13860,23 +13857,7 @@
         return;
       }
 
-      if (!res.ok) { caMsg.textContent = res.error; return; }
-
-      if (res.state === 'building') {
-        caMsg.textContent = res.message || 'Fetching the applications catalogue. This happens the first time only…';
-        caList.innerHTML = '';
-        caStopPoll();
-        caPoll = setTimeout(caHomeFetch, 3000);
-        return;
-      }
-
-      if (res.state === 'failed') {
-        caStopPoll();
-        caList.innerHTML = '';
-        caMsg.textContent = res.message ||
-          'The app catalogue could not be downloaded. Check this server can reach the internet, then search again.';
-        return;
-      }
+      if (caNotReady(res, caHomeFetch)) return;
 
       caCatCount = res.count || null;
       caFillCats(res.categories);
@@ -14944,7 +14925,7 @@
   // project or imported.id/name match — see Import.php) and always wins,
   // since it knows things this list alone cannot: a stack renamed on import,
   // or a project running under a different name than its folder guesses.
-  function importIsTaken(entry, folder) {
+  function importIsTaken(entry) {
     if (entry && entry.taken) return true;
     var leaf = importLeafName(entry).toLowerCase();
     return importExisting.some(function (s) {
@@ -15113,6 +15094,16 @@
       'written twice. The container still receives it exactly as before.';
   }
 
+  // 'template' here, not the CA-catalogue default: what a row previews has
+  // to be byte-for-byte what pressing Import would write, and that depends
+  // on the first line the converter writes naming its source.
+  function importConvert(entry) {
+    return window.StaxxCA.convert(entry.app, {
+      appdataRoot: APPDATA, origin: 'template',
+      importId: entry.id, importName: entry.name
+    });
+  }
+
   function importTemplatePreviewHtml(entry) {
     if (!window.StaxxCA || typeof window.StaxxCA.convert !== 'function') {
       return '<p class="staxx-form-empty">The app converter has not loaded. Reload the page and try again.</p>';
@@ -15120,13 +15111,7 @@
 
     var result;
     try {
-      // 'template' here, not the CA-catalogue default: what a row previews
-      // has to be byte-for-byte what pressing Import would write, and that
-      // depends on the first line the converter writes naming its source.
-      result = window.StaxxCA.convert(entry.app, {
-        appdataRoot: APPDATA, origin: 'template',
-        importId: entry.id, importName: entry.name
-      });
+      result = importConvert(entry);
     } catch (e) {
       return '<p class="staxx-form-empty">This template could not be converted: ' +
              esc(e && e.message ? e.message : String(e)) + '</p>';
@@ -15183,7 +15168,7 @@
     // Once a row has been written this session it stays done regardless of
     // which folder is chosen afterwards — it is not re-offered for a second
     // folder just because that folder happens to be free of the name too.
-    var taken       = selectable && (importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry)));
+    var taken       = selectable && (importWrittenIdx[idx] || importIsTaken(entry));
     var takenHtml   = (!selectable && entry.taken)
       ? '<span class="staxx-import-flag staxx-import-flag--taken">Already in StaXX</span>' : '';
 
@@ -15230,15 +15215,11 @@
   // kept from the fetch, because it has to hold exactly the entries in the
   // order they were rendered for the toggle handler's index to mean anything.
   //
-  // Which bucket a row falls into can change between renders — switching the
-  // destination folder changes what importIsTaken() answers, so a template
-  // can move between "Unraid templates" and "Already imported" when the
-  // folder switch below repaints. That is the feature working, not a
-  // glitch: a name free at the top level need not be free inside a folder,
-  // and the other way round. Because a row's idx moves with it when that
-  // happens, whatever the previous render had open, ticked or marked written
-  // is carried forward by matching entries themselves, not their old idx,
-  // before the new idx are handed out.
+  // Which bucket a row falls into can change between renders when a fresh
+  // listing arrives (a stack imported or removed meanwhile), so whatever the
+  // previous render had open, ticked or marked written is carried forward by
+  // matching entries themselves, not their old idx, before the new idx are
+  // handed out.
   function importRenderAll() {
     var data = importData;
     if (!data) return;
@@ -15280,7 +15261,7 @@
     (data.templates || []).concat(data.projects || [], data.loose || []).forEach(function (entry) {
       var selectable = importEntrySelectable(entry);
       var done = selectable
-        ? (prevWrittenEntries.indexOf(entry) >= 0 || importIsTaken(entry, importRowFolder(entry)))
+        ? (prevWrittenEntries.indexOf(entry) >= 0 || importIsTaken(entry))
         : !!entry.taken;
       if (done) { buckets[IMPORT_G_DONE].push(entry); return; }
       if (selectable) anyTickable = true;
@@ -15361,23 +15342,22 @@
     importDest.hidden = !anyTickable;
   }
 
-  // A folder switch can turn an available row into a taken one — a name free
-  // at the top level need not be free inside a folder. Anything ticked that
-  // is no longer offerable is dropped, or the count and the run below would
-  // both still include it.
+  // A fresh listing can turn an available row into a taken one. Anything
+  // ticked that is no longer offerable is dropped, or the count and the run
+  // below would both still include it.
   function importPruneSelected() {
     for (var k in importSelected) {
       var idx = Number(k);
       var entry = importEntries[idx];
       var selectable = importEntrySelectable(entry);
-      if (!selectable || importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry))) delete importSelected[k];
+      if (!selectable || importWrittenIdx[idx] || importIsTaken(entry)) delete importSelected[k];
     }
   }
 
   // Rebuilds the whole list, then restores whatever a click had already
   // expanded — importRenderAll() always starts every body empty, so a row
-  // left open across a repaint (the folder switch below) would otherwise go
-  // blank rather than just losing its scroll position.
+  // left open across a repaint (a fresh listing) would otherwise go blank
+  // rather than just losing its scroll position.
   function importPaint() {
     importPruneSelected();
     importRenderAll();
@@ -15604,10 +15584,6 @@
 
   importFolderSel.addEventListener('change', function () {
     importFolder = importFolderSel.value;
-    // A name taken at the top level may be free inside a folder and the
-    // other way round, so every template row's availability is worked out
-    // fresh against the newly chosen folder rather than carried over.
-    importPaint();
     importUpdateDestPath();
     importUpdateGo();
   });
@@ -15776,10 +15752,7 @@
 
       var result;
       try {
-        result = window.StaxxCA.convert(entry.app, {
-          appdataRoot: APPDATA, origin: 'template',
-          importId: entry.id, importName: entry.name
-        });
+        result = importConvert(entry);
       } catch (e) {
         // The converter runs against whatever template is actually on this
         // server, which answers to no schema this plugin controls — one bad
