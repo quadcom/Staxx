@@ -213,7 +213,6 @@
   var noticePanelDismissAll = document.getElementById('staxx-noticepanel-dismissall');
 
   var noticesList        = [];     // {id, kind, text, html, action, sticky, addedAt}
-  var noticesDismissedMap = null;  // {id: expiryMs}, loaded from localStorage on first use
   var noticeRotateTimer  = null;
   var noticeRotateIndex  = 0;
   var noticeRotatePaused = false;
@@ -234,23 +233,32 @@
     return (h >>> 0).toString(36);
   }
 
-  // localStorage can throw in a private window or with site data blocked —
-  // guarded everywhere it is touched, same as everything else that reads it
-  // on this page.
-  function loadDismissed() {
-    if (noticesDismissedMap) return noticesDismissedMap;
-    noticesDismissedMap = {};
+  // Browser storage can throw in a private window or with site data
+  // blocked; every read and write here is guarded, and a value is read
+  // from storage once per page and kept.
+  var storedCache = {};
+  function storedJson(key, fallback) {
+    if (!storedCache.hasOwnProperty(key)) {
+      var v = null;
+      try { var raw = window.localStorage.getItem(key); if (raw) v = JSON.parse(raw); } catch (e) { v = null; }
+      storedCache[key] = v || fallback;
+    }
+    return storedCache[key];
+  }
+  function storeJson(key, value) {
+    storedCache[key] = value;
     try {
-      var raw = window.localStorage.getItem('staxx.notices.dismissed');
-      if (raw) noticesDismissedMap = JSON.parse(raw) || {};
-    } catch (e) { /* treated as nothing dismissed */ }
-    return noticesDismissedMap;
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { /* a preference not remembered is not a failure worth surfacing */ }
+  }
+
+  function loadDismissed() {
+    return storedJson('staxx.notices.dismissed', {});
   }
 
   function saveDismissed() {
-    try {
-      window.localStorage.setItem('staxx.notices.dismissed', JSON.stringify(noticesDismissedMap || {}));
-    } catch (e) { /* a dismissal not remembered is not a failure worth surfacing */ }
+    storeJson('staxx.notices.dismissed', loadDismissed());
   }
 
   function noticeIsDismissed(id) {
@@ -1252,27 +1260,22 @@
    * sectionOn just above but persisted (localStorage, not cleared per
    * stack/service): collapsing Ports stays collapsed for every service until
    * expanded again. Never written to the compose file — a UI fold is not
-   * configuration (rule 1). Same try/catch-everywhere shape as
-   * noticesDismissedMap (:209) so a private window or blocked site data just
-   * means nothing starts collapsed, rather than breaking the page. Loaded
-   * once, lazily, the first time anything asks. */
+   * configuration (rule 1). Read through storedJson(), so a private window
+   * or blocked site data just means nothing starts collapsed, rather than
+   * breaking the page. Built once, lazily, the first time anything asks. */
   var collapsedGroupsMap = null;
   function collapsedGroups() {
     if (collapsedGroupsMap) return collapsedGroupsMap;
     collapsedGroupsMap = {};
-    try {
-      var raw = window.localStorage.getItem('staxx.collapsed');
-      var arr = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(arr)) arr.forEach(function (k) { collapsedGroupsMap[k] = true; });
-    } catch (e) { /* storage unavailable — nothing starts collapsed */ }
+    var arr = storedJson('staxx.collapsed', []);
+    if (Array.isArray(arr)) arr.forEach(function (k) { collapsedGroupsMap[k] = true; });
     return collapsedGroupsMap;
   }
   function isGroupCollapsed(key) { return key !== 'container' && !!collapsedGroups()[key]; }
   function setGroupCollapsed(key, collapsed) {
     var map = collapsedGroups();
     if (collapsed) map[key] = true; else delete map[key];
-    try { window.localStorage.setItem('staxx.collapsed', JSON.stringify(Object.keys(map))); }
-    catch (e) { /* nothing to do if storage refuses the write */ }
+    storeJson('staxx.collapsed', Object.keys(map));
   }
 
   // A group holding a field the form has already marked as a gap (see
@@ -2253,11 +2256,7 @@
     if (!handle) return;
     var bodyW = modalBody.getBoundingClientRect().width;
     if (!bodyW) return;   // dialog not actually laid out yet — nothing to clamp against
-    var ratio = null;
-    try {
-      var saved = localStorage.getItem(SPLIT_RATIO_KEY);
-      if (saved) ratio = parseFloat(saved);
-    } catch (e) { /* a private window throws on localStorage access */ }
+    var ratio = storedJson(SPLIT_RATIO_KEY, null);
     if (!ratio || !isFinite(ratio)) { modalBody.style.removeProperty('--staxx-split'); return; }
     var track = bodyW - SPLIT_HANDLE;
     var w = Math.max(SPLIT_FLOOR, Math.min(ratio * track, track - SPLIT_FLOOR));
@@ -2298,10 +2297,7 @@
       var bodyW = modalBody.getBoundingClientRect().width;
       var formPane = modal.querySelector('.staxx-pane--form');
       var w = formPane ? formPane.getBoundingClientRect().width : 0;
-      if (w) {
-        try { localStorage.setItem(SPLIT_RATIO_KEY, String(w / (bodyW - SPLIT_HANDLE))); }
-        catch (e) { /* private window — the ratio just does not survive this open */ }
-      }
+      if (w) storeJson(SPLIT_RATIO_KEY, w / (bodyW - SPLIT_HANDLE));
       // The gutter's highlight bands are positioned in pixels against the
       // compose pane, which the drag just resized — the same repaint the
       // view switch runs when a pane's width changes under it.
@@ -2314,7 +2310,7 @@
     // a later open starts from the grid's own 1fr/1fr default again.
     handle.addEventListener('dblclick', function () {
       modalBody.style.removeProperty('--staxx-split');
-      try { localStorage.removeItem(SPLIT_RATIO_KEY); } catch (e) {}
+      storeJson(SPLIT_RATIO_KEY, null);
       paintGutter(); paintInk(); syncGutter(); repaintMark(); redrawDots();
     });
   }
@@ -2402,10 +2398,11 @@
   // — is deliberately never flagged: sharing those is normal, and warning
   // about it would train people to ignore the warning (PLAN_65's "what
   // counts as a clash").
+  // Trimmed once here rather than inside every underAppdata() call — pathsClash()
+  // calls it twice per pair, about 114 taken paths on Adrian's box, on every edit.
+  var APPDATA_ROOT = APPDATA ? APPDATA.replace(/\/+$/, '') + '/' : null;
   function underAppdata(path) {
-    if (!APPDATA) return false;
-    var root = APPDATA.replace(/\/+$/, '');
-    return String(path).replace(/\/+$/, '').indexOf(root + '/') === 0;
+    return APPDATA_ROOT !== null && String(path).replace(/\/+$/, '').indexOf(APPDATA_ROOT) === 0;
   }
 
   // The decision reads "the same host path exactly, or anything UNDERNEATH A
@@ -2450,8 +2447,9 @@
   // "127.0.0.1:8080:80" carries an address before the host port; "8080:80"
   // does not, and compose then binds every address, the same as an explicit
   // wildcard. Never guessed beyond what is actually written on the line.
-  function minePortAddr(text, p) {
-    var line = String(text).split('\n')[p.line] || '';
+  // Handed the file's lines (split once by findClashes(), not once per port).
+  function minePortAddr(lines, p) {
+    var line = lines[p.line] || '';
     var before = line.slice(0, p.col).replace(/^\s*-\s*/, '').replace(/^["']/, '').trim();
     if (before.charAt(before.length - 1) === ':') before = before.slice(0, -1);
     return before;
@@ -2490,6 +2488,8 @@
     // name docker itself will never let a second container reuse, so a file
     // that declares it is the only thing that can be running it.
     var ownNames = typeof YAML.containerNames === 'function' ? YAML.containerNames(text) : [];
+    // Split once here rather than once per unheld port inside minePortAddr().
+    var lines = String(text).split('\n');
     var isOwn = function (t) {
       var container = t.container || '';
       if (ownNames.indexOf(container) !== -1) return true;
@@ -2511,7 +2511,7 @@
       // also tell the user "the server itself" holds a port a container
       // plainly does (PLAN_73's own rule on this).
       if (hitContainer) return;
-      var mineAddr = minePortAddr(text, p);
+      var mineAddr = minePortAddr(lines, p);
       // One line per holder, not per socket: nginx listens on 443 at the
       // LAN address and at loopback, and two hits for one port read as two
       // problems when there is one.
@@ -4021,23 +4021,14 @@
   // a watch finding, nothing here comes from comparing files, so there is
   // nothing for the server to remember on the stack's behalf, and the
   // dismissal only ever needs to survive THIS browser reopening the page.
-  function loadFieldNoticeDismissed() {
-    try {
-      var raw = window.localStorage.getItem('staxx.fieldnotice.dismissed');
-      return raw ? JSON.parse(raw) || {} : {};
-    } catch (e) { return {}; }
-  }
-
   function fieldNoticeDismissed(id) {
-    return !!loadFieldNoticeDismissed()[id];
+    return !!storedJson('staxx.fieldnotice.dismissed', {})[id];
   }
 
   function dismissFieldNotice(id) {
-    try {
-      var map = loadFieldNoticeDismissed();
-      map[id] = true;
-      window.localStorage.setItem('staxx.fieldnotice.dismissed', JSON.stringify(map));
-    } catch (e) { /* a dismissal not remembered is not a failure worth surfacing */ }
+    var map = storedJson('staxx.fieldnotice.dismissed', {});
+    map[id] = true;
+    storeJson('staxx.fieldnotice.dismissed', map);
   }
 
   function fieldNoticeDismissBtn(id) {
@@ -6433,7 +6424,7 @@
   // f.fold is excluded here, not in groupFor() — a fold field carries the
   // same 'declared:<kind>' bucket its parent row does, but it renders inside
   // that row's own <details>, never as a row of its own (see fieldHtml).
-  function stackSectionHtml(form) {
+  function stackSectionHtml(form, gaps) {
     var buckets = {};
     for (var i = 0; i < form.fields.length; i++) {
       var f = form.fields[i];
@@ -6443,7 +6434,6 @@
       buckets[gk].push(i);
     }
 
-    var gaps = requiredGaps();
     var out = ['<section class="staxx-svc staxx-svc--stack">',
                '<details class="staxx-stackfold"' + (stackOpen ? ' open' : '') + '>',
                '<summary class="staxx-svchead">Stack</summary>'];
@@ -6573,7 +6563,7 @@
     }
 
     var gaps = requiredGaps();
-    var out = [stackSectionHtml(form)];
+    var out = [stackSectionHtml(form, gaps)];
     for (var s = 0; s < form.services.length; s++) {
       var svc = form.services[s];
       out.push('<section class="staxx-svc" data-service="' + esc(svc.name) + '"' +
@@ -17230,12 +17220,15 @@
   }
 
   // [] while the scan has not landed in the model yet — guarded the same way
-  // checkHostPaths() guards for YAML.hostPaths. Always read from
-  // currentText(), never cached: the compose file stays the only source of
-  // truth, so a reference removed by editing it must stop showing at once.
+  // checkHostPaths() guards for YAML.hostPaths. Kept only for the exact text
+  // it was read from, so a reference removed by editing stops showing at
+  // once. Callers only read the list.
+  var fileRefsText = null, fileRefsList = [];
   function fileRefsSafe() {
     if (!YAML || typeof YAML.fileRefs !== 'function') return [];
-    return YAML.fileRefs(currentText()) || [];
+    var text = currentText();
+    if (text !== fileRefsText) { fileRefsList = YAML.fileRefs(text) || []; fileRefsText = text; }
+    return fileRefsList;
   }
 
   // filename -> the distinct, non-blank service names that reference it (in
