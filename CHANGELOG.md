@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- When a start, update, rebuild or roll-back fails while the stack list is redrawing, its red failure marker now appears on the row straight away instead of waiting for the next refresh.
 - When you install an app from Community Applications or Unraid's Add Container page, StaXX now warns you that it already runs that app even when your stack sits inside a folder or its name differs only in capital letters.
 - Clearing a network's fixed address or hardware address in the editor now removes it from the compose file, instead of it coming back when the editor is reopened or the stack restarts.
 - On a phone, a stack's menu no longer closes when you scroll the page to reach its lower items.

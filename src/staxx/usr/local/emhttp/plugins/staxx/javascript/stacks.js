@@ -5851,7 +5851,7 @@
                       rows: rows, verb: 'rollback-pull',
                       done: function (job) {
                         if (rows.length) clearBusy(rows);
-                        if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'rollback-pull', runRes.job);
+                        if (jobFailed(job)) markFailed(job.rows, 'rollback-pull', runRes.job);
                         refreshStateSoon();
                       }
                     });
@@ -11779,7 +11779,7 @@
         }
         track(res.job, {
           done: function (job) {
-            var failed = job.exit !== 0 && job.exit !== null;
+            var failed = jobFailed(job);
             cryptFetchState(true).then(function () {
               renderPwgenHash();
               renderCryptSettings();
@@ -19139,7 +19139,7 @@
       run(oldName, 'down', function (job) {
         // run() has already shown a failure box for a non-zero exit, so this
         // just stops the sequence rather than saying the same thing twice.
-        if (job.exit !== 0 && job.exit !== null) { reenable(); return; }
+        if (jobFailed(job)) { reenable(); return; }
         applyRename();
       });
     });
@@ -19832,7 +19832,7 @@
         rows: rows, verb: rec.verb, show: false, startedAt: rec.startedAt,
         done: function (job) {
           clearBusy(rows);
-          if (job.exit !== 0 && job.exit !== null) markFailed(rows, rec.verb, id);
+          if (jobFailed(job)) markFailed(job.rows, rec.verb, id);
           // The caller that started this job is gone with the old page, so
           // its own done() — which is what normally asks for the new state —
           // went with it. Ask here instead, or a resumed job finishes to a
@@ -20074,7 +20074,7 @@
         // The busy pill keeps its one fixed label for the whole job (see the
         // note above pullProgress()); it is only repainted if something else
         // wrote over the cell, so the width of the state column never moves.
-        if (part.text && (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update')) {
+        if (part.text && isPullVerb(entry.verb)) {
           var pillLabel = BUSY_LABEL[entry.verb] || 'Working…';
           if (pillLabel !== entry.pillLabel) {
             entry.pillLabel = pillLabel;
@@ -20099,12 +20099,7 @@
             // overlay is left up for a few seconds rather than snatched
             // away the instant markFailed() below paints the fail pill
             // underneath it.
-            if (prog.phase === 'failed' && !entry.failTimerSet) {
-              entry.failTimerSet = true;
-              setTimeout(function () {
-                entry.rows.forEach(function (row) { removeProgressOverlay(row); });
-              }, 4000);
-            }
+            if (prog.phase === 'failed') overlayGrace(entry);
           }
         }
 
@@ -20125,37 +20120,27 @@
           // every means this page recognises, so the abandon backstop
           // firing after this would find nothing left to act on anyway —
           // but a cleared timer costs nothing and a leaked one does.
-          if (entry.abandonTimer) clearTimeout(entry.abandonTimer);
-          delete jobs[id];
-          // Every rowKey() this job was filed under leads back to `id` —
-          // see track() below, where they are added.
-          Object.keys(rowJobs).forEach(function (key) {
-            if (rowJobs[key] === id) delete rowJobs[key];
-          });
           // PLAN_151 — a job the server no longer knows about (staxx_job_log()
           // reports that as done:true, exit:null, the same shape a clean
           // finish with no exit code would carry) must stop being remembered
           // here too, or a reload would go on "restoring" a job that has
           // already been dealt with.
-          persistJobs();
+          forgetJob(id);
           // Belt and braces for the overlay: a clean exit clears it now
           // rather than waiting on wording pullProgress() may not have
           // seen, and a failed one not already timed out above (the exit
           // code was bad but nothing in the log matched /^Error|failed|.../
           // for pullProgress() to have caught) still gets the same few
           // seconds' grace before vanishing under the fail pill.
-          if (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update') {
+          if (isPullVerb(entry.verb)) {
             if (part.exit === 0) {
               entry.rows.forEach(function (row) { removeProgressOverlay(row); });
-            } else if (!entry.failTimerSet) {
-              entry.failTimerSet = true;
-              setTimeout(function () {
-                entry.rows.forEach(function (row) { removeProgressOverlay(row); });
-              }, 4000);
+            } else {
+              overlayGrace(entry);
             }
           }
           if (entry.show) {
-            logTitle.textContent += (part.exit !== 0 && part.exit !== null)
+            logTitle.textContent += jobFailed(part)
               ? ' — failed (exit ' + part.exit + ')'
               : ' — done';
           }
@@ -20169,7 +20154,11 @@
           // a hand-pressed pull on a stopped stack). clearBusy() is safe to
           // run twice.
           clearBusy(entry.rows);
-          if (entry.done) entry.done({ text: entry.text, exit: part.exit, done: true });
+          // PLAN_196 — the rows are handed to done() here too, on the same
+          // "rows this entry knows NOW" reasoning just above: a caller that
+          // marks a failure on its own captured rows can be marking rows the
+          // page has already thrown away and redrawn (report bug 4).
+          if (entry.done) entry.done({ text: entry.text, exit: part.exit, done: true, rows: entry.rows });
           // PLAN_71 stage 5: every job — start, stop, restart, an update,
           // anything — can move the running side of the comparison, so this
           // is the one place that catches all of them rather than adding the
@@ -20183,6 +20172,46 @@
       if (finished) refreshPending();
       stopTickerIfIdle();
     });
+  }
+
+  // PLAN_196 item 5 — a job's finished-but-not-clean test, written out at
+  // every "did this fail" site rather than once. `exit === null` is not a
+  // failure: it is the shape staxx_job_log() answers once the server no
+  // longer knows about the job at all (see the PLAN_151 comment below).
+  function jobFailed(job) { return job.exit !== 0 && job.exit !== null; }
+
+  // PLAN_196 item 5 — "up", "pull" and "update" are the three verbs whose
+  // busy pill grows a richer progress overlay (pullProgress()); every other
+  // verb is too quick, or too varied in its output, for the overlay to say
+  // anything useful.
+  function isPullVerb(verb) { return verb === 'up' || verb === 'pull' || verb === 'update'; }
+
+  // PLAN_196 item 5 — the few seconds' grace before a failed pull's progress
+  // overlay is taken down, so a failure the log itself named is still on
+  // screen when the fail pill appears underneath it. `entry.failTimerSet`
+  // guards it against firing twice for the same job; the timer reads
+  // `entry.rows` only when it fires, so a mid-job rows refresh is still
+  // covered.
+  function overlayGrace(entry) {
+    if (entry.failTimerSet) return;
+    entry.failTimerSet = true;
+    setTimeout(function () {
+      entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+    }, 4000);
+  }
+
+  // PLAN_196 item 5 — "forget this job": clears the abandon backstop, drops
+  // its entry and every rowJobs key pointing at it, and persists the change.
+  // Used both once a job finishes normally (tickJobs() below) and once the
+  // backstop itself gives up on it (abandonJob() below).
+  function forgetJob(id) {
+    var entry = jobs[id];
+    if (entry && entry.abandonTimer) clearTimeout(entry.abandonTimer);
+    delete jobs[id];
+    // Every rowKey() this job was filed under leads back to `id` — see
+    // track() below, where they are added.
+    Object.keys(rowJobs).forEach(function (key) { if (rowJobs[key] === id) delete rowJobs[key]; });
+    persistJobs();
   }
 
   // Registers a job with the shared ticker and returns nothing — callers that
@@ -20238,10 +20267,8 @@
   function abandonJob(job) {
     var entry = jobs[job];
     if (!entry) return;   // already finished normally — a stale timer firing after that is moot, not a bug
-    delete jobs[job];
-    Object.keys(rowJobs).forEach(function (key) { if (rowJobs[key] === job) delete rowJobs[key]; });
+    forgetJob(job);
     clearBusy(entry.rows);
-    persistJobs();
     stopTickerIfIdle();
   }
 
@@ -20357,8 +20384,8 @@
 
           // Silent while it works, loud when it breaks — and loud now means
           // a sticky marker on the row, not a dialog stealing the screen.
-          if (!show && job.exit !== 0 && job.exit !== null) {
-            markFailed(rows, verb, res.job);
+          if (!show && jobFailed(job)) {
+            markFailed(job.rows, verb, res.job);
           }
           if (done) done(job);
         }
@@ -22185,7 +22212,7 @@
         rows: rows, verb: 'update',
         done: function (job) {
           clearBusy(rows);
-          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'update', res.job);
+          if (jobFailed(job)) markFailed(job.rows, 'update', res.job);
           refreshUpdates(name, service);
           refreshStateSoon();
         }
@@ -22218,7 +22245,7 @@
         rows: rows, verb: 'rebuild',
         done: function (job) {
           clearBusy(rows);
-          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'rebuild', res.job);
+          if (jobFailed(job)) markFailed(job.rows, 'rebuild', res.job);
           refreshUpdates(name, service);
           refreshStateSoon();
         }
@@ -26090,7 +26117,7 @@
       rows: rows, verb: 'recreate',
       done: function (job) {
         clearBusy(rows);
-        if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
+        if (jobFailed(job)) markFailed(job.rows, 'recreate', res.job);
         services.forEach(function (service) { refreshUpdates(openedName, service); });
         refreshStateSoon();
         // A rollback changes which build is on disk, so "Running now" in
@@ -27809,7 +27836,7 @@
       }
       track(res.job, {
         done: function (job) {
-          var failed = job.exit !== 0 && job.exit !== null;
+          var failed = jobFailed(job);
           settingsMsg.textContent = failed ? 'That did not finish cleanly — see the job log.' : '';
           cryptFetchState(true).then(function () {
             renderCryptSettings();
@@ -30815,9 +30842,9 @@
           done: function (job) {
             clearBusy(itemRows);
             doneCount++;
-            if (job.exit !== 0 && job.exit !== null) {
+            if (jobFailed(job)) {
               failCount++;
-              markFailed(itemRows, verb, item.job);
+              markFailed(job.rows, verb, item.job);
             }
             paintSummary();
             if (doneCount === total && folderRow) {
@@ -31193,7 +31220,7 @@
     names.forEach(function (name) {
       run(name, verb, function (job) {
         doneCount++;
-        if (job.exit !== 0 && job.exit !== null) { failCount++; failedLabels.push(stackLabel(name)); }
+        if (jobFailed(job)) { failCount++; failedLabels.push(stackLabel(name)); }
         paintBulkTally(doneCount, total, failCount);
         if (doneCount === total) paintBulkSummary(VERB_PAST[verb] || 'run', total, failCount, failedLabels);
       });
