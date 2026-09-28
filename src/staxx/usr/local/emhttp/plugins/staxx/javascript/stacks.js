@@ -2895,6 +2895,14 @@
   var devClaims  = {};      // host path -> stacks already mapping it
   var devGroups  = [];      // as the server grouped them
   var devLoaded  = false;
+  var lateWanted = false;   // a first devices/networks/images reply landed since the form was drawn
+  // One redraw once all three first replies are in, under the guard each
+  // loader used to apply to its own: never mid-edit, never under the device panel.
+  function lateRedraw() {
+    if (!lateWanted) return;
+    lateWanted = false;
+    if (modal.open && MODEL && !commitTimer && !devPanel) reparse();
+  }
 
   // This server's own docker networks, appended to the network_mode dropdown
   // once they arrive — see netLoad() far below, beside devLoad(). Held apart
@@ -8583,7 +8591,8 @@
   function relint() {
     // netNames() is null until the server has answered, which switches the
     // network_mode value check off rather than letting it call a real network
-    // a typo — netLoad()'s first reply triggers a reparse, so it starts then.
+    // a typo — the late redraw after all three first replies land (see
+    // lateRedraw()) reparses once networks are known, so it starts then.
     lastLint = (YAML && typeof YAML.lint === 'function' && MODEL && MODEL.doc)
       ? YAML.lint(MODEL.doc, netNames()) : [];
     varLint = varDots();
@@ -12632,9 +12641,10 @@
 
   // Called from reparse(). relint() has just cleared checkDot, so an answer
   // we already have has to be put back rather than merely not re-asked for:
-  // reparse() runs on things other than typing — netLoad()'s first reply is
-  // one — and without this the mark would vanish a second after it appeared
-  // and never return, since the text never changed to trigger a new ask.
+  // reparse() runs on things other than typing — the late redraw after all
+  // three first replies land (lateRedraw()) is one — and without this the
+  // mark would vanish a second after it appeared and never return, since the
+  // text never changed to trigger a new ask.
   function scheduleCheck() {
     // The override is the one companion compose still has an opinion on —
     // every other one is refused here, same as always.
@@ -16041,12 +16051,12 @@
       for (var p = 0; p < here.length; p++) devPresent[here[p]] = true;
 
       // The form was drawn before this arrived, so its device rows are still
-      // showing bare paths. Redraw once to put the hardware names in. Only on
-      // the first reply, and only with nothing in flight — a redraw takes the
-      // caret with it, and it would also destroy the panel it was opened from.
-      var first = !devLoaded;
+      // showing bare paths. A redraw once every one of devLoad/netLoad/
+      // imgLoad's own first replies is in — lateRedraw(), below all three —
+      // puts the hardware names in, along with whatever the other two just
+      // brought.
+      if (!devLoaded) lateWanted = true;
       devLoaded = true;
-      if (first && modal.open && MODEL && !commitTimer && !devPanel) reparse();
 
       return res;
     });
@@ -16054,9 +16064,9 @@
 
   // This server's own docker networks — bridge/host/none are offered already,
   // so only names beyond those (a macvlan, a user-defined bridge) are worth
-  // adding. Modelled on devLoad() just above: same first-reply-only redraw,
-  // guarded the same way, because opening the editor is exactly what this
-  // list is stale for otherwise.
+  // adding. Modelled on devLoad() just above: same first-reply-only late
+  // redraw, because opening the editor is exactly what this list is stale
+  // for otherwise.
   function netLoad() {
     return call('networks', {}, 15000).then(function (res) {
       if (!res.ok) return res;
@@ -16092,9 +16102,8 @@
         known[name] = true;
       }
 
-      var first = !netLoaded;
+      if (!netLoaded) lateWanted = true;
       netLoaded = true;
-      if (first && modal.open && MODEL && !commitTimer && !devPanel) reparse();
 
       return res;
     });
@@ -16102,17 +16111,15 @@
 
   // Images already pulled onto this server — collected for imageOptions()
   // above, alongside whatever tagLoad() below finds for one repo at a time.
-  // Modelled on netLoad() just above: same first-reply-only redraw, guarded
-  // the same way.
+  // Modelled on netLoad() just above: same first-reply-only late redraw.
   function imgLoad() {
     return call('images', {}, 15000).then(function (res) {
       if (!res.ok) return res;
 
       IMAGES = res.images || [];
 
-      var first = !imgLoaded;
+      if (!imgLoaded) lateWanted = true;
       imgLoaded = true;
-      if (first && modal.open && MODEL && !commitTimer && !devPanel) reparse();
 
       return res;
     });
@@ -16820,14 +16827,15 @@
 
     // Ask what hardware this server has, so device rows can be named after it
     // rather than showing a bare path. Not waited for — the form is usable at
-    // once and devLoad() redraws it when the names arrive. netLoad() does the
-    // same for this server's own docker networks, feeding the network_mode
-    // dropdown and a declared network's own name dropdown, and imgLoad() for
-    // the images already on this server (see imgLoad()'s own comment on why
-    // that list is not currently shown anywhere).
-    devLoad().catch(function () {});
-    netLoad().catch(function () {});
-    imgLoad().catch(function () {});
+    // once and lateRedraw() draws it again once all three first replies are
+    // in. netLoad() does the same for this server's own docker networks,
+    // feeding the network_mode dropdown and a declared network's own name
+    // dropdown, and imgLoad() for the images already on this server (see
+    // imgLoad()'s own comment on why that list is not currently shown
+    // anywhere). One redraw for whichever of the three is slowest, not up to
+    // three separate ones.
+    Promise.all([devLoad(), netLoad(), imgLoad()].map(function (p) { return p.catch(function () {}); }))
+      .then(lateRedraw);
     // A new stack has no folder on disk yet, so there is nothing to list —
     // draw the bare, uncloseable compose tab and stop there.
     if (isNew) renderTabs(); else filesLoad();
