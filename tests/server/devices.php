@@ -138,7 +138,8 @@ $messy = "# a top comment\r\n"
 ok('comments, blank lines, CRLF endings and a quoted "devices" key are all read the same as the plain form',
    staxx_compose_devices($messy) === ['app' => ['/dev/dri']], json_encode(staxx_compose_devices($messy)));
 ok('a sibling key (ports:) at the same indent as devices: ends the devices list, not swallows it',
-   staxx_compose_gpu_vendors($messy) === [], json_encode(staxx_compose_gpu_vendors($messy)));
+   !in_array('8080:80', staxx_compose_devices($messy)['app'] ?? [], true)
+   && count(staxx_compose_devices($messy)['app'] ?? []) === 1, json_encode(staxx_compose_devices($messy)));
 
 $secondTop = "services:\n  app:\n    devices:\n      - /dev/dri:/dev/dri\n"
            . "networks:\n  default:\n    devices:\n      - /dev/fake:/dev/fake\n";
