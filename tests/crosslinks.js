@@ -18,7 +18,11 @@
  * check another stack's own; and, from §11, that a field's own .sensitive
  * flag is what licenses the word "password" and that the field-writing
  * path used for a propagated write stays valid without a rebuild between
- * two sequential writes to the same document. Everything else stacks.js
+ * two sequential writes to the same document — and, from PLAN_193 item 9,
+ * the three further shapes that rule has to hold for (the same field
+ * written twice, a same-line name-then-value pair, two services' own
+ * inserts) so applyCrossFill(), seedDollarEscapeUndo() and the update-
+ * policy batch can all drop their old per-write form rebuild. Everything else stacks.js
  * adds — the mark, the popover, the debounce, the fetch() calls, the
  * advice text — is reviewed by hand, not run here, the same as every other
  * stacks.js-only function in this project.
@@ -313,6 +317,73 @@ function findKind(list, kind) {
   ok('one Undo restores the edited side', restoredMine.parts.value.value === 'old-value');
   ok('the SAME one Undo restores the propagated side too — never left changed on its own',
      restoredPartner.parts.value.value === 'old-value');
+})();
+
+/* ---- PLAN_193 item 9: the "no rebuild between writes" rule these three
+         one-form-many-writes callers (applyCrossFill(), seedDollarEscapeUndo(),
+         commit()'s own propagation) all now rely on — a second write to the
+         SAME field through a form a first write already used is refused as
+         stale, never misplaced; a fresh form always finds it again. --------- */
+
+/* 4. the same field written twice through one form: the second is refused,
+      not misplaced — a rebuilt form finds and writes it. */
+(function () {
+  var src = 'services:\n  a:\n    image: x\n    environment:\n      FOO: 1\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = form.fields.filter(function (x) { return x.binder === 'env'; })[0];
+
+  ok('the first write through the form succeeds', Y.setValue(doc, form, f.id, 'first-write'));
+  ok('the second write through the SAME form is refused, not misplaced',
+     !Y.setValue(doc, form, f.id, 'second-write'));
+  ok('nothing but the first write landed', Y.serialise(doc).indexOf('FOO: first-write') >= 0);
+
+  var form2 = Y.buildForm(doc);
+  var f2 = form2.fields.filter(function (x) { return x.binder === 'env'; })[0];
+  ok('a form rebuilt after the refusal writes the second value fine', Y.setValue(doc, form2, f2.id, 'second-write'));
+  ok('the rebuilt write landed', Y.serialise(doc).indexOf('FOO: second-write') >= 0);
+})();
+
+/* 5. one list entry's name then its value (same line, the tzFix shape), then
+      a different entry's value on the same, never-rebuilt form: the name
+      write is fine (it does not move its own spot's line), the value write
+      through the now-stale name spot is refused, and the OTHER entry's own
+      value — a different line entirely — still writes fine. */
+(function () {
+  var src = 'services:\n  a:\n    image: x\n    environment:\n      - FOO=1\n      - BAR=2\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var envs = form.fields.filter(function (f) { return f.binder === 'env'; });
+
+  ok('the entry\'s own name writes fine', Y.setPart(doc, form, envs[0].id, 'name', 'FOOZ'));
+  ok('that SAME entry\'s value, through the form the name write already used, is refused',
+     !Y.setPart(doc, form, envs[0].id, 'value', '99'));
+  ok('the other entry\'s own value, a different line, still writes fine through the same form',
+     Y.setValue(doc, form, envs[1].id, 'other-value'));
+
+  var want = src.replace('- FOO=1', '- FOOZ=1').replace('- BAR=2', '- BAR=other-value');
+  ok('the renamed entry keeps its original value; the other entry\'s value changed',
+     Y.serialise(doc) === want, Y.serialise(doc));
+})();
+
+/* 6. x-unraid.update.mode set on two services that do not have it yet — two
+      inserts, each on its own service, through one never-rebuilt form —
+      succeed together (PLAN_150's own policy batch, applyUpdatePolicyLocally()
+      writing a whole stack's services through one form and one undo entry). */
+(function () {
+  var src = 'services:\n  a:\n    image: x\n  b:\n    image: y\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var fa = form.fields.filter(function (f) { return f.service === 'a' && f.target === 'x-unraid.update.mode'; })[0];
+  var fb = form.fields.filter(function (f) { return f.service === 'b' && f.target === 'x-unraid.update.mode'; })[0];
+
+  ok('the first service\'s insert succeeds', !!fa && Y.setValue(doc, form, fa.id, 'notify'));
+  ok('the second service\'s insert, through the SAME never-rebuilt form, succeeds too',
+     !!fb && Y.setValue(doc, form, fb.id, 'notify'));
+
+  var after = Y.serialise(doc);
+  var formAfter = Y.buildForm(Y.parse(after));
+  var faAfter = formAfter.fields.filter(function (f) { return f.service === 'a' && f.target === 'x-unraid.update.mode'; })[0];
+  var fbAfter = formAfter.fields.filter(function (f) { return f.service === 'b' && f.target === 'x-unraid.update.mode'; })[0];
+  ok('both services actually carry the new value', faAfter.parts.value.value === 'notify' &&
+     fbAfter.parts.value.value === 'notify', after);
 })();
 
 /* ---- PLAN_160 A: a wizard-written record silences the editor's own ask -- */

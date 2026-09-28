@@ -8272,18 +8272,20 @@
     flushPending();
     pushUndo('filling in the connection to "' + st.candidate.service + '" in "' + st.candidate.stack + '"');
 
-    var doc = MODEL.doc, form = MODEL;
+    // No rebuild between writes — every entry in st.writes is a different
+    // box (see the rule above tzFix's own handler), so the ordinary open
+    // MODEL is good for all of them.
+    var doc = MODEL.doc;
     for (var i = 0; i < st.writes.length; i++) {
       var w = st.writes[i];
-      var f = YAML.fieldById(form, w.fieldId);
+      var f = YAML.fieldById(MODEL, w.fieldId);
       if (!f) continue;   // that box is no longer there — skip it rather than fail the whole click
-      if (!YAML.setValue(doc, form, f.id, w.value)) {
+      if (!YAML.setValue(doc, MODEL, f.id, w.value)) {
         undoStack.pop();
         updateUndo();
         setYamlStatus('That value could not be written — edit it in the Compose view instead.');
         return;
       }
-      form = YAML.buildForm(doc);   // refresh positions before the next write — PLAN_64's own pattern, for the same reason
     }
 
     var between = [{ service: st.sourceService, environment: st.sourceTarget },
@@ -9061,10 +9063,9 @@
     // report every outcome — a write, a refusal, or a partner that has gone
     // — on the status line, since collapsing the old offer into an
     // automatic write also removed the one place that used to say so.
-    // MODEL is used as-is, not rebuilt: writeScalar() (compose-model.js)
-    // replaces text on one line without changing the line count, so every
-    // OTHER field's own line and column — including these partners', on
-    // their own separate lines — are still exactly where MODEL already says.
+    // MODEL is used as-is, not rebuilt — the rule above tzFix's own handler:
+    // this write above and each partner's below all land on different
+    // fields, so the one open form is good for all of them.
     var propMsgs = [];
     toPropagate.forEach(function (it) {
       var pf = YAML.fieldForEndpoint(MODEL, it.other);
@@ -10362,14 +10363,19 @@
     // field to write through — the variable is not in the file at all — so
     // this goes the same way the Environment group's own "+ Variable" button
     // does (YAML.addItem), then fills in the name and value it just created.
-    // Each of those three writes reads the document afresh through
-    // YAML.buildForm()/fieldAtLine(): writeScalar() re-parses doc.root on
-    // every write but never rebuilds MODEL.fields, so reusing MODEL itself
-    // between them would hand the second and third write a spot computed
-    // against text that write already changed — see PLAN_66 on why a stale
-    // spot is refused rather than guessed through. Line numbers do not move
-    // between these three writes (each rewrites the one line already there),
-    // only the text on it, so the same `tzLine` finds it every time.
+    //
+    // The rule this — and applyCrossFill()'s writes/seedDollarEscapeUndo()'s
+    // two passes/commit()'s own partner propagation — all rest on: writes to
+    // DIFFERENT fields may share one form; a second write to the SAME field,
+    // or to anything on a line an earlier write changed, removed or inserted
+    // before, needs a fresh form. writeScalar() (compose-model.js) re-parses
+    // doc.root on every write but never rebuilds MODEL.fields, so reusing a
+    // form after a write that touched its own spot would hand the next write
+    // a position computed against text that write already changed — see
+    // PLAN_66 on why a stale spot is refused rather than guessed through.
+    // Line numbers do not move between these three writes (each rewrites the
+    // one line already there, or adds one after the others), only the text
+    // on it, so the same `tzLine` finds it every time.
     var tzFix = event.target.closest('[data-tz-fix]');
     if (tzFix) {
       var tzService = tzFix.dataset.service, tzZone = tzFix.dataset.tzZone || '';
@@ -14135,19 +14141,24 @@
     });
     if (!toRestore.length) return;
 
+    // No rebuild within a pass — each field is written once per pass (see
+    // the rule above tzFix's own handler) — but the second pass writes the
+    // SAME fields again, so one rebuild sits between the two passes rather
+    // than after every write in both.
     var doc = MODEL.doc, form = MODEL;
     toRestore.forEach(function (t) {
       var f = YAML.fieldById(form, t.id);
-      if (f) { YAML.setValue(doc, form, f.id, t.plain); form = YAML.buildForm(doc); }
+      if (f) YAML.setValue(doc, form, f.id, t.plain);
     });
     // pushUndo() snapshots currentText(), which is yamlPane.value — so the
     // pane has to actually show the halved values before the snapshot, or
     // Undo would restore to the very text already on screen.
     yamlPane.value = YAML.serialise(doc);
     pushUndo('writing each dollar sign twice');
+    form = YAML.buildForm(doc);
     toRestore.forEach(function (t) {
       var f = YAML.fieldById(form, t.id);
-      if (f) { YAML.setValue(doc, form, f.id, t.escaped); form = YAML.buildForm(doc); }
+      if (f) YAML.setValue(doc, form, f.id, t.escaped);
     });
     yamlPane.value = YAML.serialise(doc);
     paintGutter();
