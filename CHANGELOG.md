@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- StaXX's windows now fade in and out the same way for everyone. A fade moves nothing, so it is kept even when your system asks for less motion; real movement, such as sliding or spinning, still stops.
 - On the Manage tab, Download all now saves the container's whole log as a file.
 - The Save and Cancel buttons at the bottom of StaXX's windows now always sit on the right, instead of jumping across when a message appears.
 - When an app you install from Unraid's Apps page opens straight in StaXX's editor, it now says so if StaXX already runs an app by that name.

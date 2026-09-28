@@ -4724,7 +4724,9 @@ div.title.staxx-has-titlebar {
  * here once. Each dialog's own rule still carries `opacity: 1` and its own
  * `transition` list (the editor's also glides its width), which is what
  * these rules fade between. A new dialog joins every list below, and the
- * reduced-motion block near the end of this file.
+ * reduced-motion block near the end of this file — where it is named so it
+ * is excluded, not included: a fade moves nothing, so it stays full-length
+ * even when that setting asks for less motion.
  *
  * Classes a dialog shares with another (.staxx-merge-modal, .staxx-export,
  * .staxx-detail, .staxx-noticepanel, the settings variants) are covered by
@@ -13438,24 +13440,18 @@ dialog::backdrop {
 
 /* ---- Reduced motion ------------------------------------------------------
  *
- * The backdrops are named one by one because ::backdrop is a pseudo-element
- * with its own box and its own transition, and no wildcard reaches it.
+ * A fade moves nothing, so it is kept full-length for everyone, dialogs and
+ * their ::backdrop included, whatever this setting asks for — only real
+ * movement (sliding, spinning, pulsing) is cut to 1ms here. `.staxx-scaffold *`
+ * would otherwise reach the dialogs too, since every <dialog> is a direct
+ * child of the scaffold, so each dialog class is excluded from it by name.
  *
  * 1ms rather than 0 or `none`: a zero-length transition still fires
  * `transitionend`, so nothing that waits on that event (see the gutter
  * repaint in stacks.js) can hang waiting for an event that a `none` duration
  * would never send. */
 @media (prefers-reduced-motion: reduce) {
-  .staxx-scaffold *,
-  .staxx-modal::backdrop,
-  .staxx-picker::backdrop,
-  .staxx-tz::backdrop,
-  .staxx-ca::backdrop,
-  .staxx-ca-app::backdrop,
-  .staxx-confirm::backdrop,
-  .staxx-settings::backdrop,
-  .staxx-logdlg::backdrop,
-  .staxx-export::backdrop {
+  .staxx-scaffold *:not(.staxx-modal):not(.staxx-picker):not(.staxx-tz):not(.staxx-ca):not(.staxx-ca-app):not(.staxx-import):not(.staxx-confirm):not(.staxx-settings):not(.staxx-logdlg):not(.staxx-legend):not(.staxx-export) {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }
