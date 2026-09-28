@@ -5163,21 +5163,18 @@
   // word. No job follows: pinning to the build already running changes
   // nothing that is actually on disk in Docker, only the file that
   // describes it.
-  function choosePinnedInEditor(service, index) {
-    if (!openedName) {
-      resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
-      showError('Save this stack at least once before pinning a service to its running build.');
-      return;
-    }
-    clearError();
-    var name = openedName;
-    call('pin-resolve', { name: name, service: service }).then(function (res) {
+  // PLAN_196 item 2 — the shared core of "pin this service", used by the
+  // editor's own "When" row and the row menu: resolve which build to pin
+  // to, confirm, find which file owns the image (findImageOwner(), above),
+  // write the pin, save it, and adopt the write into whichever tab is open.
+  // Resolves to { ok: true, owner, saveRes, yaml } or { ok: false, why } —
+  // why is '' for a plain Cancel, which a caller must not show as an error.
+  function pinFlow(name, service) {
+    return call('pin-resolve', { name: name, service: service }).then(function (res) {
       if (!res || !res.ok) {
-        resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
-        showError((res && res.error) || 'Could not find a build to pin this service to.');
-        return;
+        return { ok: false, why: (res && res.error) || 'Could not find a build to pin this service to.' };
       }
-      askConfirm({
+      return askConfirm({
         title: 'Pin "' + service + '" to this build?',
         bodyHtml: '<p>The compose file will name this exact build, so it is never checked for an update ' +
           'again — the only way back onto one is picking a tag.</p>' +
@@ -5185,52 +5182,89 @@
         goLabel: 'Pin it', danger: false
       }).then(function (go) {
         closeConfirm();
-        if (!go) { resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index])); return; }
-        // Which file actually sets this service's image — the override if
-        // one sits beside the main file and names its own image: for this
-        // service, the main file otherwise (findImageOwner(), above).
-        findImageOwner(name, service).then(function (owner) {
-          if (!owner.ok) {
-            showError(owner.why);
-            resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
-            return;
-          }
+        if (!go) return { ok: false, why: '' };
+        return findImageOwner(name, service).then(function (owner) {
+          if (!owner.ok) return { ok: false, why: owner.why };
           var pinned = pinServiceToDigest(service, res.digest, owner.text);
-          if (!pinned.ok) {
-            showError(pinned.why);
-            resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
-            return;
-          }
-          saveImageOwner(name, owner, pinned.yaml).then(function (saveRes) {
+          if (!pinned.ok) return { ok: false, why: pinned.why };
+          return saveImageOwner(name, owner, pinned.yaml).then(function (saveRes) {
             if (!saveRes || !saveRes.ok) {
-              showError((saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
-              resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
-              return;
+              return { ok: false, why: (saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}) };
             }
             if (saveRes.icons) serviceIcons = saveRes.icons;
             adoptImageOwnerWrite(name, owner, pinned.yaml);
-            // The main-file save carries a fresh fingerprint the open
-            // editor must adopt (its stamp is now stale); a companion
-            // save carries none — the main file it is holding did not
-            // move, so fingerprintAtOpen stays exactly what it was.
-            if (!owner.isOverride) fingerprintAtOpen = saveRes.fingerprint || owner.fingerprint;
-            showPageNotice('"' + service + '" is now pinned to this exact build' +
-              (owner.isOverride ? ', in ' + owner.fileName : '') +
-              '. The file it replaces is kept in History.');
-            paintServiceIcons();
+            return { ok: true, owner: owner, saveRes: saveRes, yaml: pinned.yaml };
           });
         });
       });
     });
   }
 
-  // The shared core both in-editor release doors use — this "When" row's
-  // own Default/Manual/Automatic click while pinned, and the Versions tab's
-  // "Release this pin" (see releaseViaVersionsTab() near pinnedBandHtml()):
-  // resolve which file owns the image (findImageOwner(), above), look up
-  // its repo's tags, let the person pick one through askTagPick(), then
-  // write it in.
+  function choosePinnedInEditor(service, index) {
+    if (!openedName) {
+      resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+      showError('Save this stack at least once before pinning a service to its running build.');
+      return;
+    }
+    clearError();
+    pinFlow(openedName, service).then(function (r) {
+      if (!r.ok) {
+        resetUpdateModeRadio(index, policyValueOf(MODEL.fields[index]));
+        if (r.why) showError(r.why);
+        return;
+      }
+      // The main-file save carries a fresh fingerprint the open editor must
+      // adopt (its stamp is now stale); a companion save carries none — the
+      // main file it is holding did not move, so fingerprintAtOpen stays
+      // exactly what it was.
+      if (!r.owner.isOverride) fingerprintAtOpen = r.saveRes.fingerprint || r.owner.fingerprint;
+      showPageNotice('"' + service + '" is now pinned to this exact build' +
+        (r.owner.isOverride ? ', in ' + r.owner.fileName : '') +
+        '. The file it replaces is kept in History.');
+      paintServiceIcons();
+    });
+  }
+
+  // PLAN_196 item 3 — the shared front half of "release a pin", used by the
+  // editor's own "When" row, the Versions tab, and the row menu: resolve
+  // which file owns the image (findImageOwner(), above), build its form
+  // with this server's network drivers and env names (proven not to change
+  // the image field itself, by a throwaway probe over tests/fixtures/),
+  // find that field, strip any digest to get the repo, look up its tags and
+  // let the person pick one through askTagPick(). Resolves to
+  // { ok: true, owner, doc, form, field, repo, picked } or
+  // { ok: false, why } — why is '' for a plain Cancel.
   //
+  // On a pick this does NOT close the picker dialog itself: the row menu
+  // goes straight on to askConfirm() in the same dialog, and the picker's
+  // own dialog.close() queues its 'close' event rather than firing it
+  // inline — closing here raced that reopen, and by the time the stale
+  // event fired, askConfirm() had already reassigned confirmResolve to the
+  // NEW question, so the OLD close silently answered it with false
+  // (Adrian, 2026-09-26: the confirm "closes itself within about a second,
+  // with nothing done"). A caller that asks nothing further (the editor's
+  // own release, below) closes it itself once it has the pick.
+  function pickReleaseTag(name, service) {
+    return findImageOwner(name, service).then(function (owner) {
+      if (!owner.ok) return { ok: false, why: owner.why };
+      var doc = YAML.parse(owner.text);
+      var form = YAML.buildForm(doc, netDrivers(), envNameList());
+      form.doc = doc;
+      var field = imageFieldFor(form.fields, service);
+      var image = field && field.parts.value ? field.parts.value.value : '';
+      var atIdx = image.indexOf('@');
+      var repo = repoOf(atIdx >= 0 ? image.slice(0, atIdx) : image);
+      if (!repo) return { ok: false, why: 'Could not read this service’s image to look up its tags.' };
+      var beforePinTag = tagFromPinnedRef(field && field.note);
+      return tagsFor(repo).then(function (tags) {
+        return askTagPick(repo, tags || [], beforePinTag).then(function (picked) {
+          if (!picked) { closeConfirm(); return { ok: false, why: '' }; }   // '' — Cancel, not a real refusal
+          return { ok: true, owner: owner, doc: doc, form: form, field: field, repo: repo, picked: picked };
+        });
+      });
+    });
+  }
+
   // The two owners land differently, on purpose: the MAIN file only ever
   // edits the OPEN document — never disk directly — so the person presses
   // Save themselves once they are happy, exactly like typing the tag in by
@@ -5245,68 +5279,51 @@
   // callers show it differently (the "When" row's showError() vs the
   // Versions tab's own error banner).
   function releaseViaTagPicker(name, service, onFail) {
-    findImageOwner(name, service).then(function (owner) {
-      if (!owner.ok) { onFail(owner.why); return; }
-      var doc = YAML.parse(owner.text);
-      var form = YAML.buildForm(doc);
-      var field = imageFieldFor(form.fields, service);
-      var image = field && field.parts.value ? field.parts.value.value : '';
-      var atIdx = image.indexOf('@');
-      var repo = repoOf(atIdx >= 0 ? image.slice(0, atIdx) : image);
-      if (!repo) {
-        onFail('Could not read this service’s image to look up its tags.');
-        return;
-      }
-      var beforePinTag = tagFromPinnedRef(field && field.note);
-      tagsFor(repo).then(function (tags) {
-        tags = tags || [];
-        askTagPick(repo, tags, beforePinTag).then(function (picked) {
-          // Nothing this function does from here on ever opens another
-          // question on top of the picker (unlike the row menu's own
-          // release, which repeats the chosen tag in a confirm) — safe to
-          // close it outright, whichever way this resolved.
-          closeConfirm();
-          if (!picked) { onFail(''); return; }   // '' — Cancel, not a real refusal
+    pickReleaseTag(name, service).then(function (r) {
+      if (!r.ok) { onFail(r.why); return; }
+      // Nothing this function does from here on ever opens another
+      // question on top of the picker (unlike the row menu's own release,
+      // which repeats the chosen tag in a confirm) — safe to close it here.
+      closeConfirm();
+      var doc = r.doc, form = r.form, field = r.field, owner = r.owner, picked = r.picked;
 
-          if (owner.isOverride) {
-            if (!field || !YAML.setValue(doc, form, field.id, picked)) {
-              onFail('That image line could not be rewritten — edit it in the Compose view instead.');
-              return;
-            }
-            stripPinNoteAfterEdit(doc, YAML.buildForm(doc), field.id);
-            var newText = YAML.serialise(doc);
-            saveImageOwner(name, owner, newText).then(function (saveRes) {
-              if (!saveRes || !saveRes.ok) {
-                onFail((saveRes && saveRes.error) || 'Save failed.');
-                return;
-              }
-              adoptImageOwnerWrite(name, owner, newText);
-              // The pin just came off, so the Versions tab's own "Pinned
-              // to…" band (built from the last read()) is stale — see
-              // rollbackToVersion()/finishRollback()'s own reasoning for
-              // the same reset.
-              versionsLoaded = false;
-            });
+      if (owner.isOverride) {
+        if (!field || !YAML.setValue(doc, form, field.id, picked)) {
+          onFail('That image line could not be rewritten — edit it in the Compose view instead.');
+          return;
+        }
+        stripPinNoteAfterEdit(doc, YAML.buildForm(doc), field.id);
+        var newText = YAML.serialise(doc);
+        saveImageOwner(name, owner, newText).then(function (saveRes) {
+          if (!saveRes || !saveRes.ok) {
+            onFail((saveRes && saveRes.error) || 'Save failed.');
             return;
           }
-
-          if (!editorShowing(name)) {
-            onFail('Open this stack to release this pin.');
-            return;
-          }
-          var imgField = imageFieldFor(MODEL.fields, service);
-          pushUndo('releasing the pin on "' + service + '"');
-          if (!imgField || !YAML.setValue(MODEL.doc, MODEL, imgField.id, picked)) {
-            dropUndo();
-            onFail('That image line could not be rewritten — edit it in the Compose view instead.');
-            return;
-          }
-          stripPinNoteAfterEdit(MODEL.doc, YAML.buildForm(MODEL.doc, netDrivers(), envNameList()), imgField.id);
-          reloadPane(YAML.serialise(MODEL.doc));
-          setTab('configure');
+          adoptImageOwnerWrite(name, owner, newText);
+          // The pin just came off, so the Versions tab's own "Pinned
+          // to…" band (built from the last read()) is stale — see
+          // rollbackToVersion()/finishRollback()'s own reasoning for
+          // the same reset.
           versionsLoaded = false;
         });
-      });
+        return;
+      }
+
+      if (!editorShowing(name)) {
+        onFail('Open this stack to release this pin.');
+        return;
+      }
+      var imgField = imageFieldFor(MODEL.fields, service);
+      pushUndo('releasing the pin on "' + service + '"');
+      if (!imgField || !YAML.setValue(MODEL.doc, MODEL, imgField.id, picked)) {
+        dropUndo();
+        onFail('That image line could not be rewritten — edit it in the Compose view instead.');
+        return;
+      }
+      stripPinNoteAfterEdit(MODEL.doc, YAML.buildForm(MODEL.doc, netDrivers(), envNameList()), imgField.id);
+      reloadPane(YAML.serialise(MODEL.doc));
+      setTab('configure');
+      versionsLoaded = false;
     });
   }
 
@@ -5673,54 +5690,18 @@
   // from scratch (refreshRows()/menuRedraw) the way every other menu write
   // already does. `done(ok)` is called exactly once.
   function choosePinnedFromMenu(name, service, done) {
-    call('pin-resolve', { name: name, service: service }).then(function (res) {
-      if (!res || !res.ok) {
-        failed('Could not pin this service', (res && res.error) || 'Could not find a build to pin this service to.');
+    pinFlow(name, service).then(function (r) {
+      if (!r.ok) {
+        if (r.why) failed('Could not pin this service', r.why);
         done(false);
         return;
       }
-      askConfirm({
-        title: 'Pin "' + service + '" to this build?',
-        bodyHtml: '<p>The compose file will name this exact build, so it is never checked for an update ' +
-          'again — the only way back onto one is picking a tag.</p>' +
-          '<p>The file as it stands now is kept in History, so this can be undone.</p>',
-        goLabel: 'Pin it', danger: false
-      }).then(function (go) {
-        closeConfirm();
-        if (!go) { done(false); return; }
-        // Which file actually sets this service's image — the override
-        // wins when it names its own, the main file otherwise (see
-        // findImageOwner()'s own header comment above).
-        findImageOwner(name, service).then(function (owner) {
-          if (!owner.ok) {
-            failed('Could not pin this service', owner.why);
-            done(false);
-            return;
-          }
-          var pinned = pinServiceToDigest(service, res.digest, owner.text);
-          if (!pinned.ok) {
-            failed('Could not pin this service', pinned.why);
-            done(false);
-            return;
-          }
-          saveImageOwner(name, owner, pinned.yaml).then(function (saveRes) {
-            if (!saveRes || !saveRes.ok) {
-              failed('Could not pin this service',
-                     (saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
-              done(false);
-              return;
-            }
-            if (saveRes.icons) serviceIcons = saveRes.icons;
-            adoptImageOwnerWrite(name, owner, pinned.yaml);
-            // The main-file case already reparsed inside adoptImageOwnerWrite()
-            // (adoptRolledBackText() does that itself); an override on its own
-            // tab does not, so only that case needs its own reparse here.
-            if (owner.isOverride && editorShowing(name)) reparse();
-            paintServiceIcons();
-            done(true);
-          });
-        });
-      });
+      // The main-file case already reparsed inside adoptImageOwnerWrite()
+      // (adoptRolledBackText() does that itself); an override on its own
+      // tab does not, so only that case needs its own reparse here.
+      if (r.owner.isOverride && editorShowing(name)) reparse();
+      paintServiceIcons();
+      done(true);
     });
   }
 
@@ -5738,118 +5719,93 @@
   // a bespoke one, since it already does exactly "pull, then up -d --force-
   // recreate" for one named service.
   function releasePinFromMenu(name, service, clickedValue, done) {
-    findImageOwner(name, service).then(function (owner) {
-      if (!owner.ok) {
-        failed('Could not release this pin', owner.why);
+    pickReleaseTag(name, service).then(function (r) {
+      if (!r.ok) {
+        if (r.why) failed('Could not release this pin', r.why);
         done(false);
         return;
       }
-      var form = YAML.buildForm(YAML.parse(owner.text), netDrivers(), envNameList());
-      var imgField = imageFieldFor(form.fields, service);
-      var image = imgField && imgField.parts.value ? imgField.parts.value.value : '';
-      var atIdx = image.indexOf('@');
-      var repo = repoOf(atIdx >= 0 ? image.slice(0, atIdx) : image);
-      if (!repo) {
-        failed('Could not release this pin', 'Could not read this service’s image to look up its tags.');
-        done(false);
-        return;
-      }
+      var picked = r.picked;
+      // picked goes straight on to askConfirm() below WITHOUT closing the
+      // picker first — see pickReleaseTag()'s own header comment for why.
+      askConfirm({
+        title: 'Set "' + service + '" to ' + picked + '?',
+        bodyHtml: '<p>This takes effect immediately: the compose file is rewritten, "' + esc(picked) +
+          '" is pulled, and this service is recreated on it.</p>' +
+          '<p>The pinned file is kept in History, so this can be undone.</p>',
+        goLabel: 'Set it', danger: false
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) { done(false); return; }
 
-      var beforePinTag = tagFromPinnedRef(imgField && imgField.note);
-      tagsFor(repo).then(function (tags) {
-        tags = tags || [];
-        askTagPick(repo, tags, beforePinTag).then(function (picked) {
-          // Cancelled — nothing further to show, so this closes it; picked
-          // goes straight on to askConfirm() below WITHOUT closing first
-          // (askConfirm()'s own "already open" branch just restyles the
-          // same dialog in place) — closing here raced that reopen: the
-          // picker's dialog.close() queues its 'close' event rather than
-          // firing it inline, and by the time that stale event actually
-          // fired, askConfirm() had already reassigned confirmResolve to
-          // the NEW question, so the OLD close silently answered it with
-          // false (Adrian, 2026-09-26: the confirm "closes itself within
-          // about a second, with nothing done").
-          if (!picked) { closeConfirm(); done(false); return; }
-          askConfirm({
-            title: 'Set "' + service + '" to ' + picked + '?',
-            bodyHtml: '<p>This takes effect immediately: the compose file is rewritten, "' + esc(picked) +
-              '" is pulled, and this service is recreated on it.</p>' +
-              '<p>The pinned file is kept in History, so this can be undone.</p>',
-            goLabel: 'Set it', danger: false
-          }).then(function (go) {
-            closeConfirm();
-            if (!go) { done(false); return; }
+        // Re-resolve fresh rather than reuse the parse above — the tag
+        // lookup can take a moment, and this must post whatever is
+        // actually on disk right now, not a copy that has gone stale.
+        findImageOwner(name, service).then(function (owner2) {
+          if (!owner2.ok) {
+            failed('Could not release this pin', owner2.why);
+            done(false);
+            return;
+          }
+          var doc2 = YAML.parse(owner2.text);
+          var form2 = YAML.buildForm(doc2, netDrivers(), envNameList());
+          form2.doc = doc2;
+          var imgField2 = imageFieldFor(form2.fields, service);
+          if (!imgField2 || !YAML.setValue(doc2, form2, imgField2.id, picked)) {
+            failed('Could not release this pin',
+                   'That image line could not be rewritten — edit it in the Compose view instead.');
+            done(false);
+            return;
+          }
+          stripPinNoteAfterEdit(doc2, YAML.buildForm(doc2, netDrivers(), envNameList()), imgField2.id);
+          // The clicked choice IS written here, unlike the editor's own
+          // openReleaseInEditor() — Adrian, 2026-09-26: "Confirm writes
+          // repo:tag ... and sets the clicked update choice." The row
+          // menu is the only door where a choice was actually clicked.
+          // Written into the image's own file when that file already
+          // carries this service's x-unraid update field (the ordinary
+          // case — x-unraid metadata lives in one file); otherwise a
+          // second, separate write puts it in the main file, since an
+          // override that sets only the image has no x-unraid block of
+          // its own to hold it.
+          var modeField2 = policyFieldFor(form2.fields, service, 'mode');
+          var modeInSameFile = !!(modeField2 && !modeField2.policy.unreadable);
+          if (modeInSameFile) YAML.setPart(doc2, form2, modeField2.id, 'value', clickedValue);
 
-            // Re-resolve fresh rather than reuse the parse above — the tag
-            // lookup can take a moment, and this must post whatever is
-            // actually on disk right now, not a copy that has gone stale.
-            findImageOwner(name, service).then(function (owner2) {
-              if (!owner2.ok) {
-                failed('Could not release this pin', owner2.why);
-                done(false);
-                return;
-              }
-              var doc2 = YAML.parse(owner2.text);
-              var form2 = YAML.buildForm(doc2, netDrivers(), envNameList());
-              form2.doc = doc2;
-              var imgField2 = imageFieldFor(form2.fields, service);
-              if (!imgField2 || !YAML.setValue(doc2, form2, imgField2.id, picked)) {
-                failed('Could not release this pin',
-                       'That image line could not be rewritten — edit it in the Compose view instead.');
-                done(false);
-                return;
-              }
-              stripPinNoteAfterEdit(doc2, YAML.buildForm(doc2, netDrivers(), envNameList()), imgField2.id);
-              // The clicked choice IS written here, unlike the editor's own
-              // openReleaseInEditor() — Adrian, 2026-09-26: "Confirm writes
-              // repo:tag ... and sets the clicked update choice." The row
-              // menu is the only door where a choice was actually clicked.
-              // Written into the image's own file when that file already
-              // carries this service's x-unraid update field (the ordinary
-              // case — x-unraid metadata lives in one file); otherwise a
-              // second, separate write puts it in the main file, since an
-              // override that sets only the image has no x-unraid block of
-              // its own to hold it.
-              var modeField2 = policyFieldFor(form2.fields, service, 'mode');
-              var modeInSameFile = !!(modeField2 && !modeField2.policy.unreadable);
-              if (modeInSameFile) YAML.setPart(doc2, form2, modeField2.id, 'value', clickedValue);
+          var text2 = YAML.serialise(doc2);
+          saveImageOwner(name, owner2, text2).then(function (saveRes) {
+            if (!saveRes || !saveRes.ok) {
+              failed('Could not release this pin',
+                     (saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
+              done(false);
+              return;
+            }
+            if (saveRes.icons) serviceIcons = saveRes.icons;
+            adoptImageOwnerWrite(name, owner2, text2);
 
-              var text2 = YAML.serialise(doc2);
-              saveImageOwner(name, owner2, text2).then(function (saveRes) {
-                if (!saveRes || !saveRes.ok) {
-                  failed('Could not release this pin',
-                         (saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
-                  done(false);
-                  return;
-                }
-                if (saveRes.icons) serviceIcons = saveRes.icons;
-                adoptImageOwnerWrite(name, owner2, text2);
+            (modeInSameFile ? Promise.resolve(true)
+              : writeUpdatePolicyForServices(name, [service], 'mode', clickedValue)
+            ).then(function () {
+              // The main-file case reparsed already, inside
+              // adoptImageOwnerWrite() above; an override whose mode
+              // write went through writeUpdatePolicyForServices() just
+              // now reparsed there too. The one case neither of those
+              // covers: an override with the mode in that SAME file,
+              // written in-memory above with no reparse of its own.
+              if (owner2.isOverride && modeInSameFile && editorShowing(name)) reparse();
+              paintServiceIcons();
 
-                (modeInSameFile ? Promise.resolve(true)
-                  : writeUpdatePolicyForServices(name, [service], 'mode', clickedValue)
-                ).then(function () {
-                  // The main-file case reparsed already, inside
-                  // adoptImageOwnerWrite() above; an override whose mode
-                  // write went through writeUpdatePolicyForServices() just
-                  // now reparsed there too. The one case neither of those
-                  // covers: an override with the mode in that SAME file,
-                  // written in-memory above with no reparse of its own.
-                  if (owner2.isOverride && modeInSameFile && editorShowing(name)) reparse();
-                  paintServiceIcons();
-
-                  var rows = containerRows(name, service);
-                  // The row must re-read either way — the file itself already
-                  // changed above, whether or not the pull itself starts.
-                  startRowJob({
-                    rows: rows, verb: 'rollback-pull', action: 'run',
-                    fields: { name: name, verb: 'rollback-pull', service: service },
-                    busy: 'Updating…',
-                    failTitle: 'The file was changed but the new tag could not be brought in',
-                    failText: 'Could not start the job.',
-                    after: refreshStateSoon
-                  }).then(function () { done(true); });
-                });
-              });
+              var rows = containerRows(name, service);
+              // The row must re-read either way — the file itself already
+              // changed above, whether or not the pull itself starts.
+              startRowJob({
+                rows: rows, verb: 'rollback-pull', action: 'run',
+                fields: { name: name, verb: 'rollback-pull', service: service },
+                busy: 'Updating…',
+                failTitle: 'The file was changed but the new tag could not be brought in',
+                failText: 'Could not start the job.',
+                after: refreshStateSoon
+              }).then(function () { done(true); });
             });
           });
         });
