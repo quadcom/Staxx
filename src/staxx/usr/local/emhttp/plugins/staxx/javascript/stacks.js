@@ -3058,6 +3058,22 @@
   var tagTimer   = null;
   var yamlTagTimer = null;  // debounces the YAML pane's own use of tagCache — see scheduleYamlTagLoad()
 
+  var tagAsking = {};   // repo -> the lookup still in flight, so two askers share one request
+  // Resolves to the repo's tags ([] when the registry has none), or null when
+  // the request itself failed; only a real answer is kept for the session.
+  function tagsFor(repo) {
+    if (tagCache.hasOwnProperty(repo)) return Promise.resolve(tagCache[repo]);
+    if (!tagAsking[repo]) {
+      tagAsking[repo] = call('tags', { repo: repo }, 15000).then(function (res) {
+        delete tagAsking[repo];
+        if (!res || !res.ok) return null;
+        tagCache[repo] = res.tags || [];
+        return tagCache[repo];
+      });
+    }
+    return tagAsking[repo];
+  }
+
   // Compose also accepts forms a vocab list does not carry — restart's
   // "on-failure:3" is one such value, kept in compose-model.js's own comment
   // now — so a value already in the file that is not on the list joins it as
@@ -5224,12 +5240,8 @@
         return;
       }
       var beforePinTag = tagFromPinnedRef(field && field.note);
-      (tagCache.hasOwnProperty(repo) ? Promise.resolve(tagCache[repo])
-        : call('tags', { repo: repo }, 15000).then(function (res) {
-            tagCache[repo] = (res && res.ok) ? (res.tags || []) : [];
-            return tagCache[repo];
-          })
-      ).then(function (tags) {
+      tagsFor(repo).then(function (tags) {
+        tags = tags || [];
         askTagPick(repo, tags, beforePinTag).then(function (picked) {
           // Nothing this function does from here on ever opens another
           // question on top of the picker (unlike the row menu's own
@@ -5724,12 +5736,8 @@
       }
 
       var beforePinTag = tagFromPinnedRef(imgField && imgField.note);
-      (tagCache.hasOwnProperty(repo) ? Promise.resolve(tagCache[repo])
-        : call('tags', { repo: repo }, 15000).then(function (res) {
-            tagCache[repo] = (res && res.ok) ? (res.tags || []) : [];
-            return tagCache[repo];
-          })
-      ).then(function (tags) {
+      tagsFor(repo).then(function (tags) {
+        tags = tags || [];
         askTagPick(repo, tags, beforePinTag).then(function (picked) {
           // Cancelled — nothing further to show, so this closes it; picked
           // goes straight on to askConfirm() below WITHOUT closing first
@@ -16052,15 +16060,12 @@
     var repo = repoOf(box.value);
     if (!repo) return;
 
-    if (tagCache.hasOwnProperty(repo)) { mergeTags(box, repo, tagCache[repo]); return; }
-
-    call('tags', { repo: repo }, 15000).then(function (res) {
-      if (!res.ok) return;   // a network hiccup, not "no tags" — do not cache it
-      tagCache[repo] = res.tags || [];
-      // The box may have moved on to a different repo, or vanished (removed,
-      // or the form redrew under it), by the time this lands.
-      if (box.isConnected && repoOf(box.value) === repo) mergeTags(box, repo, tagCache[repo]);
-    }).catch(function () {});
+    // The box may have moved on to a different repo, or vanished (removed,
+    // or the form redrew under it), by the time this lands. tags is null on
+    // a network hiccup, not "no tags" — nothing to merge in that case.
+    tagsFor(repo).then(function (tags) {
+      if (tags && box.isConnected && repoOf(box.value) === repo) mergeTags(box, repo, tags);
+    });
   }
 
   function mergeTags(box, repo, tags) {
@@ -16153,12 +16158,7 @@
     if (yamlTagTimer) clearTimeout(yamlTagTimer);
     yamlTagTimer = setTimeout(function () {
       yamlTagTimer = null;
-      if (tagCache.hasOwnProperty(repo)) { refreshImageSuggest(repo); return; }
-      call('tags', { repo: repo }, 15000).then(function (res) {
-        if (!res.ok) return;
-        tagCache[repo] = res.tags || [];
-        refreshImageSuggest(repo);
-      }).catch(function () {});
+      tagsFor(repo).then(function (tags) { if (tags) refreshImageSuggest(repo); });
     }, 400);
   }
 
@@ -16177,22 +16177,18 @@
   // Typing in the image box, or landing on it, is what makes its repo worth
   // asking the registry about — delegated, since the box is redrawn whenever
   // the form is (adding a service, undo, reparse...).
-  formHost.addEventListener('input', function (event) {
-    var el = event.target;
-    if (el.dataset.part !== 'value' || !el.dataset.row) return;
-    var f = MODEL && MODEL.fields[el.dataset.row | 0];
-    if (f && f.binder === 'setting' && f.target === 'image') scheduleTagLoad(el);
-  });
-
+  //
   // 'focus' does not bubble, so this delegated pair uses 'focusin' instead —
   // reaching the same box the moment it is tabbed or clicked into, before
   // anything has been typed.
-  formHost.addEventListener('focusin', function (event) {
+  function imageBoxTagLoad(event) {
     var el = event.target;
     if (el.dataset.part !== 'value' || !el.dataset.row) return;
     var f = MODEL && MODEL.fields[el.dataset.row | 0];
     if (f && f.binder === 'setting' && f.target === 'image') scheduleTagLoad(el);
-  });
+  }
+  formHost.addEventListener('input', imageBoxTagLoad);
+  formHost.addEventListener('focusin', imageBoxTagLoad);
 
   function devShellHtml() {
     return '<div class="staxx-devhead">' +
