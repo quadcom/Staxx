@@ -1514,25 +1514,25 @@ function staxx_image_local_digest(array $local, string $remote): string {
 function staxx_update_images(string $scope): array {
   $images = [];
 
-  foreach (staxx_list_stacks() as $stack) {
+  foreach (staxx_stack_compose_map() as $rel => $file) {
     if ($scope === 'all') {
       // every stack
-    } elseif ($stack['name'] === $scope) {
+    } elseif ($rel === $scope) {
       // exact stack match
-    } elseif (strpos($stack['name'], $scope.'/') === 0) {
+    } elseif (strpos($rel, $scope.'/') === 0) {
       // folder match
     } else {
       continue;
     }
 
-    if ($stack['file'] === '') continue;
-    $meta = staxx_compose_meta($stack['file']);
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
     if (!$meta['ok']) continue;
 
     foreach ($meta['services'] as $svc => $svcMeta) {
       $image = trim((string)($svcMeta['image'] ?? ''));
       if ($image === '') continue;
-      $images[$image][] = $stack['name'].'::'.$svc;
+      $images[$image][] = $rel.'::'.$svc;
     }
   }
 
@@ -1548,11 +1548,7 @@ function staxx_update_images(string $scope): array {
  * @return array<string, string>
  */
 function staxx_update_stack_files(): array {
-  $files = [];
-  foreach (staxx_list_stacks() as $stack) {
-    if ($stack['file'] !== '') $files[$stack['name']] = $stack['file'];
-  }
-  return $files;
+  return array_filter(staxx_stack_compose_map(), fn($f) => $f !== '');
 }
 
 /**

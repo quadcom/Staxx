@@ -518,12 +518,11 @@ function staxx_images_keep_owners(): array {
     array_keys((array)($state['history'] ?? []))
   ));
 
-  $stacksByName = [];
-  foreach (staxx_list_stacks() as $s) $stacksByName[$s['name']] = $s;
+  $known = staxx_stack_compose_map();
 
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
-    if (!isset($stacksByName[$stack])) continue;
+    if (!isset($known[$stack])) continue;
     $label = $stack.' › '.$service;
     foreach (staxx_update_history($stack, $service) as $d) {
       if (!isset($owners[$d])) $owners[$d] = $label;
@@ -544,7 +543,7 @@ function staxx_images_keep_owners(): array {
  */
 function staxx_images_stack_refs(): array {
   $refs = [];
-  foreach (staxx_list_stacks() as $s) {
+  foreach (staxx_stack_states() as $s) {
     if ($s['file'] === '') continue;
     $meta = staxx_compose_meta($s['file']);
     foreach ($meta['services'] as $service) {

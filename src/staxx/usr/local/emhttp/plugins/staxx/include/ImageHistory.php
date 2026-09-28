@@ -219,15 +219,16 @@ function staxx_image_history_digests(string $stack, string $service): array {
  * wanted for a rollback before it deletes anything. This must walk every
  * stack that actually exists, not a cached or partial list — a digest
  * missing from this answer is an image that gets removed while a rollback
- * still needs it.
+ * still needs it. The map is the scan's own set of stacks, so that promise
+ * still holds.
  */
 function staxx_image_history_all(): array {
   $all = [];
-  foreach (staxx_list_stacks() as $s) {
-    $images = staxx_record_read($s['name'])['images'] ?? [];
+  foreach (array_keys(staxx_stack_compose_map()) as $rel) {
+    $images = staxx_record_read($rel)['images'] ?? [];
     foreach ($images as $service => $list) {
       $digests = array_column($list, 'digest');
-      if ($digests) $all[$s['name'].'::'.$service] = $digests;
+      if ($digests) $all[$rel.'::'.$service] = $digests;
     }
   }
   return $all;

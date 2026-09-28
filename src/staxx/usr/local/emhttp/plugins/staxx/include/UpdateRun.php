@@ -169,10 +169,7 @@ function staxx_update_policy(string $stack, string $service): array {
 
   if (!staxx_valid_path($stack)) return staxx_update_policy_fallback($global);
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return staxx_update_policy_fallback($global);
 
   $meta = staxx_compose_meta($file);
@@ -417,7 +414,7 @@ function staxx_update_due(): array {
   $out = [];
   $now = time();
 
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
     $stack = $row['stack'];
     if ($stack['file'] === '') continue;
@@ -528,10 +525,7 @@ function staxx_update_record_before_pull(string $stack, string $service = '', bo
     error_log('StaXX: image history adopt failed for '.$stack.': '.$adoptError);
   }
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return;
 
   $meta = staxx_compose_meta($file);
@@ -698,8 +692,8 @@ function staxx_update_seed_history(): array {
     return $out;
   }
 
-  foreach (staxx_list_stacks() as $s) {
-    staxx_update_record_before_pull((string)$s['name'], '', false);
+  foreach (array_keys(staxx_stack_compose_map()) as $rel) {
+    staxx_update_record_before_pull($rel, '', false);
     $out['stacks']++;
   }
 
@@ -833,10 +827,7 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
   if (empty($targets)) { $error = 'No service was named to roll back.'; return ''; }
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
 
   $meta = staxx_compose_meta($file);
@@ -1127,10 +1118,10 @@ function staxx_pin_resolve(string $stack, string $service, string &$error): arra
  */
 function staxx_update_current_refs(string $excludeStack = ''): array {
   $refs = [];
-  foreach (staxx_list_stacks() as $s) {
-    if ($excludeStack !== '' && $s['name'] === $excludeStack) continue;
-    if ($s['file'] === '') continue;
-    $meta = staxx_compose_meta($s['file']);
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($excludeStack !== '' && $rel === $excludeStack) continue;
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
     foreach ((array)($meta['services'] ?? []) as $service) {
       $ref = trim((string)($service['image'] ?? ''));
       if ($ref !== '') $refs[$ref] = true;
@@ -1196,13 +1187,11 @@ function staxx_update_keep_digests(string $excludeStack = ''): array {
     array_keys(staxx_image_history_all()),
     array_keys((array)$state['history'])
   ));
+  $files = staxx_stack_compose_map();
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
     if ($excludeStack !== '' && $stack === $excludeStack) continue;
-    $file = '';
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $stack) { $file = $s['file']; break; }
-    }
+    $file = $files[$stack] ?? '';
     if ($file === '') continue;
     $meta = staxx_compose_meta($file);
     $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
@@ -1331,7 +1320,7 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
   $images = (array)staxx_update_state()['images'];
   $items  = [];
 
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
     $stack = $row['stack'];
 
@@ -1577,7 +1566,7 @@ function staxx_update_apply_pass(): array {
   foreach ($due as $d) $wanted[$d['stack']] = true;
 
   $items = [];
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack' || !isset($wanted[$row['stack']['name']])) continue;
     $items[] = ['stack' => $row['stack']['name'], 'state' => 'waiting', 'job' => '', 'error' => ''];
   }

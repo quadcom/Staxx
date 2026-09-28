@@ -826,7 +826,9 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
  * name — there is nothing else it could be now, and the two were only ever
  * separate so that renaming a folder did not have to touch anything.
  *
- * @param  array $stacks from staxx_list_stacks()
+ * @param  array $stacks from staxx_list_stacks() or staxx_stack_states(): reads
+ *   name, folder, leaf and running, and keeps their order for anything the
+ *   start order does not name
  * @return array<int, array{type:string, ...}>
  */
 function staxx_folder_layout(array $stacks): array {
