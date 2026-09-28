@@ -66,14 +66,15 @@ unset($staxx_update_tz);
 /**
  * @return array{mode:string, delay:int, window:bool, wstart:string, wend:string,
  *               notifyFound:bool, notifyInstalled:bool, notifyFailed:bool,
- *               retain:int, cleanup:string, keepImages:bool}
+ *               notifyPinned:bool, retain:int, cleanup:string, keepImages:bool}
  *
  * mode is always returned as 'manual' or 'auto' — the config key may still
  * hold the older 'off'/'notify' spelling, normalised here rather than at
- * every reader. The three notifyXxx booleans are the server-wide switches
- * for being told about a found update, an installed one, and a failed one —
- * see staxx_update_notify_map() (Defines.php) for how a config that still
- * only has the retired UPDATE_NOTIFY choice is read.
+ * every reader. The four notifyXxx booleans are the server-wide switches for
+ * being told about a found update, an installed one, a failed one, and
+ * (PLAN_205) a pinned service's weekly reminder — see staxx_update_notify_map()
+ * (Defines.php) for how a config that still only has the retired UPDATE_NOTIFY
+ * choice is read.
  */
 function staxx_update_settings(): array {
   $cfg = staxx_cfg();
@@ -110,7 +111,7 @@ function staxx_update_settings(): array {
 
   return ['mode' => $mode, 'delay' => $delay, 'window' => $window, 'wstart' => $wstart,
           'wend' => $wend, 'notifyFound' => $notify['found'], 'notifyInstalled' => $notify['installed'],
-          'notifyFailed' => $notify['failed'], 'retain' => $retain,
+          'notifyFailed' => $notify['failed'], 'notifyPinned' => $notify['pinned'], 'retain' => $retain,
           'keepImages' => $keepImages];
 }
 
@@ -146,10 +147,11 @@ function staxx_update_bool($raw): ?bool {
  * asks solely whether it is 'auto' — so both normalise to 'manual' here and
  * no caller downstream ever has to know the old spelling existed.
  *
- * notify (PLAN_154) is NOT part of that mode/delay handoff — a scope setting
- * only 'update.notify' does not thereby also decide mode and delay, and a
- * scope setting mode/delay does not thereby also decide notify. It resolves
- * separately, per event (found/installed/failed), service then stack: the
+ * notify (PLAN_154; a fourth event, 'pinned', added by PLAN_205) is NOT part
+ * of that mode/delay handoff — a scope setting only 'update.notify' does not
+ * thereby also decide mode and delay, and a scope setting mode/delay does not
+ * thereby also decide notify. It resolves separately, per event (found/
+ * installed/failed/pinned), service then stack: the
  * first of those two scopes that has an opinion about a given event wins it,
  * and a scope with no opinion about that event — because it set neither the
  * plain boolean nor that event's own key — leaves it null rather than
@@ -162,7 +164,7 @@ function staxx_update_bool($raw): ?bool {
  * so a scope carrying an unrecognised shape at either key is treated as
  * having no opinion, same as an absent key.
  *
- * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, from:string}
+ * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, notifyPinned:?bool, from:string}
  */
 function staxx_update_policy(string $stack, string $service): array {
   $global = staxx_update_settings();
@@ -187,7 +189,8 @@ function staxx_update_policy(string $stack, string $service): array {
 function staxx_update_policy_fallback(array $global): array {
   return ['mode' => $global['mode'], 'delay' => $global['delay'],
           'notifyFound' => $global['notifyFound'], 'notifyInstalled' => $global['notifyInstalled'],
-          'notifyFailed' => $global['notifyFailed'], 'from' => 'global'];
+          'notifyFailed' => $global['notifyFailed'], 'notifyPinned' => $global['notifyPinned'],
+          'from' => 'global'];
 }
 
 /**
@@ -212,7 +215,7 @@ function staxx_update_notify_scope_value(array $x, string $event): ?bool {
  *
  * @param array $meta staxx_compose_meta()'s return for one stack
  * @param array $global staxx_update_settings()'s return
- * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, from:string}
+ * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, notifyPinned:?bool, from:string}
  */
 function staxx_update_policy_from_meta(array $meta, string $service, array $global): array {
   $modes = ['manual', 'off', 'notify', 'auto'];
@@ -246,7 +249,7 @@ function staxx_update_policy_from_meta(array $meta, string $service, array $glob
   // staxx_update_notify_scope_value() and the docblock above for why a scope
   // with nothing to say leaves an event null rather than borrowing the
   // server's switch itself.
-  $events = ['found' => null, 'installed' => null, 'failed' => null];
+  $events = ['found' => null, 'installed' => null, 'failed' => null, 'pinned' => null];
   foreach ($scopes as $x) {
     foreach ($events as $event => $resolved) {
       if ($resolved !== null) continue;
@@ -257,7 +260,7 @@ function staxx_update_policy_from_meta(array $meta, string $service, array $glob
   return [
     'mode' => $mode, 'delay' => $delay,
     'notifyFound' => $events['found'], 'notifyInstalled' => $events['installed'],
-    'notifyFailed' => $events['failed'], 'from' => $from,
+    'notifyFailed' => $events['failed'], 'notifyPinned' => $events['pinned'], 'from' => $from,
   ];
 }
 
@@ -442,6 +445,177 @@ function staxx_update_due(): array {
   }
 
   return $out;
+}
+
+/* --------------------------------------------------------- pinned reminder -- */
+
+// How often the pinned-service reminder may actually SEND a message (PLAN_205,
+// decision P2 — fixed weekly, not a choice in Settings).
+define('STAXX_PINNED_NOTICE_INTERVAL', 7 * 86400);
+
+// How often the pass may WALK every stack to keep 'pinnedSince' current. Kept
+// far shorter than the notice interval above — a pin date is only ever set or
+// dropped when a walk actually runs, so tying it to the weekly send left it up
+// to six days late. A day is frequent enough that the date shown is never
+// meaningfully stale, and cheap enough that it costs nothing between the
+// weekly sends the box actually notices.
+define('STAXX_PINNED_WALK_INTERVAL', 86400);
+
+/**
+ * The weekly "these are still pinned" message (PLAN_205). Hooked into the
+ * 15-minute apply pass rather than UPDATE_CHECK's own cadence, so the
+ * reminder does not depend on checking being switched on at all — a pin is
+ * never checked either way, so there is nothing for UPDATE_CHECK to gate here.
+ *
+ * Two clocks, kept deliberately apart:
+ *  - 'pinnedWalkAt' gates the slow walk itself (STAXX_PINNED_WALK_INTERVAL,
+ *    a day) and is all that keeps 'pinnedSince' current — between walks this
+ *    function costs the one state read below and nothing else.
+ *  - 'pinnedNoticeAt' gates SENDING (STAXX_PINNED_NOTICE_INTERVAL, a week),
+ *    exactly as before; it only moves when a send decision is actually made.
+ *
+ * One message for every pinned, opted-in service at once, never one each —
+ * see staxx_update_notify()'s own docblock for why a flood of per-container
+ * notices is worse than no notice. Nothing is sent, but 'pinnedNoticeAt'
+ * still moves on, when there is nothing to report on a week that is due; an
+ * empty week must cost one walk, not repeat the walk every 15 minutes until
+ * something changes.
+ *
+ * The very first walk this ever runs — 'pinnedNoticeAt' still unset, a fresh
+ * install or the first pass after this feature shipped — records every
+ * 'pinnedSince' it finds and starts both clocks from now, but sends nothing:
+ * a server that has been pinned for years must not announce it the moment
+ * this code first runs, so the first real reminder arrives a full week after
+ * install, the same as for a pin made afterwards.
+ *
+ * 'pinnedSince' — when this pass first saw a given image's exact digest pin —
+ * lives per image under the update state, set the first time it is seen and
+ * dropped the moment that image is no longer pinned in any stack (the pin was
+ * released or the image was changed), so a released pin does not silently
+ * reappear with its old date if the same digest is ever pinned again later.
+ *
+ * The walk itself (which stacks are pinned right now) can take a while — it
+ * parses every compose file. Whatever it finds is folded into the freshest
+ * 'images' on disk immediately before saving, under the check pass's own
+ * lock (staxx_update_lock()/staxx_update_unlock(), Updates.php) and re-read
+ * straight from the state file rather than trusting the snapshot taken at
+ * the top — otherwise a check pass that writes 'images' while this walk is
+ * still running would have its own changes overwritten by this function's
+ * stale copy, the same failure staxx_update_refresh_after_run() guards
+ * against for the same reason. Only 'pinnedSince' is folded in; every other
+ * key in the freshest 'images' is left exactly as that fresher read found it.
+ *
+ * If the lock cannot be taken at all — a check pass is mid-write right now —
+ * this pass saves NOTHING and sends nothing: neither clock moves, today's
+ * walk is simply discarded, and the next 15-minute apply pass tries the
+ * whole thing again. Saving this walk's own stale snapshot instead would
+ * risk exactly the lost-update failure the lock exists to prevent.
+ */
+function staxx_update_pinned_reminder_pass(): void {
+  $now    = time();
+  $state  = staxx_update_state(); // the one read this costs between walks
+  $walkAt = (int)($state['pinnedWalkAt'] ?? 0);
+  if ($walkAt !== 0 && ($now - $walkAt) < STAXX_PINNED_WALK_INTERVAL) return;
+
+  $noticeAt = (int)($state['pinnedNoticeAt'] ?? 0);
+  $firstRun = ($noticeAt === 0);
+  $sendDue  = !$firstRun && ($now - $noticeAt) >= STAXX_PINNED_NOTICE_INTERVAL;
+
+  $global = staxx_update_settings();
+  $images = (array)($state['images'] ?? []);
+  $stillPinned = [];
+  $lines = [];
+
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
+    if ($row['type'] !== 'stack') continue;
+    $stack = $row['stack'];
+    if ($stack['file'] === '') continue;
+
+    $meta = staxx_compose_meta($stack['file']);
+    if (!$meta['ok']) continue;
+
+    foreach ($meta['services'] as $svc => $svcMeta) {
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      $at = strpos($image, '@');
+      if ($at === false || !preg_match('/^sha256:[0-9a-f]{64}$/', substr($image, $at + 1))) continue;
+
+      $resolved = staxx_update_policy_from_meta($meta, $svc, $global)['notifyPinned'];
+      if (!($resolved ?? $global['notifyPinned'])) continue;
+
+      $stillPinned[$image] = true;
+      $entry = (array)($images[$image] ?? []);
+      $since = (int)($entry['pinnedSince'] ?? 0);
+      if ($since === 0) { $since = $now; $entry['pinnedSince'] = $since; }
+      $images[$image] = $entry;
+
+      // The tag before the '@' is the name a person recognises; a digest is
+      // only ever shown short, the first twelve hex characters, the same
+      // slice staxx_pin_version() shows in the row itself.
+      $repoTag = substr($image, 0, $at);
+      $slash = strrpos($repoTag, '/');
+      $colon = strrpos($repoTag, ':');
+      $tag = ($colon !== false && ($slash === false || $colon > $slash))
+        ? substr($repoTag, $colon + 1) : substr($image, $at + 8, 12);
+      $short = substr($image, $at + 8, 12);
+
+      $lines[] = $stack['name'].' / '.$svc.' is pinned to '.$tag.' ('.$short.') since '
+               . date('Y-m-d', $since).'.';
+    }
+  }
+
+  // An image no longer pinned anywhere loses its start date — a released
+  // pin re-applied later starts the clock again rather than reusing the old
+  // date, since it is a new decision to pin, not a continuation of the old one.
+  foreach ($images as $img => $entry) {
+    if (isset($entry['pinnedSince']) && !isset($stillPinned[$img])) {
+      unset($entry['pinnedSince']);
+      $images[$img] = $entry;
+    }
+  }
+
+  // Fold ONLY the pinnedSince changes just found into the freshest 'images'
+  // on disk, under the check pass's own lock — see this function's docblock
+  // for why the snapshot taken at the top of this pass cannot be trusted by
+  // the time the slow walk above has finished. A check pass already holds
+  // this lock while it is writing 'images' itself, so failing to take it
+  // means today's walk is discarded outright — see the docblock — rather
+  // than risking the very lost-update failure the lock exists to prevent.
+  $lockError = '';
+  if (!staxx_update_lock($lockError)) return;
+
+  // Re-read straight from the state file (staxx_update_state() would just
+  // hand back this process's own stale cache) and push that fresh copy into
+  // the cache slot so the staxx_update_state_save() call below merges over
+  // it, not over the stale one.
+  $file  = staxx_update_state_file();
+  $raw   = $file === '' ? false : @file_get_contents($file);
+  $data  = $raw === false ? null : json_decode($raw, true);
+  $fresh = is_array($data) ? array_merge(staxx_update_state_defaults(), $data) : staxx_update_state_defaults();
+  staxx_update_state_cache($fresh);
+
+  $freshImages = (array)($fresh['images'] ?? []);
+  foreach ($images as $img => $entry) {
+    $freshEntry = (array)($freshImages[$img] ?? []);
+    if (isset($entry['pinnedSince'])) $freshEntry['pinnedSince'] = $entry['pinnedSince'];
+    else unset($freshEntry['pinnedSince']);
+    $freshImages[$img] = $freshEntry;
+  }
+  $images = $freshImages;
+
+  if ($sendDue && $lines) {
+    $n = count($lines);
+    $subject = $n === 1 ? 'StaXX: 1 container still pinned' : 'StaXX: containers still pinned';
+    $body = implode("\n", $lines)."\nPick a tag from its update choices to release it.";
+    staxx_update_notify($subject, $body);
+  }
+
+  $toSave = ['images' => $images, 'pinnedWalkAt' => $now];
+  if ($sendDue || $firstRun) $toSave['pinnedNoticeAt'] = $now;
+  // Unlocked unconditionally, whether or not the save itself succeeded —
+  // the lock's only job is to stop a concurrent writer being overwritten,
+  // and a failed save here leaves nothing else holding it.
+  staxx_update_state_save($toSave);
+  staxx_update_unlock();
 }
 
 /* ------------------------------------------------------------ pause / hold -- */
@@ -1523,8 +1697,14 @@ function staxx_update_queue_stop(): bool {
  * otherwise, when staxx_update_due() has found anything, starts a fresh
  * queue over exactly those stacks. Costs no network either way — every
  * digest it acts on was already fetched by a check pass.
+ *
+ * The pinned-service reminder (PLAN_205) rides along on this same pass,
+ * first — it is its own weekly interval and never touches the queue, so it
+ * runs whether or not anything else here is due.
  */
 function staxx_update_apply_pass(): array {
+  staxx_update_pinned_reminder_pass();
+
   // Held only across the read-check-write below, never across a call to
   // staxx_update_queue_tick() — that function takes this same lock itself,
   // and a non-reentrant mkdir lock taken twice by one process would just
@@ -1583,10 +1763,17 @@ function staxx_update_apply_pass(): array {
  * event and with the server's switch only as the fallback for a container
  * that says nothing, whether anyone actually wants this message — and calls
  * here only once that list is non-empty.
+ *
+ * The binary is overridable through STAXX_NOTIFY_BIN — same trick as
+ * STAXX_UPDATE_STATE — so a server suite can prove a message was actually
+ * sent by pointing this at a throwaway stub instead of Unraid's real
+ * notifier, never by sending a real notification from this box.
  */
 function staxx_update_notify(string $subject, string $body): void {
+  $bin = getenv('STAXX_NOTIFY_BIN');
+  $bin = ($bin !== false && $bin !== '') ? $bin : '/usr/local/emhttp/webGui/scripts/notify';
   staxx_sh(
-    '/usr/local/emhttp/webGui/scripts/notify'
+    $bin
       .' -e '.escapeshellarg('StaXX')
       .' -s '.escapeshellarg($subject)
       .' -d '.escapeshellarg($body)

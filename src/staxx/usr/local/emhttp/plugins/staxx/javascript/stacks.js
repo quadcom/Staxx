@@ -37,7 +37,7 @@
   // the shape staxx_update_notify_map() itself defaults an empty config to,
   // for the one page load where the attribute failed to parse.
   var UPDATE_SETTINGS = { mode: 'manual', delay: 24, quiet: true,
-                           notify: { found: false, installed: false, failed: true } };
+                           notify: { found: false, installed: false, failed: true, pinned: true } };
   try {
     var updSettingsRaw = JSON.parse(scaffold.dataset.updateSettings || '');
     if (updSettingsRaw) UPDATE_SETTINGS = updSettingsRaw;
@@ -4480,7 +4480,30 @@
   // it untouched writes nothing, and flipping any one switch writes all
   // three (see writeUpdatePolicy()'s own comment). `f` is the single notify
   // policy field harvestUpdatePolicy() pushes for this service.
-  function updateNotifyGroupHtml(f, index) {
+  //
+  // PLAN_205 item 5 / P3(b): a PINNED service never gets a real update to be
+  // told about, so the three ticks above are replaced by the one "still
+  // pinned" reminder instead of drawn alongside them — showing "New image"
+  // beside a build that will never check for one would be offering a
+  // switch that can never do anything.
+  function updateNotifyGroupHtml(f, index, pinned) {
+    if (pinned) {
+      var on = resolvedPinnedNotify(MODEL.doc, f.service);
+      var pinnedOptHtml = '<label class="staxx-tickopt staxx-flagopt"><input type="checkbox" ' +
+        'data-updnotifypinned="1" data-svc="' + esc(f.service) + '" data-on="true" data-off="false"' +
+        (on ? ' checked' : '') + '>' +
+        '<svg class="staxx-tickmark staxx-tickmark--tick" viewBox="0 0 16 16" aria-hidden="true">' +
+          '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+        '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
+          '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
+        '<span class="staxx-tickword">Remind me it is still pinned</span></label>';
+      return '<div class="staxx-upd-row" data-row="' + index + '">' +
+               '<div class="staxx-upd-options">' +
+                 '<div class="staxx-tickrow" role="group" aria-label="Notifications">' + pinnedOptHtml + '</div>' +
+               '</div>' +
+             '</div>';
+    }
+
     if (f.policy.unreadable) {
       return '<div class="staxx-upd-row" data-row="' + index + '">' +
                '<div class="staxx-upd-options"><span class="staxx-upd-raw">"' +
@@ -4551,6 +4574,85 @@
       if (f.service === service && f.binder === 'setting' && f.target === 'image') return f;
     }
     return null;
+  }
+
+  /* =====================================================================
+   * PLAN_205 item 5 / P3(b) — the "still pinned" reminder tick.
+   * harvestUpdatePolicy() (compose-model.js) never learnt a fourth event —
+   * the pinned tick is read and written here instead, walking the parsed
+   * tree directly through the same generic primitives the icon picker
+   * already uses (YAML.servicesMap/addNested/replaceNested), rather than
+   * growing the three-event notify target compose-model.js already owns.
+   * ===================================================================== */
+
+  // The raw x-unraid map for one service, or null. YAML.servicesMap() is
+  // the one piece of that walk compose-model.js already exports.
+  function svcXuMap(doc, service) {
+    var svcMap = doc && YAML.servicesMap(doc);
+    var pair = svcMap ? svcMap.pairs[service] : null;
+    return (pair && pair.value && pair.value.pairs) ? pair.value.pairs['x-unraid'] : null;
+  }
+
+  // The stack's own x-unraid map, at the document root.
+  function rootXuMap(doc) {
+    return doc && doc.root && doc.root.kind === 'map' ? doc.root.pairs['x-unraid'] : null;
+  }
+
+  // update.notify.pinned off one x-unraid pair — true/false/null (no
+  // opinion). Reads the older whole-switch spelling too (a bare
+  // update.notify: true/false answers every event, pinned included, same
+  // as the server's own staxx_update_policy_from_meta()).
+  function xuNotifyPinnedRaw(xuPair) {
+    var upd = xuPair && xuPair.value && xuPair.value.pairs ? xuPair.value.pairs['update'] : null;
+    var updMap = upd && upd.value && upd.value.kind === 'map' ? upd.value : null;
+    var notify = updMap ? updMap.pairs['notify'] : null;
+    if (!notify || !notify.value) return null;
+    if (notify.value.kind === 'scalar') {
+      if (notify.value.value === 'true') return true;
+      if (notify.value.value === 'false') return false;
+      return null;
+    }
+    if (notify.value.kind === 'map') {
+      var p = notify.value.pairs['pinned'];
+      var raw = p && p.value && p.value.kind === 'scalar' ? p.value.value : null;
+      if (raw === 'true') return true;
+      if (raw === 'false') return false;
+    }
+    return null;
+  }
+
+  // The tick's own starting answer — service, then stack, then the global
+  // UPDATE_NOTIFY_PINNED setting — the same precedence order the other
+  // three events resolve through (updateNotifyGroupHtml() above).
+  function resolvedPinnedNotify(doc, service) {
+    var own = xuNotifyPinnedRaw(svcXuMap(doc, service));
+    if (own !== null) return own;
+    var stack = xuNotifyPinnedRaw(rootXuMap(doc));
+    if (stack !== null) return stack;
+    return !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify.pinned);
+  }
+
+  // Writes the tick straight into the document — a plain true/false, never
+  // removed back to "no opinion" (the same one-way flag shape the other
+  // three notify switches already have). Always removed then re-added bare,
+  // rather than rewritten in place through YAML.replaceNested(): that
+  // preserves whatever quoting style the line already had, which is right
+  // for text a person typed, but wrong for a control-written flag —
+  // measured directly (a throwaway probe against compose-model.js): the
+  // second toggle came back as pinned: 'false', quoted, once the first
+  // write's own bare line had been read back and re-classified as an
+  // ordinary plain scalar. removeKey() is a no-op when there is nothing to
+  // remove yet, and addNested() rebuilds whichever levels the removal (or a
+  // brand-new service) left missing, so this is safe whether the key
+  // already exists or not. Refuses, rather than guessing, an existing
+  // notify: block this cannot safely rewrite at all (the older whole-switch
+  // scalar spelling, or anything sealed/opaque) — the person can still
+  // change it from the Compose view.
+  function writePinnedNotifyOnDoc(doc, service, value) {
+    var boolWord = value ? 'true' : 'false';
+    var path = ['x-unraid', 'update', 'notify', 'pinned'];
+    YAML.removeKey(doc, null, service, path);
+    return YAML.addNested(doc, null, service, path, boolWord, true) >= 0;
   }
 
   /* =====================================================================
@@ -4725,7 +4827,7 @@
     });
 
     var updatesHtml = (modeEntry ? updatePolicyRowHtml(modeEntry.f, modeEntry.idx, pinned) : '');
-    var notifyHtml = notifyEntry ? updateNotifyGroupHtml(notifyEntry.f, notifyEntry.idx) : '';
+    var notifyHtml = notifyEntry ? updateNotifyGroupHtml(notifyEntry.f, notifyEntry.idx, pinned) : '';
 
     // PLAN_176 B3b — wrapped in the same .staxx-formgroup/.staxx-groupbody
     // shape every other section uses, so Updates gets the same collapse
@@ -5001,6 +5103,36 @@
   // to keep comparing against what disk truly has, not against a snapshot
   // that quietly folded an unrelated unsaved edit in as if it were saved.
   function applyUpdatePolicyLocally(services, policyField, value, savedFingerprint, savedText) {
+    // PLAN_205 item 5 / P3(b) — the pinned tick has no harvested field to
+    // look up by policyFieldFor(), so it writes straight into MODEL.doc
+    // through the same low-level primitive the disk-side write uses,
+    // rather than through YAML.setPart(). Same undo/reload/fingerprint
+    // shape as the ordinary path below, just without the field lookup.
+    if (policyField === 'notifyPinned') {
+      var nPinned = services.length;
+      pushUndo(nPinned === 1 ? 'changing "' + services[0] + '"’s pinned reminder'
+                              : 'changing ' + nPinned + ' services’ pinned reminders');
+      for (var p = 0; p < services.length; p++) {
+        if (!writePinnedNotifyOnDoc(MODEL.doc, services[p], value)) {
+          restoreUndo();
+          if (savedFingerprint) {
+            showError('This was saved to the file, but the open copy could not be updated to match. ' +
+                       'Reopen the stack to see it — saving from here first would be refused, on purpose, ' +
+                       'rather than risk overwriting it.');
+          } else {
+            showError('That value cannot be written as it stands — edit this one in the Compose view.');
+          }
+          return;
+        }
+      }
+      reloadPane(YAML.serialise(MODEL.doc));
+      if (savedFingerprint) {
+        fingerprintAtOpen = savedFingerprint;
+        textAtOpen = savedText;
+      }
+      return;
+    }
+
     var fields = [];
     for (var i = 0; i < services.length; i++) {
       var f = policyFieldFor(MODEL.fields, services[i], policyField);
@@ -5101,6 +5233,28 @@
     ).then(function (applied) {
       // The write already reached disk — repaint the row now rather than
       // leaving its image line and thumbtack mark stale (Adrian, 2026-09-28).
+      if (applied && applied.length) refreshRows();
+    });
+  }
+
+  // The pinned reminder tick's own commit (PLAN_205 item 5 / P3(b)) — the
+  // same shape as writeUpdatePolicy() above, but keyed by service name
+  // rather than a MODEL.fields index, since this tick has no harvested
+  // field of its own to look up.
+  function writePinnedNotify(service, value) {
+    if (!MODEL || sanitised || fileOpen !== null) return;
+    clearError();
+
+    if (!openedName) {
+      applyUpdatePolicyLocally([service], 'notifyPinned', value, null);
+      return;
+    }
+
+    writeUpdatePolicyForServices(openedName, [service], 'notifyPinned', value,
+      function (title, message) { showError(message); },
+      { read: 'Could not read the stack to change this setting.',
+        writeError: function () { return 'That value cannot be written as it stands — edit this one in the Compose view.'; } }
+    ).then(function (applied) {
       if (applied && applied.length) refreshRows();
     });
   }
@@ -5335,6 +5489,15 @@
   formHost.addEventListener('change', function (event) {
     var el = event.target;
 
+    // PLAN_205 item 5 / P3(b) — the pinned reminder tick, wired to the
+    // service name rather than a row index: it has no MODEL.fields entry of
+    // its own to look up (harvestUpdatePolicy() never learnt this fourth
+    // event), so it commits straight from data-svc instead.
+    if (el.dataset.updnotifypinned !== undefined) {
+      writePinnedNotify(el.dataset.svc, el.checked);
+      return;
+    }
+
     if (el.dataset.updnotify !== undefined) {
       // Every switch in this row is read fresh off the DOM rather than
       // computed from the one that just changed — the flipped one already
@@ -5454,11 +5617,20 @@
 
       // null means every service the file declares for this field (PLAN_162's
       // bulk panel, which never knows a stack's own services until this read
-      // has answered).
+      // has answered). The pinned tick has no harvested policy field to
+      // count over (see below), so it is counted off the image field every
+      // service always has instead — the loop's own pinned-only filter then
+      // decides which of them the write actually reaches.
       if (services === null) {
         services = [];
         diskForm.fields.forEach(function (f) {
-          if (f.policy && f.policy.field === policyField && services.indexOf(f.service) === -1) services.push(f.service);
+          if (policyField === 'notifyPinned') {
+            if (f.binder === 'setting' && f.target === 'image' && services.indexOf(f.service) === -1) {
+              services.push(f.service);
+            }
+          } else if (f.policy && f.policy.field === policyField && services.indexOf(f.service) === -1) {
+            services.push(f.service);
+          }
         });
       }
 
@@ -5466,6 +5638,26 @@
       var pinnedSkipped = 0;
       for (var i = 0; i < services.length; i++) {
         var svc = services[i];
+
+        // PLAN_205 item 5 / P3(b) — the pinned reminder tick has no
+        // harvested field to look up (harvestUpdatePolicy() never learnt
+        // this fourth event), so it writes straight into the disk parse
+        // through the same low-level primitive the editor's own commit
+        // uses, and only ever reaches a service that IS pinned — the
+        // opposite of the mode skip just below, and the mirror of D3's own
+        // "a notify tick is written to a pinned service" ruling: an
+        // unpinned one has nothing to remind it of, so the key is never
+        // added to its file.
+        if (policyField === 'notifyPinned') {
+          if (!svcIsPinned(diskForm.fields, svc)) { pinnedSkipped++; continue; }
+          if (!writePinnedNotifyOnDoc(diskDoc, svc, value)) {
+            report('Could not change this setting', words.writeError(svc));
+            return null;
+          }
+          applied.push(svc);
+          continue;
+        }
+
         var diskField = policyFieldFor(diskForm.fields, svc, policyField);
         if (!diskField || diskField.policy.unreadable) continue;
         // A pinned service's update CHOICE (the "When"/mode field) is left
@@ -5489,9 +5681,11 @@
       }
 
       if (!applied.length) {
-        // Every service in scope was pinned, not merely unreadable —
-        // Adrian's ruling above is silence, never a refusal dialog, so this
-        // is treated as nothing to do rather than "could not be changed".
+        // Every service in scope was pinned (mode) or, the other way round,
+        // had nothing pinned to remind it of (notifyPinned) — not merely
+        // unreadable. Adrian's ruling above is silence, never a refusal
+        // dialog, so this is treated as nothing to do rather than "could not
+        // be changed".
         if (pinnedSkipped && pinnedSkipped === services.length) return [];
         report('Could not change this setting',
                'None of these containers could be changed here — edit the compose file directly.');
@@ -5822,8 +6016,14 @@
   // The note (updateNotifyNoteHtml) is shown only when none of the readable
   // services has an object of its own — the same rule the editor's fieldset
   // uses — and is removed once a flip gives them one.
-  function fillNotifyMenuRow(skel, readable, name) {
-    if (!readable.length) {
+  // PLAN_205 item 5 — `readable` now holds only the UNPINNED services'
+  // notify fields (addUpdatePolicyMenuItems filters the pinned ones out
+  // before calling this); `pinnedSvcs` is the pinned ones instead, drawn as
+  // the one "still pinned" switch beneath the three, exactly as the editor's
+  // fieldset splits the same row in two. Either list, but never both, can be
+  // empty — a stack whose services are all one kind draws only its own row.
+  function fillNotifyMenuRow(skel, readable, pinnedSvcs, doc, name) {
+    if (!readable.length && !pinnedSvcs.length) {
       skel.body.querySelector('.staxx-menu-updloading').textContent =
         'This is set to something StaXX does not recognise — edit it in the Compose view.';
       return;
@@ -5837,44 +6037,75 @@
       return !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[ev]);
     }
 
-    var tickrow = document.createElement('div');
-    tickrow.className = 'staxx-tickrow';
-    tickrow.setAttribute('role', 'group');
-    tickrow.setAttribute('aria-label', skel.label.textContent);
-    tickrow.innerHTML = NOTIFY_ROW_EVENTS.map(function (ev) {
-      var on = readable.every(function (f) { return effectiveOf(f, ev[0]); });
-      return updFlagOptionHtml('staxx-menu-updnotify', 0, ev[0], ev[1], on);
-    }).join('');
-    skel.body.appendChild(tickrow);
-
-    var hasOwn = readable.some(function (f) { return f.policy.hasOwn; });
     var note = null;
-    if (!hasOwn) {
-      note = document.createElement('p');
-      note.className = 'staxx-menu-updnote';
-      note.textContent = updateNotifyNoteHtml(readable[0].policy.events);
-      skel.body.appendChild(note);
-    }
 
-    var services = readable.map(function (f) { return f.service; });
+    if (readable.length) {
+      var tickrow = document.createElement('div');
+      tickrow.className = 'staxx-tickrow';
+      tickrow.setAttribute('role', 'group');
+      tickrow.setAttribute('aria-label', skel.label.textContent);
+      tickrow.innerHTML = NOTIFY_ROW_EVENTS.map(function (ev) {
+        var on = readable.every(function (f) { return effectiveOf(f, ev[0]); });
+        return updFlagOptionHtml('staxx-menu-updnotify', 0, ev[0], ev[1], on);
+      }).join('');
+      skel.body.appendChild(tickrow);
 
-    function commit() {
-      var inputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'));
-      inputs.forEach(function (i) { i.disabled = true; });
-      var value = {};
-      inputs.forEach(function (i) { value[i.dataset.updnotify] = i.checked; });
+      var hasOwn = readable.some(function (f) { return f.policy.hasOwn; });
+      if (!hasOwn) {
+        note = document.createElement('p');
+        note.className = 'staxx-menu-updnote';
+        note.textContent = updateNotifyNoteHtml(readable[0].policy.events);
+        skel.body.appendChild(note);
+      }
 
-      writeUpdatePolicyForServices(name, services, 'notify', value).then(function (applied) {
-        inputs.forEach(function (i) { i.disabled = false; });
-        // A refusal answers null; every service in scope being pinned
-        // answers [] — neither leaves the ticks anything to reflect.
-        if (!applied || !applied.length) return;
-        if (note) { note.remove(); note = null; }   // the ticks now say it themselves
-        if (menu.hidden) refreshRows(); else menuRedraw = true;
+      var services = readable.map(function (f) { return f.service; });
+
+      tickrow.addEventListener('change', function () {
+        var inputs = Array.prototype.slice.call(tickrow.querySelectorAll('input'));
+        inputs.forEach(function (i) { i.disabled = true; });
+        var value = {};
+        inputs.forEach(function (i) { value[i.dataset.updnotify] = i.checked; });
+
+        writeUpdatePolicyForServices(name, services, 'notify', value).then(function (applied) {
+          inputs.forEach(function (i) { i.disabled = false; });
+          // A refusal answers null; every service in scope being pinned
+          // answers [] — neither leaves the ticks anything to reflect.
+          if (!applied || !applied.length) return;
+          if (note) { note.remove(); note = null; }   // the ticks now say it themselves
+          if (menu.hidden) refreshRows(); else menuRedraw = true;
+        });
       });
     }
 
-    tickrow.addEventListener('change', commit);
+    if (pinnedSvcs.length) {
+      var pinnedOn = pinnedSvcs.every(function (svc) { return resolvedPinnedNotify(doc, svc); });
+      var pinnedRow = document.createElement('div');
+      pinnedRow.className = 'staxx-tickrow';
+      pinnedRow.setAttribute('role', 'group');
+      pinnedRow.innerHTML = updFlagOptionHtml('staxx-menu-updnotifypinned', 0, 'pinned',
+        'Remind me it is still pinned', pinnedOn);
+      skel.body.appendChild(pinnedRow);
+
+      if (readable.length) {
+        var pinnedNote = document.createElement('p');
+        pinnedNote.className = 'staxx-menu-updnote';
+        pinnedNote.textContent = 'The switches above are for the ' +
+          (readable.length === 1 ? 'unpinned service' : readable.length + ' unpinned services') +
+          '; this one is for the ' +
+          (pinnedSvcs.length === 1 ? 'pinned one' : pinnedSvcs.length + ' pinned ones') + '.';
+        skel.body.appendChild(pinnedNote);
+      }
+
+      pinnedRow.addEventListener('change', function () {
+        var input = pinnedRow.querySelector('input');
+        input.disabled = true;
+        writeUpdatePolicyForServices(name, pinnedSvcs, 'notifyPinned', input.checked).then(function (applied) {
+          input.disabled = false;
+          if (!applied || !applied.length) return;
+          if (menu.hidden) refreshRows(); else menuRedraw = true;
+        });
+      });
+    }
   }
 
   // Builds the Updates row and the Notifications row for one menu.
@@ -5924,10 +6155,15 @@
         .filter(function (f) { return f && !f.policy.unreadable; });
       fillUpdateMenuRow(modeSkel, modeReadable, name, singleService, form.fields);
 
-      var notifyReadable = services
+      // PLAN_205 item 5 — split by pinned/unpinned first: a pinned service
+      // gets the one "still pinned" switch instead of the three events (see
+      // fillNotifyMenuRow()'s own comment).
+      var unpinnedServices = services.filter(function (svc) { return !svcIsPinned(form.fields, svc); });
+      var pinnedServices   = services.filter(function (svc) { return svcIsPinned(form.fields, svc); });
+      var notifyReadable = unpinnedServices
         .map(function (svc) { return policyFieldFor(form.fields, svc, 'notify'); })
         .filter(function (f) { return f && !f.policy.unreadable; });
-      fillNotifyMenuRow(notifySkel, notifyReadable, name);
+      fillNotifyMenuRow(notifySkel, notifyReadable, pinnedServices, doc, name);
     });
   }
 
@@ -27114,6 +27350,12 @@
       block: 'notify-me'
     },
     {
+      // PLAN_205 item 4: a fourth switch for the weekly "still pinned" reminder,
+      // sharing the same 'notify-me' block as the other three.
+      key: 'UPDATE_NOTIFY_PINNED', control: 'flags', label: 'Still pinned (weekly)', tab: 'updates',
+      block: 'notify-me'
+    },
+    {
       key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous image releases to keep', tab: 'updates',
       help: 'How many older releases of each image this server keeps on disk, so an update can ' +
             'be rolled back afterwards. 0 to 5.'
@@ -27232,20 +27474,14 @@
     'container-access': {
       tab: 'general', label: 'Container access', rowHints: true
     },
-    // PLAN_195 Q2, ruled 2026-09-28 (show them): these three blocks' own
-    // rows carry `help` text of their own (UPDATE_CHECK/UPDATE_CHECK_TIME;
-    // UPDATE_DELAY_HOURS/UPDATE_WINDOW/UPDATE_WINDOW_START/UPDATE_WINDOW_END;
-    // HUB_USER/HUB_TOKEN) that settingsBlockHtml() only draws when a block
-    // opts in with rowHints, same as "Container access" and "Unused image
-    // management" above and below.
     'update-check': {
-      tab: 'updates', label: 'Check for image updates', rowHints: true,
+      tab: 'updates', label: 'Check for image updates',
       help: 'How often to check, and when. Leaving this off means nothing is ever looked up. ' +
             'The middle of the night is a sensible time, since a check costs a little server ' +
             'effort even though it is cheap.'
     },
     'install-timing': {
-      tab: 'updates', label: 'When to install', rowHints: true,
+      tab: 'updates', label: 'When to install',
       help: 'Only used when Updates above is set to Automatic. An update sits on its row ' +
             'counting down the delay; if the delay runs out outside the quiet hours, it waits ' +
             'for them to open rather than installing in the middle of anything. The quiet time ' +
@@ -27258,7 +27494,7 @@
             'compose file.'
     },
     'hub-access': {
-      tab: 'registries', label: 'Docker Hub access', rowHints: true,
+      tab: 'registries', label: 'Docker Hub access',
       help: 'Used when checking your images for updates. Signed out, Docker Hub allows this ' +
             'server about ten checks an hour; signed in, about a hundred. Create a token from ' +
             'Docker Hub’s Account Settings → Security → Personal access tokens, ' +
@@ -27608,9 +27844,9 @@
   // then one small labelled control per row that claims this block. Called
   // once, at the block's first row; settingsFieldHtml() is never used here.
   // A subfield carries no help text of its own unless the block opts in with
-  // rowHints ("Container access", "Check for image updates", "When to
-  // install", "Docker Hub access" and "Unused image management") — every
-  // other block's per-row `help` stays the dead leftover it already was.
+  // rowHints ("Container access" and "Unused image management") — every other
+  // block's per-row `help` stays unshown, because its summary already says it
+  // (Adrian compared both in a live mock on 2026-09-28 and kept the summary).
   function settingsBlockHtml(blockId, values) {
     var def = SETTINGS_BLOCKS[blockId];
     if (!def) return '';
@@ -31150,7 +31386,14 @@
         countLine.textContent = names.length + (names.length === 1 ? ' stack chosen' : ' stacks chosen') +
           ', in the order shown.';
       }
-      if (bulkPanelKind) repaintBulkPanel();
+      if (bulkPanelKind) {
+        repaintBulkPanel();
+        // PLAN_205 item 5 — the selection just changed under an open notify
+        // panel, so its pinned count is stale until this re-reads the newly
+        // chosen stacks; refreshBulkPinnedCount() repaints again once it
+        // knows the real answer.
+        if (bulkPanelKind === 'notify') refreshBulkPinnedCount();
+      }
       alignSelectBar();
       return;
     }
@@ -31456,6 +31699,37 @@
     var srv = UPDATE_SETTINGS.notify || {};
     bulkNotifyState = {};
     NOTIFY_ROW_EVENTS.forEach(function (ev) { bulkNotifyState[ev[0]] = !!srv[ev[0]]; });
+    bulkNotifyState.pinned = !!srv.pinned;
+  }
+
+  // PLAN_205 item 5 — how many pinned services sit inside the current
+  // selection, known only once every chosen stack has been read (the bulk
+  // panel otherwise never reads disk before Apply). Recomputed whenever the
+  // notify panel opens or the selection changes under it; `bulkPinnedToken`
+  // throws away a stale answer that lands after a newer one has already
+  // started.
+  var bulkPinnedCount = 0;
+  var bulkPinnedToken = 0;
+  function refreshBulkPinnedCount() {
+    var names = selectedNamesInOrder();
+    var token = ++bulkPinnedToken;
+    Promise.all(names.map(function (name) {
+      return call('read', { name: name, lite: '1' }).then(function (res) {
+        if (!res || !res.ok) return 0;
+        var doc = YAML.parse(res.body);
+        var form = YAML.buildForm(doc, netDrivers(), envNameList());
+        var seen = {}, n = 0;
+        form.fields.forEach(function (f) {
+          if (f.binder === 'setting' && f.target === 'image' && !seen[f.service] &&
+              svcIsPinned(form.fields, f.service)) { seen[f.service] = true; n++; }
+        });
+        return n;
+      }).catch(function () { return 0; });
+    })).then(function (counts) {
+      if (token !== bulkPinnedToken) return;   // a newer selection already superseded this
+      bulkPinnedCount = counts.reduce(function (a, b) { return a + b; }, 0);
+      if (bulkPanelKind === 'notify') repaintBulkPanel();
+    });
   }
 
   // The scope line both contents open with — the count is read fresh every
@@ -31518,11 +31792,32 @@
     }).join('');
     var canApply = true;
 
+    // PLAN_205 item 5 — a fourth switch, present only once the selection is
+    // known to hold a pinned service (bulkPinnedCount, filled in by
+    // refreshBulkPinnedCount() after this first paints). Reuses the same
+    // 'staxx-bulknotify'/data-updnotify vocabulary as the three above, keyed
+    // 'pinned' — the selection bar's own change handler already reads
+    // whichever key a switch carries into bulkNotifyState, so no separate
+    // wiring is needed for this one.
+    var pinnedHtml = '';
+    if (bulkPinnedCount > 0) {
+      pinnedHtml =
+        '<div class="staxx-upd-row">' +
+          '<div class="staxx-upd-options"><div class="staxx-tickrow" role="group" aria-label="Notifications">' +
+            updFlagOptionHtml('staxx-bulknotify', 0, 'pinned', 'Remind me it is still pinned', bulkNotifyState.pinned) +
+          '</div></div>' +
+          '<p class="staxx-upd-note">' + esc('Applies to the ' +
+            (bulkPinnedCount === 1 ? '1 pinned service' : bulkPinnedCount + ' pinned services') +
+            ' in your selection.') + '</p>' +
+        '</div>';
+    }
+
     return bulkScopeLineHtml(count) +
       '<div class="staxx-upd-row">' +
         '<div class="staxx-upd-options"><div class="staxx-tickrow" role="group" aria-label="Notifications">' +
           itemsHtml + '</div></div>' +
       '</div>' +
+      pinnedHtml +
       bulkPanelFootHtml(canApply, count);
   }
 
@@ -31573,8 +31868,13 @@
   function openBulkPanel(kind) {
     if (!selectBar || selectBar.hidden) return;
     bulkPanelKind = kind;
-    if (kind === 'mode') bulkModeValue = '';
-    else bulkNotifyReset();
+    if (kind === 'mode') {
+      bulkModeValue = '';
+    } else {
+      bulkNotifyReset();
+      bulkPinnedCount = 0;
+      refreshBulkPinnedCount();   // repaints itself once the pinned count is known
+    }
 
     if (selectBar.querySelector('.staxx-bulkpanel')) { repaintBulkPanel(); return; }
     mountBulkPanel(true);
@@ -31643,16 +31943,33 @@
       writeUpdatePolicyForServices(name, null, field, value, function (title, message) {
         reason = message || 'Could not change this setting.';
       }).then(function (applied) {
-        doneCount++;
-        // null is a genuine refusal; [] means every service in this stack
-        // was pinned, which only skips the update CHOICE (Adrian,
-        // 2026-09-26) — so it only happens for the mode panel, never the
-        // notify one, and counts as neither a change nor a refusal.
-        if (applied && applied.length) changed++;
-        else if (!applied) refusals.push({ name: stackLabel(name), reason: reason });
-        var line = selectBar && selectBar.querySelector('.staxx-bulkpanel-progress');
-        if (line) line.textContent = doneCount + ' of ' + total + ' written';
-        next(i + 1);
+        var notifyOk = !!(applied && applied.length);
+        var notifyRefused = !applied;
+
+        // PLAN_205 item 5 — a second, separate write for the pinned
+        // reminder, only when this stack could actually hold a pinned
+        // service (bulkPinnedCount > 0 is known for the WHOLE selection;
+        // a stack with none of its own simply answers [] here, same as the
+        // mode panel's own "nothing pinned" case). Chained after the three
+        // events rather than run alongside them, so the progress line and
+        // the refusal list only ever grow once per stack.
+        var pinnedWrite = (bulkPanelKind === 'notify' && bulkPinnedCount > 0)
+          ? writeUpdatePolicyForServices(name, null, 'notifyPinned', bulkNotifyState.pinned, function (title, message) {
+              if (!reason) reason = message || 'Could not change this setting.';
+            })
+          : Promise.resolve([]);
+
+        return pinnedWrite.then(function (pinnedApplied) {
+          doneCount++;
+          // null is a genuine refusal; [] means nothing here for that write
+          // to apply to (every service already agreed, or none was pinned)
+          // — neither a change nor a refusal on its own.
+          if (notifyOk || (pinnedApplied && pinnedApplied.length)) changed++;
+          else if (notifyRefused || pinnedApplied === null) refusals.push({ name: stackLabel(name), reason: reason });
+          var line = selectBar && selectBar.querySelector('.staxx-bulkpanel-progress');
+          if (line) line.textContent = doneCount + ' of ' + total + ' written';
+          next(i + 1);
+        });
       });
     }
     next(0);

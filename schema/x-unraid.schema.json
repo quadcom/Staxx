@@ -238,7 +238,8 @@
               "properties": {
                 "found": { "type": "boolean", "description": "Mentioned when an update is found. Absent means the server-wide switch decides." },
                 "installed": { "type": "boolean", "description": "Mentioned when an update is installed. Absent means the server-wide switch decides." },
-                "failed": { "type": "boolean", "description": "Mentioned when an update fails. Absent means the server-wide switch decides." }
+                "failed": { "type": "boolean", "description": "Mentioned when an update fails. Absent means the server-wide switch decides." },
+                "pinned": { "type": "boolean", "description": "A weekly reminder that this pinned service is still pinned. Only ever fires for a service actually pinned to an exact build. Absent means the server-wide switch decides." }
               },
               "additionalProperties": false
             }

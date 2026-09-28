@@ -176,6 +176,12 @@ NEGATIVE = [
         {"x-unraid": {"update": {"notify": {"failed": "true"}}}},
     ),
     (
+        # PLAN_205 — pinned is a real event now, so it must be checked as
+        # strictly as the other three rather than tolerated as unknown.
+        "stack update notify pinned given as a string, not a boolean",
+        {"x-unraid": {"update": {"notify": {"pinned": "true"}}}},
+    ),
+    (
         "unknown key inside a stack update block",
         {"x-unraid": {"update": {"mode": "auto", "schedule": "nightly"}}},
     ),
@@ -405,6 +411,11 @@ POSITIVE = [
      {"x-unraid": {"update": {"notify": {}}}}),
     ("service update notify as an object naming only one event",
      service_doc(update={"notify": {"found": True}})),
+    # PLAN_205 — the fourth event, a pinned service's weekly reminder.
+    ("stack update notify naming the pinned event",
+     {"x-unraid": {"update": {"notify": {"pinned": True}}}}),
+    ("service update notify naming the pinned event",
+     service_doc(update={"notify": {"pinned": False}})),
     ("a valid imported block for each of the four routes", {"x-unraid": {"imported": {
         "from": "unraid-template", "on": "2026-08-30",
     }}}),

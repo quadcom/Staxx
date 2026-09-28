@@ -159,6 +159,11 @@ function staxx_settings_keys(): array {
     'UPDATE_NOTIFY_FOUND'     => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
     'UPDATE_NOTIFY_INSTALLED' => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
     'UPDATE_NOTIFY_FAILED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // A pinned service's weekly "still pinned" reminder (PLAN_205). Its own
+    // key rather than folded into the retired UPDATE_NOTIFY three-way choice
+    // above — that choice predates the idea of a pin. Default true: see
+    // staxx_update_notify_map() (Defines.php) for why.
+    'UPDATE_NOTIFY_PINNED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
     // PLAN_181 Part C — whether an earlier release UPDATE_RETAIN remembers
     // also stays on disk (today's behaviour, and the default) or only its
@@ -210,6 +215,7 @@ function staxx_settings_read(): array {
     if ($key === 'UPDATE_NOTIFY_FOUND')     { $out[$key] = $notify['found']     ? 'true' : 'false'; continue; }
     if ($key === 'UPDATE_NOTIFY_INSTALLED') { $out[$key] = $notify['installed'] ? 'true' : 'false'; continue; }
     if ($key === 'UPDATE_NOTIFY_FAILED')    { $out[$key] = $notify['failed']    ? 'true' : 'false'; continue; }
+    if ($key === 'UPDATE_NOTIFY_PINNED')    { $out[$key] = $notify['pinned']    ? 'true' : 'false'; continue; }
     // Same reasoning: while no FILES_ENABLED value has been saved, show what
     // the server actually acts on (staxx_files_enabled() — follows
     // SHELL_ENABLED), not the schema default.

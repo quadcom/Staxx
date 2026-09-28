@@ -124,7 +124,11 @@ $updateSettingsForJs = [
   'quiet'  => $updateSet['window'],
   'notify' => ['found'     => $updateSet['notifyFound'],
                'installed' => $updateSet['notifyInstalled'],
-               'failed'    => $updateSet['notifyFailed']],
+               'failed'    => $updateSet['notifyFailed'],
+               // PLAN_205 item 4/5 — the weekly "still pinned" reminder's own
+               // global answer, read the browser needs for the same "Follows
+               // your setting" fallback the other three already get.
+               'pinned'    => $updateSet['notifyPinned']],
 ];
 
 // Every tag below carries its file's modification time in the URL, via
