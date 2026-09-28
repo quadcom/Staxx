@@ -245,6 +245,28 @@
   }
 
   // Reads one value that begins at `col` on line `at`.
+  // Where a quoted scalar opening at text.charAt(from) closes on this line,
+  // or -1 if it does not. Inside double quotes a backslash skips the next
+  // character; inside single quotes '' is an escaped quote. The parser, the
+  // highlighter and the entry scanner all read a quote by this one rule.
+  function quotedEnd(text, from) {
+    var i;
+    if (text.charAt(from) === '"') {
+      for (i = from + 1; i < text.length; i++) {
+        if (text.charAt(i) === '\\') { i++; continue; }
+        if (text.charAt(i) === '"') return i;
+      }
+      return -1;
+    }
+    for (i = from + 1; i < text.length; i++) {
+      if (text.charAt(i) === "'") {
+        if (text.charAt(i + 1) === "'") { i++; continue; }
+        return i;
+      }
+    }
+    return -1;
+  }
+
   function scanValue(ctx, at, col, ownerIndent, ownerKey) {
     var line = ctx.lines[at];
     var rest = line.slice(col);
@@ -258,20 +280,7 @@
     if (head === '[' || head === '{') return seal(ctx, at, blockEnd(ctx, at, ownerIndent), 'flow');
 
     if (head === '"' || head === "'") {
-      var end = -1, i;
-      if (head === '"') {
-        for (i = 1; i < rest.length; i++) {
-          if (rest.charAt(i) === '\\') { i++; continue; }
-          if (rest.charAt(i) === '"') { end = i; break; }
-        }
-      } else {
-        for (i = 1; i < rest.length; i++) {
-          if (rest.charAt(i) === "'") {
-            if (rest.charAt(i + 1) === "'") { i++; continue; }
-            end = i; break;
-          }
-        }
-      }
+      var end = quotedEnd(rest, 0);
       if (end < 0) return seal(ctx, at, blockEnd(ctx, at, ownerIndent), 'multiline-scalar');
 
       var raw = rest.slice(0, end + 1);
@@ -7173,20 +7182,7 @@
   // left as one best-effort 'str' span by the caller rather than growing a
   // fourth carry shape for it (see the section comment above).
   function scanQuotedToken(text, i) {
-    var q = text.charAt(i), end = -1, k;
-    if (q === '"') {
-      for (k = i + 1; k < text.length; k++) {
-        if (text.charAt(k) === '\\') { k++; continue; }
-        if (text.charAt(k) === '"') { end = k; break; }
-      }
-    } else {
-      for (k = i + 1; k < text.length; k++) {
-        if (text.charAt(k) === "'") {
-          if (text.charAt(k + 1) === "'") { k++; continue; }
-          end = k; break;
-        }
-      }
-    }
+    var end = quotedEnd(text, i);
     if (end < 0) return null;
     // The quotes themselves are part of the 'str' span; only a real
     // ${...}/$NAME inside gets split out, same as an unquoted value.
@@ -8891,20 +8887,7 @@
   function scanEntryText(line, col) {
     var head = line.charAt(col);
     if (head === '"' || head === "'") {
-      var i, end = -1;
-      if (head === '"') {
-        for (i = col + 1; i < line.length; i++) {
-          if (line.charAt(i) === '\\') { i++; continue; }
-          if (line.charAt(i) === '"') { end = i; break; }
-        }
-      } else {
-        for (i = col + 1; i < line.length; i++) {
-          if (line.charAt(i) === "'") {
-            if (line.charAt(i + 1) === "'") { i++; continue; }
-            end = i; break;
-          }
-        }
-      }
+      var end = quotedEnd(line, col);
       if (end < 0) return null;
       var inner = line.slice(col + 1, end);
       if (head === '"' && inner.indexOf('\\') >= 0) return null;
