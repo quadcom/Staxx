@@ -174,26 +174,19 @@ function staxx_ca_status(): array {
  * itself, once the rebuild finishes or fails — never here.
  */
 function staxx_ca_refresh_start(): void {
-  if (is_dir(STAXX_CA_LOCK)) {
-    // Thirty minutes is far longer than a download-and-split ever takes, so a
-    // lock still standing after that is left over from a build a reboot or a
-    // kill -9 cut short, not one still working. Taking it over is what stops
-    // a single interrupted build wedging the feature forever.
-    if (time() - (int)@filemtime(STAXX_CA_LOCK) < 1800) return;
-    @rmdir(STAXX_CA_LOCK);
-  }
-
-  // mkdir is the lock: if another request's mkdir won this same race, ours
-  // fails here and we simply do not start a second download.
-  if (!@mkdir(STAXX_CA_LOCK, 0755, true)) return;
+  // Thirty minutes is far longer than a download-and-split ever takes, so a
+  // lock still standing after that is left over from a build a reboot or a
+  // kill -9 cut short, not one still working. Taking it over is what stops
+  // a single interrupted build wedging the feature forever.
+  if (!staxx_mkdir_lock_stale(STAXX_CA_LOCK)) return;
 
   $log = '/tmp/staxx/ca-build.log';
-  $cmd = 'php '.escapeshellarg(STAXX_ROOT.'/scripts/ca-index.php');
+  $cmd = staxx_php_bin().' '.escapeshellarg(STAXX_ROOT.'/scripts/ca-index.php');
 
   // setsid detaches the build from this request exactly as staxx_start_job()
   // detaches a compose command — see Stacks.php — so a page load never waits
   // on a 24 MB download.
-  @exec('setsid sh -c '.escapeshellarg($cmd).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+  staxx_detach($cmd, $log);
 }
 
 /**
@@ -372,22 +365,29 @@ function staxx_ca_home(): array {
  * and this is asked for every time someone opens one result.
  */
 function staxx_ca_app(int $i): ?array {
+  // Remembered per ordinal: a single image's detail view asks for its own
+  // app entry about five times over the several places that display it.
+  // The catalogue file is replaced only by the separate index job, never
+  // mid-request, so a request-lifetime memo cannot go stale under it.
+  static $memo = [];
+  if (array_key_exists($i, $memo)) return $memo[$i];
+
   $entry = staxx_ca_index_data()['apps'][$i] ?? null;
-  if (!is_array($entry)) return null;
+  if (!is_array($entry)) return $memo[$i] = null;
 
   $offset = (int)($entry['o'] ?? -1);
   $length = (int)($entry['len'] ?? 0);
-  if ($offset < 0 || $length <= 0) return null;
+  if ($offset < 0 || $length <= 0) return $memo[$i] = null;
 
   $fh = @fopen(STAXX_CA_APPS, 'rb');
-  if ($fh === false) return null;
+  if ($fh === false) return $memo[$i] = null;
 
   $line = '';
   if (@fseek($fh, $offset) === 0) $line = (string)@fread($fh, $length);
   fclose($fh);
 
   $app = json_decode($line, true);
-  return is_array($app) ? $app : null;
+  return $memo[$i] = (is_array($app) ? $app : null);
 }
 
 /** The categories that actually occur in the catalogue, sorted — never the

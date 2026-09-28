@@ -17,14 +17,7 @@
 var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 var MS = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 var BASE = 'services:\n' +
            '  web:\n' +
@@ -232,5 +225,4 @@ console.log('\n5. The result always round-trips through compose-model.js itself'
   ok('re-serialising a fresh parse of it is byte-identical', CM.serialise(doc) === r.text);
 })();
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-if (fail > 0) process.exit(1);
+check.done();

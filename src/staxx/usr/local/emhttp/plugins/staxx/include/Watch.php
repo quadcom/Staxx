@@ -197,14 +197,7 @@ function staxx_watch_template_claims(string $dir = STAXX_IMPORT_TEMPLATES_DIR): 
   if (isset($cache[$dir])) return $cache[$dir];
 
   $claims = [];
-  foreach ((array)@scandir($dir) as $file) {
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
-
+  foreach (staxx_unraid_template_xml($dir) as $xml) {
     $repo    = strtolower(staxx_links_repo_path((string)($xml->Repository ?? '')));
     $project = staxx_links_url((string)($xml->Project ?? ''));
     if ($repo === '' || $project === '' || isset($claims[$repo])) continue;
@@ -414,10 +407,7 @@ function staxx_watch_body_path(string $image): string {
 /** Write-then-rename, same as every other cache write in this plugin. */
 function staxx_watch_store_body(string $image, string $body): void {
   if (!is_dir(STAXX_WATCH_DIR) && !@mkdir(STAXX_WATCH_DIR, 0755, true)) return;
-  $path = staxx_watch_body_path($image);
-  $tmp  = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $body) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write(staxx_watch_body_path($image), $body);
 }
 
 /**

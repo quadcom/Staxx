@@ -33,19 +33,13 @@ var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-w
 var MS = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-suggest.js');
 var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference between the sources and
                                             // buildMergedText()'s own output must be accounted for.
+var SC = require('./lib/schema_check.js');
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk');
 
-var argv = process.argv.slice(2);
-var CHECK = argv.indexOf('--check') >= 0;
-var outArg = argv.filter(function (a) { return a !== '--check'; })[0];
-var OUT_DIR = outArg ? path.resolve(outArg) : path.join(FIXTURES, '.dryrun');
-
-var checkFails = [];   // {trap, message} — printed and turned into the exit code under --check
-
-function section(title) {
-  console.log('\n' + title);
-}
+var D = require('./lib/dryrun.js')(FIXTURES, 'DEV-TESTING');
+var CHECK = D.CHECK, OUT_DIR = D.OUT_DIR, checkFails = D.fails,
+    section = D.section, fail = D.fail, storeNameFor = D.storeNameFor;
 
 function readText(leafName, rel) {
   var p = path.join(FIXTURES, leafName, rel);
@@ -127,7 +121,6 @@ function findOverrideName(leafName) {
 // a source identity built by string concatenation elsewhere and taken apart
 // with split('/') silently breaks the moment that identity already holds a
 // "/", which a store path always does once a stack sits inside a folder.
-function storeNameFor(leafName) { return 'DEV-TESTING/' + leafName; }
 
 // Runs the whole walkthrough — reading, examine(), buildMergedText(),
 // merge-suggest.apply(), retireText() — for one pick order, printing as it
@@ -298,8 +291,6 @@ var ORDER_B = ['t155-admin', 't155-cache', 't155-db', 't155-web'];
 
 var resultA = runWalk('A', ORDER_A);
 var resultB = runWalk('B', ORDER_B);
-
-function fail(trap, message) { checkFails.push({ trap: trap, message: message }); }
 
 // PLAN_155 C7's own assertion, run against BOTH orders: every "- <key>:/…"
 // mount under a service must name a key actually declared under the merged
@@ -481,23 +472,8 @@ function checkNetworksShared(label, doc, exam) {
 // exactly one x-unraid.links "reference" record behind, naming the FINAL
 // service names (after every rename), so the editor never re-asks a
 // question this wizard already answered. Schema conformance is checked the
-// same way tests/links_record.js checks it — shelling out to python with
-// pyyaml and jsonschema — rather than re-typing the schema's own rules here.
-function validateAgainstSchema(text) {
-  var script = [
-    'import sys, json, yaml',
-    'from jsonschema import Draft202012Validator',
-    'schema = json.load(open(' + JSON.stringify(path.join(__dirname, '..', 'schema', 'x-unraid.schema.json')) + '))',
-    'doc = yaml.safe_load(sys.stdin.read())',
-    'v = Draft202012Validator(schema)',
-    'errors = [str(e.message) + " at /" + "/".join(map(str, e.path)) for e in v.iter_errors(doc)]',
-    'print(json.dumps({"ok": not errors, "errors": errors}))'
-  ].join('\n');
-  var res = require('child_process').spawnSync('python', ['-c', script], { input: text, encoding: 'utf8' });
-  if (res.status !== 0) return { ok: false, errors: [res.stderr || 'python failed'] };
-  try { return JSON.parse(res.stdout); } catch (e) { return { ok: false, errors: [res.stdout] }; }
-}
-
+// same way tests/links_record.js checks it, through the shared batch (see
+// tests/lib/schema_check.js) rather than a Python start of its own.
 function checkLinkRecords(label, doc, exam, text) {
   var records = CM.readLinks(doc).filter(function (r) { return r.kind === 'reference'; });
   exam.findings.forEach(function (f) {
@@ -516,8 +492,9 @@ function checkLinkRecords(label, doc, exam, text) {
     });
   });
 
-  var v = validateAgainstSchema(text);
-  if (!v.ok) fail('160A', 'order ' + label + ': the merged file\'s link records do not validate against the schema — ' + JSON.stringify(v.errors));
+  SC.validate(text, function (v) {
+    if (!v.ok) fail('160A', 'order ' + label + ': the merged file\'s link records do not validate against the schema — ' + JSON.stringify(v.errors));
+  });
 }
 
 if (CHECK) {
@@ -600,9 +577,11 @@ if (CHECK) {
   var orderCmp = AUDIT.compareOrders(resultA.sources, resultA.built, resultB.built);
   if (!orderCmp.ok) orderCmp.problems.forEach(function (p) { fail('audit-order', p); });
 
+  SC.flush();
+
   if (checkFails.length) {
     console.log('  FAILED:');
-    checkFails.forEach(function (f) { console.log('    trap ' + f.trap + ': ' + f.message); });
+    checkFails.forEach(function (f) { console.log('    trap ' + f.key + ': ' + f.message); });
     process.exit(1);
   }
   console.log('  all checks passed');
@@ -610,6 +589,6 @@ if (CHECK) {
   // The storage-integrity check above always runs, --check or not, because
   // it is cheap and it is the one this whole rework exists to prove.
   console.log('\nSTORAGE INTEGRITY FAILURES (see PLAN_155 C7):');
-  checkFails.forEach(function (f) { console.log('  trap ' + f.trap + ': ' + f.message); });
+  checkFails.forEach(function (f) { console.log('  trap ' + f.key + ': ' + f.message); });
   process.exitCode = 1;
 }

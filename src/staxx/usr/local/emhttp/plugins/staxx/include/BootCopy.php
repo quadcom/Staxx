@@ -174,14 +174,9 @@ function staxx_boot_read_source(string $path, string &$error): ?string {
  * thing that could disagree with the first.
  */
 function staxx_boot_write_file(string $target, string $content, string &$error): bool {
-  $tmp = $target.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $content) === false) {
-    $error = 'Could not write "'.$target.'" on the boot drive.';
-    return false;
-  }
-  if (!@rename($tmp, $target)) {
-    @unlink($tmp);
-    $error = 'Could not put "'.$target.'" in place on the boot drive.';
+  if (!staxx_atomic_write($target, $content, null, $failed)) {
+    $error = $failed === 'write' ? 'Could not write "'.$target.'" on the boot drive.'
+                                  : 'Could not put "'.$target.'" in place on the boot drive.';
     return false;
   }
   return true;
@@ -347,7 +342,7 @@ function staxx_boot_sweep(): array {
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $rel  = $found['rel'];
-    $main = staxx_find_compose_file($found['dir']);
+    $main = $found['file'];
     if ($main === '') continue;
 
     $shelfDir = staxx_boot_stacks_root().'/'.$rel;

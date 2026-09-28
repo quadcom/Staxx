@@ -110,6 +110,7 @@
   --sm-hairline: rgba(128, 128, 128, 0.22);
 
   --sm-radius: 0.4rem;
+  --sm-pop-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);   /* every floating popover */
 
   /* The width of a stat column's little graph (.staxx-spark) — and, since
      PLAN_121, the same width a blank figure or a column heading centres
@@ -4717,18 +4718,57 @@ div.title.staxx-has-titlebar {
   }
 }
 
-.staxx-modal:not([open]) {
+/* ---- Every dialog: the open and close fade -------------------------------
+ *
+ * The ten StaXX dialogs fade in and out the same way, so the mechanics live
+ * here once. Each dialog's own rule still carries `opacity: 1` and its own
+ * `transition` list (the editor's also glides its width), which is what
+ * these rules fade between. A new dialog joins every list below, and the
+ * reduced-motion block near the end of this file.
+ *
+ * Classes a dialog shares with another (.staxx-merge-modal, .staxx-export,
+ * .staxx-detail, .staxx-noticepanel, the settings variants) are covered by
+ * the base class they carry.
+ */
+.staxx-modal:not([open]),
+.staxx-picker:not([open]),
+.staxx-tz:not([open]),
+.staxx-ca:not([open]),
+.staxx-ca-app:not([open]),
+.staxx-import:not([open]),
+.staxx-confirm:not([open]),
+.staxx-settings:not([open]),
+.staxx-logdlg:not([open]),
+.staxx-legend:not([open]) {
   display: none;
   opacity: 0;
 }
 
 @starting-style {
-  .staxx-modal[open] { opacity: 0; }
+  .staxx-modal[open],
+  .staxx-picker[open],
+  .staxx-tz[open],
+  .staxx-ca[open],
+  .staxx-ca-app[open],
+  .staxx-import[open],
+  .staxx-confirm[open],
+  .staxx-settings[open],
+  .staxx-logdlg[open],
+  .staxx-legend[open] { opacity: 0; }
 }
 
 /* A separate pseudo-element with its own box, so it needs its own copy of
    the fade rather than inheriting the dialog's. */
-.staxx-modal::backdrop {
+.staxx-modal::backdrop,
+.staxx-picker::backdrop,
+.staxx-tz::backdrop,
+.staxx-ca::backdrop,
+.staxx-ca-app::backdrop,
+.staxx-import::backdrop,
+.staxx-confirm::backdrop,
+.staxx-settings::backdrop,
+.staxx-logdlg::backdrop,
+.staxx-legend::backdrop {
   background: rgba(0, 0, 0, 0.55);
   opacity: 1;
   transition: opacity var(--sm-motion) var(--sm-ease),
@@ -4736,12 +4776,30 @@ div.title.staxx-has-titlebar {
               overlay var(--sm-motion) allow-discrete;
 }
 
-.staxx-modal:not([open])::backdrop {
+.staxx-modal:not([open])::backdrop,
+.staxx-picker:not([open])::backdrop,
+.staxx-tz:not([open])::backdrop,
+.staxx-ca:not([open])::backdrop,
+.staxx-ca-app:not([open])::backdrop,
+.staxx-import:not([open])::backdrop,
+.staxx-confirm:not([open])::backdrop,
+.staxx-settings:not([open])::backdrop,
+.staxx-logdlg:not([open])::backdrop,
+.staxx-legend:not([open])::backdrop {
   opacity: 0;
 }
 
 @starting-style {
-  .staxx-modal[open]::backdrop { opacity: 0; }
+  .staxx-modal[open]::backdrop,
+  .staxx-picker[open]::backdrop,
+  .staxx-tz[open]::backdrop,
+  .staxx-ca[open]::backdrop,
+  .staxx-ca-app[open]::backdrop,
+  .staxx-import[open]::backdrop,
+  .staxx-confirm[open]::backdrop,
+  .staxx-settings[open]::backdrop,
+  .staxx-logdlg[open]::backdrop,
+  .staxx-legend[open]::backdrop { opacity: 0; }
 }
 
 /* ---- modal: header ---- */
@@ -5000,7 +5058,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-outline[hidden] {
@@ -5070,7 +5128,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-pwgen[hidden] {
@@ -6385,7 +6443,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-scaffold .staxx-sectionrow {
@@ -7169,7 +7227,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   /* Plain body text, not a status colour — the mark already said what kind
      of connection this is; the popover just names the other side. */
   color: var(--sm-fg);
@@ -7208,7 +7266,7 @@ div.title.staxx-has-titlebar {
   border-radius: var(--sm-radius);
   background-color: var(--background-color, #1c1c1c);
   color: var(--sm-fg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   font-size: 1.2rem;
   line-height: 1.4;
 }
@@ -7557,11 +7615,6 @@ div.title.staxx-has-titlebar {
   cursor: default;
 }
 
-.staxx-scaffold .staxx-input--check {
-  width: auto;
-  padding: 0;
-}
-
 /* PLAN_104 — the ports note is the compose file's own commented-out block,
    shown and edited as one box (see portsNoteHtml() in stacks.js). Monospace
    and left as typed, the same as the note itself keeps every line as
@@ -7628,7 +7681,6 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-fieldhint,
-.staxx-fieldmap,
 .staxx-fieldnote {
   margin: 0.5rem 0 0;
   color: var(--sm-muted);
@@ -7679,7 +7731,6 @@ div.title.staxx-has-titlebar {
   outline-offset: 0.1rem;
 }
 
-.staxx-fieldmap code,
 .staxx-fieldhint code {
   padding: 0.1rem 0.4rem;
   border-radius: 0.2rem;
@@ -8218,7 +8269,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-tabmenu[hidden] {
@@ -8631,7 +8682,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-suggest[hidden] {
@@ -8689,7 +8740,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   pointer-events: none;
 }
 
@@ -8909,31 +8960,6 @@ div.title.staxx-has-titlebar {
     overlay var(--sm-motion) allow-discrete;
 }
 
-.staxx-picker:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-picker[open] { opacity: 0; }
-}
-
-.staxx-picker::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-picker:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-picker[open]::backdrop { opacity: 0; }
-}
-
 .staxx-picker-head {
   padding: 1.2rem 1.4rem 0.8rem;
 }
@@ -9100,31 +9126,6 @@ div.title.staxx-has-titlebar {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-tz:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-tz[open] { opacity: 0; }
-}
-
-.staxx-tz::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-tz:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-tz[open]::backdrop { opacity: 0; }
 }
 
 .staxx-tz-head {
@@ -9348,31 +9349,6 @@ div.title.staxx-has-titlebar {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-ca:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-ca[open] { opacity: 0; }
-}
-
-.staxx-ca::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-ca:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-ca[open]::backdrop { opacity: 0; }
 }
 
 .staxx-ca-head {
@@ -9946,31 +9922,6 @@ div.title.staxx-has-titlebar {
     overlay var(--sm-motion) allow-discrete;
 }
 
-.staxx-ca-app:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-ca-app[open] { opacity: 0; }
-}
-
-.staxx-ca-app::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-ca-app:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-ca-app[open]::backdrop { opacity: 0; }
-}
-
 .staxx-ca-app-head {
   display: flex;
   align-items: center;
@@ -10226,31 +10177,6 @@ div.title.staxx-has-titlebar {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-import:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-import[open] { opacity: 0; }
-}
-
-.staxx-import::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-import:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-import[open]::backdrop { opacity: 0; }
 }
 
 .staxx-import-head {
@@ -10624,31 +10550,6 @@ div.title.staxx-has-titlebar {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-confirm:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-confirm[open] { opacity: 0; }
-}
-
-.staxx-confirm::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-confirm:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-confirm[open]::backdrop { opacity: 0; }
 }
 
 .staxx-confirm-head {
@@ -11134,9 +11035,9 @@ div.title.staxx-has-titlebar {
 
 /* ---- Settings panel ------------------------------------------------------ */
 
-/* The eighth dialog. Same recipe as .staxx-confirm — its own class, its
-   own :not([open]), ::backdrop and @starting-style — but wider, since it
-   holds five settings with explanation paragraphs rather than one warning,
+/* The eighth dialog. Its own class, like .staxx-confirm; its open and close
+   fade is the shared one under "Every dialog" above. Wider than .staxx-confirm
+   since it holds five settings with explanation paragraphs rather than one warning,
    and the body scrolls on its own (flex column, head/foot fixed) because the
    explanations are long enough to hit the max-height on a short screen. No
    z-index here — showModal() promotes the dialog to the top layer on its
@@ -11179,31 +11080,6 @@ dialog::backdrop {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-settings:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-settings[open] { opacity: 0; }
-}
-
-.staxx-settings::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-settings:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-settings[open]::backdrop { opacity: 0; }
 }
 
 /* PLAN_113: sized and laid out like the editor now that its controls are
@@ -12098,8 +11974,8 @@ dialog::backdrop {
  *
  * The ninth dialog, replacing the page-bottom panel that used to slide up and
  * scroll the whole page down to reach it (PLAN_44 Part B — Adrian's word for
- * that was "annoying"). Same recipe as .staxx-settings: own class, own
- * :not([open]), ::backdrop and @starting-style, and no z-index needed because
+ * that was "annoying"). Own class, like .staxx-settings; its open and close
+ * fade is the shared one under "Every dialog" above. No z-index needed because
  * showModal() already promotes it above everything including the context
  * menu's 9999.
  */
@@ -12122,31 +11998,6 @@ dialog::backdrop {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-logdlg:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-logdlg[open] { opacity: 0; }
-}
-
-.staxx-logdlg::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-logdlg:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-logdlg[open]::backdrop { opacity: 0; }
 }
 
 .staxx-logdlg-head {
@@ -12194,9 +12045,9 @@ dialog::backdrop {
 
 /* ---- Legend --------------------------------------------------------------
  *
- * PLAN_168 — what every chip on the page means. Same recipe as .staxx-logdlg
- * just above: own class, own :not([open]), ::backdrop and @starting-style.
- * Width is min(1400px, 96vw) — at three columns that measured 445px tall
+ * PLAN_168 — what every chip on the page means. Own class, like
+ * .staxx-logdlg just above; its open and close fade is the shared one under
+ * "Every dialog" above. Width is min(1400px, 96vw) — at three columns that measured 445px tall
  * with no scrolling on a 1918px-wide window (Adrian, 2026-09-18); below the
  * 1330px card breakpoint the columns fall back to one and the dialog scrolls,
  * matching the width chips themselves already collapse at.
@@ -12220,31 +12071,6 @@ dialog::backdrop {
     opacity var(--sm-motion) var(--sm-ease),
     display var(--sm-motion) allow-discrete,
     overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-legend:not([open]) {
-  display: none;
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-legend[open] { opacity: 0; }
-}
-
-.staxx-legend::backdrop {
-  background: rgba(0, 0, 0, 0.55);
-  opacity: 1;
-  transition: opacity var(--sm-motion) var(--sm-ease),
-              display var(--sm-motion) allow-discrete,
-              overlay var(--sm-motion) allow-discrete;
-}
-
-.staxx-legend:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .staxx-legend[open]::backdrop { opacity: 0; }
 }
 
 .staxx-legend-head {
@@ -13367,10 +13193,6 @@ dialog::backdrop {
   .staxx-menu {
     min-width: 20rem;
     max-width: calc(100vw - 2rem);
-  }
-
-  .staxx-bar {
-    flex-wrap: wrap;
   }
 
   /* The list reads as a divider across the page on a phone, rather than
@@ -15350,7 +15172,7 @@ dialog::backdrop {
   background: var(--background-color, #1c1c1c);
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   display: flex;
   flex-direction: column;
   align-items: center;

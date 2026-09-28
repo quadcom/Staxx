@@ -23,17 +23,8 @@
  * pointed at /tmp/zzc155-store, the same way tests/server/clash.php does
  * it — never the real store:
  *
- *     pscp tests/server/merge.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzc155-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzc155-store\"" >> $CFG
- *       php /tmp/merge.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/merge.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzc155-store /tmp/merge.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, all named "zzc155…", under the scratch stacks
@@ -212,6 +203,18 @@ ok('a symlink resolving outside the stack folder is flagged outside',
    ($linkByPath['escapes']['outside'] ?? false) === true);
 ok('a symlink resolving inside the stack folder is not flagged outside',
    ($linkByPath['inside-link']['outside'] ?? true) === false);
+
+// PLAN_192 item 6 — a link written as an absolute path inside the stack
+// folder, but pointing at something that does not exist, has nothing to
+// vouch for it being inside the tree, so it now counts as outside too
+// (staxx_relocate_link_outside()'s own rule, shared here since PLAN_192).
+symlink($root.'/zzc155link/no-such-file', $root.'/zzc155link/broken-inside');
+staxx_scan_stacks_reset();
+$err = ''; $brokenListing = staxx_merge_files('zzc155link', $err);
+$brokenByPath = [];
+foreach (($brokenListing['files'] ?? []) as $entry) $brokenByPath[$entry['path']] = $entry;
+ok('a broken symlink written as an absolute path inside the folder is flagged outside',
+   ($brokenByPath['broken-inside']['outside'] ?? false) === true);
 
 /* ========================================================================
  * B. Refusals — every one leaves every stack, and the disk, exactly as it

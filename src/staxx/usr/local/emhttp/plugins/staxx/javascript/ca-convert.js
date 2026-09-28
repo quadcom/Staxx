@@ -122,12 +122,6 @@
     return dq(k);
   }
 
-  function repeat(ch, n) {
-    var s = '';
-    while (n-- > 0) s += ch;
-    return s;
-  }
-
   // "align the # to (longest content line in that block + 2 spaces), capped
   // at column 60; a line longer than that column just gets two spaces before
   // its #". Lines with no comment at all are left exactly as they are and do
@@ -145,7 +139,7 @@
       if (!it.comment) { out.push(it.content); continue; }
       var pad = col - it.content.length;
       if (pad < 2) pad = 2;
-      out.push(it.content + repeat(' ', pad) + '# ' + it.comment);
+      out.push(it.content + ' '.repeat(pad) + '# ' + it.comment);
     }
     return out;
   }
@@ -1122,7 +1116,6 @@
   var API = {
     convert: convert,
     normaliseName: normaliseName,
-    parseExtraParams: parseExtraParams,
     // Those below are string helpers with no CA-specific knowledge in them at
     // all — image-import.js reuses them rather than keeping a second copy of
     // the quoting rules, which is where the anchor and trailing-colon bugs
@@ -1133,7 +1126,6 @@
     scalarOut: scalarOut,
     escapeDollars: escapeDollars,
     wrapText: wrapText,
-    warningCommentLines: warningCommentLines,
     findingsCommentLines: findingsCommentLines,
     importedMetaLines: importedMetaLines
   };

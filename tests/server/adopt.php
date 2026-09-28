@@ -8,18 +8,8 @@
  * pointed at /tmp/p102-store, the same way tests/server/files.php does it —
  * never the real store:
  *
- *     pscp tests/server/adopt.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/p102-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/p102-store\"" >> $CFG
- *       php /tmp/adopt.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       diff -q /tmp/cfg.bak $CFG && echo CONFIG_IDENTICAL
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/adopt.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/p102-store /tmp/adopt.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzadopt…", under the temporary stack root. Runs

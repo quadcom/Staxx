@@ -125,6 +125,15 @@ function staxx_import_taken_by(string $folder, string $id = '', string $name = '
 }
 
 /**
+ * Whether a stack already runs the app an Unraid template names: by the
+ * folder name it would take (any depth, any case) or by an imported stack's
+ * own recorded source name.
+ */
+function staxx_import_name_taken(string $name): bool {
+  return $name !== '' && staxx_import_taken_by(staxx_import_safe_name($name), '', $name) !== '';
+}
+
+/**
  * Every stack's own record of what it was imported from, read once and kept
  * for the rest of the request — PLAN_141 point 3. Only stacks that name a
  * source at all are worth reading twice (staxx_compose_meta() caches its own
@@ -146,7 +155,7 @@ function staxx_import_taken_sources(bool $reset = false): array {
 
   $out = ['byId' => [], 'byName' => []];
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
     $x = staxx_compose_meta($file)['x'] ?? [];
     $id   = (string)($x['imported.id']   ?? '');
@@ -346,55 +355,53 @@ function staxx_parse_ss_listeners(string $text): array {
  * has no container, so its ports and paths are invisible here. That is a
  * real hole, not an oversight, and the help text this feeds must say so.
  *
+ * @param array|null $rows PLAN_190 item 2's injectable input, in the shape
+ *   staxx_docker_inspect_rows() returns — the same pattern
+ *   staxx_unraid_templates_at_risk(?array $containers) already uses. Given,
+ *   this parses those rows instead of asking Docker, and skips both the
+ *   per-request memo and the `ss` listener read below (so 'host' is always
+ *   []) — it exists only so tests/server/taken_facts.php can run this
+ *   parsing with no Docker at all.
  * @return array{ports: array<int, array{port:string, proto:string, container:string}>,
  *               paths: array<int, array{path:string, container:string}>,
  *               host:  array<int, array{port:string, proto:string, addr:string, holder:string}>}
  */
-function staxx_import_taken_facts(): array {
-  static $facts = null;
-  if ($facts !== null) return $facts;
+function staxx_import_taken_facts(?array $rows = null): array {
+  static $memo = null;
+  // Given rows skip the memo on both ends — read AND write — so a test
+  // feeding this its own fixtures can never leave the real, no-argument
+  // answer poisoned for the rest of the request, or the other way round.
+  $useMemo = $rows === null;
+  if ($useMemo && $memo !== null) return $memo;
 
   $facts = ['ports' => [], 'paths' => [], 'host' => []];
 
-  // Independent of Docker: the webGUI, sshd and anything else on the box can
-  // hold a port whether or not Docker is even running. `-ltunp` never blocks
-  // (no name resolution, no counters) so the usual short timeout is ample.
-  $ss = staxx_sh('ss -ltunpH', 5);
-  if (trim($ss) !== '') $facts['host'] = staxx_parse_ss_listeners($ss);
+  if ($useMemo) {
+    // Independent of Docker: the webGUI, sshd and anything else on the box can
+    // hold a port whether or not Docker is even running. `-ltunp` never blocks
+    // (no name resolution, no counters) so the usual short timeout is ample.
+    $ss = staxx_sh('ss -ltunpH', 5);
+    if (trim($ss) !== '') $facts['host'] = staxx_parse_ss_listeners($ss);
 
-  if (!staxx_docker_running()) return $facts;
+    if (!staxx_docker_running()) return $memo = $facts;
+    $rows = staxx_docker_inspect_rows();
+  }
 
-  // A REAL tab — see staxx_container_net()'s own comment on this: `docker
-  // inspect --format` prints \t literally rather than translating it, unlike
-  // `docker ps --format`. Fields are separated by a distinct control
-  // character (\x1f) inside the ports/mounts columns since a host path can
-  // itself contain a space.
-  $tab = "\t";
-  // The compose project label rides along because a container's NAME is not
-  // reliable proof of which stack it belongs to: a converted Unraid template
-  // sets container_name, so CloudBeaver's own container is called
-  // "CloudBeaver" rather than "cloudbeaver-cloudbeaver", and the editor
-  // reported the stack's own port as taken by a stranger. `with` rather than
-  // a plain index so a container carrying no such label prints nothing at all
-  // instead of Go's literal "<no value>".
-  $fmt = '{{.Id}}'.$tab.'{{.Name}}'.$tab
-       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{$p}}={{.HostPort}}'."\x1f".'{{end}}{{end}}'.$tab
-       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab
-       . '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}'.$tab.'end';
-
-  $docker = escapeshellarg(staxx_docker_bin());
-  $out    = staxx_sh(
-    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
-  );
-
-  foreach (explode("\n", $out) as $line) {
-    $c = explode("\t", $line);
-    // Five fields including the trailing "end" sentinel — see
-    // staxx_container_net()'s comment on why a field that is never empty at
-    // the end stops exec() trimming a real one away.
-    if (count($c) < 5 || $c[0] === '') continue;
-    [$id, $name, $ports, $mounts, $project] = $c;
-    $name = ltrim($name, '/');
+  // Fields 0 (id), 5 (name), 6 (ports, \x1f-separated), 7 (writable mounts,
+  // \x1f-separated) and 8 (compose project) of staxx_docker_inspect_rows()'s
+  // ten — see that function's docblock for the shared template and its
+  // traps (the real tab, `index` over dotted access, the trailing "end"
+  // field). The compose project label rides along because a container's
+  // NAME is not reliable proof of which stack it belongs to: a converted
+  // Unraid template sets container_name, so CloudBeaver's own container is
+  // called "CloudBeaver" rather than "cloudbeaver-cloudbeaver", and the
+  // editor reported the stack's own port as taken by a stranger.
+  foreach ($rows as $c) {
+    if (count($c) < 10 || $c[0] === '') continue;
+    $name    = ltrim($c[5], '/');
+    $ports   = $c[6];
+    $mounts  = $c[7];
+    $project = $c[8];
 
     // Docker lists one binding per host address a port is published on, so a
     // port opened on "every address" (0.0.0.0 and its IPv6 equivalent ::)
@@ -417,19 +424,21 @@ function staxx_import_taken_facts(): array {
                            'container' => $name, 'project' => $project];
     }
 
-    // Writable mounts only - see the format string above. A read-only mount
-    // cannot corrupt what it reads, and warning about one is how a check earns
-    // a reputation for crying wolf: measured on this box, every residual false
-    // positive was a companion container reading another app's own folder - a
-    // log viewer beside its proxy, a stats app beside its media server - which
-    // is deliberate and harmless. The fact collected here is "two things
-    // WRITING the same folder", so a reader is not one of them.
+    // Writable mounts only - see the shared template's own comment. A
+    // read-only mount cannot corrupt what it reads, and warning about one is
+    // how a check earns a reputation for crying wolf: measured on this box,
+    // every residual false positive was a companion container reading
+    // another app's own folder - a log viewer beside its proxy, a stats app
+    // beside its media server - which is deliberate and harmless. The fact
+    // collected here is "two things WRITING the same folder", so a reader is
+    // not one of them.
     foreach (explode("\x1f", trim($mounts)) as $path) {
       if ($path === '') continue;
       $facts['paths'][] = ['path' => $path, 'container' => $name, 'project' => $project];
     }
   }
-  return $facts;
+
+  return $useMemo ? ($memo = $facts) : $facts;
 }
 
 /* ---------------------------------------------------------------- templates -- */
@@ -635,6 +644,19 @@ function staxx_import_find_override(string $file, string $dir): string {
 }
 
 /**
+ * A project's `indirect` file, read exactly as written — never rebuilt from
+ * the project's own folder name, because the two are allowed to disagree
+ * (PenPot_Complete's indirect points at a differently-capitalised
+ * Penpot_Complete). '' when the file is missing or empty, which both
+ * staxx_import_resolve_project_file() and staxx_import_project_file() treat
+ * as "fall through to the next tier".
+ */
+function staxx_import_indirect_target(string $dir): string {
+  if (!is_file($dir.'/indirect')) return '';
+  return rtrim(trim((string)@file_get_contents($dir.'/indirect')), '/');
+}
+
+/**
  * Where a Compose Manager project's compose file actually lives, and how
  * that was worked out — the tier that answered matters more than the path
  * itself, since it is the thing most likely to be wrong.
@@ -643,21 +665,13 @@ function staxx_import_find_override(string $file, string $dir): string {
  *                                     or 'flash'; file is '' if none found.
  */
 function staxx_import_resolve_project_file(string $dir, string $project): array {
-  // Tier 1: an `indirect` file, when present, names the real folder — used
-  // exactly as written, never rebuilt from the project's own folder name,
-  // because the two are allowed to disagree (PenPot_Complete's indirect
-  // points at a differently-capitalised Penpot_Complete).
-  $indirect = $dir.'/indirect';
-  if (is_file($indirect)) {
-    $target = rtrim(trim((string)@file_get_contents($indirect)), '/');
-    if ($target !== '') {
-      foreach (STAXX_COMPOSE_FILENAMES as $f) {
-        if (is_file($target.'/'.$f)) return [$target.'/'.$f, 'indirect'];
-      }
-      // indirect exists and was read, but nothing compose-shaped is there
-      // (yet, or any more) — the tier is still the honest answer.
-      return ['', 'indirect'];
-    }
+  // Tier 1: an `indirect` file, when present, names the real folder.
+  $target = staxx_import_indirect_target($dir);
+  if ($target !== '') {
+    // indirect exists and was read; found or not, the tier is still the
+    // honest answer — nothing compose-shaped there (yet, or any more)
+    // reports '' rather than falling through to a lower tier.
+    return [staxx_find_compose_file($target), 'indirect'];
   }
 
   // Tier 2: a running container's own label says which file started it.
@@ -971,11 +985,8 @@ function staxx_import_file_differs(string $a, string $b): bool {
  *   3. The project's own folder on the flash drive.
  */
 function staxx_import_project_file(string $dir, string $project): string {
-  $indirect = $dir.'/indirect';
-  if (is_file($indirect)) {
-    $target = rtrim(trim((string)@file_get_contents($indirect)), '/');
-    if ($target !== '') return staxx_find_compose_file($target);
-  }
+  $target = staxx_import_indirect_target($dir);
+  if ($target !== '') return staxx_find_compose_file($target);
 
   // byFile lists each project's config files in the order compose reported
   // them — main file first, override second — so the first match found here
@@ -1246,8 +1257,7 @@ function staxx_import_note(array $about): string {
 function staxx_import_prepare_dir(string $rel, string &$error): string {
   $error = '';
   if (!staxx_valid_path($rel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return '';
   }
 
@@ -1580,7 +1590,7 @@ function staxx_import_backfill(array $templates): array {
   $changed = [];
 
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
 
     $meta = staxx_compose_meta($file);
@@ -1689,19 +1699,16 @@ function staxx_handoff_write(
 
   $id   = bin2hex(random_bytes(16));
   $path = STAXX_HANDOFF_DIR.'/'.$id.'.json';
-  $tmp  = $path.'.tmp';
 
   $json = json_encode(['app' => $record, 'xml' => $xml, 'kind' => $kind, 'xmlTemplate' => $xmlTemplate]);
-  if ($json === false || @file_put_contents($tmp, $json) === false) {
+  if ($json === false) {
     $error = 'Could not write the handoff file.';
-    @unlink($tmp);
     return '';
   }
-  @chmod($tmp, 0600);
 
-  if (!@rename($tmp, $path)) {
-    $error = 'Could not put the handoff file in place.';
-    @unlink($tmp);
+  if (!staxx_atomic_write($path, $json, 0600, $failed)) {
+    $error = $failed === 'write' ? 'Could not write the handoff file.'
+                                  : 'Could not put the handoff file in place.';
     return '';
   }
 

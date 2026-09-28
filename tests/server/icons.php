@@ -13,17 +13,8 @@
  * Defines.php), so this script seeds it into the scratch store's own
  * config/staxx.cfg itself, before Defines.php's first require:
  *
- *     pscp tests/server/icons.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzicons-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzicons-store\"" >> $CFG
- *       php /tmp/icons.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/icons.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzicons-store /tmp/icons.php'
  *
  * Never touches the network and never touches the real store: everything
  * here lives under the scratch STORE_ROOT this file sets up and removes on

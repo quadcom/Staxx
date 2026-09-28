@@ -29,14 +29,9 @@ var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference betw
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk-ta');
 
-var argv = process.argv.slice(2);
-var CHECK = argv.indexOf('--check') >= 0;
-var outArg = argv.filter(function (a) { return a !== '--check'; })[0];
-var OUT_DIR = outArg ? path.resolve(outArg) : path.join(FIXTURES, '.dryrun');
-
-var checkFails = [];
-
-function section(title) { console.log('\n' + title); }
+var D = require('./lib/dryrun.js')(FIXTURES, 'TubeArchivist');
+var CHECK = D.CHECK, OUT_DIR = D.OUT_DIR, checkFails = D.fails,
+    section = D.section, fail = D.fail, storeNameFor = D.storeNameFor;
 
 // install.sh does this same substitution with sed before the fixture ever reaches a real box;
 // done here too, with a documentation-range address (RFC 5737), so the dry run exercises the
@@ -61,8 +56,6 @@ var STACKS = {
 };
 
 var LEAVES = ['Demo-TubeArchivist', 'Demo-TubeArchivist-ES', 'Demo-TubeArchivist-Redis'];
-
-function storeNameFor(leafName) { return 'TubeArchivist/' + leafName; }
 
 function readDescriptors(leaves) {
   return leaves.map(function (leafName) {
@@ -152,8 +145,6 @@ var ORDER_B = ['Demo-TubeArchivist-Redis', 'Demo-TubeArchivist-ES', 'Demo-TubeAr
 
 var resultA = runWalk('A', ORDER_A);
 var resultB = runWalk('B', ORDER_B);
-
-function fail(item, message) { checkFails.push({ item: item, message: message }); }
 
 if (!CHECK) {
   process.exit(checkFails.length ? 1 : 0);
@@ -250,7 +241,7 @@ if (!orderCmp.ok) orderCmp.problems.forEach(function (p) { fail('audit-order', p
 
 if (checkFails.length) {
   console.log('\nFAILED:');
-  checkFails.forEach(function (f) { console.log('  ' + f.item + ': ' + f.message); });
+  checkFails.forEach(function (f) { console.log('  ' + f.key + ': ' + f.message); });
   process.exit(1);
 }
 console.log('\nall checks passed');

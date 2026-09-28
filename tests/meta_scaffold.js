@@ -16,14 +16,7 @@ var path = require('path');
 var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 var M = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/meta-scaffold.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 // True when every line of `orig` still appears in `out`, in the same
 // relative order — the generic form of "only inserted, never rewrote or
@@ -456,5 +449,4 @@ console.log('\nK. missingFields() given a document, not text');
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

@@ -146,16 +146,9 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
     return false;
   }
 
-  $tmp = $file.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $json."\n");
-  if ($written === false || $written !== strlen($json) + 1) {
-    @unlink($tmp);
-    $error = 'Could not write '.$file;
-    return false;
-  }
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $json."\n", null, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file
+                                  : 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
 
@@ -470,6 +463,32 @@ function staxx_start_rekey(array &$start, string $from, string $to): void {
     if ($newPath !== null) $delay[$level.':'.$newPath] = $secs;
   }
   $start['delay'] = $delay;
+}
+
+/**
+ * staxx_rename_stack() lives in Stacks.php, which sits below Folders.php in
+ * the include order and must not depend on it — so the endpoint's
+ * 'stack-rename' case calls this instead, to keep the stored order pointed
+ * at the new name. Without it the drag position a rename inherits would
+ * silently be lost.
+ */
+function staxx_folders_follow_rename(string $from, string $to): void {
+  $folder = staxx_path_folder($from);
+  staxx_folders_update(function (array $data) use ($folder, $from, $to): array {
+    $start = $data['start'];
+    $list  = $start['stacks'][$folder] ?? [];
+    $pos   = array_search(staxx_path_leaf($from), $list, true);
+    if ($pos !== false) $list[$pos] = staxx_path_leaf($to);
+    $start['stacks'][$folder] = $list;
+    // A loose stack's top-level token carries its leaf name too.
+    if ($folder === '') {
+      $ridx = array_search('stack:'.staxx_path_leaf($from), $start['root'], true);
+      if ($ridx !== false) $start['root'][$ridx] = 'stack:'.staxx_path_leaf($to);
+    }
+    staxx_start_rekey($start, $from, $to);
+    $data['start'] = $start;
+    return $data;
+  });
 }
 
 /** Drop every start-block entry that belongs to one stack, root and branch. */
@@ -826,7 +845,9 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
  * name — there is nothing else it could be now, and the two were only ever
  * separate so that renaming a folder did not have to touch anything.
  *
- * @param  array $stacks from staxx_list_stacks()
+ * @param  array $stacks from staxx_list_stacks() or staxx_stack_states(): reads
+ *   name, folder, leaf and running, and keeps their order for anything the
+ *   start order does not name
  * @return array<int, array{type:string, ...}>
  */
 function staxx_folder_layout(array $stacks): array {

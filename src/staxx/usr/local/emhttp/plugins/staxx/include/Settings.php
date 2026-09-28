@@ -538,22 +538,21 @@ function staxx_cfg_write_keys(string $file, array $overlay, ?string &$error = nu
     $lines[] = $key.'="'.$value.'"';
   }
 
-  $tmp = $file.'.tmp-'.getmypid();
-  if (@file_put_contents($tmp, implode("\n", $lines)."\n") === false) {
-    @unlink($tmp); // a partial write is possible even though the call reported failure
-    $error = 'Could not write '.$tmp.'.';
-    return false;
-  }
+  $body = implode("\n", $lines)."\n";
+
+  // A save that changes nothing on disk writes nothing — flash has finite
+  // writes, and this runs every time Settings is opened and closed unchanged.
+  if (@file_get_contents($file) === $body) return true;
+
   // Intent is owner-only, since a settings file can hold the Docker Hub
   // token (HUB_TOKEN) in the clear — but the flash pointer lives on a vfat
   // mount with no concept of Unix permissions, so this call is a no-op
   // there: every file on that mount is already owner-only regardless of
   // what chmod reports. The store's settings file is off flash, though, so
   // this is what actually protects that one.
-  @chmod($tmp, 0600);
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save the settings file — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $body, 0600, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file.'.'
+                                  : 'Could not save the settings file — the temporary file could not be put in place.';
     return false;
   }
   return true;

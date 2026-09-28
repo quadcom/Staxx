@@ -38,6 +38,11 @@ WATCH="$DIR/watch"
 LOCK="$DIR/collector.pid"
 LOCKDIR="$DIR/collector.lock"
 
+# The container ids devices.raw was last inspected for, so a round where
+# nothing started, stopped or was recreated can skip re-inspecting them —
+# see the comment where this is used, below.
+INSPECTED=""
+
 # One collector at a time, and the lock has to be ATOMIC.
 #
 # Testing "does a pid file exist" and then writing one is two steps, and the
@@ -144,26 +149,35 @@ sample_gpu_procs() {
     [ -r "$procs" ] || continue
 
     for p in $(cat "$procs" 2>/dev/null); do
-      for fd in /proc/$p/fdinfo/*; do
-        [ -r "$fd" ] || continue
-        grep -qs '^drm-client-id' "$fd" 2>/dev/null || continue
-
-        # One line per engine. drm-driver, drm-pdev and drm-client-id always
-        # appear before the engine lines, so they are known by the time each
-        # is printed. "capacity" lines are engine counts, not time, and are
-        # skipped.
-        awk -v cid="$id" '
-          /^drm-driver:/    { drv = $2 }
-          /^drm-pdev:/      { pdev = $2 }
-          /^drm-client-id:/ { client = $2 }
-          /^drm-engine-/ {
-            name = $1
-            sub(/^drm-engine-/, "", name)
-            sub(/:$/, "", name)
-            if (name !~ /^capacity/) print "e", cid, drv, pdev, client, name, $2
+      # One awk for all of this process's open files, rather than a grep and
+      # an awk for each: a media server holds hundreds of them, and two
+      # program starts per file was most of a round's cost. Reading each file
+      # with getline, not as awk's own input, is what lets a file that has
+      # gone since the glob (a closed descriptor, an exited process) be
+      # skipped; gawk stops dead on an input file it cannot open.
+      awk -v cid="$id" '
+        BEGIN {
+          for (i = 1; i < ARGC; i++) {
+            f = ARGV[i]; buf = ""; drm = 0; drv = ""; pdev = ""; client = ""
+            while ((getline line < f) > 0) {
+              split(line, w)
+              if (line ~ /^drm-driver:/)          drv = w[2]
+              else if (line ~ /^drm-pdev:/)       pdev = w[2]
+              else if (line ~ /^drm-client-id/) { drm = 1; if (line ~ /^drm-client-id:/) client = w[2] }
+              else if (line ~ /^drm-engine-/) {
+                name = w[1]
+                sub(/^drm-engine-/, "", name)
+                sub(/:$/, "", name)
+                if (name !~ /^capacity/)
+                  buf = buf "e " cid " " drv " " pdev " " client " " name " " w[2] "\n"
+              }
+            }
+            close(f)
+            # Only a DRM client file counts, the rule the grep used to apply.
+            if (drm) printf "%s", buf
           }
-        ' "$fd" >> "$out" 2>/dev/null
-      done
+        }
+      ' /proc/"$p"/fdinfo/* >> "$out" 2>/dev/null
     done
   done < "$DIR/devices.raw"
 
@@ -222,20 +236,26 @@ while [ -f "$WATCH" ]; do
        --format '{{.ID}}	{{.Names}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.service"}}' \
        > "$DIR/ps.raw.tmp" 2>/dev/null; then
     mv "$DIR/ps.raw.tmp" "$DIR/ps.raw"
+    # Column one of what was just written, rather than a second `docker ps`
+    # call to get the same list of ids a different way.
+    ids=$(cut -f1 "$DIR/ps.raw")
   else
     rm -f "$DIR/ps.raw.tmp"
+    ids=""
   fi
 
-  # Which containers actually have a GPU handed to them. Inspecting all of
-  # them costs under a tenth of a second, so it is refreshed every round
-  # rather than cached and risked going out of date when one is recreated.
+  # Which containers actually have a GPU handed to them. Devices, device
+  # requests and privileged mode cannot change while a container runs —
+  # `docker update` changes limits, not devices — so re-inspecting is only
+  # worth doing when the list of running ids has actually changed (a
+  # container started, stopped, or was recreated with a new id) or the file
+  # is missing outright; every other round this is skipped.
   #
   # Privileged is recorded but is NOT by itself a GPU mapping: a container is
   # usually privileged for disk or network reasons and flagging every one of
   # them as a GPU user would fill the column with containers that never touch
   # it. The reader decides — see Stats.php.
-  ids=$(timeout -k 5 15 docker ps -q 2>/dev/null)
-  if [ -n "$ids" ]; then
+  if [ -n "$ids" ] && { [ "$ids" != "$INSPECTED" ] || [ ! -f "$DIR/devices.raw" ]; }; then
     # shellcheck disable=SC2086
     # `range` over both lists, never `len`.
     #
@@ -247,6 +267,9 @@ while [ -f "$WATCH" ]; do
          '{{.Id}}	{{range .HostConfig.Devices}}{{.PathOnHost}},{{end}}	{{range .HostConfig.DeviceRequests}}request,{{end}}	{{.HostConfig.Privileged}}' \
          > "$DIR/devices.raw.tmp" 2>/dev/null; then
       mv "$DIR/devices.raw.tmp" "$DIR/devices.raw"
+      # Only recorded once the write actually succeeded, so a failed inspect
+      # is retried next round rather than skipped on a stale match.
+      INSPECTED="$ids"
     else
       rm -f "$DIR/devices.raw.tmp"
     fi

@@ -71,13 +71,23 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 echo $$ > "$LOCK"
 
-# Release the lock, and stop the event reader, only if we still hold the
-# lock. An unconditional release here would hand a newer watcher's lock back
-# to a dying old one — see stats-collector.sh's cleanup() for the incident
-# that taught this.
+# Stops the event reader unconditionally, and releases the lock only if we
+# still hold it. An unconditional lock release would hand a newer watcher's
+# lock back to a dying old one — see stats-collector.sh's cleanup() for the
+# incident that taught this; the producer is a separate fault with a
+# different fix, explained below.
 cleanup() {
+  # The producer is this process's own child whoever owns the lock by now, so
+  # it is killed unconditionally. It used to sit inside the ownership test
+  # below, and a settings save that restarts the feed deletes the state
+  # directory right after signalling this watcher — so the test failed on the
+  # way out and the `docker events` child was left running, reparented to
+  # init, with the pid file already gone so nothing could find it again
+  # (the same fault, measured on scripts/boot-watch.sh, 2026-09-14).
+  [ -n "$PRODUCER" ] && kill "$PRODUCER" 2>/dev/null
+  # The lock and its directory may belong to a newer watcher by now, so those
+  # are only removed when they are still ours.
   if [ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]; then
-    [ -n "$PRODUCER" ] && kill "$PRODUCER" 2>/dev/null
     rm -f "$LOCK" "$FIFO"
     rmdir "$LOCKDIR" 2>/dev/null
   fi

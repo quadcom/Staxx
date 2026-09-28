@@ -141,10 +141,10 @@ function staxx_update_state(): array {
 
 /**
  * Write the state file, merged over the defaults so a save that only touches
- * one key can never drop the rest. Written temp-then-rename, same as
- * staxx_autostart_write(), and skipped entirely when the encoded content is
- * byte-identical to what is already there — flash has finite writes, and this
- * runs after every single image on every check.
+ * one key can never drop the rest. Written through staxx_atomic_write(), and
+ * skipped entirely when the encoded content is byte-identical to what is
+ * already there, so a save that changes nothing writes nothing. A check pass
+ * saves once, at its end.
  */
 function staxx_update_state_save(array $state): bool {
   $merged  = array_merge(staxx_update_state_defaults(), staxx_update_state(), $state);
@@ -163,10 +163,7 @@ function staxx_update_state_save(array $state): bool {
   $dir = dirname($file);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
 
-  $tmp = $dir.'/.'.basename($file).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
-  @chmod($file, 0600);
+  if (!staxx_atomic_write($file, $encoded, 0600)) return false;
 
   staxx_update_state_cache($merged);
   return true;
@@ -293,6 +290,20 @@ function staxx_release_notes_urls(string $project, string $version): array {
 }
 
 /**
+ * Drop any trailing incomplete UTF-8 sequence, left when a byte-counted cut
+ * lands in the middle of a multi-byte character.
+ */
+function staxx_utf8_trim_tail(string $s): string {
+  while ($s !== '' && (ord($s[strlen($s) - 1]) & 0xc0) === 0x80) {
+    $s = substr($s, 0, -1);
+  }
+  if ($s !== '' && (ord($s[strlen($s) - 1]) & 0x80) !== 0) {
+    $s = substr($s, 0, -1);
+  }
+  return $s;
+}
+
+/**
  * Cap a release body at STAXX_NOTES_MAX, cut at the last line break before
  * the cap so it never stops mid-word — falling back to a hard cut only when
  * the window has no break at all. Pure; the only change made to the text
@@ -316,13 +327,7 @@ function staxx_release_notes_trim(string $body): array {
   // false outright on a malformed string, and staxx_record_write_index() would
   // then fail the whole write silently, taking this stack's compose history
   // down with it. Drop any trailing incomplete sequence.
-  while ($window !== '' && (ord($window[strlen($window) - 1]) & 0xc0) === 0x80) {
-    $window = substr($window, 0, -1);
-  }
-  if ($window !== '' && (ord($window[strlen($window) - 1]) & 0x80) !== 0) {
-    $window = substr($window, 0, -1);
-  }
-  return ['notes' => $window, 'cut' => true];
+  return ['notes' => staxx_utf8_trim_tail($window), 'cut' => true];
 }
 
 /**
@@ -430,13 +435,7 @@ function staxx_changelog_fetch(string $project, string $from, string $to): array
       // the middle of a multi-byte character, which json_encode() refuses
       // outright — taking the whole record write down with it. Drop any
       // trailing incomplete sequence, exactly as staxx_release_notes_trim().
-      $subject = substr($subject, 0, STAXX_CHANGES_LINE_MAX);
-      while ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0xc0) === 0x80) {
-        $subject = substr($subject, 0, -1);
-      }
-      if ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0x80) !== 0) {
-        $subject = substr($subject, 0, -1);
-      }
+      $subject = staxx_utf8_trim_tail(substr($subject, 0, STAXX_CHANGES_LINE_MAX));
       if ($subject === '') continue;
       $cut = true;
     }
@@ -515,70 +514,30 @@ function staxx_image_tag_part(string $image): string {
  * on any failure, the same contract as staxx_image_tags() this delegates to
  * for Docker Hub and its two linuxserver mirrors.
  *
- * For everything else, the standard registry conversation: ask the host's
- * /v2/ root, read the WWW-Authenticate challenge it answers with for the
- * token realm and service, fetch a pull-scoped token from that realm (many
- * public hosts need none at all — a host with no challenge is already
- * anonymous), then list the repository's tags. Registry v2 answers in
- * lexical order with no dates, unlike Hub's "most recently pushed" — so
- * nothing here or downstream may assume recency for this route.
+ * For everything else, the shared registry conversation in Defines.php:
+ * split the reference, get a pull-scoped bearer token (its challenge is
+ * cached per host, the token per host+repo, so a registry already asked
+ * this request costs nothing extra), then list the repository's tags.
+ * Registry v2 answers in lexical order with no dates, unlike Hub's "most
+ * recently pushed" — so nothing here or downstream may assume recency for
+ * this route.
  *
  * @return string[]
  */
 function staxx_registry_tags(string $image): array {
   if (staxx_hub_repo_path($image) !== '') return staxx_image_tags($image);
 
-  $ref = trim($image);
-  $ref = preg_replace('/@sha256:[0-9a-f]+$/', '', $ref);
-  $slash = strrpos($ref, '/');
-  $colon = strrpos($ref, ':');
-  if ($colon !== false && ($slash === false || $colon > $slash)) $ref = substr($ref, 0, $colon);
+  $r = staxx_registry_ref(preg_replace('/@sha256:[0-9a-f]+$/', '', trim($image)));
+  // A repository of at least two segments on a named host: the same set of
+  // references this function has always asked about. Hub went above.
+  if ($r['repo'] === '' || $r['host'] === 'docker.io' || strpos($r['repo'], '/') === false) return [];
 
-  $slash = strpos($ref, '/');
-  if ($slash === false) return []; // no host and not Hub-eligible — nothing to ask
-  $host = substr($ref, 0, $slash);
-  $repo = substr($ref, $slash + 1);
-  if ($host === '' || $repo === '') return [];
+  $why   = '';
+  $token = staxx_registry_token($r['host'], $r['repo'], $why);
+  if ($why !== '') return [];
 
-  // Same shape a Hub repository name is held to, just without the one-slash
-  // limit — a generic registry allows deeper paths (ghcr.io/org/team/name).
-  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$#D', $repo)) {
-    return [];
-  }
-
-  // The ping needs the response headers, not the body, so it goes through
-  // curl directly rather than staxx_hub_json() (which is -f and throws the
-  // body away on anything but 2xx). A host with no challenge at all is
-  // already anonymous, so an empty realm below is not itself a failure.
-  $headers = staxx_sh(
-    'curl -sS -L --max-time 6 -D /dev/stdout -o /dev/null '.escapeshellarg('https://'.$host.'/v2/'), 8
-  );
-
-  $realm = '';
-  $service = '';
-  foreach (explode("\n", $headers) as $line) {
-    if (preg_match('/^www-authenticate:\s*(.+)$/i', trim($line), $m)) {
-      // The realm is whatever the remote registry says it is — a hostile one
-      // could name a file:// path or an internal address, so only an actual
-      // http(s) realm is accepted before it is ever used to build a URL.
-      if (preg_match('/realm="([^"]+)"/i', $m[1], $rm) && preg_match('#^https?://#i', $rm[1])) {
-        $realm = $rm[1];
-      }
-      if (preg_match('/service="([^"]+)"/i', $m[1], $sm)) $service = $sm[1];
-      break;
-    }
-  }
-
-  $bearer = [];
-  if ($realm !== '') {
-    $tokenUrl = $realm.'?scope='.rawurlencode('repository:'.$repo.':pull');
-    if ($service !== '') $tokenUrl .= '&service='.rawurlencode($service);
-    $token = staxx_hub_json($tokenUrl, [], 6, 8);
-    $bearerToken = (string)($token['token'] ?? ($token['access_token'] ?? ''));
-    if ($bearerToken !== '') $bearer = ['Authorization: Bearer '.$bearerToken];
-  }
-
-  $data = staxx_hub_json('https://'.$host.'/v2/'.$repo.'/tags/list', $bearer, 6, 8);
+  $url  = staxx_registry_scheme($r['host']).'://'.staxx_registry_api_host($r['host']).'/v2/'.$r['repo'].'/tags/list';
+  $data = staxx_hub_json($url, $token !== '' ? ['Authorization: Bearer '.$token] : [], 6, 8);
   if ($data === null || !isset($data['tags']) || !is_array($data['tags'])) return [];
 
   $tags = [];
@@ -1383,6 +1342,18 @@ function staxx_image_local_verdict(string $out): array {
 }
 
 /**
+ * The repository half of a reference to match RepoDigests against — Hub's
+ * own rewrite when the reference is Hub-eligible, else the reference with
+ * its tag stripped. Never staxx_update_local_repo(), which answers a
+ * different question (the name local Docker stores an image under, with no
+ * Hub rewrite) — see notes/constraints.md.
+ */
+function staxx_image_match_repo(string $ref): string {
+  $repo = staxx_hub_repo_path($ref);
+  return $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($ref));
+}
+
+/**
  * What is actually sitting on disk for one image reference — the digest
  * Docker recorded when it pulled it, comparable to staxx_image_remote()'s
  * digest with no conversion either side.
@@ -1412,11 +1383,10 @@ function staxx_image_local(string $image): array {
   $data = staxx_image_local_verdict($out);
   if ($data === [] || !empty($data['unknown'])) return $data;
 
-  $repo = staxx_hub_repo_path($image);
   // The reference's own repository half, used to pick the matching
   // RepoDigests entry — a locally cached image can hold digests from more
   // than one tag/repo alias.
-  $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($image));
+  $wantRepo = staxx_image_match_repo($image);
 
   $digests = [];
   foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
@@ -1473,8 +1443,7 @@ function staxx_image_id_digest(string $imageId, string $ref): array {
   $data = staxx_image_local_verdict($out);
   if ($data === [] || !empty($data['unknown'])) return $data;
 
-  $repo = staxx_hub_repo_path($ref);
-  $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($ref));
+  $wantRepo = staxx_image_match_repo($ref);
 
   $digests = [];
   foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
@@ -1514,25 +1483,25 @@ function staxx_image_local_digest(array $local, string $remote): string {
 function staxx_update_images(string $scope): array {
   $images = [];
 
-  foreach (staxx_list_stacks() as $stack) {
+  foreach (staxx_stack_compose_map() as $rel => $file) {
     if ($scope === 'all') {
       // every stack
-    } elseif ($stack['name'] === $scope) {
+    } elseif ($rel === $scope) {
       // exact stack match
-    } elseif (strpos($stack['name'], $scope.'/') === 0) {
+    } elseif (strpos($rel, $scope.'/') === 0) {
       // folder match
     } else {
       continue;
     }
 
-    if ($stack['file'] === '') continue;
-    $meta = staxx_compose_meta($stack['file']);
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
     if (!$meta['ok']) continue;
 
     foreach ($meta['services'] as $svc => $svcMeta) {
       $image = trim((string)($svcMeta['image'] ?? ''));
       if ($image === '') continue;
-      $images[$image][] = $stack['name'].'::'.$svc;
+      $images[$image][] = $rel.'::'.$svc;
     }
   }
 
@@ -1548,11 +1517,7 @@ function staxx_update_images(string $scope): array {
  * @return array<string, string>
  */
 function staxx_update_stack_files(): array {
-  $files = [];
-  foreach (staxx_list_stacks() as $stack) {
-    if ($stack['file'] !== '') $files[$stack['name']] = $stack['file'];
-  }
-  return $files;
+  return array_filter(staxx_stack_compose_map(), fn($f) => $f !== '');
 }
 
 /**
@@ -1569,14 +1534,7 @@ function staxx_update_lock(string &$error): bool {
     return false;
   }
 
-  $lock = STAXX_UPDATE_DIR.'/lock';
-  if (@mkdir($lock, 0755)) return true;
-
-  $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
-  if ($age > 1800) {
-    @rmdir($lock);
-    if (@mkdir($lock, 0755)) return true;
-  }
+  if (staxx_mkdir_lock_stale(STAXX_UPDATE_DIR.'/lock')) return true;
 
   $error = 'An update check is already running.';
   return false;
@@ -1734,19 +1692,6 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
   if ($dirty) staxx_update_state_save(['images' => $images]);
   staxx_update_unlock();
   return $dirty;
-}
-
-/**
- * Absolute path to the php binary, same reasoning as staxx_docker_bin(): PHP's
- * environment is not a login shell, so PATH cannot be relied on.
- */
-function staxx_php_bin(): string {
-  static $bin = null;
-  if ($bin !== null) return $bin;
-  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
-    if (is_file($path) && is_executable($path)) return $bin = $path;
-  }
-  return $bin = 'php';
 }
 
 /**
@@ -2450,17 +2395,6 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
-  @file_put_contents($log, '$ checking updates for '.$scope."\n\n");
-  @chmod($log, 0600);
-
   // Watch.php, not __FILE__ — it requires Links.php, which requires this
   // file, so the detached process also gets staxx_links_move_candidate()
   // (PLAN_61) and staxx_watch_check() (PLAN_62), and neither check inside
@@ -2491,11 +2425,7 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
 
   $inner = $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"';
 
-  @exec(
-    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
-  );
-
-  return $job;
+  return staxx_spawn_job('checking updates for '.$scope, $inner, $error);
 }
 
 /* ------------------------------------------------------------- Part H: the grid --
@@ -2897,15 +2827,9 @@ function staxx_updates_aggregate(array $pills): array {
  * the update state file; runs no command of its own.
  */
 function staxx_updates_for_row(string $stack, string $service = ''): array {
-  // staxx_list_stacks() works out compose metadata, run state, the review
-  // lock and more for every stack, just so this could throw all of it away
-  // bar one file path — costly when called once per stack row and once per
-  // container row. staxx_scan_stacks() (request-cached) plus a compose-file
-  // lookup answers the same question far more cheaply.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  // Not staxx_list_stacks(): that builds every stack's full row, record reads
+  // and Docker questions included, just to throw away all of it bar one path.
+  $file = staxx_stack_compose_map()[$stack] ?? '';
 
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
   if (!$meta['ok']) return staxx_updates_aggregate([]);
@@ -3316,12 +3240,7 @@ function staxx_watch_report(): array {
 function staxx_updates_moved_for_stack(string $stack): array {
   if (!function_exists('staxx_links_repo_path')) return [];
 
-  // Same cheap lookup staxx_updates_for_row() uses, rather than
-  // staxx_list_stacks() — see its own comment for why.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
   if (!$meta['ok']) return [];
 

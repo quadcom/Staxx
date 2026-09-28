@@ -438,6 +438,68 @@ function staxx_sh(string $cmd, int $seconds = 10, ?int &$code = null): string {
 }
 
 /**
+ * Write $data to $path so a reader never sees half a file: a hidden temp
+ * file beside the target, named with this process's id so two writers never
+ * share one, then rename() over the target. $mode, when given, is set on the
+ * temp file before the rename, so the file never exists with the wrong
+ * permissions. Returns false on any failure, a short write included, and
+ * removes its own temp file on every failure path. $failed says which step
+ * failed ('write' or 'rename'; '' on success) for a caller that words the
+ * two differently. Never throws or warns.
+ */
+function staxx_atomic_write(string $path, string $data, ?int $mode = null, ?string &$failed = null): bool {
+  $failed = '';
+  $tmp = dirname($path).'/.'.basename($path).'.'.getmypid().'.tmp';
+  $written = @file_put_contents($tmp, $data);
+  if ($written === false || $written !== strlen($data)) { @unlink($tmp); $failed = 'write'; return false; }
+  if ($mode !== null) @chmod($tmp, $mode);
+  if (!@rename($tmp, $path)) { @unlink($tmp); $failed = 'rename'; return false; }
+  return true;
+}
+
+// The one place a command is started that must outlive this request, so it
+// cannot go through staxx_sh(), whose timeout would kill it. It returns at
+// once, so it cannot hang either.
+function staxx_detach(string $cmd, string $log): void {
+  @exec('setsid sh -c '.escapeshellarg($cmd).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+}
+
+/** An atomic mkdir lock; one older than $staleAfter seconds was left by a
+ *  killed process and is taken over. True when this process now holds it.
+ *  Not staxx_mkdir_lock(): that one waits, counts re-entry and reports why. */
+function staxx_mkdir_lock_stale(string $lock, int $staleAfter = 1800): bool {
+  if (@mkdir($lock, 0755, true)) return true;
+  if (!is_dir($lock) || time() - (int)@filemtime($lock) <= $staleAfter) return false;
+  @rmdir($lock);
+  return @mkdir($lock, 0755, true);
+}
+
+/**
+ * Absolute path to the php binary. PHP's environment is not a login shell,
+ * so PATH cannot be relied on — resolve it once and call it explicitly.
+ */
+function staxx_php_bin(): string {
+  static $bin = null;
+  if ($bin !== null) return $bin;
+  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
+    if (is_file($path) && is_executable($path)) return $bin = $path;
+  }
+  return $bin = 'php';
+}
+
+// The rule enforced by staxx_valid_name(), spelled out for a person: kept as
+// one string so every place that refuses a bad name says the same thing.
+const STAXX_NAME_RULE = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+                       . 'must start with a letter or number, and must be 63 characters or fewer.';
+
+/** A plugin asset's URL, carrying its modification time so an edited file
+ *  is never served from the browser's cache. $rel is relative to STAXX_ROOT. */
+function staxx_asset(string $rel): string {
+  $path = STAXX_ROOT.'/'.$rel;
+  return '/plugins/'.STAXX_PLUGIN.'/'.$rel.'?v='.(is_file($path) ? filemtime($path) : '0');
+}
+
+/**
  * Absolute path to the docker binary. PHP's environment is not a login shell,
  * so PATH cannot be relied on — resolve it once and call it explicitly.
  */
@@ -469,6 +531,14 @@ function staxx_compose_paths(): array {
     '/usr/local/bin/docker-compose',
     '/usr/bin/docker-compose',
   ];
+}
+
+/** The first of staxx_compose_paths() that exists and can be run, or ''. */
+function staxx_compose_found_path(): string {
+  foreach (staxx_compose_paths() as $path) {
+    if (is_file($path) && is_executable($path)) return $path;
+  }
+  return '';
 }
 
 /**
@@ -508,24 +578,13 @@ function staxx_compose(): array {
     }
   }
 
-  foreach (staxx_compose_paths() as $path) {
-    if (is_file($path) && is_executable($path)) { $info['path'] = $path; break; }
-  }
+  $info['path'] = staxx_compose_found_path();
   if ($info['path'] === '') {
     $found = trim(staxx_sh('command -v docker-compose', 5));
     if ($found !== '' && is_file($found)) $info['path'] = $found;
   }
 
   return $info;
-}
-
-/** Absolute path to compose, or '' if it could not be located on disk. */
-function staxx_compose_bin(): string {
-  return staxx_compose()['path'];
-}
-
-function staxx_compose_version(): string {
-  return staxx_compose()['version'];
 }
 
 function staxx_docker_running(): bool {
@@ -555,14 +614,21 @@ function staxx_docker_running(): bool {
  * @return array<int, array{name:string, driver:string, project:string}>
  */
 function staxx_docker_networks(): array {
-  if (!staxx_docker_running()) return [];
+  // Remembered for the request: a table render and a state poll both ask,
+  // and nothing in one request creates a network and then asks for the
+  // list again — the start-time check in staxx_missing_external_networks()
+  // runs before the detached job, never after it.
+  static $networks = null;
+  if ($networks !== null) return $networks;
+
+  $networks = [];
+  if (!staxx_docker_running()) return $networks;
 
   $fmt = '{{.Name}}|{{.Driver}}|{{.Labels}}';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' network ls --format '.escapeshellarg($fmt), 10
   );
 
-  $networks = [];
   foreach (explode("\n", trim($out)) as $line) {
     if ($line === '') continue;
     [$name, $driver, $labels] = array_pad(explode('|', $line, 3), 3, '');
@@ -1812,6 +1878,71 @@ function staxx_docker_ps_raw(): array {
 }
 
 /**
+ * PLAN_190 item 2 — one `docker inspect` over every container, the ten
+ * tab-separated fields staxx_container_net() (the address column) and
+ * staxx_import_taken_facts() (the "already taken" facts) each used to ask
+ * for with a template of their own. Remembered for the request; both
+ * callers used to run this same pass separately, once each, on every
+ * render and every refresh.
+ *
+ * Field order: {{.Id}}, {{.HostConfig.NetworkMode}}, the container's own IP
+ * list, the published port bindings, the exposed ports (these five are
+ * staxx_container_net()'s own template, unchanged), then {{.Name}}, the
+ * port map with `\x1f` separators, the writable bind mounts with `\x1f`,
+ * the compose project `with` label (these four are
+ * staxx_import_taken_facts()'s own template, unchanged), then the literal
+ * `end`.
+ *
+ * A REAL tab, not the two characters `\t` — `docker inspect --format`
+ * prints `\t` literally rather than translating it, unlike `docker ps
+ * --format`; see staxx_container_net()'s own comment for what got silently
+ * lost here before. Every map is reached with `index`, never dotted access,
+ * for the same reason: a key Docker omits entirely (a container exposing no
+ * ports) fails dotted access with "map has no entry for key", where `index`
+ * just returns nothing. The trailing `end` field is not decoration either —
+ * PHP's `exec()` trims trailing whitespace from every line it collects, so
+ * a field that is never empty at the end is what stops a container with
+ * nothing in its last real field from arriving one field short and being
+ * discarded as malformed.
+ *
+ * Piped rather than a separate `ps` round trip, exit code ignored: one
+ * broken container on this server makes `inspect` print an error and exit
+ * non-zero, but the other containers are still reported on stdout. A line
+ * with fewer than ten fields, or an empty first field, is dropped.
+ *
+ * @return array<int, string[]> one string[10] per container
+ */
+function staxx_docker_inspect_rows(): array {
+  static $rows = null;
+  if ($rows !== null) return $rows;
+
+  $rows = [];
+  if (!staxx_docker_running()) return $rows;
+
+  $tab = "\t";
+  $fmt = '{{.Id}}'.$tab.'{{.HostConfig.NetworkMode}}'.$tab
+       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$v.IPAddress}},{{end}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}'.$tab
+       . '{{range $p, $v := index .Config "ExposedPorts"}}{{$p}},{{end}}'.$tab
+       . '{{.Name}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{$p}}={{.HostPort}}'."\x1f".'{{end}}{{end}}'.$tab
+       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab
+       . '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}'.$tab.'end';
+
+  $docker = escapeshellarg(staxx_docker_bin());
+  $out    = staxx_sh(
+    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
+  );
+
+  foreach (explode("\n", $out) as $line) {
+    $c = explode("\t", $line);
+    if (count($c) < 10 || $c[0] === '') continue;
+    $rows[] = $c;
+  }
+  return $rows;
+}
+
+/**
  * Containers on the system grouped by their compose project.
  *
  * This is the grouping key the whole stack presentation rests on: compose
@@ -1828,5 +1959,39 @@ function staxx_containers_by_project(): array {
   }
   ksort($projects);
   return $projects;
+}
+
+/**
+ * PLAN_190 item 9 — one parsed reading of an Unraid template folder,
+ * shared by every scanner that walks it (staxx_detail_template_match(),
+ * staxx_watch_template_claims(), staxx_unraid_template_for(),
+ * staxx_unraid_templates_at_risk()) instead of each running its own
+ * scandir()/simplexml_load_file() pass, remembered per request. On
+ * Adrian's box that folder holds about 85 XML files, so a request that
+ * reaches more than one of these scanners used to re-parse the whole
+ * folder for each.
+ *
+ * *.xml only — the folder also holds a .bak of whatever template was last
+ * overwritten, and it parses just as happily as a real one.
+ *
+ * @return array<string, SimpleXMLElement> path => parsed template, in
+ *   scandir()'s own order, for every regular *.xml file in $dir that
+ *   actually parses.
+ */
+function staxx_unraid_template_xml(string $dir, bool $reset = false): array {
+  static $cache = [];
+  if ($reset) { $cache = []; return []; }
+  if (array_key_exists($dir, $cache)) return $cache[$dir];
+
+  $found = [];
+  foreach ((array)@scandir($dir) as $file) {
+    if (!preg_match('/\.xml$/i', $file)) continue;
+    $path = $dir.'/'.$file;
+    if (!is_file($path)) continue;
+    $xml = @simplexml_load_file($path);
+    if ($xml === false) continue;
+    $found[$path] = $xml;
+  }
+  return $cache[$dir] = $found;
 }
 ?>

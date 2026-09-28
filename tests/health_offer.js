@@ -18,14 +18,7 @@ var D = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/db-image
 var JSON_FILE = path.join(__dirname, '..', 'src/staxx/usr/local/emhttp/plugins/staxx/data/db-images.json');
 var TABLE = JSON.parse(fs.readFileSync(JSON_FILE, 'utf8'));
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 // Fills in every environment variable a recipe's command references, so a
 // round-trip test never fails on the "missing value" refusal by accident.
@@ -316,5 +309,4 @@ console.log('\nG. A published refusal calls the report hook once');
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

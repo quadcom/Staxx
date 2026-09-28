@@ -317,6 +317,29 @@ function check_registry(string $label, string $host, string $image): array {
     $row['head_charged'] = 'not sent';
   }
 
+  // --- 9. PLAN_192 item 1: staxx_registry_tags() lists this image's own tag,
+  // using the challenge and token already cached above by steps 2-3. ---
+  spend(1);
+  $tagList = staxx_registry_tags($image);
+  if (strpos($repo, '/') === false) {
+    // A single-segment repository (registry.k8s.io/pause) is Docker Hub to
+    // staxx_registry_ref(), so this returns [] without asking the host —
+    // the same rule staxx_registry_tags() has always applied.
+    ok("$label: staxx_registry_tags() returns no list for a single-segment repository",
+       $tagList === [], json_encode($tagList));
+  } elseif ($tagList === []) {
+    skip("$label: staxx_registry_tags() lists the image's own tag",
+         'the tag list came back empty — the registry may be unreachable or the image withdrawn');
+  } elseif (!in_array($tag, $tagList, true) && count($tagList) === 100) {
+    // Only the first page is read, and some registries (GitLab's, measured
+    // 2026-09-28) return exactly 100 tags there without this image's own.
+    skip("$label: staxx_registry_tags() lists the image's own tag",
+         'a full first page of 100 tags came back without it; later pages are not read');
+  } else {
+    ok("$label: staxx_registry_tags() lists the image's own tag",
+       in_array($tag, $tagList, true), "tag '$tag' not among ".count($tagList).' tags');
+  }
+
   return $row;
 }
 

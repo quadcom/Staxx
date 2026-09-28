@@ -18,14 +18,7 @@
 var IM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/image-import.js');
 var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 var producedYaml = [];   // every case's output, for the round-trip guard at the end
 
@@ -492,5 +485,4 @@ ok('build() never throws on any of ' + producedYaml.length + ' cases', thrown ==
 
 /* ---- summary ------------------------------------------------------------ */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

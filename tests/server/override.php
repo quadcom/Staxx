@@ -8,15 +8,11 @@
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
  * blank, so without seeding it there is no stack root to test against at
- * all — this run needs it pointed at /tmp instead, the CALLER sets that and
- * puts the config back, same as links.php:
+ * all — this run needs it pointed at /tmp instead, through the shared
+ * wrapper that sets it and restores it on every exit path, same as links.php:
  *
- *     CFG=/boot/config/plugins/staxx/staxx.cfg
- *     cp $CFG /tmp/cfg.bak
- *     sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/b1-override"#' $CFG
- *     php /tmp/override.php; RC=$?
- *     cp /tmp/cfg.bak $CFG
- *     exit $RC
+ *     pscp tests/server/run-with-store.sh tests/server/override.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b1-override /tmp/override.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks under whatever the stack root is; the three

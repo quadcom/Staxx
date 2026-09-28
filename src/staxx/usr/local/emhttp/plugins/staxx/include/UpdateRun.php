@@ -169,10 +169,7 @@ function staxx_update_policy(string $stack, string $service): array {
 
   if (!staxx_valid_path($stack)) return staxx_update_policy_fallback($global);
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return staxx_update_policy_fallback($global);
 
   $meta = staxx_compose_meta($file);
@@ -211,8 +208,7 @@ function staxx_update_notify_scope_value(array $x, string $event): ?bool {
  * staxx_update_policy() so a caller that already holds a stack's
  * staxx_compose_meta() result — the row table renders one per stack already,
  * see staxx_stack_children() — can resolve every one of its services without
- * staxx_update_policy()'s own staxx_list_stacks() scan, which the row table
- * cannot afford to repeat per service on a server with hundreds of rows.
+ * the stack lookup staxx_update_policy() does first.
  *
  * @param array $meta staxx_compose_meta()'s return for one stack
  * @param array $global staxx_update_settings()'s return
@@ -390,7 +386,7 @@ function staxx_update_clock(string $stack, string $service, string $image): arra
     foreach (staxx_scan_stacks()['stacks'] as $s) {
       if ($s['rel'] !== $stack) continue;
       if (staxx_review_file($s['dir']) === '') {
-        $st = staxx_state_for(staxx_find_compose_file($s['dir']), $s['leaf']);
+        $st = staxx_state_for($s['file'], $s['leaf']);
         $running = stripos($st['status'] ?? '', 'running') !== false;
       }
       break;
@@ -417,7 +413,7 @@ function staxx_update_due(): array {
   $out = [];
   $now = time();
 
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
     $stack = $row['stack'];
     if ($stack['file'] === '') continue;
@@ -528,10 +524,7 @@ function staxx_update_record_before_pull(string $stack, string $service = '', bo
     error_log('StaXX: image history adopt failed for '.$stack.': '.$adoptError);
   }
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return;
 
   $meta = staxx_compose_meta($file);
@@ -698,8 +691,8 @@ function staxx_update_seed_history(): array {
     return $out;
   }
 
-  foreach (staxx_list_stacks() as $s) {
-    staxx_update_record_before_pull((string)$s['name'], '', false);
+  foreach (array_keys(staxx_stack_compose_map()) as $rel) {
+    staxx_update_record_before_pull($rel, '', false);
     $out['stacks']++;
   }
 
@@ -833,10 +826,7 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
   if (empty($targets)) { $error = 'No service was named to roll back.'; return ''; }
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
 
   $meta = staxx_compose_meta($file);
@@ -892,6 +882,10 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   file_put_contents($tmp, $yaml);
   $checkMeta = staxx_compose_meta($tmp);
   @unlink($tmp);
+  // staxx_compose_meta() caches its answer to disk keyed by this temp path's
+  // own md5, same as any other file it reads — but this path is never read
+  // again, so that cached copy would otherwise sit there forever.
+  @unlink(STAXX_META_DIR.'/'.md5($tmp).'.json');
   if (!$checkMeta['ok']) {
     $error = 'The supplied file could not be checked, so nothing was changed.';
     return '';
@@ -1025,23 +1019,23 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
  * service is (or last was) on, as a registry digest.
  *
  * A container, running or stopped, answers off Docker's own record of what
- * it actually runs — staxx_service_container_any_state()'s own {{.Image}}
- * (the image ID, not the reference: a tag can be re-pulled to a newer build
- * without the container moving, so reading the ID is what makes this the
- * build really on this container rather than whatever the tag now means)
- * via staxx_image_id_digest(). No container at all (never started, or
- * removed) falls back to the compose file's own image reference through
+ * it actually runs — one `docker inspect` reading both {{.Config.Image}}
+ * (the reference) and {{.Image}} (the image ID: a tag can be re-pulled to a
+ * newer build without the container moving, so reading the ID is what makes
+ * this the build really on this container rather than whatever the tag now
+ * means) via staxx_image_id_digest(). No container at all (never started,
+ * or removed) falls back to the compose file's own image reference through
  * staxx_image_local() — the plan's own "no container" case, answered the
  * same way every other reader of a not-yet-running service's image already
  * is.
  *
- * Deliberately does NOT go through staxx_cfile_container()/
- * staxx_exec_resolve_container(): those refuse a stopped container outright
- * (the shell's own rule — there is no live session to open into one), and
- * FILES_ENABLED's own gate (PLAN_188 part C) has nothing to do with pinning
- * an image either way, so a server with the file manager switched off, or a
- * service that merely is not running right now, must not also lose the
- * ability to pin.
+ * Resolves its container through staxx_service_container() with
+ * $runningOnly false, unlike the shell and file manager, which pass true:
+ * the pin wants whatever build a service's container last ran, running or
+ * not, and FILES_ENABLED's own gate (PLAN_188 part C) has nothing to do
+ * with pinning an image either way, so a server with the file manager
+ * switched off, or a service that merely is not running right now, must not
+ * also lose the ability to pin.
  *
  * Refuses in a sentence for the two shapes with nothing to point at: an
  * image built on this server (no registry digest exists to pin to) and one
@@ -1070,19 +1064,17 @@ function staxx_pin_resolve(string $stack, string $service, string &$error): arra
   // Discarded on purpose when empty — "no container at all" is the plan's
   // own fallback case here, not a refusal of staxx_pin_resolve()'s own.
   $containerError = '';
-  $container = staxx_service_container_any_state($file, staxx_path_leaf($stack), $service, $containerError);
+  $container = staxx_service_container($file, staxx_path_leaf($stack), $service, false, $containerError);
 
   if ($container !== '') {
-    $ref = trim(staxx_sh(
+    // One inspect for both fields, a real tab between them (see
+    // staxx_container_net()'s own comment on why `docker inspect --format`
+    // must never be given the two characters \t).
+    [$ref, $imageId] = array_pad(explode("\t", trim(staxx_sh(
       escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
-      ' --format '.escapeshellarg('{{.Config.Image}}'),
+      ' --format '.escapeshellarg('{{.Config.Image}}'."\t".'{{.Image}}'),
       10
-    ));
-    $imageId = trim(staxx_sh(
-      escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
-      ' --format '.escapeshellarg('{{.Image}}'),
-      10
-    ));
+    ))), 2, '');
     if ($ref === '' || $imageId === '') {
       $error = 'Could not read what this container is running.';
       return ['ok' => false, 'error' => $error];
@@ -1127,10 +1119,10 @@ function staxx_pin_resolve(string $stack, string $service, string &$error): arra
  */
 function staxx_update_current_refs(string $excludeStack = ''): array {
   $refs = [];
-  foreach (staxx_list_stacks() as $s) {
-    if ($excludeStack !== '' && $s['name'] === $excludeStack) continue;
-    if ($s['file'] === '') continue;
-    $meta = staxx_compose_meta($s['file']);
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($excludeStack !== '' && $rel === $excludeStack) continue;
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
     foreach ((array)($meta['services'] ?? []) as $service) {
       $ref = trim((string)($service['image'] ?? ''));
       if ($ref !== '') $refs[$ref] = true;
@@ -1185,8 +1177,7 @@ function staxx_update_keep_digests(string $excludeStack = ''): array {
   $keep = [];
   foreach ($images as $ref => $entry) {
     if (!isset($currentRefs[$ref])) continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    $repo = staxx_image_match_repo($ref);
     if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
   }
 
@@ -1196,19 +1187,16 @@ function staxx_update_keep_digests(string $excludeStack = ''): array {
     array_keys(staxx_image_history_all()),
     array_keys((array)$state['history'])
   ));
+  $files = staxx_stack_compose_map();
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
     if ($excludeStack !== '' && $stack === $excludeStack) continue;
-    $file = '';
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $stack) { $file = $s['file']; break; }
-    }
+    $file = $files[$stack] ?? '';
     if ($file === '') continue;
     $meta = staxx_compose_meta($file);
     $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
     if ($ref === '') continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    $repo = staxx_image_match_repo($ref);
     foreach (staxx_update_history($stack, $service) as $d) $keep[$repo][] = $d;
   }
 
@@ -1251,10 +1239,7 @@ function staxx_update_queue_write(array $queue): bool {
   $encoded = json_encode($queue, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($encoded === false) return false;
 
-  $tmp = STAXX_UPDATE_DIR.'/.queue.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, staxx_update_queue_path())) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(staxx_update_queue_path(), $encoded);
 }
 
 /**
@@ -1269,14 +1254,7 @@ function staxx_update_queue_lock(string &$error): bool {
     return false;
   }
 
-  $lock = STAXX_UPDATE_DIR.'/queue.lock';
-  if (@mkdir($lock, 0755)) return true;
-
-  $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
-  if ($age > 1800) {
-    @rmdir($lock);
-    if (@mkdir($lock, 0755)) return true;
-  }
+  if (staxx_mkdir_lock_stale(STAXX_UPDATE_DIR.'/queue.lock')) return true;
 
   $error = 'The queue is already being updated.';
   return false;
@@ -1331,7 +1309,7 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
   $images = (array)staxx_update_state()['images'];
   $items  = [];
 
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
     $stack = $row['stack'];
 
@@ -1577,7 +1555,7 @@ function staxx_update_apply_pass(): array {
   foreach ($due as $d) $wanted[$d['stack']] = true;
 
   $items = [];
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack' || !isset($wanted[$row['stack']['name']])) continue;
     $items[] = ['stack' => $row['stack']['name'], 'state' => 'waiting', 'job' => '', 'error' => ''];
   }

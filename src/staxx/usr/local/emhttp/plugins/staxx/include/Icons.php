@@ -346,10 +346,7 @@ function staxx_icon_write(string $path, string $body): bool {
 
   // Written beside the target and moved into place, so a download interrupted
   // half way never becomes a cached icon that is permanently broken.
-  $tmp = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $body) === false) return false;
-  if (!@rename($tmp, $path)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write($path, $body);
 }
 
 /** Fetch a URL, or null. Time-limited, because nothing here may hang. */
@@ -455,14 +452,12 @@ function staxx_icon_serve_path(string $stack, string $file): string {
   return $real;
 }
 
-/** The directory staxx_list_stacks() itself reports for $stack, or '' — the
- *  one lookup both staxx_icon_serve_path() and staxx_icon_serve_tree_path()
- *  share, so they can never disagree about which stacks exist. */
+/** The directory of $stack when the folder scan reports it as a stack, or
+ *  '' — the one lookup both staxx_icon_serve_path() and
+ *  staxx_icon_serve_tree_path() share, so they can never disagree about
+ *  which stacks exist. */
 function staxx_icon_stack_dir(string $stack): string {
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) return $s['dir'];
-  }
-  return '';
+  return isset(staxx_stack_compose_map()[$stack]) ? staxx_stack_dir($stack) : '';
 }
 
 /**

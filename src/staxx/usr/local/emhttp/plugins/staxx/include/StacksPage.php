@@ -48,14 +48,11 @@ if (!staxx_store_ready()) {
   // paragraph is what stays visible if first-run.js fails to load at all; the
   // script's job (Phase 2) is to turn it into the full explaining screen and,
   // once dismissed, leave exactly this behind as the one-time reopen offer.
-  $noStoreCss   = STAXX_ROOT.'/sheets/staxx.css';
-  $firstRunCss  = STAXX_ROOT.'/sheets/first-run.css';
-  $firstRunJs   = STAXX_ROOT.'/javascript/first-run.js';
   $vars = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
   $csrf = (string)($vars['csrf_token'] ?? '');
   ?>
-  <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/staxx.css?v=<?= is_file($noStoreCss) ? filemtime($noStoreCss) : '0' ?>">
-  <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/first-run.css?v=<?= is_file($firstRunCss) ? filemtime($firstRunCss) : '0' ?>">
+  <link rel="stylesheet" href="<?= staxx_asset('sheets/staxx.css') ?>">
+  <link rel="stylesheet" href="<?= staxx_asset('sheets/first-run.css') ?>">
   <div class="staxx-scaffold unapi"
        data-csrf="<?= htmlspecialchars($csrf) ?>"
        data-endpoint="/plugins/<?= STAXX_PLUGIN ?>/include/action.php">
@@ -71,7 +68,7 @@ if (!staxx_store_ready()) {
       </div>
     </div>
   </div>
-  <script src="/plugins/<?= STAXX_PLUGIN ?>/javascript/first-run.js?v=<?= is_file($firstRunJs) ? filemtime($firstRunJs) : '0' ?>"></script>
+  <script src="<?= staxx_asset('javascript/first-run.js') ?>"></script>
   <?
   return;
 }
@@ -130,13 +127,25 @@ $updateSettingsForJs = [
                'failed'    => $updateSet['notifyFailed']],
 ];
 
-// Both assets carry the file's modification time in the URL. Without it an
-// edited stylesheet or script sits in the browser cache and the page appears
-// not to have changed at all — which costs a great deal of time to diagnose,
-// because it looks exactly like a change that did not work.
+// Every tag below carries its file's modification time in the URL, via
+// staxx_asset() — without it an edited stylesheet or script sits in the
+// browser cache and the page appears not to have changed at all, which costs
+// a great deal of time to diagnose because it looks exactly like a change
+// that did not work.
 $assets  = '/plugins/'.STAXX_PLUGIN;
-$jsFile  = STAXX_ROOT.'/javascript/stacks.js';
+$jsTag   = staxx_asset('javascript/stacks.js');
+// PLAN_165 §5/§6 — the Unraid-templates settings section and the first-load
+// window. Kept out of stacks.js on purpose: it only ever reads the page's
+// own data-csrf/data-endpoint scaffold and injects itself into the settings
+// dialog once that dialog's own markup appears, so a bad edit here costs
+// only this one section, not the whole page's behaviour.
+// $…File below is kept, rather than folded into staxx_asset(), because it is
+// also used further down to decide whether to emit the <script> tag at all —
+// several of these may still be mid-build and genuinely absent.
+$unraidTemplatesFile = STAXX_ROOT.'/javascript/unraid-templates.js';
+$unraidTemplatesTag = staxx_asset('javascript/unraid-templates.js');
 $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
+$modelTag = staxx_asset('javascript/compose-model.js');
 // PLAN_148 — the merge wizard's own two halves: the reading pass (phase 2,
 // built separately) and the write pass (phase 4, ditto). Both read
 // window.StaxxYaml, so they must load after compose-model.js; stacks.js
@@ -144,7 +153,9 @@ $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 // load before it. Conditional for the same reason as the scripts below —
 // either can genuinely be mid-build when this page renders.
 $mergeExamineFile = STAXX_ROOT.'/javascript/merge-examine.js';
+$mergeExamineTag = staxx_asset('javascript/merge-examine.js');
 $mergeWriteFile   = STAXX_ROOT.'/javascript/merge-write.js';
+$mergeWriteTag   = staxx_asset('javascript/merge-write.js');
 // PLAN_155 phase E — step 5's own text-writing half (depends_on,
 // healthcheck, x-unraid.update), kept separate from merge-write.js because
 // it never feeds back into buildMergedText(); see that file's own header.
@@ -152,40 +163,27 @@ $mergeWriteFile   = STAXX_ROOT.'/javascript/merge-write.js';
 // its depends_on writer reads window.StaxxMergeWrite directly, for the
 // same "join a shared network" check the address-rewire pass uses.
 $mergeSuggestFile = STAXX_ROOT.'/javascript/merge-suggest.js';
+$mergeSuggestTag = staxx_asset('javascript/merge-suggest.js');
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
+$caTag   = staxx_asset('javascript/ca-convert.js');
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
+$imageTag = staxx_asset('javascript/image-import.js');
 $scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
+$scaffoldTag = staxx_asset('javascript/meta-scaffold.js');
 $dbImagesFile = STAXX_ROOT.'/javascript/db-images.js';
+$dbImagesTag = staxx_asset('javascript/db-images.js');
 // PLAN_108 stage 5: the health-check chooser. Reads window.StaxxDbImages, so
 // it must load after db-images.js — see the script tag order below.
 $healthOfferFile = STAXX_ROOT.'/javascript/health-offer.js';
+$healthOfferTag = staxx_asset('javascript/health-offer.js');
 // The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
 // separate agent in parallel with this file, so neither is guaranteed to exist
 // yet at any given moment. Guarded the same way the three scripts above are:
 // a missing file costs a 404 in the console, not a broken page.
 $manageJsFile  = STAXX_ROOT.'/javascript/manage.js';
-$manageCssFile = STAXX_ROOT.'/sheets/manage.css';
-// PLAN_165 §5/§6 — the Unraid-templates settings section and the first-load
-// window. Kept out of stacks.js on purpose: it only ever reads the page's
-// own data-csrf/data-endpoint scaffold and injects itself into the settings
-// dialog once that dialog's own markup appears, so a bad edit here costs
-// only this one section, not the whole page's behaviour.
-$unraidTemplatesFile = STAXX_ROOT.'/javascript/unraid-templates.js';
-$cssFile = STAXX_ROOT.'/sheets/staxx.css';
-$jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsFile) : '0');
-$unraidTemplatesTag = $assets.'/javascript/unraid-templates.js?v='.(is_file($unraidTemplatesFile) ? filemtime($unraidTemplatesFile) : '0');
-$modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
-$caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
-$imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
-$scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
-$dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? filemtime($dbImagesFile) : '0');
-$healthOfferTag = $assets.'/javascript/health-offer.js?v='.(is_file($healthOfferFile) ? filemtime($healthOfferFile) : '0');
-$mergeExamineTag = $assets.'/javascript/merge-examine.js?v='.(is_file($mergeExamineFile) ? filemtime($mergeExamineFile) : '0');
-$mergeWriteTag   = $assets.'/javascript/merge-write.js?v='.(is_file($mergeWriteFile) ? filemtime($mergeWriteFile) : '0');
-$mergeSuggestTag = $assets.'/javascript/merge-suggest.js?v='.(is_file($mergeSuggestFile) ? filemtime($mergeSuggestFile) : '0');
-$manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
-$manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
-$cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
+$manageJsTag  = staxx_asset('javascript/manage.js');
+$manageCssTag = staxx_asset('sheets/manage.css');
+$cssTag  = staxx_asset('sheets/staxx.css');
 
 // Password managers ignore autocomplete="off" — that attribute only speaks to
 // the browser's own autofill. They read the words around a box instead, and a
@@ -200,18 +198,20 @@ $nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
 
 <link rel="stylesheet" href="<?= $cssTag ?>">
 <!-- The Manage tab's own stylesheet, kept separate on purpose so it cannot
-     collide with anything below — see the comment on $manageCssFile above. A
-     missing file 404s quietly; nothing here depends on it loading. -->
+     collide with anything below — see the comment on the Manage tab's script,
+     further down, for why it may not exist yet. A missing file 404s quietly;
+     nothing here depends on it loading. -->
 <link rel="stylesheet" href="<?= $manageCssTag ?>">
 <!-- PLAN_103 addendum: the first-run dialog's own stylesheet, now needed
      here too — the recovery cards open the very same dialog rather than a
      second picker. See first-run.js's own gate for why it is safe to load
      unconditionally on this page as well as the true first-run screen. -->
 <?
-$firstRunCssFile = STAXX_ROOT.'/sheets/first-run.css';
-$firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
+// $firstRunJsFile is kept, rather than folded into staxx_asset() here, because
+// the script tag further down is conditional on this same file existing.
+$firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
 ?>
-<link rel="stylesheet" href="<?= $assets ?>/sheets/first-run.css?v=<?= is_file($firstRunCssFile) ? filemtime($firstRunCssFile) : '0' ?>">
+<link rel="stylesheet" href="<?= staxx_asset('sheets/first-run.css') ?>">
 
 <!-- `unapi` is Unraid's own opt-out marker, not a styling class. Its only
      appearances in webGui/styles are inside :not(.unapi *) guards on 88 rules
@@ -254,9 +254,9 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         refresh, for exactly the reason the clash facts below are: refreshState()
         only ever runs after something has been started or stopped, so a fresh
         page load never makes one and the pill and the first-load window would
-        never appear at all (measured 2026-09-18). Both values cost ~8ms here,
-        because the scan reuses the stack list and container names this render
-        has already read. */ ?>
+        never appear at all (measured 2026-09-18). Both values cost little: the
+        lookup behind them reads the folder scan this render has already done,
+        and the template folder is only read when a stack names a container. */ ?>
      data-unraid-templates="<?= staxx_unraid_templates_movable_count() ?>"
      data-unraid-templates-asked="<?= staxx_unraid_templates_asked() ? '1' : '0' ?>"
      <?php /* PLAN_65/73 — the ports, paths and host listeners already in use,
@@ -1691,9 +1691,9 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
        the self-test. It never opens on its own; every call site in stacks.js
        chooses to open it. A <dialog> cannot scroll the page behind it, which
        is the whole reason the old page-bottom panel this replaced is gone —
-       Adrian's word for that panel was "annoying". Same recipe as
-       .staxx-settings: own class, own :not([open]), ::backdrop and
-       @starting-style. -->
+       Adrian's word for that panel was "annoying". Own class, like
+       .staxx-settings; its open and close fade is the shared one in
+       staxx.css under "Every dialog". -->
   <dialog class="staxx-logdlg" id="staxx-log-dlg" aria-labelledby="staxx-log-title">
 
     <div class="staxx-logdlg-head">
@@ -1714,8 +1714,8 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
        button above and from the row menu's "What do these marks mean?" item,
        which used to send the reader to docs/guide/marks.md on GitHub; this
        replaces that trip entirely, chips still visible on the page behind it.
-       Same recipe as .staxx-logdlg: own class, own :not([open]), ::backdrop
-       and @starting-style. The body is built by renderLegend() in stacks.js,
+       Own class, like .staxx-logdlg; its open and close fade is the shared
+       one in staxx.css under "Every dialog". The body is built by renderLegend() in stacks.js,
        from the page's own chip classes and data-mark names — never
        hand-written lookalike markup, which is the exact drift this replaces. -->
   <dialog class="staxx-legend" id="staxx-legend" aria-labelledby="staxx-legend-title">
@@ -1813,7 +1813,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      see first-run.js's own gate for why it does nothing else on load here.
      Must come before stacks.js, which reads that global. -->
 <? if (is_file($firstRunJsFile)): ?>
-<script src="<?= $assets ?>/javascript/first-run.js?v=<?= filemtime($firstRunJsFile) ?>"></script>
+<script src="<?= staxx_asset('javascript/first-run.js') ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>
 <!-- PLAN_165 §5/§6 — see the comment on $unraidTemplatesFile above. Loaded

@@ -148,24 +148,39 @@ function staxx_detail_cache_path(string $image): string {
   return STAXX_DETAIL_DIR.'/'.sha1($image).'.json';
 }
 
+/** The shared holder both functions below read and write, by reference —
+ *  the simplest way for a write to be seen by a read straight after it in
+ *  the same request, without either function keeping its own copy. */
+function &staxx_detail_cache_memo(): array {
+  static $memo = [];
+  return $memo;
+}
+
 /** The gathered bundle for one image, or null when there is nothing cached
  *  or it has gone stale. Write-then-rename on the way in, same as every
- *  other cache under /tmp/staxx — a reader must never see half a file. */
+ *  other cache under /tmp/staxx — a reader must never see half a file.
+ *  Remembered per image for the request: one image's detail lookup asks
+ *  for this small file up to five times, and staxx_detail_cache_write()
+ *  keeps this same memo current, so a read straight after a write sees
+ *  exactly what was just written, as a disk read would. */
 function staxx_detail_cache_read(string $image): ?array {
+  $memo = &staxx_detail_cache_memo();
+  if (array_key_exists($image, $memo)) return $memo[$image];
+
   $path = staxx_detail_cache_path($image);
   $data = @json_decode((string)@file_get_contents($path), true);
-  if (!is_array($data) || !isset($data['at'])) return null;
-  if ((time() - (int)$data['at']) > STAXX_DETAIL_CACHE_TTL) return null;
-  return $data;
+  if (!is_array($data) || !isset($data['at']) || (time() - (int)$data['at']) > STAXX_DETAIL_CACHE_TTL) {
+    return $memo[$image] = null;
+  }
+  return $memo[$image] = $data;
 }
 
 function staxx_detail_cache_write(string $image, array $bundle): void {
   if (!is_dir(STAXX_DETAIL_DIR) && !@mkdir(STAXX_DETAIL_DIR, 0755, true)) return;
   $bundle['at'] = time();
-  $path = staxx_detail_cache_path($image);
-  $tmp  = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, json_encode($bundle)) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write(staxx_detail_cache_path($image), json_encode($bundle));
+  $memo = &staxx_detail_cache_memo();
+  $memo[$image] = $bundle;
 }
 
 /* ------------------------------------------------------------- one image -- */
@@ -540,11 +555,7 @@ function staxx_health_turned_away_write(array $data): bool {
   $dir = dirname($file);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
 
-  $tmp = $dir.'/.'.basename($file).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
-  @chmod($file, 0600);
-  return true;
+  return staxx_atomic_write($file, $encoded, 0600);
 }
 
 /**
@@ -663,15 +674,7 @@ function staxx_detail_template_match(string $image, string $dir = STAXX_IMPORT_T
   if (array_key_exists($key, $cache)) return $cache[$key];
 
   $found = null;
-  foreach ((array)@scandir($dir) as $file) {
-    // *.xml only — the folder also holds a .bak of whatever was last
-    // overwritten, and it would parse just as happily as a real template.
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $xml) {
     if (strtolower(staxx_links_repo_path((string)($xml->Repository ?? ''))) !== $repo) continue;
 
     $found = [
@@ -811,16 +814,12 @@ function staxx_detail_overview(
       "This is the image's own description label — its publisher wrote this in.", $current);
   }
 
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      $catOverview = staxx_detail_collapse(is_array($app) ? (string)($app['Overview'] ?? '') : '');
-      if (staxx_detail_schema_ok('overview', $catOverview)) {
-        return staxx_detail_answer($catOverview, 'catalog', 'claimed',
-          'The Community Applications catalogue describes the image this way.', $current);
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $catOverview = staxx_detail_collapse((string)($app['Overview'] ?? ''));
+    if (staxx_detail_schema_ok('overview', $catOverview)) {
+      return staxx_detail_answer($catOverview, 'catalog', 'claimed',
+        'The Community Applications catalogue describes the image this way.', $current);
     }
   }
 
@@ -845,20 +844,14 @@ function staxx_detail_overview(
 function staxx_detail_category(string $image, array $stackX, ?array $template): ?array {
   $current = trim((string)($stackX['category'] ?? ''));
 
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      if (is_array($app)) {
-        $list = is_array($app['CategoryList'] ?? null) ? $app['CategoryList'] : [];
-        $raw  = $list !== [] ? (string)$list[0] : (string)($app['Category'] ?? '');
-        $cat  = staxx_detail_normalise_category($raw);
-        if (staxx_detail_schema_ok('category', $cat)) {
-          return staxx_detail_answer($cat, 'catalog', 'claimed',
-            'The Community Applications catalogue files the image under this category.', $current);
-        }
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $list = is_array($app['CategoryList'] ?? null) ? $app['CategoryList'] : [];
+    $raw  = $list !== [] ? (string)$list[0] : (string)($app['Category'] ?? '');
+    $cat  = staxx_detail_normalise_category($raw);
+    if (staxx_detail_schema_ok('category', $cat)) {
+      return staxx_detail_answer($cat, 'catalog', 'claimed',
+        'The Community Applications catalogue files the image under this category.', $current);
     }
   }
 
@@ -888,19 +881,15 @@ function staxx_detail_author(
       "This is the image's own author/vendor label — its publisher wrote this in.", $current);
   }
 
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      // The catalogue feed has no dedicated author field for most entries;
-      // 'Repo' is the closest it carries (the maintaining account), so it is
-      // tried defensively rather than assumed present.
-      $catAuthor = trim(is_array($app) ? (string)($app['Author'] ?? $app['Repo'] ?? '') : '');
-      if (staxx_detail_schema_ok('author', $catAuthor)) {
-        return staxx_detail_answer($catAuthor, 'catalog', 'claimed',
-          'The Community Applications catalogue names this as the maintainer.', $current);
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    // The catalogue feed has no dedicated author field for most entries;
+    // 'Repo' is the closest it carries (the maintaining account), so it is
+    // tried defensively rather than assumed present.
+    $catAuthor = trim((string)($app['Author'] ?? $app['Repo'] ?? ''));
+    if (staxx_detail_schema_ok('author', $catAuthor)) {
+      return staxx_detail_answer($catAuthor, 'catalog', 'claimed',
+        'The Community Applications catalogue names this as the maintainer.', $current);
     }
   }
 
@@ -939,16 +928,12 @@ function staxx_detail_readme(
   // "where to ask for help" — so these two steps exist for a well-formed
   // future entry rather than anything seen in today's feed, and are
   // ordinarily no-ops.
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      $catReadme = staxx_links_url(is_array($app) ? (string)($app['Readme'] ?? '') : '');
-      if ($catReadme !== '') {
-        return staxx_detail_answer($catReadme, 'catalog', 'claimed',
-          'The Community Applications catalogue links to this as documentation.', $current);
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $catReadme = staxx_links_url((string)($app['Readme'] ?? ''));
+    if ($catReadme !== '') {
+      return staxx_detail_answer($catReadme, 'catalog', 'claimed',
+        'The Community Applications catalogue links to this as documentation.', $current);
     }
   }
   $tplReadme = staxx_links_url((string)($template['readme'] ?? ''));

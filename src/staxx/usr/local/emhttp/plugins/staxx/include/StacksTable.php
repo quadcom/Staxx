@@ -195,7 +195,7 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
  * rebuilding it in JavaScript also keeps the translated words in one place.
  *
  * PLAN_107: $s['health'] is the roll-up of the stack's own containers'
- * health (staxx_stack_health()), $s['unhealthy'] the service names a title
+ * health (staxx_stack_health_summary()), $s['unhealthy'] the service names a title
  * can name. Both are optional — a caller that has not computed them gets
  * today's plain running pill, never an error.
  *
@@ -689,12 +689,7 @@ function staxx_watch_join_names(array $names): string {
 function staxx_watch_for_stack(string $stack): array {
   $empty = ['findings' => [], 'notes' => []];
 
-  // Same cheap lookup staxx_updates_moved_for_stack() uses, rather than
-  // staxx_list_stacks() — see its own comment for why.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
   if (!$meta['ok']) return $empty;
 
@@ -776,12 +771,7 @@ function staxx_watch_for_stack(string $stack): array {
  * @return array<string, array{html: string, q: string}>
  */
 function staxx_service_icons_for_stack(string $stack): array {
-  // Same cheap lookup staxx_watch_for_stack() uses, rather than
-  // staxx_list_stacks() — see its own comment for why.
-  $file = '';
-  foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return [];
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return [];
@@ -845,7 +835,7 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
   foreach (staxx_scan_stacks()['stacks'] as $s) {
     if (isset($skip[$s['rel']])) continue;
 
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
 
     $meta = staxx_compose_meta($file);
@@ -1597,9 +1587,8 @@ function staxx_pin_mark_html(array $kids): string {
  * it never earns the mark either, whatever its resolved mode says.
  *
  * Takes $meta directly rather than calling staxx_update_policy() itself:
- * that function's own file lookup walks staxx_list_stacks() to find the
- * file by name, which the row table has already found once for every one of
- * its (potentially hundreds of) rows — see staxx_update_policy_from_meta().
+ * that function looks the file up by name, which the row table has already
+ * done once for every row.
  */
 function staxx_service_updates_itself(array $meta, string $service, string $declaredImage, bool $hasBuild, array $global): bool {
   if (strpos($declaredImage, '@') !== false) return false;
@@ -2089,12 +2078,13 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
       $sGpuVendors = array_values(array_unique($sGpuVendors));
 
       // PLAN_107 — rolled up from $kids, already in hand, rather than a
-      // second read of the containers: see staxx_stack_health()'s own
-      // docblock for why this must never be computed from a compose-ls-only
-      // source.
-      $sHealth    = staxx_stack_health($kids);
-      $sUnhealthy = staxx_unhealthy_services($kids);
-      $sCounts    = staxx_stack_health_counts($kids);
+      // second read of the containers: see staxx_stack_health_summary()'s
+      // own docblock for why this must never be computed from a
+      // compose-ls-only source.
+      $sHealthSummary = staxx_stack_health_summary($kids);
+      $sHealth        = $sHealthSummary['health'];
+      $sUnhealthy     = $sHealthSummary['unhealthy'];
+      $sCounts        = $sHealthSummary;
       // Unhealthy only. A check still deciding is not a fault, and a dot
       // that flickers red every time a container restarts teaches people to
       // ignore it.
@@ -2767,9 +2757,10 @@ function staxx_state_snapshot(): array {
 
     // PLAN_107 — rolled up from $mine, already in hand above; never a second
     // read, and never from staxx_stack_states() itself (see its docblock).
-    $mineHealth    = staxx_stack_health($mine);
-    $mineUnhealthy = staxx_unhealthy_services($mine);
-    $mineCounts    = staxx_stack_health_counts($mine);
+    $mineHealthSummary = staxx_stack_health_summary($mine);
+    $mineHealth        = $mineHealthSummary['health'];
+    $mineUnhealthy     = $mineHealthSummary['unhealthy'];
+    $mineCounts        = $mineHealthSummary;
 
     // Keyed by service, which is what the container rows carry, so the browser
     // can find each row without knowing the container names in advance. That

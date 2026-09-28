@@ -17,16 +17,8 @@
  * file, run, then put it back — never /boot, which is vfat and would make
  * section D's fixture directory create for the wrong reason:
  *
- *     pscp tests/server/updateeconomy.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/staxx-updateeconomy-store\"#" $CFG
- *       php /tmp/updateeconomy.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       diff -q /tmp/cfg.bak $CFG && echo "config restored, byte-identical"
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/updateeconomy.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/staxx-updateeconomy-store /tmp/updateeconomy.php'
  *
  * Prints one line per case and exits non-zero on any failure.
  *

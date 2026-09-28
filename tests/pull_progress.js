@@ -29,14 +29,7 @@ var ROOT        = path.join(__dirname, '..');
 var STACKS_PATH = path.join(ROOT, 'src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js');
 var FIXTURE_DIR = path.join(ROOT, 'tests/fixtures/pull-progress');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 // Pulls the function's own source text out of stacks.js by matching braces
 // from its declaration, then evaluates it as an expression — see the file
@@ -202,6 +195,4 @@ function firstNLines(text, n) {
     'first tick was: ' + JSON.stringify(afterFirstTick));
 });
 
-console.log('');
-console.log(pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

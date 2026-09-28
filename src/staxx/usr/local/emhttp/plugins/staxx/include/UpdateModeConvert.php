@@ -91,7 +91,7 @@ function staxx_update_convert_append(array $entry): void {
                         'done_at' => $record['done_at'] ?? null, 'files' => $files],
                        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return;
-  staxx_record_atomic_write($dir.'/record.json', $json."\n");
+  staxx_atomic_write($dir.'/record.json', $json."\n");
 }
 
 function staxx_update_convert_mark_done(): void {
@@ -102,7 +102,7 @@ function staxx_update_convert_mark_done(): void {
                         'files' => $record['files'] ?? []],
                        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return;
-  staxx_record_atomic_write($dir.'/record.json', $json."\n");
+  staxx_atomic_write($dir.'/record.json', $json."\n");
 }
 
 /* ---------------------------------------------------------------- scan --- */
@@ -270,7 +270,7 @@ function staxx_update_mode_convert_run(): array {
   $converted = [];
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $rel  = $found['rel'];
-    $file = staxx_find_compose_file($found['dir']);
+    $file = $found['file'];
     if ($file === '') continue;
 
     $change = staxx_update_convert_file($rel, $file);
@@ -289,7 +289,7 @@ function staxx_update_mode_convert_run(): array {
 
     $n = count(staxx_update_convert_read()['files'] ?? []) + 1;
     $beforeRel = 'before/'.sprintf('%04d', $n).'.yaml';
-    if (!staxx_record_atomic_write($dir.'/'.$beforeRel, $change['before'])) {
+    if (!staxx_atomic_write($dir.'/'.$beforeRel, $change['before'])) {
       // The rewrite already landed but nothing to undo it with was kept —
       // report it plainly rather than silently dropping the undo for this
       // one file.

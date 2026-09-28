@@ -23,14 +23,7 @@ var JSON_FILE = path.join(__dirname, '..', 'src/staxx/usr/local/emhttp/plugins/s
 var RAW = fs.readFileSync(JSON_FILE, 'utf8');
 var TABLE = JSON.parse(RAW);
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 /* =========================================================================
  * A. The table itself is well-formed
@@ -242,5 +235,4 @@ console.log('\nF. Healthcheck recipe shape');
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

@@ -14,14 +14,7 @@
 
 var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function links(yaml) {
   return Y.detectLinks(Y.buildForm(Y.parse(yaml)));
@@ -310,5 +303,4 @@ function findKind(list, kind) {
      findKind(links(y), 'secret').length === 0, JSON.stringify(findKind(links(y), 'secret')));
 })();
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

@@ -232,6 +232,48 @@ function staxx_crosslinks_config_yaml(string $file): string {
 }
 
 /**
+ * staxx_crosslinks_config_yaml()'s text, flattened once and remembered —
+ * staxx_crosslinks_service_networks(), staxx_crosslinks_service_fixed_vlan()
+ * and staxx_crosslinks_service_env() each used to flatten the same resolved
+ * text again on every call; this is asked instead, keyed the same way the
+ * yaml itself is cached.
+ */
+function staxx_crosslinks_config_flat(string $file): array {
+  static $cache = [];
+
+  $files = staxx_compose_files($file);
+  $key   = implode("\0", $files);
+  if (array_key_exists($key, $cache)) return $cache[$key];
+
+  $yaml = staxx_crosslinks_config_yaml($file);
+  return $cache[$key] = ($yaml === '' ? [] : staxx_yaml_flatten($yaml));
+}
+
+/**
+ * Every top-level network declared `external: true`, mapped to the real,
+ * on-host name it runs under: the network's own `name:` when the file sets
+ * one, otherwise the key it is declared under (compose's own rule for an
+ * external network with no name override).
+ *
+ * @param array $flat staxx_crosslinks_config_flat()'s own output
+ * @return array<string, string> top-level network key => real network name
+ */
+function staxx_crosslinks_external_networks(array $flat): array {
+  $isExternal = [];   // top-level network key => true
+  $realName   = [];   // top-level network key => its own name: value, if any
+  foreach ($flat as $path => $value) {
+    $parts = explode("\0", $path);
+    if ($parts[0] !== 'networks' || count($parts) !== 3) continue;
+    if ($parts[2] === 'external' && $value === 'true') $isExternal[$parts[1]] = true;
+    elseif ($parts[2] === 'name' && $value !== '') $realName[$parts[1]] = $value;
+  }
+
+  $external = [];
+  foreach ($isExternal as $key => $_) $external[$key] = $realName[$key] ?? $key;
+  return $external;
+}
+
+/**
  * Every service's network attachments, but ONLY the networks that could ever
  * be shared with another stack: those declared `external: true` at the top
  * of the file. Compose namespaces every other network — including the
@@ -248,28 +290,10 @@ function staxx_crosslinks_config_yaml(string $file): string {
  * @return array<string, string[]> service name => real network names
  */
 function staxx_crosslinks_service_networks(string $file): array {
-  $yaml = staxx_crosslinks_config_yaml($file);
-  if ($yaml === '') return [];
+  $flat = staxx_crosslinks_config_flat($file);
+  if ($flat === []) return [];
 
-  $flat = staxx_yaml_flatten($yaml);
-
-  $isExternal = [];   // top-level network key => true
-  $realName   = [];   // top-level network key => its own name: value, if any
-  foreach ($flat as $path => $value) {
-    $parts = explode("\0", $path);
-    if ($parts[0] !== 'networks' || count($parts) < 3) continue;
-    $key = $parts[1];
-    if ($parts[2] === 'external' && count($parts) === 3 && $value === 'true') {
-      $isExternal[$key] = true;
-    } elseif ($parts[2] === 'name' && count($parts) === 3 && $value !== '') {
-      $realName[$key] = $value;
-    }
-  }
-
-  $external = [];      // key => real, on-host name
-  foreach ($isExternal as $key => $_) {
-    $external[$key] = $realName[$key] ?? $key;
-  }
+  $external = staxx_crosslinks_external_networks($flat);
   if ($external === []) return [];
 
   $byService = [];
@@ -411,18 +435,10 @@ function staxx_crosslinks_looks_like_address(string $value): bool {
  * @return array<string, array{ip:string, vlan:bool}>
  */
 function staxx_crosslinks_service_fixed_vlan(string $file, ?array $drivers = null): array {
-  $yaml = staxx_crosslinks_config_yaml($file);
-  if ($yaml === '') return [];
-  $flat = staxx_yaml_flatten($yaml);
+  $flat = staxx_crosslinks_config_flat($file);
+  if ($flat === []) return [];
 
-  $isExternal = [];   // top-level network key => true
-  $realName   = [];   // top-level network key => its own name: value, if any
-  foreach ($flat as $path => $value) {
-    $parts = explode("\0", $path);
-    if ($parts[0] !== 'networks' || count($parts) !== 3) continue;
-    if ($parts[2] === 'external' && $value === 'true') $isExternal[$parts[1]] = true;
-    elseif ($parts[2] === 'name' && $value !== '') $realName[$parts[1]] = $value;
-  }
+  $external = staxx_crosslinks_external_networks($flat);
 
   $drivers = $drivers ?? staxx_network_drivers();
   $out = [];
@@ -432,8 +448,8 @@ function staxx_crosslinks_service_fixed_vlan(string $file, ?array $drivers = nul
         || $parts[2] !== 'networks' || $parts[4] !== 'ipv4_address') continue;
     $service = $parts[1];
     $netKey  = $parts[3];
-    if (isset($out[$service]) || !isset($isExternal[$netKey])) continue;
-    $realNetName = $realName[$netKey] ?? $netKey;
+    if (isset($out[$service]) || !isset($external[$netKey])) continue;
+    $realNetName = $external[$netKey];
     $driver = $drivers[$realNetName] ?? '';
     $out[$service] = ['ip' => $value, 'vlan' => ($driver === 'macvlan' || $driver === 'ipvlan')];
   }
@@ -588,16 +604,16 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
   $fuzzyNear  = [];     // part C pass 2 — up to 2 characters' difference
   $thisServer = $hasHostPort && $port !== '' && staxx_crosslinks_is_this_server($host);
 
-  foreach (staxx_list_stacks() as $stack) {
-    if ($stack['name'] === $sourcePath || $stack['file'] === '') continue;
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($rel === $sourcePath || $file === '') continue;
 
-    $meta = staxx_compose_meta($stack['file']);
+    $meta = staxx_compose_meta($file);
     if (!$meta['ok']) continue;
 
     // Read once per stack, not once per service: the flatten behind it is
     // the same work whichever service asked for it.
     $fixedByService = $addressHost !== ''
-      ? staxx_crosslinks_service_fixed_vlan($stack['file'], $drivers) : [];
+      ? staxx_crosslinks_service_fixed_vlan($file, $drivers) : [];
 
     foreach ($meta['services'] as $svcName => $svc) {
       // Route 2 — a name match, gated on a real shared network.
@@ -609,11 +625,11 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
         $via = 'container-name';
       }
       if ($via !== null) {
-        $targetNets = staxx_crosslinks_service_networks($stack['file'])[$svcName] ?? [];
+        $targetNets = staxx_crosslinks_service_networks($file)[$svcName] ?? [];
         $shared     = array_values(array_intersect($sourceNets, $targetNets));
         if ($shared !== []) {
           $candidates[] = [
-            'stack'   => $stack['name'],
+            'stack'   => $rel,
             'service' => $svcName,
             'via'     => $via,
             'network' => $shared[0],
@@ -623,7 +639,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
           // say so, naming the target's own network, rather than falling
           // through to silence. First one found wins, same as everywhere
           // else in this file that has to pick just one.
-          $nearMiss = ['stack' => $stack['name'], 'service' => $svcName, 'network' => $targetNets[0] ?? null];
+          $nearMiss = ['stack' => $rel, 'service' => $svcName, 'network' => $targetNets[0] ?? null];
         }
       }
 
@@ -632,7 +648,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
         $published = (string)($svc['firstPort']['published'] ?? '');
         if ($published !== '' && $published === $port) {
           $candidates[] = [
-            'stack'   => $stack['name'],
+            'stack'   => $rel,
             'service' => $svcName,
             'via'     => 'port',
             'port'    => $published,
@@ -644,7 +660,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
       if ($addressHost !== '') {
         $fixed = $fixedByService[$svcName] ?? null;
         if ($fixed !== null && $fixed['vlan'] && strcasecmp($fixed['ip'], $addressHost) === 0) {
-          $candidates[] = ['stack' => $stack['name'], 'service' => $svcName, 'via' => 'fixed-address'];
+          $candidates[] = ['stack' => $rel, 'service' => $svcName, 'via' => 'fixed-address'];
         }
       }
 
@@ -662,21 +678,22 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
           if ($targetLoose === '') continue;
           foreach (array_keys($nameCandidates) as $i) {
             if ($nameLoose[$i] === '') continue;
+            // Test first, resolve second: a compose read of the candidate
+            // stack's networks (staxx_crosslinks_service_networks()) is only
+            // worth paying for a name that could match at all.
+            $loose = $nameLoose[$i] === $targetLoose;
+            // The THREE-OR-FEWER rule is on the name itself, separators
+            // stripped — "d_b" is really a two-letter name, and two
+            // characters' difference is most of it either way.
+            if (!$loose && !(strlen($nameLoose[$i]) > 3 && levenshtein($nameLoose[$i], $targetLoose) <= 2)) continue;
             if ($fuzzyShared === null) {
               $fuzzyShared = array_values(array_intersect(
-                $sourceNets, staxx_crosslinks_service_networks($stack['file'])[$svcName] ?? []
+                $sourceNets, staxx_crosslinks_service_networks($file)[$svcName] ?? []
               ));
             }
-            $entry = ['stack' => $stack['name'], 'service' => $svcName, 'via' => $vk,
+            $entry = ['stack' => $rel, 'service' => $svcName, 'via' => $vk,
                       'network' => $fuzzyShared[0] ?? null];
-            if ($nameLoose[$i] === $targetLoose) {
-              $fuzzyLoose[] = $entry;
-            } elseif (strlen($nameLoose[$i]) > 3 && levenshtein($nameLoose[$i], $targetLoose) <= 2) {
-              // The THREE-OR-FEWER rule is on the name itself, separators
-              // stripped — "d_b" is really a two-letter name, and two
-              // characters' difference is most of it either way.
-              $fuzzyNear[] = $entry;
-            }
+            if ($loose) $fuzzyLoose[] = $entry; else $fuzzyNear[] = $entry;
           }
         }
       }
@@ -724,15 +741,12 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
  *  staxx_crosslinks_credentials() and staxx_crosslinks_learn() below, so
  *  both read the same live values rather than each re-deriving them. */
 function staxx_crosslinks_service_env(string $file, string $service): array {
-  $yaml = staxx_crosslinks_config_yaml($file);
-  $env  = [];
-  if ($yaml !== '') {
-    foreach (staxx_yaml_flatten($yaml) as $path => $value) {
-      $parts = explode("\0", $path);
-      if ($parts[0] === 'services' && count($parts) === 4
-          && $parts[1] === $service && $parts[2] === 'environment') {
-        $env[$parts[3]] = $value;
-      }
+  $env = [];
+  foreach (staxx_crosslinks_config_flat($file) as $path => $value) {
+    $parts = explode("\0", $path);
+    if ($parts[0] === 'services' && count($parts) === 4
+        && $parts[1] === $service && $parts[2] === 'environment') {
+      $env[$parts[3]] = $value;
     }
   }
   return $env;

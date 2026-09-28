@@ -11,6 +11,16 @@
 
 set -euo pipefail
 
+# The last KEY="value" line of a settings file, quotes removed.
+cfg_get() {
+  sed -n 's/^[[:space:]]*'"$1"'[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$2" | tail -n1
+}
+
+# Is Docker actually up, not merely installed.
+docker_up() {
+  command -v docker >/dev/null 2>&1 && timeout -k 2 10 docker info >/dev/null 2>&1
+}
+
 PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
 CFG="/boot/config/plugins/staxx/staxx.cfg"
 LOG_DIR="/tmp/staxx/updates"
@@ -19,7 +29,7 @@ LOG_DIR="/tmp/staxx/updates"
 # up. Exit before any work starts — no log directory, no lock, nothing —
 # rather than running a pass over an empty list every time the cron entry
 # fires.
-store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+store_root=$(cfg_get STORE_ROOT "${CFG}" 2>/dev/null || true)
 if [[ -z "${store_root}" ]]; then
   exit 0
 fi
@@ -98,7 +108,7 @@ run_check() {
   # the user turned off.
   update_check="daily"
   if [[ -f "${CFG}" ]]; then
-    update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+    update_check=$(cfg_get UPDATE_CHECK "${CFG}")
     update_check="${update_check:-daily}"
   fi
 
@@ -107,7 +117,7 @@ run_check() {
     exit 0
   fi
 
-  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+  if ! docker_up; then
     # A cron job firing before Docker is up on boot is not an error.
     log "Docker is not available; skipping this pass."
     exit 0
@@ -135,7 +145,7 @@ run_check() {
 }
 
 run_apply() {
-  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+  if ! docker_up; then
     # A cron job firing before Docker is up on boot is not an error.
     log "Docker is not available; skipping this pass."
     exit 0
@@ -158,7 +168,7 @@ run_storage() {
   # PLAN_181 Part D — replaces the old weekly cleanup pass. This never
   # removes anything itself; it only refreshes the figures the page's
   # storage-alert notice reads (Images.php: staxx_storage_alert_refresh()).
-  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+  if ! docker_up; then
     log "Docker is not available; skipping this pass."
     exit 0
   fi

@@ -7,3 +7,5 @@
 writes a timestamp into a heartbeat file each time it asks for stats, and the collector exits once
 that goes stale (45s). Close the tab and sampling stops on its own. Snapshots are written to a temp
 file and moved into place, so a reader never sees half of one. Locking is an atomic `mkdir`.
+
+Device settings are inspected again only when the list of running container ids changes, since a running container's devices cannot change.

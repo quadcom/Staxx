@@ -27,7 +27,6 @@
   var Yaml = (typeof window !== 'undefined' && window.StaxxYaml) ||
     (typeof require === 'function' ? require('./compose-model.js') : null);
 
-  function pad(n) { var s = ''; while (s.length < n) s += ' '; return s; }
 
   /* =====================================================================
    * Field tables — the one source both scaffold() and its tests/callers
@@ -72,17 +71,17 @@
   // one comment — the same shape the overview block below uses.
   function fieldLine(indent, key, value, hint, inner) {
     var body = '# ' + (inner || '') + key + ':' + (value ? ' ' + value : '');
-    var s = pad(indent) + body;
-    if (hint) s += pad(Math.max(1, 22 - body.length)) + '# ' + hint;
+    var s = ' '.repeat(indent) + body;
+    if (hint) s += ' '.repeat(Math.max(1, 22 - body.length)) + '# ' + hint;
     return s;
   }
 
   function renderField(field, indent) {
     if (field.block) {
-      return [pad(indent) + '# ' + field.key + ': |', pad(indent) + '#   ' + field.block];
+      return [' '.repeat(indent) + '# ' + field.key + ': |', ' '.repeat(indent) + '#   ' + field.block];
     }
     if (field.nested) {
-      var lines = [pad(indent) + '# ' + field.key + ':'];
+      var lines = [' '.repeat(indent) + '# ' + field.key + ':'];
       field.nested.forEach(function (sub) {
         lines.push(fieldLine(indent, sub.key, sub.value, sub.hint, '  '));
       });
@@ -137,7 +136,7 @@
   // this one's.
   function hasPlaceholder(doc, pair, childIndent, key) {
     var end = blockExtent(doc, pair);
-    var prefix = pad(childIndent) + '#';
+    var prefix = ' '.repeat(childIndent) + '#';
     var re = new RegExp('^' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:');
     for (var i = pair.start + 1; i < end; i++) {
       var line = doc.lines[i];
@@ -183,7 +182,7 @@
     // predates this field entirely, so this one gets a real default instead
     // of an offer.
     if (isRoot && !map.pairs.version) {
-      lines.push(pad(childIndent) + 'version: 1');
+      lines.push(' '.repeat(childIndent) + 'version: 1');
       names.push('version');
     }
     fields.forEach(function (f) {
@@ -205,7 +204,7 @@
   // ca-convert.js already puts around its own x-unraid block.
   function scaffoldNewRoot(doc, servicesPair, step, added) {
     var indent = step;
-    var lines = ['x-unraid:', pad(indent) + 'version: 1'];
+    var lines = ['x-unraid:', ' '.repeat(indent) + 'version: 1'];
     var names = ['version'];
     STACK_FIELDS.forEach(function (f) {
       lines = lines.concat(renderField(f, indent));
@@ -220,7 +219,7 @@
   }
 
   function scaffoldService(doc, name, step, added, skipped) {
-    var svc = doc.root.pairs.services.value.pairs[name];
+    var svc = Yaml.servicesMap(doc).pairs[name];
     if (!svc || !svc.value || svc.value.kind !== 'map') {
       skipped.push('The "' + name + '" service is not written as a plain block, so its StaXX fields were not added.');
       return;

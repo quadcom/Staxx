@@ -234,6 +234,15 @@ function staxx_merge_path_under(string $path, array $folders): bool {
  *   none — the browser reads it separately with 'read' and applies it
  *   itself, so it is never one of the 'files' offered as a companion.
  */
+/** Every file's contents, each preceded by a newline, joined into one text
+ *  a keyword or port search can scan without caring how many files a stack
+ *  is split across. */
+function staxx_compose_text(array $files): string {
+  $text = '';
+  foreach ($files as $f) $text .= "\n" . (string)@file_get_contents($f);
+  return $text;
+}
+
 function staxx_merge_files(string $rel, string &$error): ?array {
   $error = '';
   if (!staxx_valid_path($rel)) { $error = 'Invalid stack name.'; return null; }
@@ -245,11 +254,9 @@ function staxx_merge_files(string $rel, string &$error): ?array {
   if ($root === false) { $error = 'There is no stack called "'.$rel.'".'; return null; }
 
   $mainFile     = staxx_find_compose_file($dir);
-  $composeNames = array_map('basename', staxx_compose_files($mainFile));
-  $composeText  = '';
-  foreach (staxx_compose_files($mainFile) as $f) {
-    $composeText .= "\n" . (string)@file_get_contents($f);
-  }
+  $composeFiles = staxx_compose_files($mainFile);
+  $composeNames = array_map('basename', $composeFiles);
+  $composeText  = staxx_compose_text($composeFiles);
   $mountedFolders = staxx_merge_mounted_folders($composeText);   // PLAN_156 F12
 
   // Same list the serving page itself will accept (STAXX_ICON_EXTS), so a
@@ -322,16 +329,8 @@ function staxx_merge_files(string $rel, string &$error): ?array {
       $target  = '';
       $outside = false;
       if ($isLink) {
-        $target = (string)@readlink($full2);
-        // A relative target resolves against the folder the LINK sits in —
-        // the same arithmetic a shell `cd` there would do, not against the
-        // stack's own root.
-        $resolved = ($target !== '' && $target[0] === '/')
-          ? $target
-          : @realpath(dirname($full2).'/'.$target);
-        if ($resolved === false || ($resolved !== $root && strpos($resolved, $root.'/') !== 0)) {
-          $outside = true;
-        }
+        $target  = (string)@readlink($full2);
+        $outside = staxx_relocate_link_outside(dirname($full2), $target, $root);
       }
 
       // PLAN_187's hover preview: a loose picture anywhere in the stack's own
@@ -428,15 +427,15 @@ function staxx_merge_port_users(array $excludeRels, string $port, string $host):
   if ($hosts === []) return [];
 
   $out = [];
-  foreach (staxx_list_stacks() as $s) {
-    if (in_array($s['name'], $excludeRels, true)) continue;
-    if ($s['file'] === '') continue;
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if (in_array($rel, $excludeRels, true)) continue;
+    if ($file === '') continue;
 
-    $text = '';
-    foreach (staxx_compose_files($s['file']) as $f) {
-      $text .= "\n" . (string)@file_get_contents($f);
-    }
-    $envFile = rtrim($s['dir'], '/') . '/.env';
+    $text = staxx_compose_text(staxx_compose_files($file));
+    // The compose file always sits directly in the stack directory
+    // (staxx_find_compose_file() returns $dir.'/'.$f), so the directory it
+    // was found in is the compose file's own dirname.
+    $envFile = rtrim(dirname($file), '/') . '/.env';
     if (is_file($envFile)) $text .= "\n" . (string)@file_get_contents($envFile);
     if ($text === '') continue;
 
@@ -445,7 +444,7 @@ function staxx_merge_port_users(array $excludeRels, string $port, string $host):
     foreach ($hosts as $h) {
       $hq = preg_quote($h, '/');
       // "<host>:<port>" written together, however it is quoted.
-      if (preg_match('/'.$hq.':'.$port.'\b/', $text)) { $out[] = $s['name']; continue 2; }
+      if (preg_match('/'.$hq.':'.$port.'\b/', $text)) { $out[] = $rel; continue 2; }
 
       // The split shape: the host alone as a setting's own value on one
       // line, the port alone as a setting's own value on another.
@@ -457,7 +456,7 @@ function staxx_merge_port_users(array $excludeRels, string $port, string $host):
         if (!$hasPortLine && preg_match('/[:=]\s*["\']?'.$port.'["\']?\s*$/', $trimmed)) $hasPortLine = true;
         if ($hasHostLine && $hasPortLine) break;
       }
-      if ($hasHostLine && $hasPortLine) { $out[] = $s['name']; continue 2; }
+      if ($hasHostLine && $hasPortLine) { $out[] = $rel; continue 2; }
     }
   }
 
@@ -711,8 +710,7 @@ function staxx_merge_stacks_impl(
     return false;
   }
   if (!staxx_valid_path($newRel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, must start '
-           . 'with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return false;
   }
   if (is_dir(staxx_stack_dir($newRel))) {

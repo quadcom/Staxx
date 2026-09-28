@@ -338,27 +338,39 @@ function staxx_device_host(string $item): string {
 }
 
 /**
- * Host device paths mapped by one compose file, keyed by service name.
- *
- * Its own indentation walk rather than staxx_yaml_flatten(), which discards
- * every sequence it meets — that is where device entries live, so it cannot
- * answer this. Widening it instead would change what staxx_compose_meta()
- * sees, for one caller's benefit.
+ * One row per non-blank, non-comment line found inside services:, walked once
+ * for both staxx_compose_devices() and staxx_compose_gpu_vendors() to filter —
+ * they need the same indentation state (which service is open, where its own
+ * keys sit) because the first must skip the deploy.resources.reservations.devices
+ * list that the second reads, and tracking that twice was the only difference
+ * between them.
  *
  * The raw file is read, not `docker compose config`, so a file that builds its
- * devices out of an anchor or an `extends` is not counted. This feeds an
- * advisory badge; 60ms of compose per stack every time the picker opens is not
- * worth paying for it.
+ * devices out of an anchor or an `extends` is not counted. This feeds advisory
+ * output only (a badge, a vendor column); 60ms of compose per stack every time
+ * the picker opens is not worth paying for it.
  *
- * @return array<string, string[]>
+ * A row's `in` says the line sits under the service's own devices: list
+ * ('devices'), a deeper deploy.resources.reservations.devices list
+ * ('reservations'), or neither (''). `direct` says a key line is a key of the
+ * service itself, not of something nested under it — the service's own
+ * devices:/runtime:/gpus: keys are all direct; a reservations entry's
+ * continuation keys (driver:, capabilities:) are not, and carry `in` instead.
+ * An item line's `body` is the text after its leading "- "; a key line's
+ * `key` and `val` are what comes before and after its first unquoted ':'.
+ *
+ * @return array<int, array{service:string, item:bool, body:string, key:string,
+ *   val:string, in:string, direct:bool}>
  */
-function staxx_compose_devices(string $yaml): array {
-  $out     = [];
+function staxx_compose_service_lines(string $yaml): array {
+  $rows = [];
+
   $inSvc   = false;   // inside the services: block
   $svcAt   = -1;      // indent at which service names sit
   $service = '';      // the service currently open
   $keyAt   = -1;      // indent of that service's own keys
-  $devAt   = -1;      // indent of that service's devices: key, or -1
+  $devAt   = -1;      // indent of that service's own devices: key, or -1
+  $resAt   = -1;      // indent of a deeper, reservations-shaped devices: key, or -1
 
   foreach (explode("\n", $yaml) as $raw) {
     $line = rtrim($raw, "\r");
@@ -369,39 +381,82 @@ function staxx_compose_devices(string $yaml): array {
     $isItem = strncmp($body, '- ', 2) === 0 || $body === '-';
 
     if ($isItem) {
-      if ($devAt >= 0 && $indent > $devAt) {
-        $host = staxx_device_host(substr($body, 1));
-        if ($host !== '') $out[$service][] = $host;
+      if ($service !== '') {
+        $in = ($resAt >= 0 && $indent > $resAt) ? 'reservations'
+            : (($devAt >= 0 && $indent > $devAt) ? 'devices' : '');
+        if ($in !== '') {
+          $rows[] = ['service' => $service, 'item' => true, 'body' => substr($body, 1),
+                     'key' => '', 'val' => '', 'in' => $in, 'direct' => false];
+        }
       }
       continue;                                  // an item never opens a key
     }
 
-    if (!preg_match('/^("[^"]*"|\'[^\']*\'|[^:#]+):/', $body, $m)) continue;
+    if (!preg_match('/^("[^"]*"|\'[^\']*\'|[^:#]+):(.*)$/', $body, $m)) continue;
     $key = trim($m[1], " \"'");
+    $val = trim($m[2]);
 
-    // Stepping back out to this level or further closes the devices: list.
+    // Stepping back out to this level or further closes the open list.
     if ($devAt >= 0 && $indent <= $devAt) $devAt = -1;
+    if ($resAt >= 0 && $indent <= $resAt) $resAt = -1;
+
+    // A reservations entry's continuation lines ("capabilities: [gpu]" sat
+    // under "- driver: nvidia") are plain key: value lines, not items.
+    if ($service !== '' && $resAt >= 0 && $indent > $resAt) {
+      $rows[] = ['service' => $service, 'item' => false, 'body' => $body,
+                 'key' => $key, 'val' => $val, 'in' => 'reservations', 'direct' => false];
+    }
 
     if (!$inSvc) {
       if ($indent === 0 && $key === 'services') $inSvc = true;
       continue;
     }
     if ($indent === 0) {                         // a new top-level key ends services:
-      $inSvc = false; $svcAt = -1; $service = ''; $keyAt = -1; $devAt = -1;
+      $inSvc = false; $svcAt = -1; $service = ''; $keyAt = -1; $devAt = -1; $resAt = -1;
       continue;
     }
 
     if ($svcAt < 0) $svcAt = $indent;            // the first key in there names a service
-    if ($indent === $svcAt) { $service = $key; $keyAt = -1; $devAt = -1; continue; }
+    if ($indent === $svcAt) { $service = $key; $keyAt = -1; $devAt = -1; $resAt = -1; continue; }
     if ($keyAt < 0) $keyAt = $indent;            // and the first key inside that service
 
-    // A DIRECT child of the service, and nothing deeper. Compose has a second,
-    // unrelated devices: key down at deploy.resources.reservations.devices,
-    // which reserves a GPU and maps nothing — counting its entries as claims
-    // would report hardware as taken by a stack that never asked for a path.
-    if ($service !== '' && $key === 'devices' && $indent === $keyAt) $devAt = $indent;
+    if ($service === '') continue;
+
+    if ($indent === $keyAt) {
+      $rows[] = ['service' => $service, 'item' => false, 'body' => $body,
+                 'key' => $key, 'val' => $val, 'in' => '', 'direct' => true];
+    }
+
+    // A DIRECT child of the service named devices:, and nothing deeper.
+    // Compose has a second, unrelated devices: key down at
+    // deploy.resources.reservations.devices, which reserves a GPU and maps
+    // nothing — counting its entries as claims would report hardware as
+    // taken by a stack that never asked for a path.
+    if ($key === 'devices' && $indent === $keyAt) $devAt = $indent;
+    if ($key === 'devices' && $indent > $keyAt)   $resAt = $indent;
   }
 
+  return $rows;
+}
+
+/**
+ * Host device paths mapped by one compose file, keyed by service name.
+ *
+ * A filter over staxx_compose_service_lines(): every item row sitting under a
+ * service's own devices: list ('in' === 'devices'), read for a /dev/ path.
+ * Long-form entries and the reservations list are not device paths and are
+ * simply not counted — see staxx_device_host() and
+ * staxx_compose_service_lines()'s own comment.
+ *
+ * @return array<string, string[]>
+ */
+function staxx_compose_devices(string $yaml): array {
+  $out = [];
+  foreach (staxx_compose_service_lines($yaml) as $row) {
+    if (!$row['item'] || $row['in'] !== 'devices') continue;
+    $host = staxx_device_host($row['body']);
+    if ($host !== '') $out[$row['service']][] = $host;
+  }
   return $out;
 }
 
@@ -412,15 +467,13 @@ function staxx_compose_devices(string $yaml): array {
  * actually using right now", which goes blank the moment a container stops;
  * this answers "what would it use if it started", straight from the file.
  *
- * Three shapes are read, none of which staxx_compose_devices() reports:
- * a `/dev/dri` (or a specific node under it), resolved to Intel or AMD
- * through the host's own staxx_gpu_nodes() map; `runtime: nvidia` or a bare
- * `gpus:` key; and a `deploy.resources.reservations.devices` entry naming
- * `driver: nvidia` or `capabilities: [gpu]` — the one place Nvidia is asked
- * for without a `/dev/nvidia*` path in sight. Built as its own line walk
- * rather than on top of staxx_compose_devices(), because that function
- * deliberately skips the reservations list (see its own comment) — the two
- * questions share a shape but not an answer.
+ * A filter over staxx_compose_service_lines(): a device path under the
+ * service's own devices: list, resolved to Intel/AMD/Nvidia through the
+ * host's own staxx_gpu_nodes() map or a literal /dev/nvidia* node; a
+ * deploy.resources.reservations.devices entry naming `driver: nvidia` or
+ * `capabilities: [gpu]`, whether written on the entry's own item line or a
+ * continuation key beneath it; and a direct `runtime: nvidia` or bare
+ * `gpus:` key — three shapes none of which staxx_compose_devices() reports.
  *
  * @return array<string, string[]> service name (within the one file handed
  *   in, same as staxx_compose_devices()) => de-duplicated vendors
@@ -434,24 +487,12 @@ function staxx_compose_gpu_vendors(string $yaml): array {
     if (!in_array($vendor, $out[$service] ?? [], true)) $out[$service][] = $vendor;
   };
 
-  $inSvc   = false;
-  $svcAt   = -1;
-  $service = '';
-  $keyAt   = -1;
-  $devAt   = -1;   // indent of the service's own /dev-path devices: list, or -1
-  $resAt   = -1;   // indent of a deeper, reservations-shaped devices: list, or -1
+  foreach (staxx_compose_service_lines($yaml) as $row) {
+    $service = $row['service'];
 
-  foreach (explode("\n", $yaml) as $raw) {
-    $line = rtrim($raw, "\r");
-    if (trim($line) === '' || preg_match('/^\s*#/', $line)) continue;
-
-    $indent = strlen($line) - strlen(ltrim($line, ' '));
-    $body   = ltrim($line, ' ');
-    $isItem = strncmp($body, '- ', 2) === 0 || $body === '-';
-
-    if ($isItem) {
-      if ($devAt >= 0 && $indent > $devAt) {
-        $host = staxx_device_host(substr($body, 1));
+    if ($row['item']) {
+      if ($row['in'] === 'devices') {
+        $host = staxx_device_host($row['body']);
         if (strncmp($host, '/dev/nvidia', 11) === 0) {
           $add($service, 'nvidia');
         } elseif (preg_match('#^/dev/dri(?:/(\w+))?$#', $host, $mm)) {
@@ -461,59 +502,27 @@ function staxx_compose_gpu_vendors(string $yaml): array {
             foreach (array_unique(array_values($nodes)) as $v) $add($service, $v);
           }
         }
-      }
-      // A reservations entry's own first line ("- driver: nvidia") is an
-      // item too, so it is checked here rather than falling through to the
-      // key match below, which never runs for an item line.
-      if ($resAt >= 0 && $indent > $resAt) {
-        $item = substr($body, 1);
-        if (preg_match('/\bdriver\s*:\s*["\']?nvidia/i', $item)
-          || preg_match('/\bcapabilities\s*:\s*\[[^\]]*gpu/i', $item)) {
+      } elseif ($row['in'] === 'reservations') {
+        // A reservations entry's own first line ("- driver: nvidia").
+        if (preg_match('/\bdriver\s*:\s*["\']?nvidia/i', $row['body'])
+          || preg_match('/\bcapabilities\s*:\s*\[[^\]]*gpu/i', $row['body'])) {
           $add($service, 'nvidia');
         }
       }
       continue;
     }
 
-    if (!preg_match('/^("[^"]*"|\'[^\']*\'|[^:#]+):(.*)$/', $body, $m)) continue;
-    $key = trim($m[1], " \"'");
-    $val = trim($m[2]);
-
-    if ($devAt >= 0 && $indent <= $devAt) $devAt = -1;
-    if ($resAt >= 0 && $indent <= $resAt) $resAt = -1;
-
-    // A reservations entry's continuation lines ("capabilities: [gpu]" sat
-    // under "- driver: nvidia") are plain key: value lines, not items.
-    if ($resAt >= 0 && $indent > $resAt) {
-      if (($key === 'driver' && stripos($val, 'nvidia') !== false)
-        || ($key === 'capabilities' && stripos($val, 'gpu') !== false)) {
+    if ($row['in'] === 'reservations') {
+      if (($row['key'] === 'driver' && stripos($row['val'], 'nvidia') !== false)
+        || ($row['key'] === 'capabilities' && stripos($row['val'], 'gpu') !== false)) {
         $add($service, 'nvidia');
       }
-    }
-
-    if (!$inSvc) {
-      if ($indent === 0 && $key === 'services') $inSvc = true;
-      continue;
-    }
-    if ($indent === 0) {
-      $inSvc = false; $svcAt = -1; $service = ''; $keyAt = -1; $devAt = -1; $resAt = -1;
       continue;
     }
 
-    if ($svcAt < 0) $svcAt = $indent;
-    if ($indent === $svcAt) { $service = $key; $keyAt = -1; $devAt = -1; $resAt = -1; continue; }
-    if ($keyAt < 0) $keyAt = $indent;
-
-    if ($service === '') continue;
-
-    if ($key === 'devices' && $indent === $keyAt) { $devAt = $indent; continue; }
-    // Any OTHER devices: list, deeper than the service's own keys, is the
-    // deploy.resources.reservations shape rather than a path list — see
-    // staxx_compose_devices()'s comment on why that indent alone tells them
-    // apart.
-    if ($key === 'devices' && $indent > $keyAt) { $resAt = $indent; continue; }
-    if ($key === 'runtime' && strtolower(trim($val, " \"'")) === 'nvidia') { $add($service, 'nvidia'); continue; }
-    if ($key === 'gpus') { $add($service, 'nvidia'); continue; }
+    if (!$row['direct']) continue;
+    if ($row['key'] === 'runtime' && strtolower(trim($row['val'], " \"'")) === 'nvidia') { $add($service, 'nvidia'); continue; }
+    if ($row['key'] === 'gpus') { $add($service, 'nvidia'); continue; }
   }
 
   return $out;
@@ -532,7 +541,7 @@ function staxx_device_claims(): array {
   $out = [];
 
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
 
     $yaml = (string)@file_get_contents($file);

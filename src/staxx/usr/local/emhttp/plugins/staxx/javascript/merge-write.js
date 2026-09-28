@@ -27,13 +27,12 @@
  *
  * A service's own raw span (its lead comment, its own lines, and the gap up
  * to the next entry) is found the same way compose-model.js's own tidy()
- * pass finds one — buildSpans() there is not exported, because tidy() also
- * needs the refusal machinery around REORDERING a scope, which this has no
- * need of: nothing here reorders anything inside a single source's own
- * file, it only appends whole blocks from several sources one after
- * another. computeBlocks() below is the same idea (a key's own lead
- * comment plus its trailing gap travels as one block) kept to the narrower
- * job this actually has.
+ * pass finds one — computeBlocks() below calls that same buildSpans()
+ * directly, since the two need the identical span (a key's own lead
+ * comment plus its trailing gap, travelling as one block); this file just
+ * never needs tidy()'s own refusal machinery around REORDERING a scope,
+ * since nothing here reorders anything inside a single source's own file,
+ * it only appends whole blocks from several sources one after another.
  *
  * Same dual shape as merge-examine.js: `window.StaxxMergeWrite` in the
  * browser, `module.exports` under Node.
@@ -51,6 +50,13 @@
   // exist). `stack` fields and `files[].from` are the only things that
   // keep the rel, since the server needs it to find the folder again.
   var leaf = ME.leaf;
+  // PLAN_198 item 1 — the services/declared-block map and the four line
+  // helpers below them are read here exactly as merge-examine.js's own
+  // finders read them; this file no longer keeps its own second copy of
+  // any of them. The many existing calls to these four names stay as
+  // written.
+  var servicesMapOf = CM.servicesMap, declMapOf = ME.declMapOf,
+      findKeyChildRange = ME.findKeyChildRange, parsePortListLine = ME.parsePortListLine;
 
   /* =====================================================================
    * Small line-level helpers — deliberately simpler than compose-model.js's
@@ -113,30 +119,19 @@
   // never duplicated). `starts` gives each block's own first DOC line —
   // the write pass needs it to work out where an edit it already applied
   // (in doc-line terms) lands once the block is pasted into the merged
-  // text.
+  // text. Built on compose-model.js's own buildSpans() (PLAN_198 item 7)
+  // — the same idea tidy() already uses for reordering a scope's keys —
+  // rather than a second, hand-classified copy of it; leadStart/lineKind
+  // above stay, since stripCommentAbove/leadingCommentLinesOf/
+  // renameBlockKeyLine and several passes below still use them directly.
   function computeBlocks(doc, mapNode) {
-    var keys = mapNode.keys, spans = [];
-    for (var i = 0; i < keys.length; i++) {
-      var p = mapNode.pairs[keys[i]];
-      spans.push({ key: keys[i], indent: p.indent, start: leadStart(doc.lines, p.start, p.indent), contentEnd: p.end });
-    }
-    for (i = 0; i < spans.length; i++) {
-      var limit = i + 1 < spans.length ? spans[i + 1].start : mapNode.end;
-      var j = spans[i].contentEnd, last = j;
-      while (j < limit) {
-        var c = lineKind(doc.lines[j]);
-        if (c.kind === 'blank') { j++; continue; }
-        if (c.kind === 'comment' && c.indent > spans[i].indent) { j++; last = j; continue; }
-        break;
-      }
-      spans[i].contentEnd = last;
-    }
+    var spans = CM.buildSpans(doc, mapNode);
     var order = [], blocks = {}, contentEnds = {}, starts = {};
-    for (i = 0; i < spans.length; i++) {
+    for (var i = 0; i < spans.length; i++) {
       var to = i + 1 < spans.length ? spans[i + 1].start : mapNode.end;
       order.push(spans[i].key);
       blocks[spans[i].key] = doc.lines.slice(spans[i].start, to);
-      contentEnds[spans[i].key] = spans[i].contentEnd - spans[i].start;
+      contentEnds[spans[i].key] = spans[i].end - spans[i].start;
       starts[spans[i].key] = spans[i].start;
     }
     return { order: order, blocks: blocks, contentEnds: contentEnds, starts: starts };
@@ -155,16 +150,6 @@
     var m = /^(\s*)([^:\s][^:]*):(.*)$/.exec(body[idx]);
     if (m) body[idx] = m[1] + newKey + ':' + m[3];
     return idx;
-  }
-
-  function servicesMapOf(doc) {
-    var svc = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    return svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
-  }
-
-  function declMapOf(doc, kind) {
-    var d = doc.root && doc.root.kind === 'map' ? doc.root.pairs[kind] : null;
-    return d && d.value && d.value.kind === 'map' ? d.value : null;
   }
 
   /* =====================================================================
@@ -382,39 +367,18 @@
     return out;
   }
 
-  // The same search rewriteEnvAddressTracked() below uses, without editing
-  // anything — a declined rewire needs to point its change record's marker
-  // at the exact line that stays, not at a line it just rewrote.
-  function findEnvAddressLine(doc, serviceKey, envVar, addr) {
-    var svcMap = servicesMapOf(doc);
-    var p = svcMap && svcMap.pairs[serviceKey];
-    if (!p) return null;
-    for (var i = p.start; i < p.end; i++) {
-      var line = doc.lines[i];
-      if (line.indexOf(envVar) === -1 || line.indexOf(addr) === -1) continue;
-      return i;
-    }
-    return null;
-  }
-
   // Substring replace inside whichever line names both the env var and the
   // old address — safe because the examiner already matched that exact
   // "host:port" text on that exact variable, so there is nothing to
   // re-derive here, only to apply. Strikes a falsified lead comment first.
   // Returns { line, struckComment } on success, null when nothing matched.
   function rewriteEnvAddressTracked(doc, serviceKey, envVar, oldAddr, newAddr) {
-    var svcMap = servicesMapOf(doc);
-    var p = svcMap && svcMap.pairs[serviceKey];
-    if (!p) return null;
-    for (var i = p.start; i < p.end; i++) {
-      var line = doc.lines[i];
-      if (line.indexOf(envVar) === -1 || line.indexOf(oldAddr) === -1) continue;
-      var struck = stripCommentAbove(doc, i, [oldAddr]);
-      var idx = i - (struck ? struck.shift : 0);
-      doc.lines[idx] = doc.lines[idx].split(oldAddr).join(newAddr);
-      return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
-    }
-    return null;
+    var i = ME.locateEnvLine(doc, serviceKey, envVar, oldAddr);
+    if (i < 0) return null;
+    var struck = stripCommentAbove(doc, i, [oldAddr]);
+    var idx = i - (struck ? struck.shift : 0);
+    doc.lines[idx] = doc.lines[idx].split(oldAddr).join(newAddr);
+    return { line: idx, struckComment: struck ? struck.lines : null, text: doc.lines[idx] };
   }
 
   // PLAN_179 P2 — the line the network_mode rewrite below both finds and
@@ -452,45 +416,13 @@
    * the same shape is never mistaken for one.
    * ===================================================================== */
 
-  function findKeyChildRange(doc, mapStart, mapEnd, keyRegex) {
-    for (var i = mapStart; i < mapEnd; i++) {
-      var m = keyRegex.exec(doc.lines[i]);
-      if (!m) continue;
-      var indent = m[1].length;
-      var j = i + 1;
-      while (j < mapEnd) {
-        var lm = /^(\s*)\S/.exec(doc.lines[j]);
-        if (lm && lm[1].length <= indent) break;
-        j++;
-      }
-      return { start: i + 1, end: j };
-    }
-    return null;
-  }
-
   // Same range findKeyChildRange() already gives, plus the key LINE itself
   // (findKeyChildRange only ever returns its children) — removePortPublishTracked
   // needs it to rewrite "ports:" to "ports: []" when the last entry goes,
-  // and to give the change record a line to point at either way.
-  function findPortsRange(doc, serviceKey) {
-    var svcMap = servicesMapOf(doc);
-    var p = svcMap && svcMap.pairs[serviceKey];
-    if (!p) return null;
-    for (var i = p.start; i < p.end; i++) {
-      if (!/^(\s*)ports:\s*(#.*)?$/.test(doc.lines[i])) continue;
-      var range = findKeyChildRange(doc, p.start, p.end, /^(\s*)ports:\s*(#.*)?$/);
-      if (!range) return null;
-      range.keyLine = i;
-      return range;
-    }
-    return null;
-  }
-
-  function parsePortListLine(line) {
-    var m = /^(\s*-\s*)(['"]?)([^'"]*)\2\s*$/.exec(line);
-    if (!m) return null;
-    return { prefix: m[1], quote: m[2], body: m[3] };
-  }
+  // and to give the change record a line to point at either way. Read from
+  // merge-examine.js: its own findKeyChildRange already returns `keyLine`,
+  // so there is nothing left for a second search here to add.
+  var findPortsRange = ME.findPortsRange;
 
   // F3 — a thin alias for merge-examine.js's own parsePortSpec(), so a
   // "ports:" list line is read the same way here (locating/rewriting one
@@ -499,28 +431,13 @@
   // parser, kept in ME so it is never accidentally forked into two.
   function parsePortBody(body) { return ME.parsePortSpec(body); }
 
-  // The bare lookup rewritePortHost() (below) uses — split out so a decline
-  // can point a change record's marker at the SAME line without rewriting
-  // it (a decline leaves the port exactly as the author wrote it).
-  function findPortLine(doc, serviceKey, hostPort) {
-    var range = findPortsRange(doc, serviceKey);
-    if (!range) return null;
-    for (var i = range.start; i < range.end; i++) {
-      var parsed = parsePortListLine(doc.lines[i]);
-      if (!parsed) continue;
-      var pb = parsePortBody(parsed.body);
-      if (pb.host === String(hostPort)) return i;
-    }
-    return null;
-  }
-
   // Returns { line, text } (the SAME shape rewritePathOccurrenceTracked() and
   // friends use) so the port-clash change record below can be resolved by
   // marker text like every other rewrite, rather than by a bare boolean that
   // left this one kind of change with no line to point a mark at at all.
   function rewritePortHost(doc, serviceKey, oldHostPort, newHostPort) {
-    var i = findPortLine(doc, serviceKey, oldHostPort);
-    if (i === null) return null;
+    var i = ME.locatePortLine(doc, serviceKey, oldHostPort);
+    if (i < 0) return null;
     var parsed = parsePortListLine(doc.lines[i]);
     var pb = parsePortBody(parsed.body);
     // F3 — an address prefix (an IPv4/hostname, or a bracketed IPv6
@@ -968,6 +885,15 @@
   // clash, so the two can never disagree about what a "ports:" entry means.
   function splitPortEntry(entry) { return ME.parsePortSpec(entry); }
 
+  // A settings-file line, read the same way compose-model.js's own
+  // envLineRe reads it (redactEnv() and the "export NAME=value" export
+  // redaction) — so a name here is never anything the model itself would
+  // disagree with. Previously took everything before the first "=" as the
+  // name, so "export HOST=db1" read as a setting called "export HOST":
+  // a compose value resolving ${HOST} against that .env found nothing and
+  // came out empty, even though the merged settings file itself still
+  // carried "export HOST=db1" (bug fixed in PLAN_198 — see its own
+  // comment there for what was probed).
   function readEnvText(text) {
     if (text == null) return null;
     var lines = String(text).split(/\r?\n/);
@@ -976,9 +902,16 @@
     lines.forEach(function (raw) {
       if (raw.trim() === '') { out.push({ type: 'blank' }); return; }
       if (/^\s*#/.test(raw)) { out.push({ type: 'comment', text: raw }); return; }
-      var eq = raw.indexOf('=');
-      if (eq < 0) { out.push({ type: 'comment', text: raw }); return; }
-      out.push({ type: 'setting', name: raw.slice(0, eq), value: raw.slice(eq + 1), comment: '' });
+      var m = CM.envLineRe.exec(raw);
+      if (!m) { out.push({ type: 'comment', text: raw }); return; }
+      var entry = { type: 'setting', name: m[3], value: m[4], comment: '' };
+      // Carried only when there is something to carry ("export ", or a
+      // leading space the name would otherwise absorb) — an ordinary
+      // "NAME=value" line gets no `lead` key at all, so every existing
+      // descriptor and joined line is unchanged.
+      var lead = m[1] + (m[2] || '');
+      if (lead) entry.lead = lead;
+      out.push(entry);
     });
     return { lines: out };
   }
@@ -1052,6 +985,26 @@
     return String(value);
   }
 
+  // "A list of KEY=VALUE strings, or a map" into something keyed — a list
+  // becomes a map, split at the first "=", entries with no "=" skipped, a
+  // later key replacing an earlier one; a map is returned as the SAME
+  // object (not copied, not stringified). Used for descriptorFromText()'s
+  // own `environment`/`labels` reading below. Kept apart from
+  // overrideKVEntries() just below, which answers a different question —
+  // it keeps repeated keys as separate list entries and turns every value
+  // into a string, both needed for what the override pass writes back out.
+  function kvToMap(value) {
+    var out = {};
+    if (Array.isArray(value)) {
+      value.forEach(function (kv) {
+        var eq = String(kv).indexOf('=');
+        if (eq >= 0) out[kv.slice(0, eq)] = kv.slice(eq + 1);
+      });
+      return out;
+    }
+    return (value && typeof value === 'object') ? value : out;
+  }
+
   function overrideKVEntries(value) {
     var out = [];
     if (Array.isArray(value)) {
@@ -1094,8 +1047,8 @@
     var range = findKeyChildRange(doc, p.start, p.end, keyRe);
 
     if (!range) {
-      var keyIndent = new Array(p.indent + 3).join(' ');
-      var itemIndent = new Array(p.indent + 5).join(' ');
+      var keyIndent = ' '.repeat(p.indent + 2);
+      var itemIndent = ' '.repeat(p.indent + 4);
       var lines = [keyIndent + key + ':'];
       values.forEach(function (v) { lines.push(itemIndent + '- ' + v); });
       var firstItemLine = p.end + 1;
@@ -1114,7 +1067,7 @@
       existing.push(m[2].trim());
       if (itemIndent2 === null) itemIndent2 = m[1];
     }
-    if (itemIndent2 === null) itemIndent2 = new Array(p.indent + 5).join(' ');
+    if (itemIndent2 === null) itemIndent2 = ' '.repeat(p.indent + 4);
 
     var toAdd = values.filter(function (v) { return existing.indexOf(String(v)) === -1; });
     if (!toAdd.length) return;
@@ -1139,8 +1092,8 @@
     var range = findKeyChildRange(doc, p.start, p.end, keyRe);
 
     if (!range) {
-      var keyIndent = new Array(p.indent + 3).join(' ');
-      var childIndent = new Array(p.indent + 5).join(' ');
+      var keyIndent = ' '.repeat(p.indent + 2);
+      var childIndent = ' '.repeat(p.indent + 4);
       var lines = [keyIndent + key + ':'];
       entries.forEach(function (e) { lines.push(childIndent + e[0] + ': ' + e[1]); });
       var firstLine = p.end + 1;
@@ -1165,7 +1118,7 @@
       }
     }
     if (isList === null) isList = false;
-    if (itemIndent === null) itemIndent = new Array(p.indent + 5).join(' ');
+    if (itemIndent === null) itemIndent = ' '.repeat(p.indent + 4);
 
     var toAppend = [];
     entries.forEach(function (e) {
@@ -1263,8 +1216,8 @@
     var range = findKeyChildRange(doc, p.start, p.end, keyRe);
 
     if (!range) {
-      var keyIndent = new Array(p.indent + 3).join(' ');
-      var itemIndent = new Array(p.indent + 5).join(' ');
+      var keyIndent = ' '.repeat(p.indent + 2);
+      var itemIndent = ' '.repeat(p.indent + 4);
       var at = p.end;
       // No networks: key at all means this service was on the project's
       // implicit default network (PLAN_155 C15's own rule). Writing
@@ -1287,7 +1240,7 @@
       var mm = /^(\s*)[^:\s][^:]*:/.exec(doc.lines[i]);
       if (mm) { isMap = true; itemIndent2 = mm[1]; break; }
     }
-    if (isMap === null) { isMap = false; itemIndent2 = new Array(p.indent + 5).join(' '); }
+    if (isMap === null) { isMap = false; itemIndent2 = ' '.repeat(p.indent + 4); }
 
     var newLine = itemIndent2 + (isMap ? (netName + ':') : ('- ' + netName));
     var at2 = range.end;
@@ -1375,7 +1328,7 @@
       return;
     }
 
-    var keyIndent = new Array(p.indent + 3).join(' ');
+    var keyIndent = ' '.repeat(p.indent + 2);
     var newLine2 = keyIndent + key + ': ' + valueText;
     CM.splice(doc, p.end, 0, [newLine2]);
     changes.push(overrideChangeRecord(stackRel, p.end, newLine2, overrideLeaf));
@@ -1502,7 +1455,10 @@
       composeText = applied.text;
       overrideChanges = applied.changes;
     }
-    var doc = CM.parse(composeText);
+    // A document the caller already parsed (buildMergedText()'s own
+    // readDocs, PLAN_198 item 3) is reused rather than parsed again — but
+    // only when no override has just changed the text out from under it.
+    var doc = (extra.doc && typeof extra.overrideText !== 'string') ? extra.doc : CM.parse(composeText);
     var plain = toPlain(doc.root) || {};
 
     // This source's own .env, read once — the settings file the wiring
@@ -1548,15 +1504,7 @@
         return null;
       }).filter(Boolean);
 
-      var environment = {};
-      if (Array.isArray(raw.environment)) {
-        raw.environment.forEach(function (kv) {
-          var eq = String(kv).indexOf('=');
-          if (eq >= 0) environment[kv.slice(0, eq)] = kv.slice(eq + 1);
-        });
-      } else if (raw.environment && typeof raw.environment === 'object') {
-        environment = raw.environment;
-      }
+      var environment = kvToMap(raw.environment);
 
       // C2 — each value as the author wrote it, resolved once against this
       // source's own .env (see resolveEnvValue()'s own comment). The two
@@ -1574,15 +1522,7 @@
       // a map (key: value directly) — findLabelClashes() (merge-examine.js)
       // only ever needs to ask "what is this label's own value", never how
       // it was shaped.
-      var labels = {};
-      if (Array.isArray(raw.labels)) {
-        raw.labels.forEach(function (kv) {
-          var eq = String(kv).indexOf('=');
-          if (eq >= 0) labels[kv.slice(0, eq)] = kv.slice(eq + 1);
-        });
-      } else if (raw.labels && typeof raw.labels === 'object') {
-        labels = raw.labels;
-      }
+      var labels = kvToMap(raw.labels);
 
       services[svcName] = {
         image: raw.image || '',
@@ -1619,7 +1559,7 @@
       return out;
     }
 
-    return {
+    var desc = {
       name: name,
       // Kept so examine() can locate the exact lines a finding will change
       // (see its own docCacheFor()) — read-only there, never re-parsed
@@ -1660,6 +1600,11 @@
         // x-unraid block back out of a parsed source.
       }
     };
+    // The doc is kept beside the descriptor (a WeakMap, not a new
+    // property — see merge-examine.js's own DOC_OF), so examine()'s
+    // docCacheFor() can reuse it instead of parsing composeText again
+    // (PLAN_198 item 3).
+    return ME.rememberDoc(desc, doc);
   }
 
   /* =====================================================================
@@ -1744,8 +1689,15 @@
     // file missing whatever line broke, with nothing said. `text: null` is
     // the caller-facing half of the refusal — nothing downstream can
     // mistake this for a normal result and finish writing it out.
-    var unreadable = sources.map(function (s) {
-      var warnings = CM.parse(s.text).warnings || [];
+    // PLAN_198 item 3 — each source is parsed ONCE here for every read-only
+    // use below (this refusal check, each descriptor's own parse, and the
+    // untouched origDoc further down); only the doc that is actually
+    // EDITED (docs, below) gets its own separate parse, since editing it
+    // in place would otherwise corrupt this shared read-only copy.
+    var readDocs = sources.map(function (s) { return CM.parse(s.text); });
+
+    var unreadable = sources.map(function (s, i) {
+      var warnings = readDocs[i].warnings || [];
       return warnings.length ? { stack: s.name, line: warnings[0].line } : null;
     }).filter(Boolean);
     if (unreadable.length) {
@@ -1763,12 +1715,12 @@
       };
     }
 
-    var descs = sources.map(function (s) {
+    var descs = sources.map(function (s, idx) {
       var reply = filesReplies[s.name] || {};
       return descriptorFromText(s.name, s.text, s.envText,
         reply.files || s.files || [], {
           filesLarge: reply.large || s.filesLarge || null, depth: s.depth, rel: s.rel,
-          runningFrom: reply.runningFrom || s.runningFrom
+          runningFrom: reply.runningFrom || s.runningFrom, doc: readDocs[idx]
         });
     });
     // PLAN_155 C15 — a rewire's target lives in whichever source declared
@@ -1858,20 +1810,20 @@
 
     var docs = sources.map(function (s, idx) {
       var doc = CM.parse(s.text);
-      // PLAN_155 F7: a second, untouched parse of this source's own text —
-      // never edited by anything below. The wizard's source pane shows
-      // this same text (the override applied, nothing else), so a change
-      // record that is pinned to a SOURCE line (never carried into the
-      // merged file — a stack's own left-behind x-unraid: block, an
-      // anchor or top-level key rename) has to locate that line here, not
-      // in `doc`. `doc` gets edited in place below (services renamed,
-      // ports removed, paths rewritten…), and a removed line shifts every
-      // line after it — so a position read off the edited doc can name a
-      // line the source pane does not show at all, which is a record with
-      // nowhere to be shown: the exact fault behind the merged heading's
-      // count not matching the marks a person could find, seen live
-      // 2026-09-15.
-      var origDoc = CM.parse(s.text);
+      // PLAN_155 F7: `readDocs[idx]` — untouched, never edited by anything
+      // below — stands in for a second parse of this source's own text.
+      // The wizard's source pane shows this same text (the override
+      // applied, nothing else), so a change record that is pinned to a
+      // SOURCE line (never carried into the merged file — a stack's own
+      // left-behind x-unraid: block, an anchor or top-level key rename)
+      // has to locate that line here, not in `doc`. `doc` gets edited in
+      // place below (services renamed, ports removed, paths rewritten…),
+      // and a removed line shifts every line after it — so a position
+      // read off the edited doc can name a line the source pane does not
+      // show at all, which is a record with nowhere to be shown: the
+      // exact fault behind the merged heading's count not matching the
+      // marks a person could find, seen live 2026-09-15.
+      var origDoc = readDocs[idx];
       var desc = descs[idx];
 
       // Icon files are rewritten by their own scoped pass just below (one
@@ -2057,8 +2009,8 @@
           // still marked, so the count and the ring stay honest and the
           // decision can be reversed (CLAUDE.md rule 2).
           if (f.facts.split) {
-            var declHostLine = findEnvAddressLine(doc, finalSvc, f.facts.hostVar, f.facts.fromHost);
-            if (declHostLine !== null) {
+            var declHostLine = ME.locateEnvLine(doc, finalSvc, f.facts.hostVar, f.facts.fromHost);
+            if (declHostLine >= 0) {
               changes.push({
                 key: f.key, part: 'host', declined: true, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[declHostLine],
                 title: 'Now reaches ' + f.facts.toService + ' inside the stack',
@@ -2066,8 +2018,8 @@
                 struckComment: null
               });
             }
-            var declPortLine = findEnvAddressLine(doc, finalSvc, f.facts.portVar, f.facts.fromPort);
-            if (declPortLine !== null) {
+            var declPortLine = ME.locateEnvLine(doc, finalSvc, f.facts.portVar, f.facts.fromPort);
+            if (declPortLine >= 0) {
               changes.push({
                 key: f.key, part: 'port', declined: true, stack: s.name, sourceLine: sourceLineFor(f, 1), marker: doc.lines[declPortLine],
                 title: 'Now uses ' + f.facts.toService + '’s own port',
@@ -2076,8 +2028,8 @@
               });
             }
           } else {
-            var declLine = findEnvAddressLine(doc, finalSvc, f.facts.envVar, f.facts.from);
-            if (declLine !== null) {
+            var declLine = ME.locateEnvLine(doc, finalSvc, f.facts.envVar, f.facts.from);
+            if (declLine >= 0) {
               changes.push({
                 key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declLine],
                 title: 'Now reaches ' + f.facts.toService + ' inside the stack',
@@ -2186,8 +2138,8 @@
         var finalSvc = plan.serviceRenames[s.name + '/' + f.facts.service] || f.facts.service;
 
         if (decision === 'leave') {
-          var lineIdx = findPortLine(doc, finalSvc, f.facts.port);
-          if (lineIdx === null) return;
+          var lineIdx = ME.locatePortLine(doc, finalSvc, f.facts.port);
+          if (lineIdx < 0) return;
           changes.push({
             key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f, 0), marker: doc.lines[lineIdx],
             title: 'Two services publish port ' + f.facts.port,
@@ -2257,8 +2209,8 @@
         }
 
         if (!decisionValue(decisions, f)) {
-          var declPortLine = findPortLine(doc, finalSvc, f.facts.port);
-          if (declPortLine === null) return;
+          var declPortLine = ME.locatePortLine(doc, finalSvc, f.facts.port);
+          if (declPortLine < 0) return;
           changes.push({
             key: f.key, declined: true, stack: s.name, sourceLine: sourceLineFor(f), marker: doc.lines[declPortLine],
             title: title,
@@ -2402,7 +2354,10 @@
           var entry = envFinding.facts.joinedLines.filter(function (l) {
             return l.dedupe && l.stack === sv.stack && l.name === sv.name;
           })[0];
-          if (entry) { entry.type = 'setting'; entry.name = sv.name; entry.value = sv.value; entry.comment = ''; delete entry.dedupe; }
+          if (entry) {
+            entry.type = 'setting'; entry.name = sv.name; entry.value = sv.value; entry.comment = ''; delete entry.dedupe;
+            if (sv.lead) entry.lead = sv.lead;
+          }
         }
       });
 
@@ -2424,7 +2379,7 @@
           l._finalLine = envLines.length; envLines.push(l.text); return;
         }
         l._finalLine = envLines.length;
-        envLines.push(l.name + '=' + l.value + (l.comment ? '  # ' + l.comment : ''));
+        envLines.push((l.lead || '') + l.name + '=' + l.value + (l.comment ? '  # ' + l.comment : ''));
       });
       envText = envLines.join('\n') + '\n';
 
@@ -2455,7 +2410,7 @@
         changes.push({
           key: sv.changeKey, stack: sv.stack, file: 'env', line: entry ? entry._finalLine : null,
           sourceLine: sourceEnvLine(sv.stack, sv.name),
-          removed: true, removedText: sv.name + '=' + sv.value,
+          removed: true, removedText: (sv.lead || '') + sv.name + '=' + sv.value,
           title: 'Already set above, so not repeated',
           reason: 'Both stacks said the same thing.', struckComment: null
         });
@@ -2844,7 +2799,7 @@
       blocks.order.forEach(function (key, ki) {
         var block = blocks.blocks[key];
         var pIndent = svcMap.pairs[key].indent;
-        var pad = new Array(pIndent + 1).join(' ');
+        var pad = ' '.repeat(pIndent);
 
         var blockStartFinal = finalLines.length;
         if (ki === 0 && headerLines.length) finalLines = finalLines.concat(headerLines);
@@ -3107,13 +3062,13 @@
         j++;
       }
       if (already) return;
-      var childPad = new Array(indent + 3).join(' ');
+      var childPad = ' '.repeat(indent + 2);
       CM.splice(doc, lastItemLine + 1, 0, [childPad + '- retired']);
       return;
     }
 
     // No profiles: key at all — add one as the service's own last key.
-    var childPad2 = new Array(p.indent + 3).join(' ');
+    var childPad2 = ' '.repeat(p.indent + 2);
     CM.splice(doc, p.end, 0, [childPad2 + 'profiles: ["retired"]']);
   }
 
@@ -3139,13 +3094,15 @@
     descriptorFromText: descriptorFromText,
     buildMergedText: buildMergedText,
     retireText: retireText,
-    // Exposed for tests — the block-splicing primitive on its own.
-    computeBlocks: computeBlocks,
     // PLAN_155 C15 — merge-suggest.js's depends_on writer calls these two
     // for the exact same "must share a network" rule, on the one merged
     // doc where both ends already live together.
     serviceNetworkInfo: serviceNetworkInfo,
-    joinNetworkIfNeeded: joinNetworkIfNeeded
+    joinNetworkIfNeeded: joinNetworkIfNeeded,
+    // PLAN_198 item 6 — the wizard page reads a finding's decision through
+    // this, rather than keeping its own copy of the rule (stacks.js's
+    // mergeFindingDecision).
+    decisionValue: decisionValue
   };
 
   if (typeof window !== 'undefined') window.StaxxMergeWrite = API;

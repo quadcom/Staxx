@@ -23,9 +23,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/CA.php';
 
 /** Write a file via write-then-rename, so a reader never sees a half write. */
 function staxx_ca_index_write_json(string $path, array $data): void {
-  $tmp = $path.'.'.getmypid().'.tmp';
-  @file_put_contents($tmp, (string)json_encode($data));
-  @rename($tmp, $path);
+  staxx_atomic_write($path, (string)json_encode($data));
 }
 
 function staxx_ca_index_status(string $state, string $message, int $built = 0, int $count = 0): void {

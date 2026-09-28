@@ -36,14 +36,9 @@ var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference betw
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk-six');
 
-var argv = process.argv.slice(2);
-var CHECK = argv.indexOf('--check') >= 0;
-var outArg = argv.filter(function (a) { return a !== '--check'; })[0];
-var OUT_DIR = outArg ? path.resolve(outArg) : path.join(FIXTURES, '.dryrun');
-
-var checkFails = [];   // {trap, message} — printed and turned into the exit code under --check
-
-function section(title) { console.log('\n' + title); }
+var D = require('./lib/dryrun.js')(FIXTURES, 'DEV-TESTING');
+var CHECK = D.CHECK, OUT_DIR = D.OUT_DIR, checkFails = D.fails,
+    section = D.section, fail = D.fail, storeNameFor = D.storeNameFor;
 
 // install.sh does this same substitution with sed before the fixture ever reaches a real box
 // (t169-api/compose.yaml's own comment explains why the placeholder is there); done here too,
@@ -109,8 +104,6 @@ var STACKS = {
 };
 
 var LEAVES = ['t169-edge', 't169-site', 't169-api', 't169-store', 't169-bus', 't169-tools'];
-
-function storeNameFor(leafName) { return 'DEV-TESTING/' + leafName; }
 
 function readDescriptors(leaves) {
   return leaves.map(function (leafName) {
@@ -223,8 +216,6 @@ var ORDER_B = ['t169-tools', 't169-bus', 't169-store', 't169-api', 't169-site', 
 
 var resultA = runWalk('A', ORDER_A);
 var resultB = runWalk('B', ORDER_B);
-
-function fail(trap, message) { checkFails.push({ trap: trap, message: message }); }
 
 if (!CHECK) {
   process.exit(checkFails.length ? 1 : 0);
@@ -477,7 +468,7 @@ if (!orderCmp.ok) orderCmp.problems.forEach(function (p) { fail('audit-order', p
 
 if (checkFails.length) {
   console.log('\nFAILED:');
-  checkFails.forEach(function (f) { console.log('  trap ' + f.trap + ': ' + f.message); });
+  checkFails.forEach(function (f) { console.log('  trap ' + f.key + ': ' + f.message); });
   process.exit(1);
 }
 console.log('\nall checks passed');

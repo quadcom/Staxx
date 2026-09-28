@@ -292,7 +292,7 @@ $after = @parse_ini_file($cfgFile) ?: [];
 ok('the unknown cfg key survives the write', ($after['ZZB1TEST_UNKNOWN_KEY'] ?? '') === 'keep-me');
 ok('the submitted key was actually written', ($after['TAKEOVER_DOCKER_TAB'] ?? '') === $flipTakeover);
 
-$tmpGlob = glob($cfgFile.'.tmp-*');
+$tmpGlob = glob(dirname($cfgFile).'/.'.basename($cfgFile).'.*.tmp');
 ok('no temp file left behind', $tmpGlob === [] || $tmpGlob === false, implode(',', (array)$tmpGlob));
 ok('the cfg still parses', is_array(@parse_ini_file($cfgFile)));
 
@@ -302,7 +302,7 @@ $err = ''; $reload = null; $saved = null;
 $okBad = staxx_settings_save(['HEADER_MENU' => 'yes'], $err, $reload, $saved);
 ok('save refuses an invalid choice', !$okBad, $err);
 ok('file is untouched by a refused save', file_get_contents($cfgFile) === $before);
-$tmpGlob = glob($cfgFile.'.tmp-*');
+$tmpGlob = glob(dirname($cfgFile).'/.'.basename($cfgFile).'.*.tmp');
 ok('no temp file left behind after a refusal', $tmpGlob === [] || $tmpGlob === false);
 
 // One key now, so the old "two paths posted together must be checked against

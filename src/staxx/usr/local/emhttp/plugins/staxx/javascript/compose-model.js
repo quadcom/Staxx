@@ -245,6 +245,28 @@
   }
 
   // Reads one value that begins at `col` on line `at`.
+  // Where a quoted scalar opening at text.charAt(from) closes on this line,
+  // or -1 if it does not. Inside double quotes a backslash skips the next
+  // character; inside single quotes '' is an escaped quote. The parser, the
+  // highlighter and the entry scanner all read a quote by this one rule.
+  function quotedEnd(text, from) {
+    var i;
+    if (text.charAt(from) === '"') {
+      for (i = from + 1; i < text.length; i++) {
+        if (text.charAt(i) === '\\') { i++; continue; }
+        if (text.charAt(i) === '"') return i;
+      }
+      return -1;
+    }
+    for (i = from + 1; i < text.length; i++) {
+      if (text.charAt(i) === "'") {
+        if (text.charAt(i + 1) === "'") { i++; continue; }
+        return i;
+      }
+    }
+    return -1;
+  }
+
   function scanValue(ctx, at, col, ownerIndent, ownerKey) {
     var line = ctx.lines[at];
     var rest = line.slice(col);
@@ -258,20 +280,7 @@
     if (head === '[' || head === '{') return seal(ctx, at, blockEnd(ctx, at, ownerIndent), 'flow');
 
     if (head === '"' || head === "'") {
-      var end = -1, i;
-      if (head === '"') {
-        for (i = 1; i < rest.length; i++) {
-          if (rest.charAt(i) === '\\') { i++; continue; }
-          if (rest.charAt(i) === '"') { end = i; break; }
-        }
-      } else {
-        for (i = 1; i < rest.length; i++) {
-          if (rest.charAt(i) === "'") {
-            if (rest.charAt(i + 1) === "'") { i++; continue; }
-            end = i; break;
-          }
-        }
-      }
+      var end = quotedEnd(rest, 0);
       if (end < 0) return seal(ctx, at, blockEnd(ctx, at, ownerIndent), 'multiline-scalar');
 
       var raw = rest.slice(0, end + 1);
@@ -3254,8 +3263,8 @@
       }
     }
 
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') {
+    var svc = servicesMapOf(doc);
+    if (!svc) {
       out.warnings.push({ line: 0, message: 'This file lists no services.' });
       return out;
     }
@@ -3270,16 +3279,16 @@
     // referenced by services — read one level deep, no recursion. A name
     // with a null value (declared, nothing under it) still counts, because
     // .keys lists it regardless of what its value turned out to be.
-    out.declared.services = svc.value.keys.slice();
+    out.declared.services = svc.keys.slice();
     var declKinds = ['networks', 'volumes', 'secrets', 'configs'];
     for (var dk = 0; dk < declKinds.length; dk++) {
       var dp = doc.root.pairs[declKinds[dk]];
       if (dp && dp.value && dp.value.kind === 'map') out.declared[declKinds[dk]] = dp.value.keys.slice();
     }
 
-    for (var i = 0; i < svc.value.keys.length; i++) {
-      var name = svc.value.keys[i];
-      var p = svc.value.pairs[name];
+    for (var i = 0; i < svc.keys.length; i++) {
+      var name = svc.keys[i];
+      var p = svc.pairs[name];
       if (!p.value || p.value.kind !== 'map') {
         out.services.push({
           name: name, display: 'basic',
@@ -4046,15 +4055,20 @@
    */
 
   function pad(n) {
-    return n > 0 ? new Array(n + 1).join(' ') : '';
+    return n > 0 ? ' '.repeat(n) : '';
+  }
+
+  // The services: map of a parsed document, or null when the file has none
+  // (or its root is not a map). One definition for every script that needs it.
+  function servicesMapOf(doc) {
+    var svc = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
+    return svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
   }
 
   /** The pair holding one service's block, or null if it cannot be read. */
   function serviceMapOf(doc, name) {
-    if (!doc.root || doc.root.kind !== 'map') return null;
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') return null;
-    var p = svc.value.pairs[name];
+    var map = servicesMapOf(doc);
+    var p = map ? map.pairs[name] : null;
     return p && p.value && p.value.kind === 'map' ? p : null;
   }
 
@@ -5416,8 +5430,7 @@
     var refusals = [], replacements = [], i;
 
     // ---- step 1: each service's own keys -----------------------------
-    var servicesPair = doc.root.pairs['services'];
-    var servicesMap = servicesPair && servicesPair.value && servicesPair.value.kind === 'map' ? servicesPair.value : null;
+    var servicesMap = servicesMapOf(doc);
     if (servicesMap && servicesMap.keys.length) {
       for (i = 0; i < servicesMap.keys.length; i++) {
         var name = servicesMap.keys[i];
@@ -5462,8 +5475,7 @@
     var stage3 = stage2, gapsChanged = false;
     var doc2 = parse(doc.bom + stage2.join('\n'));
     if (doc2.root && doc2.root.kind === 'map' && !doc2.unreadTail) {
-      var svcPair2 = doc2.root.pairs['services'];
-      var svcMap2 = svcPair2 && svcPair2.value && svcPair2.value.kind === 'map' ? svcPair2.value : null;
+      var svcMap2 = servicesMapOf(doc2);
       if (svcMap2 && svcMap2.keys.length > 1) {
         var gapResult = layoutScope(doc2, svcMap2, svcMap2.keys, null, null, 'the services list', stage2, true);
         if (gapResult.changed) {
@@ -5856,19 +5868,19 @@
     // is unread, which is exactly what closes the duplicate-service route.
     if (hasUnreadTail(doc)) return -1;
 
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') return -1;
-    if (svc.value.pairs[name]) return -1;
+    var svc = servicesMapOf(doc);
+    if (!svc) return -1;
+    if (svc.pairs[name]) return -1;
 
     // Positioned after the last existing service, the same placement addItem
     // uses for a list's first entry.
-    var indent = svc.value.indent;
+    var indent = svc.indent;
     var after = null, i;
-    for (i = 0; i < svc.value.keys.length; i++) {
-      after = svc.value.pairs[svc.value.keys[i]];
+    for (i = 0; i < svc.keys.length; i++) {
+      after = svc.pairs[svc.keys[i]];
     }
 
-    var to = after ? after.end : svc.value.start + 1;
+    var to = after ? after.end : svc.start + 1;
     var lines = [];
 
     // Match the file's own habit: if the service above this one is separated
@@ -6763,11 +6775,11 @@
     if (!doc.root || doc.root.kind !== 'map') {
       return { ok: false, error: 'This file cannot be read as compose, so nothing can be renamed.' };
     }
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') {
+    var svc = servicesMapOf(doc);
+    if (!svc) {
       return { ok: false, error: 'This file lists no services, so there is nothing to rename.' };
     }
-    var topPair = svc.value.pairs[oldName];
+    var topPair = svc.pairs[oldName];
     if (!topPair) {
       return { ok: false, error: 'There is no service called "' + oldName + '" in this file, so it cannot be renamed.' };
     }
@@ -6775,7 +6787,7 @@
     // collision test below, which would otherwise refuse it for colliding
     // with itself.
     if (newName === oldName) return { ok: true, refs: 0 };
-    if (svc.value.pairs[newName]) {
+    if (svc.pairs[newName]) {
       return { ok: false, error: 'A service called "' + newName + '" already exists — choose another name.' };
     }
 
@@ -6786,8 +6798,8 @@
     }
 
     var edits = [], i;
-    for (i = 0; i < svc.value.keys.length; i++) {
-      var p = svc.value.pairs[svc.value.keys[i]];
+    for (i = 0; i < svc.keys.length; i++) {
+      var p = svc.pairs[svc.keys[i]];
       if (p.value && p.value.kind === 'map') collectServiceRefs(edits, p.value, oldName, newName);
     }
 
@@ -6831,11 +6843,11 @@
     var pair = block && block.value && block.value.kind === 'map' ? block.value.pairs[name] : null;
     if (pair) edits.push({ spot: keySpot(pair) });
 
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') return edits;
+    var svc = servicesMapOf(doc);
+    if (!svc) return edits;
 
-    for (var si = 0; si < svc.value.keys.length; si++) {
-      var sp = svc.value.pairs[svc.value.keys[si]];
+    for (var si = 0; si < svc.keys.length; si++) {
+      var sp = svc.pairs[svc.keys[si]];
       if (!sp.value || sp.value.kind !== 'map') continue;
 
       var lp = sp.value.pairs[kind];
@@ -7170,20 +7182,7 @@
   // left as one best-effort 'str' span by the caller rather than growing a
   // fourth carry shape for it (see the section comment above).
   function scanQuotedToken(text, i) {
-    var q = text.charAt(i), end = -1, k;
-    if (q === '"') {
-      for (k = i + 1; k < text.length; k++) {
-        if (text.charAt(k) === '\\') { k++; continue; }
-        if (text.charAt(k) === '"') { end = k; break; }
-      }
-    } else {
-      for (k = i + 1; k < text.length; k++) {
-        if (text.charAt(k) === "'") {
-          if (text.charAt(k + 1) === "'") { k++; continue; }
-          end = k; break;
-        }
-      }
-    }
+    var end = quotedEnd(text, i);
     if (end < 0) return null;
     // The quotes themselves are part of the 'str' span; only a real
     // ${...}/$NAME inside gets split out, same as an unquoted value.
@@ -7654,10 +7653,10 @@
       if (doc && doc.root && doc.root.kind === 'map') {
         checkSpecKeys(doc.root, TOP_SPEC_SET, TOP_SPEC_KEYS, add);
 
-        var svc = doc.root.pairs['services'];
-        if (svc && svc.value && svc.value.kind === 'map') {
-          for (var i = 0; i < svc.value.keys.length; i++) {
-            var p = svc.value.pairs[svc.value.keys[i]];
+        var svc = servicesMapOf(doc);
+        if (svc) {
+          for (var i = 0; i < svc.keys.length; i++) {
+            var p = svc.pairs[svc.keys[i]];
             // A service written in a way this parser cannot open at all
             // (kind !== 'map') has no keys to check — that is what "skip
             // anything inside a sealed region" means here.
@@ -8888,20 +8887,7 @@
   function scanEntryText(line, col) {
     var head = line.charAt(col);
     if (head === '"' || head === "'") {
-      var i, end = -1;
-      if (head === '"') {
-        for (i = col + 1; i < line.length; i++) {
-          if (line.charAt(i) === '\\') { i++; continue; }
-          if (line.charAt(i) === '"') { end = i; break; }
-        }
-      } else {
-        for (i = col + 1; i < line.length; i++) {
-          if (line.charAt(i) === "'") {
-            if (line.charAt(i + 1) === "'") { i++; continue; }
-            end = i; break;
-          }
-        }
-      }
+      var end = quotedEnd(line, col);
       if (end < 0) return null;
       var inner = line.slice(col + 1, end);
       if (head === '"' && inner.indexOf('\\') >= 0) return null;
@@ -8946,6 +8932,36 @@
     return { type: type, source: source, next: j };
   }
 
+  // Walks `text` the way every text-only reader below needs: classify() each
+  // line, skip blanks and comments, and keep the stack of mapping keys that
+  // enclose the current line. visit(c, i, lines, stack) runs for every other
+  // line after the stack is popped and before a key line is pushed; it may
+  // return a line index to carry on from (a long-form item it has read to its
+  // end). Returns false if anything threw, so each caller keeps its own
+  // "never throws" promise by returning its own empty answer.
+  function walkKeyed(text, visit) {
+    try {
+      var lines = String(text == null ? '' : text).split('\n');
+      var stack = [];
+      for (var i = 0; i < lines.length; i++) {
+        var c = classify(lines[i], i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+        var next = visit(c, i, lines, stack);
+        if (c.kind === 'key') stack.push({ indent: c.indent, key: c.key });
+        if (typeof next === 'number') i = next - 1;
+      }
+    } catch (e) { return false; }
+    return true;
+  }
+
+  // Whether the line just classified sits in a service's own `key:` list —
+  // services -> <name> -> key.
+  function underService(stack, key) {
+    return stack.length >= 3 && stack[stack.length - 1].key === key && stack[stack.length - 3].key === 'services';
+  }
+
   /**
    * hostPaths(text) -> [{path, line, col, len}]
    *
@@ -8957,56 +8973,33 @@
    */
   function hostPaths(text) {
     var out = [];
-    try {
-      text = String(text == null ? '' : text);
-      var lines = text.split('\n');
-      var stack = [];    // ancestor mapping keys enclosing the current line
+    function visit(c, i, lines, stack) {
+      if (c.kind === 'key') return;
+      if (c.kind !== 'seq' || !c.sub) return;
+      if (!underService(stack, 'volumes')) return;
 
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var c = classify(line, i);
-        if (c.kind === 'blank' || c.kind === 'comment') continue;
-
-        // Pop ancestors this line is no longer inside. A sequence item is
-        // allowed to sit at the SAME indent as its own key (compose accepts
-        // both), so only a sibling KEY at that indent replaces the key —
-        // the item itself must not pop it off.
-        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
-        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
-
-        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
-        if (c.kind !== 'seq' || !c.sub) continue;
-
-        var inServiceVolumes = stack.length >= 3 &&
-          stack[stack.length - 1].key === 'volumes' &&
-          stack[stack.length - 3].key === 'services';
-        if (!inServiceVolumes) continue;
-
-        if (c.sub.kind === 'key') {
-          // Long form over several lines: {type:, source:, target:, ...}.
-          // Reading it is not folded into the ancestor stack above, which
-          // exists to find volumes: blocks and has no business tracking a
-          // mount's own keys — see readVolumeItem().
-          var r = readVolumeItem(lines, i, c);
-          if (r.source && (r.type === null || r.type === 'bind') && isHostPathLike(r.source.text)) {
-            out.push({ path: r.source.text, line: r.source.line, col: r.source.col, len: r.source.text.length });
-          }
-          i = r.next - 1;
-          continue;
+      if (c.sub.kind === 'key') {
+        // Long form over several lines: {type:, source:, target:, ...}.
+        // Reading it is not folded into the ancestor stack above, which
+        // exists to find volumes: blocks and has no business tracking a
+        // mount's own keys — see readVolumeItem().
+        var r = readVolumeItem(lines, i, c);
+        if (r.source && (r.type === null || r.type === 'bind') && isHostPathLike(r.source.text)) {
+          out.push({ path: r.source.text, line: r.source.line, col: r.source.col, len: r.source.text.length });
         }
-
-        // Short form: "HOST:CONTAINER[:MODE]", possibly quoted whole.
-        var scanned = scanEntryText(line, c.contentCol);
-        if (!scanned) continue;
-        var bits = splitOutsideVars(scanned.text);
-        if (bits.length < 2) continue;               // a bare container path: no host side
-        var host = bits[0];
-        if (!isHostPathLike(host)) continue;          // a named volume, not a path
-        out.push({ path: host, line: i, col: scanned.col, len: host.length });
+        return r.next;
       }
-    } catch (e) {
-      return [];
+
+      // Short form: "HOST:CONTAINER[:MODE]", possibly quoted whole.
+      var scanned = scanEntryText(lines[i], c.contentCol);
+      if (!scanned) return;
+      var bits = splitOutsideVars(scanned.text);
+      if (bits.length < 2) return;               // a bare container path: no host side
+      var host = bits[0];
+      if (!isHostPathLike(host)) return;          // a named volume, not a path
+      out.push({ path: host, line: i, col: scanned.col, len: host.length });
     }
+    if (!walkKeyed(text, visit)) return [];
     out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
     return out;
   }
@@ -9022,46 +9015,28 @@
    */
   function namedVolumes(text) {
     var out = [];
-    try {
-      text = String(text == null ? '' : text);
-      var lines = text.split('\n');
-      var stack = [];
+    function visit(c, i, lines, stack) {
+      if (c.kind === 'key') return;
+      if (c.kind !== 'seq' || !c.sub) return;
+      if (!underService(stack, 'volumes')) return;
 
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var c = classify(line, i);
-        if (c.kind === 'blank' || c.kind === 'comment') continue;
-
-        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
-        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
-
-        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
-        if (c.kind !== 'seq' || !c.sub) continue;
-
-        var inServiceVolumes = stack.length >= 3 &&
-          stack[stack.length - 1].key === 'volumes' &&
-          stack[stack.length - 3].key === 'services';
-        if (!inServiceVolumes) continue;
-
-        var name = null;
-        if (c.sub.kind === 'key') {
-          var r = readVolumeItem(lines, i, c);
-          if (r.source && (r.type === null || r.type === 'volume') && !isHostPathLike(r.source.text)) {
-            name = r.source.text;
-          }
-          i = r.next - 1;
-        } else {
-          var scanned = scanEntryText(line, c.contentCol);
-          if (scanned) {
-            var bits = splitOutsideVars(scanned.text);
-            if (bits.length >= 2 && !isHostPathLike(bits[0])) name = bits[0];
-          }
+      var name = null;
+      if (c.sub.kind === 'key') {
+        var r = readVolumeItem(lines, i, c);
+        if (r.source && (r.type === null || r.type === 'volume') && !isHostPathLike(r.source.text)) {
+          name = r.source.text;
         }
         if (name && out.indexOf(name) < 0) out.push(name);
+        return r.next;
       }
-    } catch (e) {
-      return [];
+      var scanned = scanEntryText(lines[i], c.contentCol);
+      if (scanned) {
+        var bits = splitOutsideVars(scanned.text);
+        if (bits.length >= 2 && !isHostPathLike(bits[0])) name = bits[0];
+      }
+      if (name && out.indexOf(name) < 0) out.push(name);
     }
+    if (!walkKeyed(text, visit)) return [];
     return out;
   }
 
@@ -9121,67 +9096,48 @@
    */
   function hostPorts(text) {
     var out = [];
-    try {
-      text = String(text == null ? '' : text);
-      var lines = text.split('\n');
-      var stack = [];    // ancestor mapping keys enclosing the current line
+    function visit(c, i, lines, stack) {
+      if (c.kind === 'key') return;
+      if (c.kind !== 'seq' || !c.sub) return;
+      if (!underService(stack, 'ports')) return;
 
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var c = classify(line, i);
-        if (c.kind === 'blank' || c.kind === 'comment') continue;
-
-        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
-        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
-
-        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
-        if (c.kind !== 'seq' || !c.sub) continue;
-
-        var inServicePorts = stack.length >= 3 &&
-          stack[stack.length - 1].key === 'ports' &&
-          stack[stack.length - 3].key === 'services';
-        if (!inServicePorts) continue;
-
-        if (c.sub.kind === 'key') {
-          // Long form over several lines: {target:, published:, protocol:}.
-          var r = readPortItem(lines, i, c);
-          if (r.published && isHostPortLike(r.published.text)) {
-            out.push({
-              port: r.published.text, proto: normalisePortProto(r.protocol),
-              line: r.published.line, col: r.published.col, len: r.published.text.length,
-              service: stack[stack.length - 2].key
-            });
-          }
-          i = r.next - 1;
-          continue;
+      if (c.sub.kind === 'key') {
+        // Long form over several lines: {target:, published:, protocol:}.
+        var r = readPortItem(lines, i, c);
+        if (r.published && isHostPortLike(r.published.text)) {
+          out.push({
+            port: r.published.text, proto: normalisePortProto(r.protocol),
+            line: r.published.line, col: r.published.col, len: r.published.text.length,
+            service: stack[stack.length - 2].key
+          });
         }
-
-        // Short form: "[IP:]HOST:CONTAINER[/PROTO]", possibly quoted whole.
-        var scanned = scanEntryText(line, c.contentCol);
-        if (!scanned) continue;
-        var proto = '', body = scanned.text;
-        var slash = body.lastIndexOf('/');
-        if (slash > 0 && /^[a-zA-Z]+$/.test(body.slice(slash + 1))) {
-          proto = body.slice(slash + 1);
-          body = body.slice(0, slash);
-        }
-        var bits = splitOutsideVars(body);
-        if (bits.length < 2) continue;                // container-only: nothing published
-        // Same rule splitPortShort() above uses to place the host field when
-        // an interface address is also present: the host is always the
-        // second-to-last colon-separated bit, whatever leads it.
-        var host = bits[bits.length - 2];
-        if (!isHostPortLike(host)) continue;
-        var lead = bits.slice(0, bits.length - 2).join(':');
-        var hostCol = scanned.col + (lead ? lead.length + 1 : 0);
-        out.push({
-          port: host, proto: normalisePortProto(proto), line: i, col: hostCol, len: host.length,
-          service: stack[stack.length - 2].key
-        });
+        return r.next;
       }
-    } catch (e) {
-      return [];
+
+      // Short form: "[IP:]HOST:CONTAINER[/PROTO]", possibly quoted whole.
+      var scanned = scanEntryText(lines[i], c.contentCol);
+      if (!scanned) return;
+      var proto = '', body = scanned.text;
+      var slash = body.lastIndexOf('/');
+      if (slash > 0 && /^[a-zA-Z]+$/.test(body.slice(slash + 1))) {
+        proto = body.slice(slash + 1);
+        body = body.slice(0, slash);
+      }
+      var bits = splitOutsideVars(body);
+      if (bits.length < 2) return;                // container-only: nothing published
+      // Same rule splitPortShort() above uses to place the host field when
+      // an interface address is also present: the host is always the
+      // second-to-last colon-separated bit, whatever leads it.
+      var host = bits[bits.length - 2];
+      if (!isHostPortLike(host)) return;
+      var lead = bits.slice(0, bits.length - 2).join(':');
+      var hostCol = scanned.col + (lead ? lead.length + 1 : 0);
+      out.push({
+        port: host, proto: normalisePortProto(proto), line: i, col: hostCol, len: host.length,
+        service: stack[stack.length - 2].key
+      });
     }
+    if (!walkKeyed(text, visit)) return [];
     out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
     return out;
   }
@@ -9202,31 +9158,15 @@
    */
   function containerNames(text) {
     var out = [];
-    try {
-      text = String(text == null ? '' : text);
-      var lines = text.split('\n');
-      var stack = [];    // ancestor mapping keys enclosing the current line
-
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var c = classify(line, i);
-        if (c.kind === 'blank' || c.kind === 'comment') continue;
-
-        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
-        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
-
-        if (c.kind !== 'key') continue;
-
-        if (c.key === 'container_name' && c.valueCol >= 0 &&
-            stack.length >= 2 && stack[stack.length - 2].key === 'services') {
-          var scanned = scanEntryText(line, c.valueCol);
-          if (scanned && scanned.text !== '') out.push(scanned.text);
-        }
-        stack.push({ indent: c.indent, key: c.key });
+    function visit(c, i, lines, stack) {
+      if (c.kind !== 'key') return;
+      if (c.key === 'container_name' && c.valueCol >= 0 &&
+          stack.length >= 2 && stack[stack.length - 2].key === 'services') {
+        var scanned = scanEntryText(lines[i], c.valueCol);
+        if (scanned && scanned.text !== '') out.push(scanned.text);
       }
-    } catch (e) {
-      return [];
     }
+    if (!walkKeyed(text, visit)) return [];
     return out;
   }
 
@@ -9257,62 +9197,42 @@
    */
   function fileNames(text) {
     var out = { services: [], networks: [], volumes: [], secrets: [], configs: [], profiles: [] };
-    try {
-      text = String(text == null ? '' : text);
-      var lines = text.split('\n');
-      var stack = [];    // ancestor mapping keys enclosing the current line
-      var seen = { services: {}, networks: {}, volumes: {}, secrets: {}, configs: {}, profiles: {} };
+    var seen = { services: {}, networks: {}, volumes: {}, secrets: {}, configs: {}, profiles: {} };
 
-      // hasOwnProperty, not a plain lookup, for the reason vocab()/keyInfo()
-      // above use it too: a service or volume called 'constructor' inherits a
-      // truthy value from Object and would be dropped silently, and a
-      // DECL_BUCKET miss on the same name would reach push() on nothing.
-      function has(obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); }
+    // hasOwnProperty, not a plain lookup, for the reason vocab()/keyInfo()
+    // above use it too: a service or volume called 'constructor' inherits a
+    // truthy value from Object and would be dropped silently, and a
+    // DECL_BUCKET miss on the same name would reach push() on nothing.
+    function has(obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); }
 
-      function add(bucket, name) {
-        if (name === '' || has(seen[bucket], name)) return;
-        seen[bucket][name] = true;
-        out[bucket].push(name);
-      }
-
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var c = classify(line, i);
-        if (c.kind === 'blank' || c.kind === 'comment') continue;
-
-        // Pop ancestors this line is no longer inside. A sequence item is
-        // allowed to sit at the SAME indent as its own key (compose accepts
-        // both), so only a sibling KEY at that indent replaces the key —
-        // the item itself must not pop it off.
-        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
-        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
-
-        if (c.kind === 'key') {
-          // A service name: a mapping key whose ancestor stack is exactly
-          // ['services']. A declared name: a mapping key whose ancestor
-          // stack is exactly one of the four top-level blocks.
-          if (stack.length === 1 && stack[0].key === 'services') add('services', c.key);
-          if (stack.length === 1 && has(DECL_BUCKET, stack[0].key)) add(DECL_BUCKET[stack[0].key], c.key);
-          stack.push({ indent: c.indent, key: c.key });
-          continue;
-        }
-        if (c.kind !== 'seq' || !c.sub) continue;
-
-        // A profile name: a plain scalar item under services -> <name> ->
-        // profiles. c.sub.kind === 'key' means the item is a block, not a
-        // name, so it is skipped the same way a long-form volume item is
-        // skipped by the check just below hostPaths()'s own equivalent.
-        var inProfiles = stack.length >= 3 &&
-          stack[stack.length - 1].key === 'profiles' &&
-          stack[stack.length - 3].key === 'services';
-        if (!inProfiles || c.sub.kind === 'key') continue;
-
-        var scanned = scanEntryText(line, c.contentCol);
-        if (scanned) add('profiles', scanned.text);
-      }
-    } catch (e) {
-      return { services: [], networks: [], volumes: [], secrets: [], configs: [], profiles: [] };
+    function add(bucket, name) {
+      if (name === '' || has(seen[bucket], name)) return;
+      seen[bucket][name] = true;
+      out[bucket].push(name);
     }
+
+    function visit(c, i, lines, stack) {
+      if (c.kind === 'key') {
+        // A service name: a mapping key whose ancestor stack is exactly
+        // ['services']. A declared name: a mapping key whose ancestor
+        // stack is exactly one of the four top-level blocks.
+        if (stack.length === 1 && stack[0].key === 'services') add('services', c.key);
+        if (stack.length === 1 && has(DECL_BUCKET, stack[0].key)) add(DECL_BUCKET[stack[0].key], c.key);
+        return;
+      }
+      if (c.kind !== 'seq' || !c.sub) return;
+
+      // A profile name: a plain scalar item under services -> <name> ->
+      // profiles. c.sub.kind === 'key' means the item is a block, not a
+      // name, so it is skipped the same way a long-form volume item is
+      // skipped by the check just below hostPaths()'s own equivalent.
+      if (!underService(stack, 'profiles') || c.sub.kind === 'key') return;
+
+      var scanned = scanEntryText(lines[i], c.contentCol);
+      if (scanned) add('profiles', scanned.text);
+    }
+
+    if (!walkKeyed(text, visit)) return { services: [], networks: [], volumes: [], secrets: [], configs: [], profiles: [] };
     return out;
   }
 
@@ -10090,113 +10010,97 @@
    */
   function fileRefs(text) {
     var out = [];
-    try {
-      text = String(text == null ? '' : text);
-      var lines = text.split('\n');
-      var stack = [];    // ancestor mapping keys enclosing the current line
+    function visit(c, i, lines, stack) {
+      // services -> <name> is always stack[0]/stack[1] once inside it,
+      // since every other top-level key (volumes:, secrets:, ...) pops
+      // "services" off the moment its own indent-0 key is reached.
+      var svc = (stack.length >= 2 && stack[0].key === 'services') ? stack[1].key : null;
 
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i];
-        var c = classify(line, i);
-        if (c.kind === 'blank' || c.kind === 'comment') continue;
-
-        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
-        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
-
-        // services -> <name> is always stack[0]/stack[1] once inside it,
-        // since every other top-level key (volumes:, secrets:, ...) pops
-        // "services" off the moment its own indent-0 key is reached.
-        var svc = (stack.length >= 2 && stack[0].key === 'services') ? stack[1].key : null;
-
-        if (c.kind === 'key') {
-          // A service's env_file: written as a single scalar, not a list.
-          if (svc !== null && stack.length === 2 && c.key === 'env_file' && c.valueCol >= 0) {
-            var sc1 = scanEntryText(line, c.valueCol);
-            if (sc1) pushFileRef(out, sc1.text, svc, 'env_file');
-          }
-          // build:'s own context:/dockerfile: keys — long form only. A bare
-          // "build: ." names a directory, not a file, so the short form is
-          // left out rather than reported as one.
-          if (svc !== null && stack.length === 3 && stack[2].key === 'build' &&
-              (c.key === 'context' || c.key === 'dockerfile') && c.valueCol >= 0) {
-            var sc2 = scanEntryText(line, c.valueCol);
-            if (sc2) pushFileRef(out, sc2.text, svc, 'build');
-          }
-          // Top-level secrets:/configs: <name>: file: — never seen under
-          // services, so this names no service.
-          if (stack.length === 2 && (stack[0].key === 'secrets' || stack[0].key === 'configs') &&
-              c.key === 'file' && c.valueCol >= 0) {
-            var sc3 = scanEntryText(line, c.valueCol);
-            if (sc3) pushFileRef(out, sc3.text, '', stack[0].key === 'secrets' ? 'secret' : 'config');
-          }
-          // Top-level include:, written as a single scalar. Names no service —
-          // an include sits above the services: block, not inside one.
-          if (stack.length === 0 && c.key === 'include' && c.valueCol >= 0) {
-            var sc4 = scanEntryText(line, c.valueCol);
-            if (sc4) pushFileRef(out, sc4.text, '', 'include');
-          }
-          // The document root's own x-unraid.icon. Names no service.
-          if (stack.length === 1 && stack[0].key === 'x-unraid' &&
-              c.key === 'icon' && c.valueCol >= 0) {
-            var sc5 = scanEntryText(line, c.valueCol);
-            if (sc5) pushIconRef(out, sc5.text, '');
-          }
-          // A service's own x-unraid.icon, overriding the root one.
-          if (svc !== null && stack.length === 3 && stack[2].key === 'x-unraid' &&
-              c.key === 'icon' && c.valueCol >= 0) {
-            var sc6 = scanEntryText(line, c.valueCol);
-            if (sc6) pushIconRef(out, sc6.text, svc);
-          }
-          stack.push({ indent: c.indent, key: c.key });
-          continue;
+      if (c.kind === 'key') {
+        // A service's env_file: written as a single scalar, not a list.
+        if (svc !== null && stack.length === 2 && c.key === 'env_file' && c.valueCol >= 0) {
+          var sc1 = scanEntryText(lines[i], c.valueCol);
+          if (sc1) pushFileRef(out, sc1.text, svc, 'env_file');
         }
-
-        if (c.kind !== 'seq' || !c.sub) continue;
-
-        // Top-level include:, written as a list. Each entry can also be a map
-        // (- path: other.yaml, with extra keys) — left unread rather than
-        // guessed at, same as env_file's own long form just below.
-        if (stack.length === 1 && stack[0].key === 'include') {
-          if (c.sub.kind !== 'key') {
-            var inc = scanEntryText(line, c.contentCol);
-            if (inc) pushFileRef(out, inc.text, '', 'include');
-          }
-          continue;
+        // build:'s own context:/dockerfile: keys — long form only. A bare
+        // "build: ." names a directory, not a file, so the short form is
+        // left out rather than reported as one.
+        if (svc !== null && stack.length === 3 && stack[2].key === 'build' &&
+            (c.key === 'context' || c.key === 'dockerfile') && c.valueCol >= 0) {
+          var sc2 = scanEntryText(lines[i], c.valueCol);
+          if (sc2) pushFileRef(out, sc2.text, svc, 'build');
         }
-
-        // A service's env_file: written as a list. The compose spec also
-        // allows a long form here (- path: .env, required: false); that is
-        // deliberately left unread rather than guessed at.
-        if (svc !== null && stack.length === 3 && stack[2].key === 'env_file') {
-          if (c.sub.kind !== 'key') {
-            var ef = scanEntryText(line, c.contentCol);
-            if (ef) pushFileRef(out, ef.text, svc, 'env_file');
-          }
-          continue;
+        // Top-level secrets:/configs: <name>: file: — never seen under
+        // services, so this names no service.
+        if (stack.length === 2 && (stack[0].key === 'secrets' || stack[0].key === 'configs') &&
+            c.key === 'file' && c.valueCol >= 0) {
+          var sc3 = scanEntryText(lines[i], c.valueCol);
+          if (sc3) pushFileRef(out, sc3.text, '', stack[0].key === 'secrets' ? 'secret' : 'config');
         }
+        // Top-level include:, written as a single scalar. Names no service —
+        // an include sits above the services: block, not inside one.
+        if (stack.length === 0 && c.key === 'include' && c.valueCol >= 0) {
+          var sc4 = scanEntryText(lines[i], c.valueCol);
+          if (sc4) pushFileRef(out, sc4.text, '', 'include');
+        }
+        // The document root's own x-unraid.icon. Names no service.
+        if (stack.length === 1 && stack[0].key === 'x-unraid' &&
+            c.key === 'icon' && c.valueCol >= 0) {
+          var sc5 = scanEntryText(lines[i], c.valueCol);
+          if (sc5) pushIconRef(out, sc5.text, '');
+        }
+        // A service's own x-unraid.icon, overriding the root one.
+        if (svc !== null && stack.length === 3 && stack[2].key === 'x-unraid' &&
+            c.key === 'icon' && c.valueCol >= 0) {
+          var sc6 = scanEntryText(lines[i], c.valueCol);
+          if (sc6) pushIconRef(out, sc6.text, svc);
+        }
+        return;
+      }
 
-        // A service's volumes: list — the same host-side extraction as
-        // hostPaths() above, restricted to a relative path and attributed
-        // to the enclosing service.
-        if (svc !== null && stack.length === 3 && stack[2].key === 'volumes') {
-          if (c.sub.kind === 'key') {
-            var r = readVolumeItem(lines, i, c);
-            if (r.source && (r.type === null || r.type === 'bind') && isHostPathLike(r.source.text)) {
-              pushFileRef(out, r.source.text, svc, 'volume');
-            }
-            i = r.next - 1;
-            continue;
+      if (c.kind !== 'seq' || !c.sub) return;
+
+      // Top-level include:, written as a list. Each entry can also be a map
+      // (- path: other.yaml, with extra keys) — left unread rather than
+      // guessed at, same as env_file's own long form just below.
+      if (stack.length === 1 && stack[0].key === 'include') {
+        if (c.sub.kind !== 'key') {
+          var inc = scanEntryText(lines[i], c.contentCol);
+          if (inc) pushFileRef(out, inc.text, '', 'include');
+        }
+        return;
+      }
+
+      // A service's env_file: written as a list. The compose spec also
+      // allows a long form here (- path: .env, required: false); that is
+      // deliberately left unread rather than guessed at.
+      if (svc !== null && stack.length === 3 && stack[2].key === 'env_file') {
+        if (c.sub.kind !== 'key') {
+          var ef = scanEntryText(lines[i], c.contentCol);
+          if (ef) pushFileRef(out, ef.text, svc, 'env_file');
+        }
+        return;
+      }
+
+      // A service's volumes: list — the same host-side extraction as
+      // hostPaths() above, restricted to a relative path and attributed
+      // to the enclosing service.
+      if (svc !== null && stack.length === 3 && stack[2].key === 'volumes') {
+        if (c.sub.kind === 'key') {
+          var r = readVolumeItem(lines, i, c);
+          if (r.source && (r.type === null || r.type === 'bind') && isHostPathLike(r.source.text)) {
+            pushFileRef(out, r.source.text, svc, 'volume');
           }
-          var scanned = scanEntryText(line, c.contentCol);
-          if (scanned) {
-            var bits = splitOutsideVars(scanned.text);
-            if (bits.length >= 2 && isHostPathLike(bits[0])) pushFileRef(out, bits[0], svc, 'volume');
-          }
+          return r.next;
+        }
+        var scanned = scanEntryText(lines[i], c.contentCol);
+        if (scanned) {
+          var bits = splitOutsideVars(scanned.text);
+          if (bits.length >= 2 && isHostPathLike(bits[0])) pushFileRef(out, bits[0], svc, 'volume');
         }
       }
-    } catch (e) {
-      return [];
     }
+    if (!walkKeyed(text, visit)) return [];
     return out;
   }
 
@@ -10577,6 +10481,7 @@
   var API = {
     parse: parse,
     serialise: serialise,
+    servicesMap: servicesMapOf,
     buildForm: buildForm,
     setPart: setPart,
     renameService: renameService,
@@ -10616,12 +10521,10 @@
     // Phase 3 (PLAN_8) calls this from stacks.js to drop a whole
     // healthcheck/deploy block when its tick box is switched off.
     removeKey: removeKey,
-    // Phase 4 (PLAN_8): healthcheck.test read as {mode, command} and written
-    // back as one canonical line. splitQuoted/parseFlowList are exported
-    // because stacks.js's own commandSay() gloss needs the same splitting —
-    // see the comment beside splitQuoted() above for why there is only one
-    // copy of it now.
-    readTest: readTest,
+    // Phase 4 (PLAN_8): healthcheck.test written back as one canonical line.
+    // splitQuoted/parseFlowList are exported because stacks.js's own
+    // commandSay() gloss needs the same splitting — see the comment beside
+    // splitQuoted() above for why there is only one copy of it now.
     writeTest: writeTest,
     // Phase 5 (PLAN_8): stacks.js calls this directly to add a long-form
     // dependency — condition: service_started written explicitly alongside
@@ -10717,7 +10620,6 @@
     interpolates: interpolates,
     escapeDollars: escapeDollars,
     hashNeedsEscaping: hashNeedsEscaping,
-    dollarsNeedEscaping: dollarsNeedEscaping,
     // PLAN_70 stage 5: the two pure decisions behind the cross-stack lookup
     // — see the section comment above crossLooksLikeAddress() for why they
     // live here rather than in stacks.js.
@@ -10760,6 +10662,12 @@
     redactText: redactText,
     redactEnv: redactEnv,
     secretEnvNames: secretEnvNames,
+    // PLAN_198 — the one rule for reading a ".env" line's name and value
+    // (an optional leading "export " is part of the syntax, not the
+    // name), shared with merge-write.js's own readEnvText() so a merge
+    // reads a settings file the same way redactEnv() above already does.
+    // No 'g' flag, so sharing the one RegExp object is safe.
+    envLineRe: ENV_LINE_RE,
     // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
     // CHOICES table — see the comment above VOCAB for what stayed behind.
     vocab: vocab,
@@ -10777,7 +10685,12 @@
     portsNote: portsNote,
     setPortsNote: setPortsNote,
     commentOutPorts: commentOutPorts,
-    restorePorts: restorePorts
+    restorePorts: restorePorts,
+    // PLAN_198 item 7 — merge-write.js's own computeBlocks() (the same
+    // idea, a key's own lead comment plus its trailing gap travelling as
+    // one block) is built on this rather than keeping a second, hand-
+    // classified copy of it.
+    buildSpans: buildSpans
   };
 
   if (typeof window !== 'undefined') window.StaxxYaml = API;

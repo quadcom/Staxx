@@ -10,17 +10,8 @@
  * memoises the first time it is read, so the key is seeded into the config
  * file BEFORE php runs, not changed from inside this script.
  *
- *     pscp tests/server/archive_images.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b-archive-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b-archive-store\"" >> $CFG
- *       php /tmp/archive_images.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/archive_images.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b-archive-store /tmp/archive_images.php'
  *
  * The central update-state file lives on the flash drive too — this script
  * points STAXX_UPDATE_STATE at a scratch file in /tmp via putenv(), before

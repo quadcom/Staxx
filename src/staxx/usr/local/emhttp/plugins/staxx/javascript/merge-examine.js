@@ -236,23 +236,21 @@
   /* =====================================================================
    * Locating the exact lines a finding will change, in that SOURCE's own
    * original text — for the wizard's source-pane marks and its
-   * click-to-pair scroll. Read-only: nothing here edits anything, so it can
-   * afford to be a much lighter re-implementation of the structural finding
-   * merge-write.js's own edit functions already do properly. A source with
-   * no `.text` (a hand-built descriptor, as most of this file's own tests
-   * use) simply gets no lines — never a thrown error and never a guess.
+   * click-to-pair scroll. Read-only: nothing here edits anything. These
+   * line helpers are the one copy each — merge-write.js's own edit
+   * functions read them too, rather than each file keeping its own. A
+   * source with no `.text` (a hand-built descriptor, as most of this
+   * file's own tests use) simply gets no lines — never a thrown error and
+   * never a guess.
    * ===================================================================== */
 
-  function lineKind(line) {
-    var m = /^([ \t]*)#/.exec(line);
-    if (m) return { kind: 'comment', indent: m[1].length };
-    if (/^[ \t]*$/.test(line)) return { kind: 'blank', indent: 0 };
-    return { kind: 'other', indent: /^([ \t]*)/.exec(line)[1].length };
-  }
-
+  // A forwarder, not a second copy: compose-model.js holds the one real
+  // servicesMap() (PLAN_199 phase 1). Called at run time, not aliased at
+  // load, because this file is written to load even where CM is absent
+  // (docCacheFor's own guard below) — every actual call here always has a
+  // parsed document in hand, which only exists when CM does too.
   function servicesMapOf(doc) {
-    var svc = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    return svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
+    return CM.servicesMap(doc);
   }
 
   function declMapOf(doc, kind) {
@@ -260,6 +258,8 @@
     return d && d.value && d.value.kind === 'map' ? d.value : null;
   }
 
+  // `keyLine` is the key's own line, so a caller needing it (merge-write.js's
+  // findPortsRange, below) has no separate search left to do.
   function findKeyChildRange(doc, mapStart, mapEnd, keyRegex) {
     for (var i = mapStart; i < mapEnd; i++) {
       var m = keyRegex.exec(doc.lines[i]);
@@ -271,7 +271,7 @@
         if (lm && lm[1].length <= indent) break;
         j++;
       }
-      return { start: i + 1, end: j };
+      return { start: i + 1, end: j, keyLine: i };
     }
     return null;
   }
@@ -372,12 +372,23 @@
     return a === b;
   }
 
+  // The parsed document behind a descriptor merge-write.js built, so it is
+  // not parsed again here. Kept beside the descriptor rather than on it:
+  // the suites compare descriptors, and a new property would show in
+  // every one.
+  var DOC_OF = new WeakMap();
+  function rememberDoc(desc, doc) { DOC_OF.set(desc, doc); return desc; }
+
   // A per-examine() cache of parsed docs, keyed by source name — several
   // finding kinds for the same source each want their own lookup, and
-  // CM.parse() is not free enough to redo per finding.
+  // CM.parse() is not free enough to redo per finding. A source
+  // merge-write.js already parsed (rememberDoc(), above) hands back that
+  // same document instead of a fresh parse (PLAN_198 item 3).
   function docCacheFor(sources) {
     var cache = {};
     sources.forEach(function (s) {
+      var known = s && DOC_OF.get(s);
+      if (known) { cache[s.name] = known; return; }
       if (s && s.text && CM) { try { cache[s.name] = CM.parse(s.text); } catch (e) { /* left undefined */ } }
     });
     return cache;
@@ -862,7 +873,13 @@
           // dedupe only ever fires when the values already match, the
           // value the wizard would write is right here, not worth a second
           // lookup back into this source's own .env for.
-          sameValue.push({ name: line.name, stack: s.name, value: line.value });
+          // `lead` (an "export " prefix, or a leading space the name
+          // would otherwise absorb) carries through so a "keep both"
+          // answer, or the struck line's own preview, shows this setting
+          // exactly as its author wrote it.
+          var sameValueEntry = { name: line.name, stack: s.name, value: line.value };
+          if (line.lead) sameValueEntry.lead = line.lead;
+          sameValue.push(sameValueEntry);
           // `dedupe`/`name` mark this placeholder so merge-write.js can
           // find it by identity rather than parsing its own wording back
           // out of `text` — that text is only ever shown at all when a
@@ -1591,13 +1608,17 @@
     // Refusals first — nothing past a refusal is written, so it is said first.
     findings = findings.concat(findHiddenConfigFindings(sources));
 
-    findCompanionFindings(sources, docCache).forEach(function (f) {
+    // Read once, split into the same two passes as before (refusals ahead
+    // of the storage findings, the rest after) so finding order is unchanged.
+    var companion = findCompanionFindings(sources, docCache);
+
+    companion.forEach(function (f) {
       if (f.severity === 'refusal') findings.push(f);
     });
 
     findings = findings.concat(findStorageFindings(sources, docCache));
 
-    findCompanionFindings(sources, docCache).forEach(function (f) {
+    companion.forEach(function (f) {
       if (f.severity !== 'refusal') findings.push(f);
     });
 
@@ -1645,15 +1666,6 @@
     // examine()'s combined output.
     suffix: suffix,
     leaf: leaf,
-    adjustUpPath: adjustUpPath,
-    resolveDepthPath: resolveDepthPath,
-    findingKey: findingKey,
-    // PLAN_155 C10: the dry run picks its own port-clash decision by hand,
-    // and it must land on the exact same number examine() would have
-    // suggested — sharing the helper is what makes that provable rather
-    // than merely likely.
-    pickFreePort: pickFreePort,
-    allPublishedPorts: allPublishedPorts,
     // F3 — the one port-body parser, shared with merge-write.js's own
     // splitPortEntry() (descriptor building) and line-based parsePortBody()
     // (locating/rewriting a "ports:" list entry), so the two files can never
@@ -1662,7 +1674,20 @@
     // Exposed so the step 2 summary card can flag a hidden-config refusal
     // for one stack the moment it is read, without waiting on a full
     // examine() over every picked source.
-    findHiddenConfigFindings: findHiddenConfigFindings
+    findHiddenConfigFindings: findHiddenConfigFindings,
+    // The one copy of these line-scanning helpers (PLAN_198 item 1) —
+    // merge-write.js's edit functions read them the same way this file's
+    // own read-only finders do, rather than keeping a second copy of each.
+    declMapOf: declMapOf,
+    findKeyChildRange: findKeyChildRange,
+    findPortsRange: findPortsRange,
+    parsePortListLine: parsePortListLine,
+    locatePortLine: locatePortLine,
+    locateEnvLine: locateEnvLine,
+    // PLAN_198 item 3 — merge-write.js hands back the document it already
+    // parsed for a descriptor, rather than this file parsing the same
+    // text a second time.
+    rememberDoc: rememberDoc
   };
 
   if (typeof window !== 'undefined') window.StaxxMergeExamine = API;

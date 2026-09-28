@@ -39,11 +39,12 @@
 - **`staxx_hub_repo_path()` is for asking a registry, never for asking local Docker.** It turns
   `lscr.io/linuxserver/plex` into `linuxserver/plex` on purpose, for the Hub lookups — but Docker
   stores the image under the name it was pulled as, so `docker image ls|inspect linuxserver/plex…`
-  finds nothing. That one mix-up made the weekly image cleanup miss every linuxserver image and made
+  finds nothing. That one mix-up made every linuxserver image invisible to local matching and made
   every linuxserver roll-back refuse as "no longer present" (both fixed 2026-09-24, PLAN_180 parts 2
   and 2c). A local Docker call uses the service's own reference with its tag and digest stripped
   (`staxx_update_local_repo()`), or reads Docker's whole listing and normalises each row's own
-  name through the same rule as whatever it is compared with (`staxx_update_cleanup_pick()`).
+  name through the same rule as whatever it is compared with (as `staxx_image_local()` does with
+  each `RepoDigests` entry).
 - **`docker rmi repo@digest` frees nothing while the image still has a tag.** It only drops the
   digest reference — and then the image has no digest at all, so anything matching by digest can
   never find it again. Measured 2026-09-24 on Plex `1.42.2` and friends. Remove every `repo:tag`

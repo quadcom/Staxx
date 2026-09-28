@@ -25,14 +25,7 @@ var path = require('path');
 
 var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function firstDiff(a, b) {
   var A = a.split('\n'), B = b.split('\n');
@@ -311,5 +304,4 @@ console.log('\n5. Full round trip: setNetworkMode(host) then restoreNetworkStash
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-if (fail > 0) process.exit(1);
+check.done();

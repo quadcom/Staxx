@@ -8,14 +8,11 @@
  * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
  * blank, so the refusal cases (which need a real, on-disk stack for
  * staxx_start_job() to find) need it pointed at /tmp instead, same as
- * override.php:
+ * override.php, through the shared wrapper that sets it and restores it on
+ * every exit path:
  *
- *     CFG=/boot/config/plugins/staxx/staxx.cfg
- *     cp $CFG /tmp/cfg.bak
- *     sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/p140-networks"#' $CFG
- *     php /tmp/networks.php; RC=$?
- *     cp /tmp/cfg.bak $CFG
- *     exit $RC
+ *     pscp tests/server/run-with-store.sh tests/server/networks.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/p140-networks /tmp/networks.php'
  *
  * The question itself (staxx_missing_external_networks() with an explicit
  * $networks list) needs no config key at all and is checked first.

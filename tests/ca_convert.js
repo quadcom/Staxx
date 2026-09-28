@@ -22,15 +22,7 @@ var path = require('path');
 
 var CA = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/ca-convert.js');
 var Y  = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
-
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function count(str, needle) {
   return str.split(needle).length - 1;
@@ -1517,5 +1509,4 @@ ok('an empty [PORT:] marker with no ports: is written unchanged',
 
 /* ---- summary ------------------------------------------------------------ */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

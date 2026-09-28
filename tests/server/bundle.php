@@ -14,17 +14,8 @@
  * part-way through this script — which is why the whole run below is wrapped in a redirected
  * config even though only the last two cases actually touch the store:
  *
- *     pscp tests/server/bundle.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzb-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzb-store\"" >> $CFG
- *       php /tmp/bundle.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/bundle.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzb-store /tmp/bundle.php'
  *
  * The restore happens in the shell wrapper on every exit path, php dying outright included — never
  * from inside this script, the same pattern tests/server/export.php and record.php use. NEVER point

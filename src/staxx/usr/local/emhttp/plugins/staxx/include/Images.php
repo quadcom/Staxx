@@ -32,36 +32,33 @@ if (defined('STAXX_IMAGES_LOADED')) return;
 define('STAXX_IMAGES_LOADED', true);
 
 /**
- * Its own resolved php binary, the same three lines Crypt.php carries for
- * the same reason (see staxx_crypt_php_bin()): PHP's environment here is not
- * a login shell, so PATH cannot be trusted, and three duplicated lines are
- * cheaper than a dependency on a file this one has no other reason to need.
+ * One `docker info` call for both the data root and the storage driver
+ * (PLAN_190 item 8: these were two separate `docker info` runs, 0.3-1 s
+ * each on the box). Cached for the life of the request; the tab is a real
+ * tab byte written here, never the two characters `\t` — a Go template
+ * separator has to be the actual character, the same trap
+ * staxx_container_net() records for its own template.
  */
-function staxx_images_php_bin(): string {
-  static $bin = null;
-  if ($bin !== null) return $bin;
-  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
-    if (is_file($path) && is_executable($path)) return $bin = $path;
-  }
-  return $bin = 'php';
+function staxx_images_docker_info(): array {
+  static $info = null;
+  if ($info !== null) return $info;
+  $code = 1;
+  $out = trim(staxx_sh(staxx_docker_bin().' info --format '.escapeshellarg('{{.DockerRootDir}}'."\t".'{{.Driver}}'), 10, $code));
+  $parts = $code === 0 ? explode("\t", $out) : [];
+  return $info = ['root' => ($parts[0] ?? '') !== '' ? $parts[0] : '/var/lib/docker', 'driver' => $parts[1] ?? ''];
 }
 
 /**
  * Docker's own data root ("docker info"'s DockerRootDir) — needed for the
  * capacity bar's figures (item 9) and to find a broken container's own
  * files under <root>/containers/<id>/, which `docker inspect` cannot read
- * for it (item 10). Cached for the life of the request; falls back to
- * Docker's own usual default when `docker info` itself cannot be asked,
- * since a wrong guess only ever costs a missing bar or missing facts
- * downstream, never a wrong command.
+ * for it (item 10). Falls back to Docker's own usual default when
+ * `docker info` itself cannot be asked, since a wrong guess only ever
+ * costs a missing bar or missing facts downstream, never a wrong command.
  * PLAN_181 item 9 / item 10.
  */
 function staxx_images_docker_root(): string {
-  static $root = null;
-  if ($root !== null) return $root;
-  $code = 1;
-  $out = trim(staxx_sh(staxx_docker_bin().' info --format '.escapeshellarg('{{.DockerRootDir}}'), 10, $code));
-  return $root = ($code === 0 && $out !== '') ? $out : '/var/lib/docker';
+  return staxx_images_docker_info()['root'];
 }
 
 /**
@@ -83,14 +80,10 @@ function staxx_images_storage(): ?array {
 /**
  * PLAN_181 "layer counting" build — Docker's storage driver ("docker
  * info"'s Driver, e.g. "btrfs" on the box), needed to find where each
- * layer's own size is recorded. Cached for the life of the request.
+ * layer's own size is recorded.
  */
 function staxx_images_docker_driver(): string {
-  static $driver = null;
-  if ($driver !== null) return $driver;
-  $code = 1;
-  $out = trim(staxx_sh(staxx_docker_bin().' info --format '.escapeshellarg('{{.Driver}}'), 10, $code));
-  return $driver = ($code === 0 && $out !== '') ? $out : '';
+  return staxx_images_docker_info()['driver'];
 }
 
 /**
@@ -518,12 +511,11 @@ function staxx_images_keep_owners(): array {
     array_keys((array)($state['history'] ?? []))
   ));
 
-  $stacksByName = [];
-  foreach (staxx_list_stacks() as $s) $stacksByName[$s['name']] = $s;
+  $known = staxx_stack_compose_map();
 
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
-    if (!isset($stacksByName[$stack])) continue;
+    if (!isset($known[$stack])) continue;
     $label = $stack.' › '.$service;
     foreach (staxx_update_history($stack, $service) as $d) {
       if (!isset($owners[$d])) $owners[$d] = $label;
@@ -544,7 +536,7 @@ function staxx_images_keep_owners(): array {
  */
 function staxx_images_stack_refs(): array {
   $refs = [];
-  foreach (staxx_list_stacks() as $s) {
+  foreach (staxx_stack_states() as $s) {
     if ($s['file'] === '') continue;
     $meta = staxx_compose_meta($s['file']);
     foreach ($meta['services'] as $service) {
@@ -835,11 +827,21 @@ function staxx_images_unused(string &$error): array {
 
   // Rules 4a/4c/6/7 all need docker image inspect's own view — RepoDigests,
   // labels, layers (below) and byte size — asked once over every candidate
-  // ID, not one call per image.
-  $idsArg = implode(' ', array_map('escapeshellarg', array_keys($byId)));
+  // ID. The in-use ids ($usedFullIds) ride in the same call, so pass 1a
+  // below (their layers, for "rebuilt" naming) needs no inspect of its
+  // own; each pass filters the one decoded list down to the ids it wants.
+  $allIds = array_unique(array_merge(array_keys($byId), array_keys($usedFullIds)));
+  $idsArg = implode(' ', array_map('escapeshellarg', $allIds));
   $inspectOut = staxx_sh(
-    staxx_docker_bin().' image inspect --format '.escapeshellarg('{{json .}}').' '.$idsArg, 30
+    staxx_docker_bin().' image inspect --format '.escapeshellarg('{{json .}}').' '.$idsArg, 60
   );
+  $inspected = [];
+  foreach (explode("\n", trim($inspectOut)) as $jsonLine) {
+    $jsonLine = trim($jsonLine);
+    if ($jsonLine === '') continue;
+    $info = json_decode($jsonLine, true);
+    if (is_array($info)) $inspected[] = $info;
+  }
 
   $keepDigests = staxx_images_keep_digest_set();
   $keepOwners  = staxx_images_keep_owners();
@@ -855,12 +857,7 @@ function staxx_images_unused(string &$error): array {
   $protectedLayers  = [];  // layer lists of images excluded before grouping
                             // (today: staxx.crypt) — never clutter, never a row
 
-  foreach (explode("\n", trim($inspectOut)) as $jsonLine) {
-    $jsonLine = trim($jsonLine);
-    if ($jsonLine === '') continue;
-    $info = json_decode($jsonLine, true);
-    if (!is_array($info)) continue;
-
+  foreach ($inspected as $info) {
     $id   = (string)($info['Id'] ?? '');
     if ($id === '' || !isset($byId[$id])) continue;
     $tags = $byId[$id];
@@ -967,35 +964,27 @@ function staxx_images_unused(string &$error): array {
   }
 
   // Pass 1a — every RUNNING (in-use) image's own layers, Cmd and
-  // Entrypoint, one more batched inspect over the ids $usedFullIds
-  // collected above (never a candidate row, since a container is using
+  // Entrypoint, read from the same decoded inspect ($inspected) rather
+  // than a second call (never a candidate row, since a container is using
   // them). Needed before naming below: the common real-world "rebuilt"
   // case is a leftover from rebuilding an app that is CURRENTLY RUNNING —
   // on the box, 28 leftovers are earlier builds of pmd:local, itself never
   // a candidate — so the match pool below has to include these, not just
-  // the clutter/keep/wanted candidates already in $taggedCandidates.
+  // the clutter/keep/wanted candidates already in $taggedCandidates. The
+  // membership test keeps a candidate's layers out of this pass — without
+  // it, every $byId entry (also in $inspected) would be miscounted as in use.
   $usedLayersById = [];
-  if ($usedFullIds) {
-    $usedIdsArg = implode(' ', array_map('escapeshellarg', array_keys($usedFullIds)));
-    $usedInspectOut = staxx_sh(
-      staxx_docker_bin().' image inspect --format '.escapeshellarg('{{json .}}').' '.$usedIdsArg, 30
-    );
-    foreach (explode("\n", trim($usedInspectOut)) as $jsonLine) {
-      $jsonLine = trim($jsonLine);
-      if ($jsonLine === '') continue;
-      $info = json_decode($jsonLine, true);
-      if (!is_array($info)) continue;
-      $uid = (string)($info['Id'] ?? '');
-      if ($uid === '') continue;
-      $uLayers = array_values((array)($info['RootFS']['Layers'] ?? []));
-      $usedLayersById[$uid] = $uLayers;
-      $uTags = $usedTags[$uid] ?? [];
-      if ($uTags) {
-        $taggedCandidates[] = [
-          'tag' => $uTags[0], 'layers' => $uLayers,
-          'cmd' => $info['Config']['Cmd'] ?? null, 'entrypoint' => $info['Config']['Entrypoint'] ?? null,
-        ];
-      }
+  foreach ($inspected as $info) {
+    $uid = (string)($info['Id'] ?? '');
+    if ($uid === '' || !isset($usedFullIds[$uid])) continue;
+    $uLayers = array_values((array)($info['RootFS']['Layers'] ?? []));
+    $usedLayersById[$uid] = $uLayers;
+    $uTags = $usedTags[$uid] ?? [];
+    if ($uTags) {
+      $taggedCandidates[] = [
+        'tag' => $uTags[0], 'layers' => $uLayers,
+        'cmd' => $info['Config']['Cmd'] ?? null, 'entrypoint' => $info['Config']['Entrypoint'] ?? null,
+      ];
     }
   }
 
@@ -1212,28 +1201,18 @@ function staxx_images_remove_job(array $ids, string &$error): string {
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) { $error = 'Could not create '.STAXX_JOB_DIR; return ''; }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
   // Handed to the detached process as plain data via var_export(), the same
   // pattern staxx_crypt_start_job() uses to run one of this plugin's own
   // functions in the background — never shell arguments built from user
   // input, since the ids were already checked against the server's own
   // list above.
-  $php = staxx_images_php_bin().' -r '.escapeshellarg(
+  $php = staxx_php_bin().' -r '.escapeshellarg(
     'require '.var_export(__DIR__.'/Images.php', true).'; '
     .'exit(staxx_images_do_remove('.var_export($rows, true).') ? 0 : 1);'
   );
   $inner = $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"';
 
-  @file_put_contents($log, '$ removing the selected images'."\n\n");
-  @chmod($log, 0600);
-
-  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
-
-  return $job;
+  return staxx_spawn_job('removing the selected images', $inner, $error);
 }
 
 /**
@@ -1459,11 +1438,7 @@ function staxx_storage_alert_refresh(string &$error): array {
   if ($sinceFile !== '') {
     $dir = dirname($sinceFile);
     if (is_dir($dir) || @mkdir($dir, 0755, true)) {
-      $tmp = $dir.'/.'.basename($sinceFile).'.'.getmypid().'.tmp';
-      if (@file_put_contents($tmp, json_encode($since, JSON_PRETTY_PRINT)) !== false) {
-        @rename($tmp, $sinceFile);
-        @chmod($sinceFile, 0600);
-      }
+      staxx_atomic_write($sinceFile, json_encode($since, JSON_PRETTY_PRINT), 0600);
     }
   }
 
@@ -1471,11 +1446,7 @@ function staxx_storage_alert_refresh(string &$error): array {
   if ($alertFile !== '') {
     $dir = dirname($alertFile);
     if (is_dir($dir) || @mkdir($dir, 0755, true)) {
-      $tmp = $dir.'/.'.basename($alertFile).'.'.getmypid().'.tmp';
-      if (@file_put_contents($tmp, json_encode($result, JSON_PRETTY_PRINT)) !== false) {
-        @rename($tmp, $alertFile);
-        @chmod($alertFile, 0600);
-      }
+      staxx_atomic_write($alertFile, json_encode($result, JSON_PRETTY_PRINT), 0600);
     }
   }
 

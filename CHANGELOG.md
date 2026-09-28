@@ -7,6 +7,9 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - On the Manage tab, the handles between the log, shell and files panes no longer stay stuck to the mouse after a quick drag across the shell.
+- When you merge stacks, a line in a stack's settings file written as `export NAME=value` is now read the way Docker Compose reads it, so an address set that way is carried into the new stack instead of coming out empty.
+- When a start, update, rebuild or roll-back fails while the stack list is redrawing, its red failure marker now appears on the row straight away instead of waiting for the next refresh.
+- When you install an app from Community Applications or Unraid's Add Container page, StaXX now warns you that it already runs that app even when your stack sits inside a folder or its name differs only in capital letters.
 - Clearing a network's fixed address or hardware address in the editor now removes it from the compose file, instead of it coming back when the editor is reopened or the stack restarts.
 - On a phone, a stack's menu no longer closes when you scroll the page to reach its lower items.
 - The container file manager has its own switch in Settings, Container files, beside Container shells in a box now called Container access. Until you change it, it follows your shell setting, so if you had shells switched off the file manager stays off too. On the Manage tab, a tool that is switched off is no longer shown: the other one takes its space, and with both off the log fills the whole tab.
