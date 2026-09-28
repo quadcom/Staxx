@@ -36807,15 +36807,12 @@
     };
   }
 
-  // Mirrors merge-write.js's own decisionValue() (not exported, so read
-  // fresh here): an unset decision reads as whichever choice the finding
-  // itself marked recommended.
+  // PLAN_198 10 — reads merge-write.js's own rule, exported as decisionValue(),
+  // so the two can never drift: an unset decision reads as whichever choice
+  // the finding itself marked recommended, except a "wiring" finding (an
+  // address-rewire), which reads as its own default tick instead.
   function mergeFindingDecision(f) {
-    var stored = mergeState.decisions[f.key];
-    if (stored !== undefined) return stored;
-    var rec = null;
-    (f.choices || []).forEach(function (c) { if (c.recommended) rec = c.id; });
-    return rec;
+    return window.StaxxMergeWrite.decisionValue(mergeState.decisions, f);
   }
 
   function mergeSettingsJoinFinding() {
@@ -37613,19 +37610,15 @@
 
   // The merged file's own services, in file order — read straight off the
   // parse tree rather than through YAML.buildForm(), which has no notion
-  // of "just the service names" on its own. Mirrors merge-write.js's own
-  // servicesMapOf(); duplicated rather than shared for the same reason
-  // that file gives for having its own copy — this is a structural read
-  // against the parser's tree, not a form-side helper.
+  // of "just the service names" on its own. Reads the model's own helper
+  // (PLAN_199, CM.servicesMap()) rather than keeping its own copy.
   function mergeSuggestServices(doc) {
-    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var map = YAML.servicesMap(doc);
     return map ? map.keys.slice() : [];
   }
 
   function mergeSuggestHasHealthcheck(doc, service) {
-    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var map = YAML.servicesMap(doc);
     var pair = map ? map.pairs[service] : null;
     var own = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
     return !!(own && own.pairs['healthcheck']);
@@ -37637,8 +37630,7 @@
   // apart, and calling a switched-off check "built in" is simply false, so
   // this is read separately and only asked when the block exists at all.
   function mergeSuggestHealthIsDisabled(doc, service) {
-    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var map = YAML.servicesMap(doc);
     var pair = map ? map.pairs[service] : null;
     var own = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
     var hc = own ? own.pairs['healthcheck'] : null;
@@ -37712,6 +37704,15 @@
     }
   }
 
+  // PLAN_198 10 — "recompute the suggestions, then redraw step 5" is
+  // written unconditionally at eight call sites; the two places that guard
+  // it on "still on step 5" (a network reply that may have landed after
+  // the wizard moved on) keep their own guard rather than calling this.
+  function mergeSuggestRefresh() {
+    mergeSuggestRecompute();
+    mergeRenderStep5();
+  }
+
   // PLAN_169 F14 — every depends_on edge a source file already wrote (a
   // plain list, or the map form with its own `condition:`), read straight
   // off the merged text rather than any finding — nothing rewired these, so
@@ -37719,8 +37720,7 @@
   // mergeSeededDeps() below can tell them apart from a line the person can
   // still draw or remove.
   function mergeExistingDeps(doc) {
-    var svcs = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
-    var map = svcs && svcs.value && svcs.value.kind === 'map' ? svcs.value : null;
+    var map = YAML.servicesMap(doc);
     var deps = [];
     if (!map) return deps;
     map.keys.forEach(function (svcName) {
@@ -37908,8 +37908,7 @@
     if (from === to) return;
     var exists = mergeState.suggest.deps.some(function (d) { return d.from === from && d.to === to; });
     if (!exists) mergeState.suggest.deps.push({ from: from, to: to });
-    mergeSuggestRecompute();
-    mergeRenderStep5();
+    mergeSuggestRefresh();
   }
 
   function mergeDepBoardEls() {
@@ -38635,8 +38634,7 @@
       var idx = parseInt(path.dataset.depIndex, 10);
       if (isNaN(idx)) return;
       mergeState.suggest.deps.splice(idx, 1);
-      mergeSuggestRecompute();
-      mergeRenderStep5();
+      mergeSuggestRefresh();
     });
 
     mergeModal.addEventListener('click', function (event) {
@@ -38644,8 +38642,7 @@
       if (!btn || !mergeState) return;
       mergeState.suggest.health[btn.dataset.healthOwn] =
         { on: true, source: 'own', mode: 'CMD-SHELL', test: ['CMD-SHELL', ''], interval: '30s', timeout: '10s', retries: 3 };
-      mergeSuggestRecompute();
-      mergeRenderStep5();
+      mergeSuggestRefresh();
     });
 
     mergeModal.addEventListener('change', function (event) {
@@ -38664,8 +38661,7 @@
         } else if (h) {
           h.on = el.checked;
         }
-        mergeSuggestRecompute();
-        mergeRenderStep5();
+        mergeSuggestRefresh();
       } else if (el.name === 'staxx-merge-update-mode') {
         // Leaving Automatic eases the Install row out before it is torn
         // down, rather than popping — see mergeRenderUpdateBlock()'s own
@@ -38681,26 +38677,22 @@
           setTimeout(function () {
             if (!mergeState) return;
             mergeState.suggest.update.mode = newMode;
-            mergeSuggestRecompute();
-            mergeRenderStep5();
+            mergeSuggestRefresh();
           }, 280);
         } else {
           mergeState.suggest.update.mode = newMode;
-          mergeSuggestRecompute();
-          mergeRenderStep5();
+          mergeSuggestRefresh();
         }
       } else if (el.name === 'staxx-merge-update-install') {
         mergeState.suggest.update.immediate = el.value === 'immediate';
-        mergeSuggestRecompute();
-        mergeRenderStep5();
+        mergeSuggestRefresh();
       } else if (el.dataset && el.dataset.mergeNotify) {
         // The first flip is what turns "follow the server" into "this
         // stack's own answer" — every switch after that is just an update
         // to a row that is already explicit (third interactive session).
         mergeState.suggest.update.notify.touched = true;
         mergeState.suggest.update.notify[el.dataset.mergeNotify] = el.checked;
-        mergeSuggestRecompute();
-        mergeRenderStep5();
+        mergeSuggestRefresh();
       }
     });
 
@@ -39182,17 +39174,12 @@
     } else if (mergeState.step === 2) {
       mergeRenderStep2();   // sets nextBtn.disabled itself, via mergeUpdateStep2Live()
     } else if (mergeState.step === 3) {
+      // PLAN_198 10 — mergeRenderTally() (called by mergeRenderStep3() below)
+      // already sets the Next lock from the same counts; recomputing it
+      // here a second time could only ever agree.
       mergeRenderStep3();
-      var refusals = (mergeState.built && mergeState.built.refusals) || [];
-      var outstanding3 = mergeOutstandingKeys().length;
-      nextBtn.disabled = refusals.length > 0 || outstanding3 > 0;
-      nextBtn.title = outstanding3 > 0 ? 'Answer every marked change before going on.' : '';
     } else if (mergeState.step === 4) {
-      mergeRenderStep4();   // paints its own tally
-      var refusals4 = (mergeState.built && mergeState.built.refusals) || [];
-      var outstanding4 = mergeStep4TallyCounts().o;
-      nextBtn.disabled = refusals4.length > 0 || outstanding4 > 0;
-      nextBtn.title = outstanding4 > 0 ? 'Answer every marked change before going on.' : '';
+      mergeRenderStep4();   // paints its own tally, and the Next lock with it
     } else if (mergeState.step === 5) {
       // Every suggestion here is optional (PLAN_155: "everything is off by
       // default"), so there is never a refusal to gate Next on.
