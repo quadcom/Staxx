@@ -125,6 +125,15 @@ function staxx_import_taken_by(string $folder, string $id = '', string $name = '
 }
 
 /**
+ * Whether a stack already runs the app an Unraid template names: by the
+ * folder name it would take (any depth, any case) or by an imported stack's
+ * own recorded source name.
+ */
+function staxx_import_name_taken(string $name): bool {
+  return $name !== '' && staxx_import_taken_by(staxx_import_safe_name($name), '', $name) !== '';
+}
+
+/**
  * Every stack's own record of what it was imported from, read once and kept
  * for the rest of the request — PLAN_141 point 3. Only stacks that name a
  * source at all are worth reading twice (staxx_compose_meta() caches its own

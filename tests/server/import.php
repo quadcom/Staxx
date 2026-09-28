@@ -537,6 +537,11 @@ $nestedTaken = staxx_import_taken_by('zzb1importleaf');
 ok('a nested stack counts as taken at any depth',
    $nestedTaken === 'zzb1importfolder2/zzb1importleaf', $nestedTaken);
 
+ok('the Add Container warning finds a stack inside a folder', staxx_import_name_taken('zzb1importleaf'));
+ok('the Add Container warning ignores case', staxx_import_name_taken('ZZB1ImportLeaf'));
+ok('the Add Container warning stays quiet for an unused name', !staxx_import_name_taken('zzb1nosuchapp'));
+ok('the Add Container warning stays quiet for no name', !staxx_import_name_taken(''));
+
 @exec('rm -rf '.escapeshellarg($nestedFolderDir));
 staxx_scan_stacks_reset();
 staxx_import_taken_names(true);

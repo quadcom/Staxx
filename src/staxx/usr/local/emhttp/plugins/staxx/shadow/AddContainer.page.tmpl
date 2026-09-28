@@ -251,13 +251,14 @@ if ($staxx_show_edit_offer) {
       // and nothing else.
     }
 
-    // The same name-to-folder heuristic staxx_import_templates() already uses
-    // to mark an import row "taken" — not a guarantee (a stack can be renamed
-    // away from its app's name on the way in), but cheap, off a lookup this
-    // request needs no extra work to have, and worth saying rather than
-    // staying quiet about the exact duplicate PLAN_63's Phase D worried about.
-    $staxx_already = $staxx_edit_name !== ''
-      && in_array(staxx_import_safe_name($staxx_edit_name), staxx_import_taken_names(), true);
+    // The same "does a stack already run this app" check the import list
+    // uses — by the folder name it would take, at any depth and any case,
+    // or by the source recorded on a stack renamed after import — not a
+    // guarantee (a stack can be renamed away from its app's name on the way
+    // in), but cheap, off a lookup this request needs no extra work to have,
+    // and worth saying rather than staying quiet about the exact duplicate
+    // PLAN_63's Phase D worried about.
+    $staxx_already = staxx_import_name_taken($staxx_edit_name);
   }
 
   // Both follow-ups are THIS request's own URL with only the "staxx" flag
