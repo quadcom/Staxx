@@ -9,17 +9,8 @@
  * one that inherited Adrian's real store; the caller sets it and puts the
  * config back:
  *
- *     pscp tests/server/store.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzstore-seed\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzstore-seed\"" >> $CFG
- *       php /tmp/store.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/store.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzstore-seed /tmp/store.php'
  *
  * Prints one line per case and exits non-zero on any failure.
  *

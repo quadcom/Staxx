@@ -34,12 +34,13 @@
  *       ROOT=$(sed -n "s/^STORE_ROOT=\"\(.*\)\"/\1/p" /boot/config/plugins/staxx/staxx.cfg)
  *       CFG=$ROOT/config/staxx.cfg
  *       cp $CFG /tmp/staxx-cfg.bak
+ *       grep "^REGISTRY_TRUST=" $CFG
  *       grep -q "^REGISTRY_TRUST=" $CFG \
  *         && sed -i "s#^REGISTRY_TRUST=.*#REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"#" $CFG \
  *         || echo "REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"" >> $CFG
  *       STAXX_SELFHOSTED=1 STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json php /tmp/registry_selfhosted.php; RC=$?
  *       cp /tmp/staxx-cfg.bak $CFG
- *       diff -q /tmp/staxx-cfg.bak $CFG && echo CONFIG_IDENTICAL
+ *       grep "^REGISTRY_TRUST=" $CFG
  *       exit $RC
  *     '
  *

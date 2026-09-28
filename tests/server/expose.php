@@ -23,12 +23,13 @@
  *     ssh unraid '
  *       CFG=/mnt/m2cache/appdata/staxx/config/staxx.cfg
  *       cp $CFG /tmp/expose-cfg.bak
+ *       grep "^EXPOSE_ALLOW_INSECURE=" $CFG
  *       grep -q "^EXPOSE_ALLOW_INSECURE=" $CFG \
  *         && sed -i "s#^EXPOSE_ALLOW_INSECURE=.*#EXPOSE_ALLOW_INSECURE=\"no\"#" $CFG \
  *         || echo "EXPOSE_ALLOW_INSECURE=\"no\"" >> $CFG
  *       php /tmp/expose.php; RC=$?
  *       cp /tmp/expose-cfg.bak $CFG
- *       diff -q /tmp/expose-cfg.bak $CFG && echo CONFIG_IDENTICAL
+ *       grep "^EXPOSE_ALLOW_INSECURE=" $CFG
  *       exit $RC
  *     '
  *

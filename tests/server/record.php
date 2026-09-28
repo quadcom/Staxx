@@ -12,17 +12,8 @@
  * the time this file's first line executes it is already too late to move
  * the store out from under it.
  *
- *     pscp tests/server/record.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b2-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b2-store\"" >> $CFG
- *       php /tmp/record.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/record.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b2-store /tmp/record.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzb2…", under the temporary stack root, and its

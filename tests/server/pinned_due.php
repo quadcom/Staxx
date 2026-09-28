@@ -29,17 +29,8 @@
  * first time it is read, so the key is seeded into the config file BEFORE
  * php runs, not changed from inside this script.
  *
- *     pscp tests/server/pinned_due.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b5-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b5-store\"" >> $CFG
- *       php /tmp/pinned_due.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/pinned_due.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b5-store /tmp/pinned_due.php'
  *
  * The central update-state file lives on the flash drive too
  * (/boot/config/plugins/staxx/updates.json) and is NEVER touched — this

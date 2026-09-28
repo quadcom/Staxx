@@ -16,17 +16,8 @@
  * pointed at /tmp/zzstartorder-store, the same way tests/server/clash.php
  * does it:
  *
- *     pscp tests/server/startorder.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzstartorder-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzstartorder-store\"" >> $CFG
- *       php /tmp/startorder.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/startorder.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzstartorder-store /tmp/startorder.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own folders and stacks, all named "zzso…", under the scratch

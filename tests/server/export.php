@@ -12,17 +12,8 @@
  * record.php and files.php do it — pointed at /tmp/zze-store, never the
  * real store:
  *
- *     pscp tests/server/export.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zze-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zze-store\"" >> $CFG
- *       php /tmp/export.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/export.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zze-store /tmp/export.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zze…", under the temporary stack root. Stage 2

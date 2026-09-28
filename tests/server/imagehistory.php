@@ -19,17 +19,8 @@
  * require (see there): staxx_cfg() memoises the first time it is read, so
  * seeding it any later would already be too late.
  *
- *     pscp tests/server/imagehistory.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b3-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b3-store\"" >> $CFG
- *       php /tmp/imagehistory.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/imagehistory.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b3-store /tmp/imagehistory.php'
  *
  * The central update-state file lives on the flash drive too
  * (/boot/config/plugins/staxx/updates.json) and is NEVER touched — this

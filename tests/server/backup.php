@@ -9,19 +9,8 @@
  * the fixtures below are written against those values. staxx_cfg() memoises
  * on first read, so it has to be seeded into the config file BEFORE php runs:
  *
- *     pscp tests/server/backup.php root@<box>:/tmp/
- *
- *     plink -ssh -batch -pw <pw> root@<box> '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/bk-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/bk-store\"" >> $CFG
- *       php /tmp/backup.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       diff -q /tmp/cfg.bak $CFG && echo CONFIG_IDENTICAL
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/backup.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/bk-store /tmp/backup.php'
  *
  * NEVER reads the real /boot/config/plugins/appdata.backup/config.json, and
  * nothing anywhere in StaXX writes it. Every case here builds its own fixture

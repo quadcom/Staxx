@@ -18,17 +18,8 @@
  * already have their own opt-in live suites (registry_live.php,
  * releasenotes_live.php); this file is not trying to re-prove those.
  *
- *     pscp tests/server/detail.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzdetail-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzdetail-store\"" >> $CFG
- *       php /tmp/detail.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/detail.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzdetail-store /tmp/detail.php'
  *
  * Prints one line per case and exits non-zero on any failure.
  *

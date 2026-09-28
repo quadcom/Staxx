@@ -7,17 +7,8 @@
  * pass the permission case near the end for the wrong reason; the caller sets
  * it and puts the config back:
  *
- *     pscp tests/server/files.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b1-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b1-store\"" >> $CFG
- *       php /tmp/files.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/files.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b1-store /tmp/files.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzb1test" and a handful of "zz…" siblings, under

@@ -9,16 +9,8 @@
  * disk with a real `profiles:` list — declared profiles are read off it with
  * `docker compose config`, a read-only render, never `up` or `down` — so it
  * points STORE_ROOT at /tmp/zzc69-store the same way tests/server/review.php
- * does, and refuses to run if that redirection did not take:
- *
- *     CFG=/boot/config/plugins/staxx/staxx.cfg
- *     cp $CFG /tmp/cfg.bak
- *     grep -q "^STORE_ROOT=" $CFG \
- *       && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzc69-store\"#" $CFG \
- *       || echo "STORE_ROOT=\"/tmp/zzc69-store\"" >> $CFG
- *     php /tmp/console.php; RC=$?
- *     cp /tmp/cfg.bak $CFG
- *     exit $RC
+ * does, through the shared wrapper below, and refuses to run if that
+ * redirection did not take.
  *
  * PLAN_44 phase 3 adds the log pane's follower — staxx_log_start(),
  * staxx_log_read(), staxx_log_stop() and staxx_log_reap() — covered further
@@ -62,13 +54,14 @@
  * only asks read-only docker/compose questions about a stack deliberately
  * never started.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine.
+ * Runs ON THE SERVER — there is no PHP on the dev machine, through the
+ * shared wrapper that sets STORE_ROOT and restores it on every exit path.
  *
- *     pscp tests/server/console.php root@<box>:/tmp/
- *     plink … "php /tmp/console.php"                                          # both on (today's default)
- *     plink … "STAXX_SHELL_ENABLED=false php /tmp/console.php"                # shell off, files follows it off too (unsaved)
- *     plink … "STAXX_SHELL_ENABLED=true STAXX_FILES_ENABLED=false php /tmp/console.php"  # files off on its own, shell stays on
- *     plink … "STAXX_SHELL_ENABLED=false STAXX_FILES_ENABLED=true php /tmp/console.php"  # shell off, files switched back on of its own
+ *     pscp tests/server/run-with-store.sh tests/server/console.php root@<box>:/tmp/
+ *     plink … "bash /tmp/run-with-store.sh /tmp/zzc69-store /tmp/console.php"                                          # both on (today's default)
+ *     plink … "STAXX_SHELL_ENABLED=false bash /tmp/run-with-store.sh /tmp/zzc69-store /tmp/console.php"                # shell off, files follows it off too (unsaved)
+ *     plink … "STAXX_SHELL_ENABLED=true STAXX_FILES_ENABLED=false bash /tmp/run-with-store.sh /tmp/zzc69-store /tmp/console.php"  # files off on its own, shell stays on
+ *     plink … "STAXX_SHELL_ENABLED=false STAXX_FILES_ENABLED=true bash /tmp/run-with-store.sh /tmp/zzc69-store /tmp/console.php"  # shell off, files switched back on of its own
  *
  * SHELL_ENABLED is seeded by this script itself, into the scratch store's own
  * config file, before its first require — see the comment just above that
