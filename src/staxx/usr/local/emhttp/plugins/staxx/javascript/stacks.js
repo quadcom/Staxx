@@ -30674,11 +30674,7 @@
   function folderRun(id, verb, label) {
     if (verb !== 'up') { folderRunNow(id, verb, label); return; }
 
-    var stackNames = [];
-    Array.prototype.forEach.call(
-      document.querySelectorAll('.staxx-stack-row[data-in-folder="' + id + '"]'),
-      function (r) { stackNames.push(r.dataset.stackRow); }
-    );
+    var stackNames = folderMemberNames(id);
 
     Promise.all(stackNames.map(function (name) {
       return call('read', { name: name }).then(function (res) {
@@ -30699,12 +30695,9 @@
 
   function folderRunNow(id, verb, label) {
     // Every stack in the folder spins, and so does everything inside them.
+    var stackNames = folderMemberNames(id);
     var rows = [];
-    var stackNames = [];
-    Array.prototype.forEach.call(
-      document.querySelectorAll('.staxx-stack-row[data-in-folder="' + id + '"]'),
-      function (r) { stackNames.push(r.dataset.stackRow); rows = rows.concat(stackRows(r.dataset.stackRow)); }
-    );
+    stackNames.forEach(function (name) { rows = rows.concat(stackRows(name)); });
     setBusy(rows, BUSY_LABEL[verb] || 'Working…');
 
     var folderRow = document.querySelector('[data-folder-row="' + id + '"]');
@@ -30849,13 +30842,23 @@
     return out;
   }
 
+  // Touches only what differs — same reasoning as setCell(): a mark that is
+  // already showing what it should costs nothing to repaint.
+  function setSelectMark(mark, on, dim) {
+    var cls = 'staxx-selectmark' + (dim ? ' staxx-selectmark--some' : '');
+    if (mark.className !== cls) mark.className = cls;
+    var pressed = on ? 'true' : 'false';
+    if (mark.getAttribute('aria-pressed') !== pressed) mark.setAttribute('aria-pressed', pressed);
+    var title = on ? 'Chosen — click to leave it out' : 'Click to choose it';
+    if (mark.title !== title) mark.title = title;
+    var icon = '<i class="fa fa-toggle-' + (on ? 'on' : 'off') + '"></i>';
+    if (mark.innerHTML !== icon) mark.innerHTML = icon;
+  }
+
   function buildSelectMark(on, dim) {
     var mark = document.createElement('button');
     mark.type = 'button';
-    mark.className = 'staxx-selectmark' + (dim ? ' staxx-selectmark--some' : '');
-    mark.setAttribute('aria-pressed', on ? 'true' : 'false');
-    mark.title = on ? 'Chosen — click to leave it out' : 'Click to choose it';
-    mark.innerHTML = '<i class="fa fa-toggle-' + (on ? 'on' : 'off') + '"></i>';
+    setSelectMark(mark, on, dim);
     return mark;
   }
 
@@ -30879,27 +30882,29 @@
     paintSelectMarks();
   }
 
-  // Repaints every mark from scratch — cheap enough to call after any
-  // change, and the only way to stay correct once refreshRows() has thrown
-  // the old rows away and rebuilt them without a single one of these on
-  // them (see the call to this in refreshRows() above).
+  // Updates every mark in place rather than throwing the lot away and
+  // building fresh ones — a row that already carries its mark just has its
+  // state touched up (setSelectMark), and only a row with none yet (just
+  // drawn by refreshRows(), or entering Select mode for the first time)
+  // gets one built. Nothing is removed here; leaving Select mode is what
+  // clears them, in setSelectMode(false) below. A folder's own tri-state
+  // reads off a map of its members built in the same pass over the stack
+  // rows, rather than a fresh page-wide query per folder.
   function paintSelectMarks() {
     if (!rowsHost) return;
-    Array.prototype.forEach.call(
-      rowsHost.querySelectorAll('.staxx-selectmark'), function (m) { m.remove(); }
-    );
+    var members = {};   // folder id -> stack names filed in it
 
     Array.prototype.forEach.call(
       rowsHost.querySelectorAll('.staxx-stack-row[data-stack-row]'), function (row) {
         var box = row.querySelector('.staxx-namebox');
         if (!box) return;
         var name = row.dataset.stackRow;
-        var mark = buildSelectMark(!!selectedStacks[name], false);
-        mark.addEventListener('click', function (event) {
-          event.stopPropagation();
-          toggleStackSelected(name);
-        });
-        box.insertBefore(mark, box.firstChild);
+        if (row.dataset.inFolder) {
+          (members[row.dataset.inFolder] = members[row.dataset.inFolder] || []).push(name);
+        }
+        var mark = box.querySelector('.staxx-selectmark');
+        if (mark) { setSelectMark(mark, !!selectedStacks[name], false); return; }
+        box.insertBefore(buildSelectMark(!!selectedStacks[name], false), box.firstChild);
       }
     );
 
@@ -30907,15 +30912,13 @@
       rowsHost.querySelectorAll('.staxx-folder-row[data-folder-row]'), function (row) {
         var box = row.querySelector('.staxx-namebox');
         if (!box) return;
-        var id      = row.dataset.folderRow;
-        var members = folderMemberNames(id);
-        var onCount = members.filter(function (n) { return selectedStacks[n]; }).length;
-        var mark = buildSelectMark(onCount > 0, onCount > 0 && onCount < members.length);
-        mark.addEventListener('click', function (event) {
-          event.stopPropagation();
-          toggleFolderSelected(id);
-        });
-        box.insertBefore(mark, box.firstChild);
+        var names   = members[row.dataset.folderRow] || [];
+        var onCount = names.filter(function (n) { return selectedStacks[n]; }).length;
+        var on      = onCount > 0;
+        var dim     = onCount > 0 && onCount < names.length;
+        var mark = box.querySelector('.staxx-selectmark');
+        if (mark) { setSelectMark(mark, on, dim); return; }
+        box.insertBefore(buildSelectMark(on, dim), box.firstChild);
       }
     );
 
@@ -30957,6 +30960,22 @@
     // so they come and go with the box rather than with selection mode.
     if (!selectMode || !names.length) {
       closeSelectBar();
+      return;
+    }
+
+    // Already open with something still chosen: only the count needs to
+    // move (and a bulk panel's own scope line and Apply button, if one is
+    // showing), not the whole bar thrown away and its seven buttons rebuilt
+    // from scratch. The open-class test excludes a bar still sliding shut —
+    // closeSelectBar() removes that class before the slide starts.
+    if (!selectBar.hidden && selectBar.classList.contains('staxx-selectbar--open')) {
+      var countLine = selectBar.querySelector('[data-select-count]');
+      if (countLine) {
+        countLine.textContent = names.length + (names.length === 1 ? ' stack chosen' : ' stacks chosen') +
+          ', in the order shown.';
+      }
+      if (bulkPanelKind) repaintBulkPanel();
+      alignSelectBar();
       return;
     }
 
@@ -32054,6 +32073,21 @@
   };
 
   if (rowsHost) {
+    // One delegated listener for every select mark on the page, rather than
+    // a fresh button and a fresh listener built for every row on every
+    // repaint. stopPropagation() keeps this from reaching the row-click
+    // handlers on the scaffold above and the document listener that closes
+    // an open row menu, exactly as each mark's own listener used to.
+    rowsHost.addEventListener('click', function (event) {
+      var mark = event.target.closest('.staxx-selectmark');
+      if (!mark) return;
+      event.stopPropagation();
+      var row = mark.closest('[data-stack-row],[data-folder-row]');
+      if (!row) return;
+      if (row.dataset.stackRow) toggleStackSelected(row.dataset.stackRow);
+      else toggleFolderSelected(row.dataset.folderRow);
+    });
+
     rowsHost.addEventListener('pointerdown', function (event) {
       var grip = event.target.closest('.staxx-grip[data-row-grip]');
       if (!grip || sortLocked || grip.classList.contains('staxx-grip--off')) return;
