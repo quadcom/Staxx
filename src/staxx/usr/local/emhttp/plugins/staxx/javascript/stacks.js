@@ -5251,7 +5251,7 @@
           var imgField = imageFieldFor(MODEL.fields, service);
           pushUndo('releasing the pin on "' + service + '"');
           if (!imgField || !YAML.setValue(MODEL.doc, MODEL, imgField.id, picked)) {
-            undoStack.pop(); updateUndo();
+            dropUndo();
             onFail('That image line could not be rewritten — edit it in the Compose view instead.');
             return;
           }
@@ -7733,17 +7733,11 @@
   // Nothing is written until this runs — detection alone never writes.
   function commitLinkState(kind, between, newState) {
     if (!MODEL || !MODEL.doc || !YAML || typeof YAML.setLinkState !== 'function') return;
-    flushPending();
-    pushUndo(newState === 'confirmed' ? 'confirming that connection'
+    var res = undoableEdit(newState === 'confirmed' ? 'confirming that connection'
       : newState === 'rejected' ? 'marking that connection not related'
-      : 'withdrawing that connection record');
-    var res = YAML.setLinkState(MODEL.doc, kind, 'inferred', between, newState);
-    if (!res.ok) {
-      undoStack.pop();
-      updateUndo();
-      setYamlStatus(res.error);
-      return;
-    }
+      : 'withdrawing that connection record',
+      function () { return YAML.setLinkState(MODEL.doc, kind, 'inferred', between, newState); });
+    if (!res) return;
     structuralEdit(-1, '');
   }
 
@@ -8269,8 +8263,7 @@
       var f = YAML.fieldById(MODEL, w.fieldId);
       if (!f) continue;   // that box is no longer there — skip it rather than fail the whole click
       if (!YAML.setValue(doc, MODEL, f.id, w.value)) {
-        undoStack.pop();
-        updateUndo();
+        dropUndo();
         setYamlStatus('That value could not be written — edit it in the Compose view instead.');
         return;
       }
@@ -8727,7 +8720,7 @@
     pushUndo('writing each dollar sign twice');
     var appliedAny = false;
     fieldIds.forEach(function (fid) { if (applyDollarFieldFixes(fid)) appliedAny = true; });
-    if (!appliedAny) { undoStack.pop(); updateUndo(); }   // every one of them had already changed — nothing to keep
+    if (!appliedAny) dropUndo();   // every one of them had already changed — nothing to keep
     else setYamlStatus('Wrote each flagged dollar sign twice.');
   }
 
@@ -8971,8 +8964,7 @@
       pushUndo('joining the network "' + el.value + '"');
       var declLine = YAML.declareNetwork(MODEL.doc, el.value);
       if (declLine < 0) {
-        undoStack.pop();
-        updateUndo();
+        dropUndo();
         setYamlStatus('The networks block in this file is written in a way the form cannot add to — ' +
                       'add the declaration in the Compose view instead.');
         return;
@@ -9026,7 +9018,7 @@
       // is untouched, so the honest thing is "try again" — telling somebody to
       // go and hand-edit YAML because of our bug sends them somewhere they
       // never needed to go.
-      if (toPropagate.length) { undoStack.pop(); updateUndo(); }   // nothing landed — the snapshot above goes with it
+      if (toPropagate.length) dropUndo();   // nothing landed — the snapshot above goes with it
       setYamlStatus(MODEL.doc.staleWrite
         ? 'That edit was not made — the file moved underneath it. Try it again.'
         : 'That value cannot be written as it stands — edit this one in the Compose view.');
@@ -9471,8 +9463,7 @@
                      : entry === false ? YAML.setSectionState(MODEL.doc, MODEL, svc, key, null)
                      : true;
       if (!ok) {
-        undoStack.pop();
-        updateUndo();
+        dropUndo();
         setYamlStatus('That block is written in a way the form cannot restore — ' +
                       'restore it in the Compose view instead.');
         box.checked = false;
@@ -9503,8 +9494,7 @@
       ok = fileHasIt ? YAML.stashSection(MODEL.doc, MODEL, svc, sect.path)
                      : YAML.setSectionState(MODEL.doc, MODEL, svc, key, sect.on ? false : null);
       if (!ok) {
-        undoStack.pop();
-        updateUndo();
+        dropUndo();
         setYamlStatus('That block is written in a way the form cannot move — ' +
                       'remove it in the Compose view instead.');
         box.checked = true;
@@ -9616,6 +9606,33 @@
     var back = undoStack.pop();
     if (back) reloadPane(back.text);
     updateUndo();
+  }
+
+  // Takes back an undo entry pushed for an edit that never landed.
+  function dropUndo() {
+    undoStack.pop();
+    updateUndo();
+  }
+
+  // One structural edit as one undo entry: finish a typed edit still on its
+  // timer, snapshot, run op(). A refusal (false, null, a negative line, or
+  // { ok: false }) takes the snapshot back and is reported: failMsg is the
+  // status-line sentence, or a function given the refusal to report it some
+  // other way; left out, the refusal's own .error goes to the status line.
+  // Returns op()'s result when it landed, null when it was refused. Only for
+  // an op that writes once: a multi-step edit that can fail after an earlier
+  // step landed keeps restoreUndo() (see its own comment).
+  function undoableEdit(what, op, failMsg) {
+    flushPending();
+    pushUndo(what);
+    var r = op();
+    var refused = r === false || r === null || r === undefined ||
+                  (typeof r === 'number' && r < 0) || (typeof r === 'object' && r.ok === false);
+    if (!refused) return r;
+    dropUndo();
+    if (typeof failMsg === 'function') failMsg(r);
+    else setYamlStatus(failMsg || (r && r.error) || '');
+    return null;
   }
 
   // Puts text in the compose box and repaints its gutter and colours.
@@ -9982,15 +9999,13 @@
       closeConfirm();
       exposePendingRemove[serviceName] = true;
 
-      flushPending();
-      pushUndo('removing "' + serviceName + '" from proxy and DNS');
-      var ok = YAML.removeKey(MODEL.doc, MODEL, serviceName, ['x-unraid', 'expose']);
-      if (!ok) {
-        undoStack.pop(); updateUndo();
-        delete exposePendingRemove[serviceName];
-        setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
-        return false;
-      }
+      var ok = undoableEdit('removing "' + serviceName + '" from proxy and DNS',
+        function () { return YAML.removeKey(MODEL.doc, MODEL, serviceName, ['x-unraid', 'expose']); },
+        function () {
+          delete exposePendingRemove[serviceName];
+          setYamlStatus('That could not be removed as it stands — edit it in the Compose view instead.');
+        });
+      if (!ok) return false;
       structuralEdit(-1, 'Removed "' + serviceName + '" from proxy and DNS.');
       return true;
     });
@@ -10132,16 +10147,11 @@
     // to either markup cannot make one swallow the other silently.
     var declareNet = event.target.closest('[data-declare-net]');
     if (declareNet) {
-      flushPending();
-      pushUndo('adding that network');
-      var nLine = YAML.declareNetwork(MODEL.doc, declareNet.dataset.netName);
-      if (nLine < 0) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('The networks block in this file is written in a way the form cannot add to — ' +
-                      'add the declaration in the Compose view instead.');
-        return;
-      }
+      var nLine = undoableEdit('adding that network',
+        function () { return YAML.declareNetwork(MODEL.doc, declareNet.dataset.netName); },
+        'The networks block in this file is written in a way the form cannot add to — ' +
+          'add the declaration in the Compose view instead.');
+      if (nLine === null) return;
       structuralEdit(nLine, '');
       return;
     }
@@ -10227,15 +10237,9 @@
     var fixMacvlan = event.target.closest('[data-fix-macvlan-ports]');
     if (fixMacvlan) {
       var fmService = fixMacvlan.dataset.service;
-      flushPending();
-      pushUndo('commenting out "' + fmService + '"’s ports');
-      var fm = YAML.commentOutPorts(MODEL.doc, fmService);
-      if (!fm.ok) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus(fm.error);
-        return;
-      }
+      var fm = undoableEdit('commenting out "' + fmService + '"’s ports',
+        function () { return YAML.commentOutPorts(MODEL.doc, fmService); });
+      if (!fm) return;
       structuralEdit(-1, 'Commented out ' + fm.count + ' published port' + (fm.count === 1 ? '' : 's') +
                     ' on "' + fmService + '" — a container with its own address cannot publish ' +
                     (fm.count === 1 ? 'it' : 'any of them') + '. ' +
@@ -10250,15 +10254,9 @@
     var restorePortsBtn = event.target.closest('[data-restore-ports]');
     if (restorePortsBtn) {
       var rpService = restorePortsBtn.dataset.service;
-      flushPending();
-      pushUndo('bringing back "' + rpService + '"’s ports');
-      var rp = YAML.restorePorts(MODEL.doc, rpService);
-      if (!rp.ok) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus(rp.error);
-        return;
-      }
+      var rp = undoableEdit('bringing back "' + rpService + '"’s ports',
+        function () { return YAML.restorePorts(MODEL.doc, rpService); });
+      if (!rp) return;
       structuralEdit(-1, 'Brought back ' + rp.count + ' published port' + (rp.count === 1 ? '' : 's') +
                     ' for "' + rpService + '". Undo is at the bottom if that was wrong.');
       return;
@@ -10274,15 +10272,10 @@
       var applyField = applyRow && MODEL.fields[applyRow.dataset.row | 0];
       if (!applyField || !applyField.movedAdvice) return;
 
-      flushPending();
-      pushUndo('switching "' + applyField.service + '"’s image');
-      var applied = YAML.setValue(MODEL.doc, MODEL, applyField.id, moveApply.dataset.moveValue);
-      if (!applied) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('This image line could not be rewritten — fix it in the Compose view instead.');
-        return;
-      }
+      var applied = undoableEdit('switching "' + applyField.service + '"’s image',
+        function () { return YAML.setValue(MODEL.doc, MODEL, applyField.id, moveApply.dataset.moveValue); },
+        'This image line could not be rewritten — fix it in the Compose view instead.');
+      if (applied === null) return;
       setYamlStatus('');
       quietEdit();
       return;
@@ -10332,15 +10325,10 @@
       var rfRow = restartFix.closest('.staxx-fieldrow');
       var rfField = rfRow && MODEL.fields[rfRow.dataset.row | 0];
       if (!rfField) return;
-      flushPending();
-      pushUndo('setting a restart policy for "' + rfField.service + '"');
-      var rfOk = YAML.setPart(MODEL.doc, MODEL, rfField.id, 'value', 'unless-stopped');
-      if (!rfOk) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('That could not be written — set it in the Compose view instead.');
-        return;
-      }
+      var rfOk = undoableEdit('setting a restart policy for "' + rfField.service + '"',
+        function () { return YAML.setPart(MODEL.doc, MODEL, rfField.id, 'value', 'unless-stopped'); },
+        'That could not be written — set it in the Compose view instead.');
+      if (rfOk === null) return;
       quietEdit();
       return;
     }
@@ -10366,15 +10354,10 @@
     var tzFix = event.target.closest('[data-tz-fix]');
     if (tzFix) {
       var tzService = tzFix.dataset.service, tzZone = tzFix.dataset.tzZone || '';
-      flushPending();
-      pushUndo('adding a time zone for "' + tzService + '"');
-      var tzLine = YAML.addItem(MODEL.doc, MODEL, tzService, 'env', '', '');
-      if (tzLine < 0) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('That list is written in a way the form cannot add to — add it in the Compose view instead.');
-        return;
-      }
+      var tzLine = undoableEdit('adding a time zone for "' + tzService + '"',
+        function () { return YAML.addItem(MODEL.doc, MODEL, tzService, 'env', '', ''); },
+        'That list is written in a way the form cannot add to — add it in the Compose view instead.');
+      if (tzLine === null) return;
       var tzForm1 = YAML.buildForm(MODEL.doc);
       var tzId1   = YAML.fieldAtLine(tzForm1, tzLine);
       var tzOk1   = tzId1 && YAML.setPart(MODEL.doc, tzForm1, tzId1, 'name', 'TZ');
@@ -10426,8 +10409,6 @@
       // level up (see YAML.addDeclared).
       if (add.dataset.add.slice(0, 9) === 'declared:') {
         var declKind = add.dataset.add.slice(9);
-        flushPending();
-        pushUndo('adding that ' + addWord(add.dataset.add));
         // A fresh network is named after the server's own first choice
         // (netChoices() has no field yet, so it skips only the own-name
         // exclusion) rather than the generic "network" placeholder, so the
@@ -10435,15 +10416,13 @@
         // straight away. Falls back to the placeholder when the server has
         // not answered yet, or has nothing to offer.
         var netFirst = declKind === 'networks' ? netChoices()[0] : null;
-        var declLine = YAML.addDeclared(MODEL.doc, declKind,
-                          (netFirst && netFirst[0]) || DECL_WORD[declKind] || 'item');
-        if (declLine < 0) {
-          undoStack.pop();
-          updateUndo();
-          setYamlStatus('That block is written in a way the form cannot add to — ' +
-                        'add it in the Compose view instead.');
-          return;
-        }
+        var declLine = undoableEdit('adding that ' + addWord(add.dataset.add),
+          function () {
+            return YAML.addDeclared(MODEL.doc, declKind,
+                      (netFirst && netFirst[0]) || DECL_WORD[declKind] || 'item');
+          },
+          'That block is written in a way the form cannot add to — add it in the Compose view instead.');
+        if (declLine === null) return;
         structuralEdit(declLine, '');
         return;
       }
@@ -10474,20 +10453,14 @@
                         'so there is nothing left to add.');
           return;
         }
-        pushUndo('adding that service dependency');
-        var dLine = YAML.addNested(MODEL.doc, MODEL, dSvc, ['depends_on', pick, 'condition'], 'service_started');
-        if (dLine < 0) {
-          undoStack.pop();
-          updateUndo();
-          setYamlStatus('That block is written in a way the form cannot add to — ' +
-                        'add it in the Compose view instead.');
-          return;
-        }
+        var dLine = undoableEdit('adding that service dependency',
+          function () { return YAML.addNested(MODEL.doc, MODEL, dSvc, ['depends_on', pick, 'condition'], 'service_started'); },
+          'That block is written in a way the form cannot add to — add it in the Compose view instead.');
+        if (dLine === null) return;
         structuralEdit(dLine, '');
         return;
       }
       flushPending();
-      pushUndo('adding that ' + addWord(add.dataset.add));
 
       // A dynamic list group's button carries which list as "list:<key>" —
       // one binder covers all of them in the model, so the key rides as its
@@ -10504,10 +10477,8 @@
       // to block this from the OTHER side (setting network_mode while
       // networks: already existed), so this is now the only guard left
       // against the reverse: adding a network from underneath a service that
-      // already sets network_mode. Reported the same way an unreadable list
-      // is below — pop the undo entry the generic push above already made,
-      // and explain in the status line instead of leaving addItem to refuse
-      // with a message about the wrong problem.
+      // already sets network_mode. Checked before any undo entry is pushed,
+      // so a refusal here leaves nothing to take back.
       if (listKey === 'networks') {
         var svcNm = null;
         for (var nmi = 0; nmi < MODEL.fields.length; nmi++) {
@@ -10518,22 +10489,16 @@
           }
         }
         if (svcNm && !svcNm.absent) {
-          undoStack.pop();
-          updateUndo();
           setYamlStatus(add.dataset.service + ' already sets network_mode, and compose does not allow a ' +
                         'service to have both network_mode and networks — remove network_mode first.');
           return;
         }
       }
 
-      var line = YAML.addItem(MODEL.doc, MODEL, add.dataset.service, addBinder, '', listKey);
-      if (line < 0) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('That list is written in a way the form cannot add to — ' +
-                      'add it in the Compose view instead.');
-        return;
-      }
+      var line = undoableEdit('adding that ' + addWord(add.dataset.add),
+        function () { return YAML.addItem(MODEL.doc, MODEL, add.dataset.service, addBinder, '', listKey); },
+        'That list is written in a way the form cannot add to — add it in the Compose view instead.');
+      if (line === null) return;
       structuralEdit(line, '');
       return;
     }
@@ -10548,15 +10513,10 @@
       var newSvcName = 'new-container', suffix = 2;
       while (takenNames[newSvcName]) { newSvcName = 'new-container-' + suffix; suffix++; }
 
-      flushPending();
-      pushUndo('adding a new container');
-      var svcLine = YAML.addService(MODEL.doc, MODEL, newSvcName);
-      if (svcLine < 0) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('That could not be added — add it in the Compose view instead.');
-        return;
-      }
+      var svcLine = undoableEdit('adding a new container',
+        function () { return YAML.addService(MODEL.doc, MODEL, newSvcName); },
+        'That could not be added — add it in the Compose view instead.');
+      if (svcLine === null) return;
       structuralEdit(svcLine, 'Added "' + newSvcName + '". Undo is at the bottom if that was wrong.');
 
       // Naming it is the first thing to do with a container nobody has
@@ -10655,15 +10615,10 @@
       var declWord = DECL_WORD[declKind] || 'declaration';
       var refs = declaredRefCount(declKind, declName);
 
-      flushPending();
-      pushUndo('removing the ' + declWord + ' "' + declName + '"');
-      if (!YAML.removeDeclared(MODEL.doc, declKind, declName)) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus('That block is written in a way the form cannot remove — ' +
-                      'remove it in the Compose view instead.');
-        return;
-      }
+      var declRes = undoableEdit('removing the ' + declWord + ' "' + declName + '"',
+        function () { return YAML.removeDeclared(MODEL.doc, declKind, declName); },
+        'That block is written in a way the form cannot remove — remove it in the Compose view instead.');
+      if (declRes === null) return;
       structuralEdit(-1, 'Removed the ' + declWord + ' "' + declName + '"' +
                     (refs > 0
                       ? '. ' + refs + (refs === 1 ? ' service still refers' : ' services still refer') + ' to it.'
@@ -10685,8 +10640,7 @@
   function removeRow(f, say) {
     pushUndo('removing ' + f.title);
     if (!YAML.removeItem(MODEL.doc, MODEL, f.id)) {
-      undoStack.pop();
-      updateUndo();
+      dropUndo();
       setYamlStatus('That entry is written in a way the form cannot remove — ' +
                     'remove it in the Compose view instead.');
       return false;
@@ -10714,15 +10668,9 @@
   // not-yet-promoted entry is opened — see the capture-phase 'toggle'
   // listener. Reversible the same way every other structural edit here is.
   function promoteNetworks(f) {
-    flushPending();
-    pushUndo('turning "' + f.target + '" into a setting');
-    var res = YAML.promoteNetworksList(MODEL.doc, f.service);
-    if (!res.ok) {
-      undoStack.pop();
-      updateUndo();
-      setYamlStatus(res.error);
-      return;
-    }
+    var res = undoableEdit('turning "' + f.target + '" into a setting',
+      function () { return YAML.promoteNetworksList(MODEL.doc, f.service); });
+    if (!res) return;
     netFoldOpen[f.id] = true;
     structuralEdit(-1, 'Every network under "' + f.service + '" can now take a fixed address ' +
                        'or a hardware address. Undo is at the bottom if that was wrong.');
@@ -10804,8 +10752,7 @@
     if (isUndeclaredServerNet(value)) {
       declLine = YAML.declareNetwork(MODEL.doc, value);
       if (declLine < 0) {
-        undoStack.pop();
-        updateUndo();
+        dropUndo();
         setYamlStatus('The networks block in this file is written in a way the form cannot add to — ' +
                       'add the declaration in the Compose view instead.');
         return;
@@ -10889,14 +10836,10 @@
   function addPortsNoteLine(service) {
     flushPending();
     var already = YAML.portsNote(MODEL.doc, service);
-    pushUndo('adding a port to "' + service + '"’s ports note');
-    var ok = YAML.setPortsNote(MODEL.doc, service, already.lines.concat(['- ""']));
-    if (!ok) {
-      undoStack.pop();
-      updateUndo();
-      setYamlStatus('That note is written in a way the form cannot add to — edit it in the Compose view instead.');
-      return;
-    }
+    var ok = undoableEdit('adding a port to "' + service + '"’s ports note',
+      function () { return YAML.setPortsNote(MODEL.doc, service, already.lines.concat(['- ""'])); },
+      'That note is written in a way the form cannot add to — edit it in the Compose view instead.');
+    if (ok === null) return;
     structuralEdit(-1, '');
     var svcSel = '.staxx-svc[data-service="' + cssEsc(service) + '"]';
     var ta = formHost.querySelector(svcSel + ' [data-portsnote]');
@@ -10916,15 +10859,10 @@
     var lines = el.value.split('\n');
     while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
 
-    flushPending();
-    pushUndo('editing "' + service + '"’s ports note');
-    var ok = YAML.setPortsNote(MODEL.doc, service, lines);
-    if (!ok) {
-      undoStack.pop();
-      updateUndo();
-      setYamlStatus('This note could not be updated — edit it in the Compose view instead.');
-      return;
-    }
+    var ok = undoableEdit('editing "' + service + '"’s ports note',
+      function () { return YAML.setPortsNote(MODEL.doc, service, lines); },
+      'This note could not be updated — edit it in the Compose view instead.');
+    if (ok === null) return;
     structuralEdit(-1, '');
   }
 
@@ -11031,15 +10969,10 @@
   // so nothing is flushed and no undo entry goes on the stack for it.
   function movePort(service, from, to) {
     if (from === to) return;
-    flushPending();
-    pushUndo('moving that port');
-    var res = safeMoveItem(MODEL.doc, MODEL, service, 'ports', from, to);
-    if (!res || !res.ok) {
-      undoStack.pop();
-      updateUndo();
-      if (res) setYamlStatus(res.error);
-      return;
-    }
+    var res = undoableEdit('moving that port',
+      function () { return safeMoveItem(MODEL.doc, MODEL, service, 'ports', from, to); },
+      function (r) { if (r) setYamlStatus(r.error); });
+    if (res === null) return;
     structuralEdit(-1, '');
     // structuralEdit() just redrew the whole form, taking focus with it —
     // land it back on the grip that moved, at its new spot, so a keyboard
@@ -16467,8 +16400,7 @@
     pushUndo('adding that device');
     var line = YAML.addItem(MODEL.doc, MODEL, devSvc, 'device', d.host + ':' + d.container);
     if (line < 0) {
-      undoStack.pop();
-      updateUndo();
+      dropUndo();
       devMsg('That list is written in a way the form cannot add to — ' +
              'add it in the Compose view instead.');
       return;
@@ -18286,7 +18218,7 @@
         });
         // Nothing changed, so there is nothing to undo — matches what the
         // single-item Add button does on its own -1.
-        if (lastLine < 0) { undoStack.pop(); updateUndo(); }
+        if (lastLine < 0) dropUndo();
         structuralEdit(lastLine, null);
         renderTabs();   // the file just stopped being an orphan, on however many services landed
 
@@ -23303,7 +23235,7 @@
     var ok = was
       ? YAML.replaceNested(MODEL.doc, null, service, ['x-unraid', 'icon'], address)
       : YAML.addNested(MODEL.doc, null, service, ['x-unraid', 'icon'], address) >= 0;
-    if (!ok) { undoStack.pop(); updateUndo(); return false; }
+    if (!ok) { dropUndo(); return false; }
 
     structuralEdit(-1, 'Set the icon for "' + service + '" from what was dropped onto it. ' +
       'Undo is at the bottom if that was wrong.');
