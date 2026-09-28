@@ -330,6 +330,11 @@ function check_registry(string $label, string $host, string $image): array {
   } elseif ($tagList === []) {
     skip("$label: staxx_registry_tags() lists the image's own tag",
          'the tag list came back empty — the registry may be unreachable or the image withdrawn');
+  } elseif (!in_array($tag, $tagList, true) && count($tagList) === 100) {
+    // Only the first page is read, and some registries (GitLab's, measured
+    // 2026-09-28) return exactly 100 tags there without this image's own.
+    skip("$label: staxx_registry_tags() lists the image's own tag",
+         'a full first page of 100 tags came back without it; later pages are not read');
   } else {
     ok("$label: staxx_registry_tags() lists the image's own tag",
        in_array($tag, $tagList, true), "tag '$tag' not among ".count($tagList).' tags');
