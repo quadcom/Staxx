@@ -550,6 +550,18 @@ function staxx_compose_found_path(): string {
   return '';
 }
 
+/** Where staxx_compose()'s cross-request cache lives. The env override is
+ *  the same trick STAXX_UPDATE_STATE uses, so a server test can point this
+ *  at /tmp without ever touching the real cache. */
+function staxx_compose_cache_file(): string {
+  static $override = null;
+  if ($override === null) {
+    $env = getenv('STAXX_COMPOSE_CACHE_FILE');
+    $override = ($env !== false && $env !== '') ? $env : '';
+  }
+  return $override !== '' ? $override : '/tmp/staxx/compose.json';
+}
+
 /**
  * What compose is available, and in what form.
  *
@@ -562,6 +574,20 @@ function staxx_compose_found_path(): string {
  * Unraid does not ship compose itself, but the Compose Manager plugin does,
  * and a user may have installed it by hand. Any of those count.
  *
+ * Adrian ruled (D1, PLAN_190 item 15, 2026-09-28) that the answer is worth
+ * remembering between requests, not just within one. It is cached in
+ * /tmp/staxx keyed on the resolved binary's path, size and modified time —
+ * cheap to check with a single stat() and no shell involved. A request
+ * whose stat still matches the cached one trusts the cached answer; a
+ * changed size or time means a different binary now sits there (a compose
+ * upgrade, Compose Manager reinstalling itself), so it is asked fresh and
+ * the cache is rewritten. The cache lives under /tmp, so it is already gone
+ * after a reboot or this plugin's own removal — nothing here needs its own
+ * cleanup. When the binary cannot be found at all, there is nothing to
+ * stat, so nothing is cached and every request asks again, exactly as
+ * before this rule. The in-request memo below is unchanged and still
+ * avoids a second ask within the same request.
+ *
  * @return array{available:bool, version:string, path:string, form:string}
  *         form is 'plugin' (`docker compose`), 'standalone' (`docker-compose`)
  *         or '' when unavailable.
@@ -569,6 +595,21 @@ function staxx_compose_found_path(): string {
 function staxx_compose(): array {
   static $info = null;
   if ($info !== null) return $info;
+
+  // Known-path lookup is a stat, not a shell call, so it is safe to try
+  // before deciding whether the cache can be trusted.
+  $path = staxx_compose_found_path();
+
+  if ($path !== '' && ($stat = @stat($path)) !== false) {
+    $cached = json_decode((string)@file_get_contents(staxx_compose_cache_file()), true);
+    if (is_array($cached)
+        && ($cached['path'] ?? null) === $path
+        && ($cached['mtime'] ?? null) === $stat['mtime']
+        && ($cached['size'] ?? null) === $stat['size']
+        && is_array($cached['info'] ?? null)) {
+      return $info = $cached['info'];
+    }
+  }
 
   $docker = escapeshellarg(staxx_docker_bin());
   $info = ['available' => false, 'version' => '', 'path' => '', 'form' => ''];
@@ -587,10 +628,22 @@ function staxx_compose(): array {
     }
   }
 
-  $info['path'] = staxx_compose_found_path();
+  $info['path'] = $path;
   if ($info['path'] === '') {
     $found = trim(staxx_sh('command -v docker-compose', 5));
     if ($found !== '' && is_file($found)) $info['path'] = $found;
+  }
+
+  // Nothing to key the cache on without a file to stat, so it is left
+  // untouched and the next request asks again, same as always.
+  if ($info['path'] !== '' && ($stat = @stat($info['path'])) !== false) {
+    @mkdir('/tmp/staxx', 0755, true);
+    staxx_atomic_write(staxx_compose_cache_file(), json_encode([
+      'path'  => $info['path'],
+      'mtime' => $stat['mtime'],
+      'size'  => $stat['size'],
+      'info'  => $info,
+    ]));
   }
 
   return $info;

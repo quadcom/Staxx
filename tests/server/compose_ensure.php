@@ -12,6 +12,12 @@
  * binary — production never sets it, and the pinned constant it defaults to
  * is duplicated below just for case 9's own assertion, not used to drive it.
  *
+ * Cases 10-12 are a different thing sharing the file: `staxx_compose()`'s
+ * own cross-request cache (PLAN_190 item 15, D1), keyed on the real compose
+ * binary this box has, but pointed at a scratch cache file via
+ * STAXX_COMPOSE_CACHE_FILE so /tmp/staxx/compose.json is never touched.
+ * Read-only — they stat the real binary and never run, replace or remove it.
+ *
  *     pscp tests/server/compose_ensure.php root@<box>:/tmp/
  *     plink … "php /tmp/compose_ensure.php"
  *
@@ -227,6 +233,59 @@ if (getenv('STAXX_LIVE_COMPOSE') === '1') {
      is_file($target) && hash_file('sha256', $target) === REAL_COMPOSE_SHA256);
 } else {
   echo "skipped  live download against the real pinned release (set STAXX_LIVE_COMPOSE=1 to run it)\n";
+}
+
+/* --- 10-12: staxx_compose()'s cross-request cache (PLAN_190 item 15, D1) --
+ * Different code under test from the cases above: the real installed
+ * Defines.php, not a fake docker script, since the cache logic only matters
+ * once a real compose binary can be stat()'d. Each case is its own PHP
+ * process, the same way one request is one process, so the in-request memo
+ * never masks whether the cache file was actually consulted.
+ * STAXX_COMPOSE_CACHE_FILE points the cache at a scratch file so the real
+ * one under /tmp/staxx is never read or written. Nothing here starts, pulls
+ * or touches the real compose binary — only stat()s it. */
+
+function compose_probe(string $cacheFile): array {
+  $code = 'require_once "/usr/local/emhttp/plugins/staxx/include/Defines.php"; '
+        . 'echo json_encode(staxx_compose());';
+  $out = shell_exec('STAXX_COMPOSE_CACHE_FILE='.escapeshellarg($cacheFile).' php -r '.escapeshellarg($code).' 2>&1');
+  $decoded = json_decode((string)$out, true);
+  return is_array($decoded) ? $decoded : [];
+}
+
+$composeCache = "$scratch/compose-cache.json";
+@unlink($composeCache);
+
+$fresh = compose_probe($composeCache);
+ok('compose cache: a first call answers something', array_key_exists('available', $fresh), json_encode($fresh));
+
+if (($fresh['path'] ?? '') === '') {
+  echo "skipped  compose cache hit/miss cases (no compose binary found to stat on this box)\n";
+} else {
+  $cached = json_decode((string)@file_get_contents($composeCache), true);
+  ok('compose cache: writes a cache file naming the resolved binary',
+     is_array($cached) && ($cached['path'] ?? '') === $fresh['path'], json_encode($cached));
+
+  $stat = @stat($fresh['path']);
+
+  // A planted answer under the real path/mtime/size must come back verbatim —
+  // only trusting the cache, never asking Docker again, could produce it.
+  $sentinel = ['available' => true, 'version' => 'sentinel-v0.0.0', 'path' => $fresh['path'], 'form' => 'plugin'];
+  file_put_contents($composeCache, json_encode([
+    'path' => $fresh['path'], 'mtime' => $stat['mtime'], 'size' => $stat['size'], 'info' => $sentinel,
+  ]));
+  $hit = compose_probe($composeCache);
+  ok('compose cache: a matching path/mtime/size trusts the planted answer', $hit === $sentinel, json_encode($hit));
+
+  // The same planted answer under a wrong size must be rejected: a changed
+  // size is exactly what a replaced binary looks like, so this is asked
+  // fresh instead of returning the sentinel.
+  file_put_contents($composeCache, json_encode([
+    'path' => $fresh['path'], 'mtime' => $stat['mtime'], 'size' => $stat['size'] + 1, 'info' => $sentinel,
+  ]));
+  $miss = compose_probe($composeCache);
+  ok('compose cache: a changed size is asked fresh, not trusted',
+     $miss !== $sentinel && ($miss['version'] ?? null) === $fresh['version'], json_encode($miss));
 }
 
 exit($fails > 0 ? 1 : 0);
