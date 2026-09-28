@@ -1757,26 +1757,14 @@ const STAXX_META_VERSION = 9;   // 9: a profiled service's own fields are read t
  * Returns null to mean "never cache this stack": when any file mentions
  * `include:` or `extends:`, the answer depends on a file this key cannot
  * see, because compose does not report what it read in.
- *
- * Remembered for the request, keyed the same way staxx_compose_meta() and
- * staxx_service_hashes() key their own memos, since both read this file set
- * afresh in the same render. $reset clears every stack's entry for a caller
- * that has just changed a file mid-request — staxx_compose_meta()'s own
- * reset calls this with $reset true so the next read here sees it too.
  */
-function staxx_meta_cache_key(array $files, bool $reset = false): ?string {
-  static $cache = [];
-  if ($reset) { $cache = []; return null; }
-
-  $key = implode("\0", $files);
-  if (array_key_exists($key, $cache)) return $cache[$key];
-
+function staxx_meta_cache_key(array $files): ?string {
   $parts = [(string)STAXX_META_VERSION];
 
   foreach ($files as $f) {
     $text = @file_get_contents($f);
-    if ($text === false) return $cache[$key] = null;
-    if (preg_match('/(?:^|\n)\s*(?:include|extends)\s*:/', $text)) return $cache[$key] = null;
+    if ($text === false) return null;
+    if (preg_match('/(?:^|\n)\s*(?:include|extends)\s*:/', $text)) return null;
     $parts[] = md5($text);
   }
 
@@ -1784,7 +1772,7 @@ function staxx_meta_cache_key(array $files, bool $reset = false): ?string {
   $envText = is_file($envFile) ? @file_get_contents($envFile) : '';
   $parts[] = md5((string)$envText);
 
-  return $cache[$key] = md5(implode("\0", $parts));
+  return md5(implode("\0", $parts));
 }
 
 /**
@@ -1839,9 +1827,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // $reset empties the in-process memory for a caller that has just changed
   // a file mid-request — the import back-fill — and needs the next read to
   // see it. The on-disk copy needs nothing: it is keyed on the contents.
-  // staxx_meta_cache_key() keeps its own memo of the same file set, so it is
-  // reset too, or a stale key would be reused straight after.
-  if ($reset) { $cache = []; staxx_meta_cache_key([], true); }
+  if ($reset) $cache = [];
 
   // Keyed on the whole pair, not just $file, so an override's settings are
   // reflected in what this reports. Safe as a cache key: for a single file
