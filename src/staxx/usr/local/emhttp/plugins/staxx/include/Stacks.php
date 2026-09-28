@@ -139,6 +139,21 @@ function staxx_private_dir(string $dir): bool {
   return true;
 }
 
+/**
+ * A job the page's `job` poller can follow: its own log in STAXX_JOB_DIR
+ * whose first line is "$ <shown>", then $inner detached. Returns the job id,
+ * or '' with $error set.
+ */
+function staxx_spawn_job(string $shown, string $inner, string &$error): string {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) { $error = 'Could not create '.STAXX_JOB_DIR; return ''; }
+  $job = bin2hex(random_bytes(8));
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+  @file_put_contents($log, '$ '.$shown."\n\n");
+  @chmod($log, 0600);
+  staxx_detach($inner, $log);
+  return $job;
+}
+
 /* ------------------------------------------------------------------ paths -- */
 
 /**
@@ -1267,19 +1282,6 @@ function staxx_compose_cmd(): string {
 }
 
 /**
- * What compose itself thinks is running, keyed by compose file path.
- *
- * Asking compose is better than inspecting containers ourselves: it already
- * knows which config file produced which project, and it is the same answer
- * the command line would give.
- *
- * @return array<string, array{name:string, status:string}>
- */
-function staxx_compose_ls(): array {
-  return staxx_compose_state()['byFile'];
-}
-
-/**
  * The same answer indexed three ways, so that moving a stack does not lose it.
  *
  * The full file path is the best key and stays the first choice: it ties a
@@ -1788,6 +1790,14 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
   $tmp = $path.'.'.getmypid().'.tmp';
   if (@file_put_contents($tmp, $json) === false) return;
   @rename($tmp, $path);
+}
+
+/** The blank shape a service's meta starts from before anything is read
+ *  from the compose file, keys in the order every cached copy expects. */
+function staxx_meta_blank_service(): array {
+  return ['image' => '', 'container_name' => '', 'x' => [],
+          'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+          'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
 }
 
 /**
@@ -2365,7 +2375,7 @@ function staxx_container_index(): array {
     $index['byProject'][$row['project']][] = $row;
 
     // A project can be built from several files ("a.yml,b.yml"); it is listed
-    // under each, the same way staxx_compose_ls() does it.
+    // under each, the same way staxx_compose_state()['byFile'] does it.
     foreach (explode(',', $r['configFiles']) as $file) {
       $file = trim($file);
       if ($file !== '') $index['byFile'][$file][] = $row;
@@ -7532,6 +7542,44 @@ function staxx_placeholders(string $file): array {
   }
 
   return array_keys($found);
+}
+
+/** The retired or review-lock refusal for acting on $stack, or '' when
+ *  neither applies. $purpose ends the review sentence ("starting it"). */
+function staxx_stack_locked(string $stack, string $purpose): string {
+  $retiredInto = staxx_retired_into($stack);
+  if ($retiredInto !== '') {
+    return 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+         . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+         . 'and the "retired" profile lines to bring it back.';
+  }
+  if (staxx_review_locked($stack)) {
+    return 'This stack was imported and has not been reviewed yet. Open it, read '
+         . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+         . ' before '.$purpose.'.';
+  }
+  return '';
+}
+
+/** Every check a per-stack command shares, in the order they refuse: a
+ *  valid name, the $off refusal when a setting has the feature switched
+ *  off, the retired and review locks, compose and Docker present, a compose
+ *  file, and $service a member of it ('' skips that). Returns the compose
+ *  file, or '' with $error set. */
+function staxx_stack_gate(string $stack, string $purpose, string $service, string &$error, string $off = ''): string {
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  if ($off !== '') { $error = $off; return ''; }
+  $error = staxx_stack_locked($stack, $purpose);
+  if ($error !== '') return '';
+  if (staxx_compose_cmd() === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+  $file = staxx_find_compose_file(staxx_stack_dir($stack));
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  if ($service !== '' && !isset(staxx_compose_meta($file)['services'][$service])) {
+    $error = 'No service called "'.$service.'" in this stack.';
+    return '';
+  }
+  return $file;
 }
 
 /**

@@ -438,6 +438,67 @@ function staxx_sh(string $cmd, int $seconds = 10, ?int &$code = null): string {
 }
 
 /**
+ * Write $data to $path so a reader never sees half a file: a hidden temp
+ * file beside the target, named with this process's id so two writers never
+ * share one, then rename() over the target. $mode, when given, is set on the
+ * temp file before the rename, so the file never exists with the wrong
+ * permissions. Returns false on any failure, a short write included, and
+ * removes its own temp file on every failure path. $failed says which step
+ * failed ('write' or 'rename'; '' on success) for a caller that words the
+ * two differently. Never throws or warns.
+ */
+function staxx_atomic_write(string $path, string $data, ?int $mode = null, ?string &$failed = null): bool {
+  $failed = '';
+  $tmp = dirname($path).'/.'.basename($path).'.'.getmypid().'.tmp';
+  $written = @file_put_contents($tmp, $data);
+  if ($written === false || $written !== strlen($data)) { @unlink($tmp); $failed = 'write'; return false; }
+  if ($mode !== null) @chmod($tmp, $mode);
+  if (!@rename($tmp, $path)) { @unlink($tmp); $failed = 'rename'; return false; }
+  return true;
+}
+
+// The one place a command is started that must outlive this request, so it
+// cannot go through staxx_sh(), whose timeout would kill it. It returns at
+// once, so it cannot hang either.
+function staxx_detach(string $cmd, string $log): void {
+  @exec('setsid sh -c '.escapeshellarg($cmd).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+}
+
+/** An atomic mkdir lock; one older than $staleAfter seconds was left by a
+ *  killed process and is taken over. True when this process now holds it. */
+function staxx_mkdir_lock(string $lock, int $staleAfter = 1800): bool {
+  if (@mkdir($lock, 0755, true)) return true;
+  if (!is_dir($lock) || time() - (int)@filemtime($lock) <= $staleAfter) return false;
+  @rmdir($lock);
+  return @mkdir($lock, 0755, true);
+}
+
+/**
+ * Absolute path to the php binary. PHP's environment is not a login shell,
+ * so PATH cannot be relied on — resolve it once and call it explicitly.
+ */
+function staxx_php_bin(): string {
+  static $bin = null;
+  if ($bin !== null) return $bin;
+  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
+    if (is_file($path) && is_executable($path)) return $bin = $path;
+  }
+  return $bin = 'php';
+}
+
+// The rule enforced by staxx_valid_name(), spelled out for a person: kept as
+// one string so every place that refuses a bad name says the same thing.
+const STAXX_NAME_RULE = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+                       . 'must start with a letter or number, and must be 63 characters or fewer.';
+
+/** A plugin asset's URL, carrying its modification time so an edited file
+ *  is never served from the browser's cache. $rel is relative to STAXX_ROOT. */
+function staxx_asset(string $rel): string {
+  $path = STAXX_ROOT.'/'.$rel;
+  return '/plugins/'.STAXX_PLUGIN.'/'.$rel.'?v='.(is_file($path) ? filemtime($path) : '0');
+}
+
+/**
  * Absolute path to the docker binary. PHP's environment is not a login shell,
  * so PATH cannot be relied on — resolve it once and call it explicitly.
  */
@@ -469,6 +530,14 @@ function staxx_compose_paths(): array {
     '/usr/local/bin/docker-compose',
     '/usr/bin/docker-compose',
   ];
+}
+
+/** The first of staxx_compose_paths() that exists and can be run, or ''. */
+function staxx_compose_found_path(): string {
+  foreach (staxx_compose_paths() as $path) {
+    if (is_file($path) && is_executable($path)) return $path;
+  }
+  return '';
 }
 
 /**
@@ -517,15 +586,6 @@ function staxx_compose(): array {
   }
 
   return $info;
-}
-
-/** Absolute path to compose, or '' if it could not be located on disk. */
-function staxx_compose_bin(): string {
-  return staxx_compose()['path'];
-}
-
-function staxx_compose_version(): string {
-  return staxx_compose()['version'];
 }
 
 function staxx_docker_running(): bool {

@@ -293,6 +293,20 @@ function staxx_release_notes_urls(string $project, string $version): array {
 }
 
 /**
+ * Drop any trailing incomplete UTF-8 sequence, left when a byte-counted cut
+ * lands in the middle of a multi-byte character.
+ */
+function staxx_utf8_trim_tail(string $s): string {
+  while ($s !== '' && (ord($s[strlen($s) - 1]) & 0xc0) === 0x80) {
+    $s = substr($s, 0, -1);
+  }
+  if ($s !== '' && (ord($s[strlen($s) - 1]) & 0x80) !== 0) {
+    $s = substr($s, 0, -1);
+  }
+  return $s;
+}
+
+/**
  * Cap a release body at STAXX_NOTES_MAX, cut at the last line break before
  * the cap so it never stops mid-word — falling back to a hard cut only when
  * the window has no break at all. Pure; the only change made to the text
@@ -1730,19 +1744,6 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
   if ($dirty) staxx_update_state_save(['images' => $images]);
   staxx_update_unlock();
   return $dirty;
-}
-
-/**
- * Absolute path to the php binary, same reasoning as staxx_docker_bin(): PHP's
- * environment is not a login shell, so PATH cannot be relied on.
- */
-function staxx_php_bin(): string {
-  static $bin = null;
-  if ($bin !== null) return $bin;
-  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
-    if (is_file($path) && is_executable($path)) return $bin = $path;
-  }
-  return $bin = 'php';
 }
 
 /**
