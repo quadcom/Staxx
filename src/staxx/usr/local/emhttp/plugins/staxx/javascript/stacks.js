@@ -540,17 +540,7 @@
   }
 
   if (noticePanel) {
-    // <dialog> fires no event for the backdrop, because the backdrop is a
-    // pseudo-element of the dialog itself and a click on it targets the
-    // dialog — same hit-testing trick the stack editor uses for its own
-    // backdrop click, further down this file.
-    noticePanel.addEventListener('click', function (event) {
-      if (event.target !== noticePanel) return;
-      var r = noticePanel.getBoundingClientRect();
-      var inside = event.clientX >= r.left && event.clientX <= r.right &&
-                   event.clientY >= r.top  && event.clientY <= r.bottom;
-      if (!inside) noticePanel.close();
-    });
+    onBackdropClick(noticePanel);
     noticePanel.addEventListener('close', function () {
       startNoticeRotation();
       paintTickerSlot();
@@ -2589,6 +2579,51 @@
     return String(s === undefined || s === null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  // A click on a <dialog>'s own backdrop targets the dialog element itself
+  // (it fires no backdrop event of its own), so the only way to tell a
+  // backdrop click from one on the dialog's own padding is to measure the
+  // box and see whether the click landed inside it. `guard`, when given,
+  // skips the close while it answers true (mid-request, for instance);
+  // `close` defaults to the dialog's own close().
+  function onBackdropClick(dlg, guard, close) {
+    dlg.addEventListener('click', function (event) {
+      if (event.target !== dlg || (guard && guard())) return;
+      var r = dlg.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) (close || function () { dlg.close(); })();
+    });
+  }
+
+  // A script-built <dialog> in the shared "confirm" shape (head, body,
+  // message line, button row) — used by the two dialogs that do not come
+  // from the page's own PHP-rendered markup (export, bundle import).
+  // o: { id, cls, title, bodyCls, buttonsHtml, busy, close, onClose }.
+  // busy and close double as onBackdropClick()'s guard and close, and the
+  // dialog's own `cancel` (Escape) is blocked the same way while busy is
+  // true, so Escape and the backdrop always agree.
+  function staxxDialog(o) {
+    var dlg = document.createElement('dialog');
+    dlg.className = 'staxx-confirm ' + o.cls;
+    dlg.setAttribute('aria-labelledby', 'staxx-' + o.id + '-title');
+    dlg.innerHTML =
+      '<div class="staxx-confirm-head"><h3 class="staxx-confirm-title" id="staxx-' + o.id + '-title">' +
+        esc(o.title || '') + '</h3></div>' +
+      '<div class="staxx-confirm-body' + (o.bodyCls ? ' ' + o.bodyCls : '') + '" id="staxx-' + o.id + '-body"></div>' +
+      '<div class="staxx-confirm-foot">' +
+        '<p class="staxx-confirm-msg" id="staxx-' + o.id + '-msg" role="status" aria-live="polite"></p>' +
+        '<div class="staxx-buttons staxx-buttons--inline">' + o.buttonsHtml + '</div>' +
+      '</div>';
+    // .staxx-btn and friends are only styled inside .staxx-scaffold — every
+    // other dialog on this page sits there too, so this is appended to the
+    // same container rather than to <body>, where it would render frameless
+    // but unstyled.
+    (document.querySelector('.staxx-scaffold') || document.body).appendChild(dlg);
+    onBackdropClick(dlg, o.busy, o.close);
+    dlg.addEventListener('cancel', function (event) { if (o.busy && o.busy()) event.preventDefault(); });
+    dlg.addEventListener('close', o.onClose);
+    return dlg;
   }
 
   // One editable box. A part with nowhere to write to — the host half of an
@@ -11189,6 +11224,34 @@
     movePort(svcSection.dataset.service, from, to);
   });
 
+  // Shared by the editor's little panels below (outline, link popovers, the
+  // password generator, the tab menu): a click outside the panel closes it,
+  // and Escape closes it and calls preventDefault() — which is what stops
+  // the editor dialog's own Escape (its `cancel` handler further down) from
+  // closing the whole editor as well. The Sections panel just below is a
+  // fifth case with its own click/Escape pair, left as it is (Q1 in
+  // PLAN_195): its Escape does NOT preventDefault, so it closes both the
+  // panel and, if nothing is unsaved, the editor underneath it.
+  var outsidePanels = [];
+  function closeOnOutside(isOpen, inside, close, after) {
+    outsidePanels.push({ isOpen: isOpen, inside: inside, close: close, after: after });
+  }
+  document.addEventListener('click', function (event) {
+    if (!modal.open) return;
+    outsidePanels.forEach(function (p) {
+      if (p.isOpen() && !event.target.closest(p.inside)) p.close();
+    });
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || !modal.open) return;
+    outsidePanels.forEach(function (p) {
+      if (!p.isOpen()) return;
+      event.preventDefault();   // closes the panel, never the editor behind it
+      p.close();
+      if (p.after) p.after();
+    });
+  });
+
   // Closes any open Sections panel: a click outside it, or Escape. The button
   // that opens one stops its own click reaching here (see [data-sections]
   // above), so this only ever sees a click genuinely outside.
@@ -11316,21 +11379,7 @@
     });
   }
 
-  document.addEventListener('click', function (event) {
-    if (!modal.open || !outlineOpen()) return;
-    if (event.target.closest('.staxx-outlinewrap')) return;
-    closeOutline();
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || !modal.open || !outlineOpen()) return;
-    // preventDefault here, not left to the dialog's own Escape-closes-me
-    // action, is the same trick the suggestion list and find bar rely on
-    // (see their own comments) — it is what keeps this closing only the
-    // outline panel rather than the whole editor.
-    event.preventDefault();
-    closeOutline();
-    outlineBtn.focus();
-  });
+  closeOnOutside(outlineOpen, '.staxx-outlinewrap', closeOutline, function () { outlineBtn.focus(); });
 
   // A confirmed link's popover (§11.4) — same click-outside/Escape pattern
   // as the outline and password panels just above, adapted for there being
@@ -11346,16 +11395,7 @@
   function anyLinkPopOpen() {
     return !!formHost.querySelector('.staxx-linkpop:not([hidden])');
   }
-  document.addEventListener('click', function (event) {
-    if (!modal.open || !anyLinkPopOpen()) return;
-    if (event.target.closest('.staxx-linkmarkwrap')) return;
-    closeAllLinkPops();
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || !modal.open || !anyLinkPopOpen()) return;
-    event.preventDefault();
-    closeAllLinkPops();
-  });
+  closeOnOutside(anyLinkPopOpen, '.staxx-linkmarkwrap', closeAllLinkPops);
 
   /* ---- Password generator (PLAN_74 Part A) ------------------------------
    *
@@ -12118,21 +12158,7 @@
     });
   }
 
-  document.addEventListener('click', function (event) {
-    if (!modal.open || !pwgenOpen()) return;
-    if (event.target.closest('.staxx-pwgenwrap')) return;
-    closePwgen();
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || !modal.open || !pwgenOpen()) return;
-    // preventDefault here, not left to the dialog's own Escape-closes-me
-    // action, is the same trick the outline panel's own Escape handler
-    // relies on — it is what keeps this closing only the password panel
-    // rather than the whole editor.
-    event.preventDefault();
-    closePwgen();
-    pwgenBtn.focus();
-  });
+  closeOnOutside(pwgenOpen, '.staxx-pwgenwrap', closePwgen, function () { pwgenBtn.focus(); });
 
   undoBtn.addEventListener('click', function () {
     var step = undoStack.pop();
@@ -13183,14 +13209,7 @@
     picker.close();
   });
 
-  // Same hit-test as the editor: <dialog> fires no backdrop event, because a
-  // click on the backdrop targets the dialog itself.
-  picker.addEventListener('click', function (event) {
-    if (event.target !== picker) return;
-    var r = picker.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right ||
-        event.clientY < r.top  || event.clientY > r.bottom) picker.close();
-  });
+  onBackdropClick(picker);
 
   picker.addEventListener('close', function () { pickerFor = null; });
 
@@ -13418,12 +13437,7 @@
     tzModal.close();
   });
 
-  tzModal.addEventListener('click', function (event) {
-    if (event.target !== tzModal) return;
-    var r = tzModal.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right ||
-        event.clientY < r.top  || event.clientY > r.bottom) tzModal.close();
-  });
+  onBackdropClick(tzModal);
 
   tzModal.addEventListener('close', function () { tzFor = null; });
 
@@ -14915,12 +14929,7 @@
 
   caAppClose.addEventListener('click', function () { caAppModal.close(); });
 
-  caAppModal.addEventListener('click', function (event) {
-    if (event.target !== caAppModal) return;
-    var r = caAppModal.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right ||
-        event.clientY < r.top  || event.clientY > r.bottom) caAppModal.close();
-  });
+  onBackdropClick(caAppModal);
 
   caAppModal.addEventListener('close', function () {
     // A stale app must never flash up on the next open.
@@ -14995,12 +15004,7 @@
     caModal.close();
   });
 
-  caModal.addEventListener('click', function (event) {
-    if (event.target !== caModal) return;
-    var r = caModal.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right ||
-        event.clientY < r.top  || event.clientY > r.bottom) caModal.close();
-  });
+  onBackdropClick(caModal);
 
   caModal.addEventListener('close', function () {
     caStopPoll();
@@ -16089,13 +16093,8 @@
     importModal.close();
   });
 
-  importModal.addEventListener('click', function (event) {
-    if (importBusy) return;   // Close is Stop while a run is in flight; no backdrop escape either
-    if (event.target !== importModal) return;
-    var r = importModal.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right ||
-        event.clientY < r.top  || event.clientY > r.bottom) importModal.close();
-  });
+  // Close is Stop while a run is in flight; no backdrop escape either.
+  onBackdropClick(importModal, function () { return importBusy; });
 
   // Escape fires 'cancel' before 'close' on a <dialog> — block it here for
   // the same reason the backdrop click above is blocked while busy.
@@ -17166,16 +17165,7 @@
     closePwgen();
   });
 
-  // <dialog> fires no event for the backdrop, because the backdrop is a
-  // pseudo-element of the dialog itself and a click on it targets the dialog.
-  // Tell them apart by hit-testing the click against the dialog's own box.
-  modal.addEventListener('click', function (event) {
-    if (event.target !== modal) return;
-    var r = modal.getBoundingClientRect();
-    var inside = event.clientX >= r.left && event.clientX <= r.right &&
-                 event.clientY >= r.top  && event.clientY <= r.bottom;
-    if (!inside) confirmDiscard().then(function (go) { if (go) modal.close(); });
-  });
+  onBackdropClick(modal, null, function () { confirmDiscard().then(function (go) { if (go) modal.close(); }); });
 
   modal.addEventListener('click', function (event) {
     var btn = event.target.closest('.staxx-viewbtn');
@@ -18074,19 +18064,7 @@
     }, 400);
   });
 
-  document.addEventListener('click', function (event) {
-    if (!modal.open || !tabmenuOpen()) return;
-    if (event.target.closest('.staxx-tabmenu') || event.target.closest('.staxx-tab-menubtn')) return;
-    closeTabmenu();
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || !modal.open || !tabmenuOpen()) return;
-    // preventDefault here, not left to the dialog's own Escape-closes-me
-    // action, is the same trick the outline panel relies on — it is what
-    // keeps this closing only the tab menu rather than the whole editor.
-    event.preventDefault();
-    closeTabmenu();
-  });
+  closeOnOutside(tabmenuOpen, '.staxx-tabmenu, .staxx-tab-menubtn', closeTabmenu);
 
   // The server's own rules (staxx_valid_filename() and STAXX_FILE_MAX
   // in Stacks.php), mirrored here so an obviously bad name or an oversized
@@ -22751,14 +22729,7 @@
     detailModal.addEventListener('cancel', function (event) {
       if (detailBusy) event.preventDefault();
     });
-    // Same backdrop hit-test #staxx-confirm uses above — <dialog> fires no
-    // backdrop click of its own.
-    detailModal.addEventListener('click', function (event) {
-      if (event.target !== detailModal || detailBusy) return;
-      var r = detailModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) closeDetailModal();
-    });
+    onBackdropClick(detailModal, function () { return detailBusy; }, closeDetailModal);
   }
 
   // Live counter and the Apply gate — recomputed on every radio change
@@ -23829,15 +23800,8 @@
     if (logDlg) logDlg.close();
   });
 
-  // Same hit-test every dialog here uses: <dialog> fires no backdrop click of
-  // its own, because a click on the backdrop targets the dialog element.
   if (logDlg) {
-    logDlg.addEventListener('click', function (event) {
-      if (event.target !== logDlg) return;
-      var r = logDlg.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) logDlg.close();
-    });
+    onBackdropClick(logDlg);
   }
 
   // PLAN_168 — the legend. Escape is <dialog>'s own native behaviour and
@@ -23852,12 +23816,7 @@
   });
 
   if (legendDlg) {
-    legendDlg.addEventListener('click', function (event) {
-      if (event.target !== legendDlg) return;
-      var r = legendDlg.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) legendDlg.close();
-    });
+    onBackdropClick(legendDlg);
   }
 
   // A short server error, not real command output, so it reads as prose in
@@ -24092,6 +24051,27 @@
     if (confirmModal.open) confirmModal.close();
   }
 
+  // The reset every question through #staxx-confirm starts from: claim the
+  // dialog, clear busy and the status line, set the title and body, and put
+  // Go, Cancel and the two optional extras back to their ordinary shape.
+  // Every caller used to reset a different subset of these by hand, which is
+  // how a stale Go label once leaked from one question into the next (see
+  // the tag picker's own comment, below) — resetting all of them here, every
+  // time, is what stops that leaking again. Each caller then sets only what
+  // is its own on top (Go's label, the danger colour, and so on).
+  function prepConfirm(title, bodyHtml) {
+    claimConfirm();
+    confirmSetBusy(false);
+    confirmMsg.textContent = '';
+    confirmTitle.textContent = title;
+    confirmBody.innerHTML = bodyHtml;
+    confirmGo.hidden = false;
+    confirmCancel.hidden = false;
+    confirmCancel.textContent = confirmCancelDefault;
+    if (confirmExtra) confirmExtra.hidden = true;
+    if (confirmBadicon) confirmBadicon.hidden = true;
+  }
+
   function settleConfirm(value) {
     if (!confirmResolve) return;
     var resolve = confirmResolve;
@@ -24119,11 +24099,7 @@
   // "unsaved changes" question (PLAN_44 C2) is the only caller that passes
   // it, so every existing two-answer question is untouched by this.
   function askConfirm(opts) {
-    claimConfirm();
-    confirmSetBusy(false);
-    confirmMsg.textContent = '';
-    confirmTitle.textContent = opts.title;
-    confirmBody.innerHTML = opts.bodyHtml;
+    prepConfirm(opts.title, opts.bodyHtml);
     confirmGo.textContent = opts.goLabel;
     // The dialog's own markup carries --danger as its default (StacksPage.php,
     // "Delete stack") since most questions this asks are destructive — PLAN_176
@@ -24131,11 +24107,6 @@
     // than destroying), so it is the first caller to pass danger:false.
     confirmGo.classList.toggle('staxx-btn--danger', opts.danger !== false);
     confirmCancel.textContent = opts.cancelLabel || confirmCancelDefault;
-    // Both reset unconditionally: a question always has a Cancel and is
-    // never drawn as bad news, so nothing showInfo() left set on the shared
-    // dialog can leak into the next askConfirm() call.
-    confirmCancel.hidden = false;
-    if (confirmBadicon) confirmBadicon.hidden = true;
     if (confirmExtra) {
       confirmExtra.hidden = !opts.extraLabel;
       confirmExtra.textContent = opts.extraLabel || '';
@@ -24160,14 +24131,9 @@
   // askConfirm()'s callers do.
   function showInfo(title, bodyHtml, opts) {
     opts = opts || {};
-    claimConfirm();
-    confirmSetBusy(false);
-    confirmMsg.textContent = '';
-    confirmTitle.textContent = title;
-    confirmBody.innerHTML = bodyHtml;
+    prepConfirm(title, bodyHtml);
     confirmGo.textContent = opts.okLabel || 'OK';
     confirmCancel.hidden = true;
-    if (confirmExtra) confirmExtra.hidden = true;
     if (confirmBadicon) confirmBadicon.hidden = !opts.bad;
     if (!confirmModal.open) confirmModal.showModal();
     confirmGo.focus({ preventScroll: true });
@@ -24182,20 +24148,12 @@
   // the same shape prompt() itself returns, so a caller converts by simply
   // awaiting this instead.
   function askText(title, label, value) {
-    claimConfirm();
-    confirmSetBusy(false);
-    confirmMsg.textContent = '';
-    confirmTitle.textContent = title;
-    if (confirmBadicon) confirmBadicon.hidden = true;
-    confirmBody.innerHTML =
+    prepConfirm(title,
       '<label class="staxx-confirm-field" for="staxx-confirm-textinput">' + esc(label) + '</label>' +
-      '<input type="text" class="staxx-confirm-input" id="staxx-confirm-textinput">';
+      '<input type="text" class="staxx-confirm-input" id="staxx-confirm-textinput">');
     var input = confirmBody.querySelector('#staxx-confirm-textinput');
     input.value = value || '';
     confirmGo.textContent = 'OK';
-    confirmCancel.hidden = false;
-    confirmCancel.textContent = confirmCancelDefault;
-    if (confirmExtra) confirmExtra.hidden = true;
     if (!confirmModal.open) confirmModal.showModal();
     input.focus({ preventScroll: true });
     input.select();
@@ -24314,11 +24272,7 @@
       '<button type="button" class="staxx-btn" data-tag-pick-go>Use this tag</button>' +
       '</div>';
 
-    claimConfirm();
-    confirmSetBusy(false);
-    confirmMsg.textContent = '';
-    confirmTitle.textContent = 'Choose a tag for ' + repo;
-    confirmBody.innerHTML = listHtml + typeHtml;
+    prepConfirm('Choose a tag for ' + repo, listHtml + typeHtml);
     // Neither of this dialog's own buttons answers the question here — a
     // tag button or "Use this tag" does, through the delegated click
     // handler below — so Go is hidden rather than repurposed. Its label is
@@ -24329,10 +24283,6 @@
     // epoch guard itself, not a replacement for it.
     confirmGo.hidden = true;
     confirmGo.textContent = '';
-    confirmCancel.hidden = false;
-    confirmCancel.textContent = confirmCancelDefault;
-    if (confirmBadicon) confirmBadicon.hidden = true;
-    if (confirmExtra) confirmExtra.hidden = true;
     if (!confirmModal.open) confirmModal.showModal();
     confirmCancel.focus({ preventScroll: true });
 
@@ -24411,15 +24361,7 @@
     if (confirmBusy) event.preventDefault();
   });
 
-  // Same hit-test the picker and editor use: <dialog> fires no backdrop
-  // click of its own, because a click on the backdrop targets the dialog
-  // element itself.
-  confirmModal.addEventListener('click', function (event) {
-    if (event.target !== confirmModal || confirmBusy) return;
-    var r = confirmModal.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right ||
-        event.clientY < r.top  || event.clientY > r.bottom) closeConfirm();
-  });
+  onBackdropClick(confirmModal, function () { return confirmBusy; }, closeConfirm);
 
   confirmGo.addEventListener('click', function () {
     if (confirmBusy) return;
@@ -24674,45 +24616,22 @@
 
   function exportDialogEl() {
     if (exportModal) return exportModal;
-    exportModal = document.createElement('dialog');
-    exportModal.className = 'staxx-confirm staxx-export';
-    exportModal.setAttribute('aria-labelledby', 'staxx-export-title');
-    exportModal.innerHTML =
-      '<div class="staxx-confirm-head"><h3 class="staxx-confirm-title" id="staxx-export-title"></h3></div>' +
-      '<div class="staxx-confirm-body staxx-export-body" id="staxx-export-body"></div>' +
-      '<div class="staxx-confirm-foot">' +
-        '<p class="staxx-confirm-msg" id="staxx-export-msg" role="status" aria-live="polite"></p>' +
-        '<div class="staxx-buttons staxx-buttons--inline">' +
-          '<button type="button" class="staxx-btn" id="staxx-export-cancel">Cancel</button>' +
-          '<button type="button" class="staxx-btn" id="staxx-export-back" hidden>Back</button>' +
-          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-export-next">Next</button>' +
-        '</div>' +
-      '</div>';
-    // .staxx-btn and friends are only styled inside .staxx-scaffold — every
-    // other dialog on this page sits there too, just further up the same
-    // markup this script never touches, so this is appended to the same
-    // container rather than to <body>, where it would render frameless but
-    // unstyled.
-    (document.querySelector('.staxx-scaffold') || document.body).appendChild(exportModal);
+    exportModal = staxxDialog({
+      id: 'export', cls: 'staxx-export', bodyCls: 'staxx-export-body',
+      buttonsHtml:
+        '<button type="button" class="staxx-btn" id="staxx-export-cancel">Cancel</button>' +
+        '<button type="button" class="staxx-btn" id="staxx-export-back" hidden>Back</button>' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-export-next">Next</button>',
+      busy: function () { return exportState && exportState.busy; },
+      close: closeExportModal,
+      onClose: function () { exportState = null; }
+    });
 
     exportModal.querySelector('#staxx-export-cancel').addEventListener('click', closeExportModal);
     exportModal.querySelector('#staxx-export-back').addEventListener('click', function () {
       renderExportScreen(1);
     });
     exportModal.querySelector('#staxx-export-next').addEventListener('click', onExportNext);
-    exportModal.addEventListener('close', function () { exportState = null; });
-
-    // Same backdrop hit-test every other <dialog> on this page uses — a
-    // click on the element itself, outside its own box, is a backdrop click.
-    exportModal.addEventListener('click', function (event) {
-      if (event.target !== exportModal || (exportState && exportState.busy)) return;
-      var r = exportModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) closeExportModal();
-    });
-    exportModal.addEventListener('cancel', function (event) {
-      if (exportState && exportState.busy) event.preventDefault();
-    });
 
     exportModal.querySelector('#staxx-export-body').addEventListener('change', onExportBodyChange);
     exportModal.querySelector('#staxx-export-body').addEventListener('click', onExportBodyClick);
@@ -29103,14 +29022,7 @@
     settingsCancel.addEventListener('click', closeSettingsAsk);
     settingsSave.addEventListener('click', saveSettings);
 
-    // Same hit-test every dialog here uses: <dialog> fires no backdrop click
-    // of its own, because a click on the backdrop targets the dialog element.
-    settingsModal.addEventListener('click', function (event) {
-      if (event.target !== settingsModal || settingsBusy) return;
-      var r = settingsModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) closeSettingsAsk();
-    });
+    onBackdropClick(settingsModal, function () { return settingsBusy; }, closeSettingsAsk);
 
     document.addEventListener('keydown', function (event) {
       if (event.key !== 'Escape' || !settingsModal.open) return;
@@ -30022,14 +29934,7 @@
     if (imagesRemove) imagesRemove.addEventListener('click', runImagesRemove);
     imagesModal.addEventListener('close', imagesStopWatch);
 
-    // Same hit-test every dialog here uses: <dialog> fires no backdrop click
-    // of its own, because a click on the backdrop targets the dialog element.
-    imagesModal.addEventListener('click', function (event) {
-      if (event.target !== imagesModal) return;
-      var r = imagesModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) imagesModal.close();
-    });
+    onBackdropClick(imagesModal);
   }
 
   function openStorageChooser() {
@@ -30207,14 +30112,7 @@
 
     if (storageClose) storageClose.addEventListener('click', function () { storageModal.close(); });
 
-    // Same hit-test every dialog here uses: <dialog> fires no backdrop click
-    // of its own, because a click on the backdrop targets the dialog element.
-    storageModal.addEventListener('click', function (event) {
-      if (event.target !== storageModal) return;
-      var r = storageModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) storageModal.close();
-    });
+    onBackdropClick(storageModal);
   }
 
   // PLAN_97 retired the one-time flash banner and the store-choice action
@@ -32826,38 +32724,18 @@
 
   function bundleDialogEl() {
     if (bundleModal) return bundleModal;
-    bundleModal = document.createElement('dialog');
-    bundleModal.className = 'staxx-confirm staxx-bundle';
-    bundleModal.setAttribute('aria-labelledby', 'staxx-bundle-title');
-    bundleModal.innerHTML =
-      '<div class="staxx-confirm-head"><h3 class="staxx-confirm-title" id="staxx-bundle-title">Import a bundle</h3></div>' +
-      '<div class="staxx-confirm-body" id="staxx-bundle-body"></div>' +
-      '<div class="staxx-confirm-foot">' +
-        '<p class="staxx-confirm-msg" id="staxx-bundle-msg" role="status" aria-live="polite"></p>' +
-        '<div class="staxx-buttons staxx-buttons--inline">' +
-          '<button type="button" class="staxx-btn" id="staxx-bundle-cancel">Cancel</button>' +
-          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-bundle-import" disabled>Import</button>' +
-        '</div>' +
-      '</div>';
-    // Appended beside .staxx-scaffold, not <body> — everything .staxx-btn
-    // and friends style is scoped there, the same reason openExportModal()
-    // does this for its own dialog.
-    (document.querySelector('.staxx-scaffold') || document.body).appendChild(bundleModal);
+    bundleModal = staxxDialog({
+      id: 'bundle', cls: 'staxx-bundle', title: 'Import a bundle',
+      buttonsHtml:
+        '<button type="button" class="staxx-btn" id="staxx-bundle-cancel">Cancel</button>' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-bundle-import" disabled>Import</button>',
+      busy: function () { return bundleState && bundleState.busy; },
+      close: closeBundleModal,
+      onClose: function () { bundleState = null; }
+    });
 
     bundleModal.querySelector('#staxx-bundle-cancel').addEventListener('click', closeBundleModal);
     bundleModal.querySelector('#staxx-bundle-import').addEventListener('click', onBundleImportClick);
-    bundleModal.addEventListener('close', function () { bundleState = null; });
-
-    // Same backdrop hit-test every <dialog> on this page uses.
-    bundleModal.addEventListener('click', function (event) {
-      if (event.target !== bundleModal || (bundleState && bundleState.busy)) return;
-      var r = bundleModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) closeBundleModal();
-    });
-    bundleModal.addEventListener('cancel', function (event) {
-      if (bundleState && bundleState.busy) event.preventDefault();
-    });
 
     return bundleModal;
   }
