@@ -49,28 +49,10 @@ jobs:
         with:
           fetch-depth: 0   # need every branch's and tag's history — to commit the stamped manifest back to the channel branch, and to find prior dev/main tags
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
-
-      - name: Install schema test dependencies
-        run: pip install pyyaml jsonschema
-
       # Same gates release.yml runs. A release that skips them is worse than no
       # release at all — this is the one thing that ends up on someone else's
       # server permanently, not a rolling build they can throw away.
-      - name: Check
-        run: |
-          for f in src/staxx/usr/local/emhttp/plugins/staxx/javascript/*.js; do node --check "$f"; done
-          # Every suite this checkout has, not a hard-coded list — see
-          # release.yml's own comment on this line for why a named list is
-          # the wrong shape here too.
-          for t in tests/*.js; do echo "==> $t"; node "$t"; done
-          python tests/validate_schema.py
+      - uses: ./.github/actions/check
 
       # Three cases: a tag push (version and channel are read off the tag); a
       # hand-typed dispatch (the manual escape hatch, for an exact version on
