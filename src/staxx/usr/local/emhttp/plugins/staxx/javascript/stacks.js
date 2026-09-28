@@ -5838,25 +5838,16 @@
                   paintServiceIcons();
 
                   var rows = containerRows(name, service);
-                  if (rows.length) setBusy(rows, 'Updating…');
-                  call('run', { name: name, verb: 'rollback-pull', service: service }).then(function (runRes) {
-                    if (!runRes || !runRes.ok) {
-                      if (rows.length) clearBusy(rows);
-                      failed('The file was changed but the new tag could not be brought in',
-                             (runRes && runRes.error) || 'Could not start the job.');
-                      done(true);   // the file itself already changed — the row must re-read
-                      return;
-                    }
-                    track(runRes.job, {
-                      rows: rows, verb: 'rollback-pull',
-                      done: function (job) {
-                        if (rows.length) clearBusy(rows);
-                        if (jobFailed(job)) markFailed(job.rows, 'rollback-pull', runRes.job);
-                        refreshStateSoon();
-                      }
-                    });
-                    done(true);
-                  });
+                  // The row must re-read either way — the file itself already
+                  // changed above, whether or not the pull itself starts.
+                  startRowJob({
+                    rows: rows, verb: 'rollback-pull', action: 'run',
+                    fields: { name: name, verb: 'rollback-pull', service: service },
+                    busy: 'Updating…',
+                    failTitle: 'The file was changed but the new tag could not be brought in',
+                    failText: 'Could not start the job.',
+                    after: refreshStateSoon
+                  }).then(function () { done(true); });
                 });
               });
             });
@@ -20272,6 +20263,29 @@
     stopTickerIfIdle();
   }
 
+  // PLAN_196 item 6 — the shared shape behind every row-scoped job: spin the
+  // rows, post, and either report the refusal or track the job through to
+  // its own failure marker. o: rows, verb, action, fields, busy (label;
+  // defaults to BUSY_LABEL[verb]), failTitle, failText (fallback when the
+  // server gives no sentence), show, started(res) (before track, e.g. to
+  // open the log), after(job).
+  function startRowJob(o) {
+    if (o.rows.length) setBusy(o.rows, o.busy || BUSY_LABEL[o.verb] || 'Working…');
+    return call(o.action, o.fields).then(function (res) {
+      if (!res || !res.ok) {
+        clearBusy(o.rows);
+        failed(o.failTitle, (res && res.error) || o.failText);
+        return null;
+      }
+      if (o.started) o.started(res);
+      track(res.job, { rows: o.rows, verb: o.verb, show: !!o.show, done: function (job) {
+        if (!o.show && jobFailed(job)) markFailed(job.rows, o.verb, res.job);
+        if (o.after) o.after(job);
+      } });
+      return res;
+    });
+  }
+
   // PLAN_65 phase D — one clash line, reused by the single-stack and the
   // whole-folder confirmation below. `stack` is only ever set in the folder
   // case, where more than one stack's own name is worth keeping straight.
@@ -20355,12 +20369,11 @@
     // stopping the last running container does change the stack's own state.
     var rows = show ? [] : (service ? containerRows(name, service) : stackRows(name));
 
-    // setBusy() below is what a double-click's second press would see on
-    // screen, but nothing stopped it being sent anyway — refuse outright
-    // while the row is already showing an earlier command's busy pill.
+    // setBusy() below (inside startRowJob) is what a double-click's second
+    // press would see on screen, but nothing stopped it being sent anyway —
+    // refuse outright while the row is already showing an earlier command's
+    // busy pill.
     if (rows.length && rows.some(function (r) { return r.dataset.busy; })) return;
-
-    if (rows.length) setBusy(rows, BUSY_LABEL[verb] || 'Working…');
 
     // `fields` gains `service` only when one was given, so the 3-argument
     // calls elsewhere in this file — there are many — post exactly what they
@@ -20368,28 +20381,11 @@
     var fields = { name: name, verb: verb };
     if (service) fields.service = service;
 
-    call('run', fields).then(function (res) {
-      if (!res.ok) {
-        clearBusy(rows);
-        failed('Could not start', res.error || 'Could not start the command.');
-        return;
-      }
-
-      if (show) openLogDialog(res.title || 'Output', 'Working…');
-
-      track(res.job, {
-        rows: rows, verb: verb, show: show,
-        done: function (job) {
-          clearBusy(rows);
-
-          // Silent while it works, loud when it breaks — and loud now means
-          // a sticky marker on the row, not a dialog stealing the screen.
-          if (!show && jobFailed(job)) {
-            markFailed(job.rows, verb, res.job);
-          }
-          if (done) done(job);
-        }
-      });
+    startRowJob({
+      rows: rows, verb: verb, action: 'run', fields: fields, show: show,
+      failTitle: 'Could not start', failText: 'Could not start the command.',
+      started: function (res) { if (show) openLogDialog(res.title || 'Output', 'Working…'); },
+      after: done
     });
   }
 
@@ -22203,20 +22199,12 @@
   // here, since only it knows whether the target container is running.
   function applyUpdate(name, service, label) {
     var rows = service ? containerRows(name, service) : stackRows(name);
-    if (rows.length) setBusy(rows, 'Updating…');
     var fields = { name: name };
     if (service) fields.service = service;
-    call('update-apply', fields).then(function (res) {
-      if (!res.ok) { clearBusy(rows); failed('Could not update ' + label, res.error); return; }
-      track(res.job, {
-        rows: rows, verb: 'update',
-        done: function (job) {
-          clearBusy(rows);
-          if (jobFailed(job)) markFailed(job.rows, 'update', res.job);
-          refreshUpdates(name, service);
-          refreshStateSoon();
-        }
-      });
+    startRowJob({
+      rows: rows, verb: 'update', action: 'update-apply', fields: fields,
+      failTitle: 'Could not update ' + label,
+      after: function () { refreshUpdates(name, service); refreshStateSoon(); }
     });
   }
 
@@ -22238,18 +22226,10 @@
   // it has just been given.
   function rebuildService(name, service, label) {
     var rows = containerRows(name, service);
-    if (rows.length) setBusy(rows, 'Rebuilding…');
-    call('update-rebuild', { name: name, service: service }).then(function (res) {
-      if (!res.ok) { clearBusy(rows); failed('Could not rebuild ' + label, res.error); return; }
-      track(res.job, {
-        rows: rows, verb: 'rebuild',
-        done: function (job) {
-          clearBusy(rows);
-          if (jobFailed(job)) markFailed(job.rows, 'rebuild', res.job);
-          refreshUpdates(name, service);
-          refreshStateSoon();
-        }
-      });
+    startRowJob({
+      rows: rows, verb: 'rebuild', action: 'update-rebuild', fields: { name: name, service: service },
+      failTitle: 'Could not rebuild ' + label,
+      after: function () { refreshUpdates(name, service); refreshStateSoon(); }
     });
   }
 
