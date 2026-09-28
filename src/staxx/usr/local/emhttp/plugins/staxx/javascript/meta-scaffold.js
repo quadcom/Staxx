@@ -220,7 +220,7 @@
   }
 
   function scaffoldService(doc, name, step, added, skipped) {
-    var svc = doc.root.pairs.services.value.pairs[name];
+    var svc = Yaml.servicesMap(doc).pairs[name];
     if (!svc || !svc.value || svc.value.kind !== 'map') {
       skipped.push('The "' + name + '" service is not written as a plain block, so its StaXX fields were not added.');
       return;

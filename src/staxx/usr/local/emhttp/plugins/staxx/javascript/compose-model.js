@@ -3254,8 +3254,8 @@
       }
     }
 
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') {
+    var svc = servicesMapOf(doc);
+    if (!svc) {
       out.warnings.push({ line: 0, message: 'This file lists no services.' });
       return out;
     }
@@ -3270,16 +3270,16 @@
     // referenced by services — read one level deep, no recursion. A name
     // with a null value (declared, nothing under it) still counts, because
     // .keys lists it regardless of what its value turned out to be.
-    out.declared.services = svc.value.keys.slice();
+    out.declared.services = svc.keys.slice();
     var declKinds = ['networks', 'volumes', 'secrets', 'configs'];
     for (var dk = 0; dk < declKinds.length; dk++) {
       var dp = doc.root.pairs[declKinds[dk]];
       if (dp && dp.value && dp.value.kind === 'map') out.declared[declKinds[dk]] = dp.value.keys.slice();
     }
 
-    for (var i = 0; i < svc.value.keys.length; i++) {
-      var name = svc.value.keys[i];
-      var p = svc.value.pairs[name];
+    for (var i = 0; i < svc.keys.length; i++) {
+      var name = svc.keys[i];
+      var p = svc.pairs[name];
       if (!p.value || p.value.kind !== 'map') {
         out.services.push({
           name: name, display: 'basic',
@@ -4049,12 +4049,17 @@
     return n > 0 ? new Array(n + 1).join(' ') : '';
   }
 
+  // The services: map of a parsed document, or null when the file has none
+  // (or its root is not a map). One definition for every script that needs it.
+  function servicesMapOf(doc) {
+    var svc = doc.root && doc.root.kind === 'map' ? doc.root.pairs['services'] : null;
+    return svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
+  }
+
   /** The pair holding one service's block, or null if it cannot be read. */
   function serviceMapOf(doc, name) {
-    if (!doc.root || doc.root.kind !== 'map') return null;
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') return null;
-    var p = svc.value.pairs[name];
+    var map = servicesMapOf(doc);
+    var p = map ? map.pairs[name] : null;
     return p && p.value && p.value.kind === 'map' ? p : null;
   }
 
@@ -5416,8 +5421,7 @@
     var refusals = [], replacements = [], i;
 
     // ---- step 1: each service's own keys -----------------------------
-    var servicesPair = doc.root.pairs['services'];
-    var servicesMap = servicesPair && servicesPair.value && servicesPair.value.kind === 'map' ? servicesPair.value : null;
+    var servicesMap = servicesMapOf(doc);
     if (servicesMap && servicesMap.keys.length) {
       for (i = 0; i < servicesMap.keys.length; i++) {
         var name = servicesMap.keys[i];
@@ -5462,8 +5466,7 @@
     var stage3 = stage2, gapsChanged = false;
     var doc2 = parse(doc.bom + stage2.join('\n'));
     if (doc2.root && doc2.root.kind === 'map' && !doc2.unreadTail) {
-      var svcPair2 = doc2.root.pairs['services'];
-      var svcMap2 = svcPair2 && svcPair2.value && svcPair2.value.kind === 'map' ? svcPair2.value : null;
+      var svcMap2 = servicesMapOf(doc2);
       if (svcMap2 && svcMap2.keys.length > 1) {
         var gapResult = layoutScope(doc2, svcMap2, svcMap2.keys, null, null, 'the services list', stage2, true);
         if (gapResult.changed) {
@@ -5856,19 +5859,19 @@
     // is unread, which is exactly what closes the duplicate-service route.
     if (hasUnreadTail(doc)) return -1;
 
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') return -1;
-    if (svc.value.pairs[name]) return -1;
+    var svc = servicesMapOf(doc);
+    if (!svc) return -1;
+    if (svc.pairs[name]) return -1;
 
     // Positioned after the last existing service, the same placement addItem
     // uses for a list's first entry.
-    var indent = svc.value.indent;
+    var indent = svc.indent;
     var after = null, i;
-    for (i = 0; i < svc.value.keys.length; i++) {
-      after = svc.value.pairs[svc.value.keys[i]];
+    for (i = 0; i < svc.keys.length; i++) {
+      after = svc.pairs[svc.keys[i]];
     }
 
-    var to = after ? after.end : svc.value.start + 1;
+    var to = after ? after.end : svc.start + 1;
     var lines = [];
 
     // Match the file's own habit: if the service above this one is separated
@@ -6763,11 +6766,11 @@
     if (!doc.root || doc.root.kind !== 'map') {
       return { ok: false, error: 'This file cannot be read as compose, so nothing can be renamed.' };
     }
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') {
+    var svc = servicesMapOf(doc);
+    if (!svc) {
       return { ok: false, error: 'This file lists no services, so there is nothing to rename.' };
     }
-    var topPair = svc.value.pairs[oldName];
+    var topPair = svc.pairs[oldName];
     if (!topPair) {
       return { ok: false, error: 'There is no service called "' + oldName + '" in this file, so it cannot be renamed.' };
     }
@@ -6775,7 +6778,7 @@
     // collision test below, which would otherwise refuse it for colliding
     // with itself.
     if (newName === oldName) return { ok: true, refs: 0 };
-    if (svc.value.pairs[newName]) {
+    if (svc.pairs[newName]) {
       return { ok: false, error: 'A service called "' + newName + '" already exists — choose another name.' };
     }
 
@@ -6786,8 +6789,8 @@
     }
 
     var edits = [], i;
-    for (i = 0; i < svc.value.keys.length; i++) {
-      var p = svc.value.pairs[svc.value.keys[i]];
+    for (i = 0; i < svc.keys.length; i++) {
+      var p = svc.pairs[svc.keys[i]];
       if (p.value && p.value.kind === 'map') collectServiceRefs(edits, p.value, oldName, newName);
     }
 
@@ -6831,11 +6834,11 @@
     var pair = block && block.value && block.value.kind === 'map' ? block.value.pairs[name] : null;
     if (pair) edits.push({ spot: keySpot(pair) });
 
-    var svc = doc.root.pairs['services'];
-    if (!svc || !svc.value || svc.value.kind !== 'map') return edits;
+    var svc = servicesMapOf(doc);
+    if (!svc) return edits;
 
-    for (var si = 0; si < svc.value.keys.length; si++) {
-      var sp = svc.value.pairs[svc.value.keys[si]];
+    for (var si = 0; si < svc.keys.length; si++) {
+      var sp = svc.pairs[svc.keys[si]];
       if (!sp.value || sp.value.kind !== 'map') continue;
 
       var lp = sp.value.pairs[kind];
@@ -7654,10 +7657,10 @@
       if (doc && doc.root && doc.root.kind === 'map') {
         checkSpecKeys(doc.root, TOP_SPEC_SET, TOP_SPEC_KEYS, add);
 
-        var svc = doc.root.pairs['services'];
-        if (svc && svc.value && svc.value.kind === 'map') {
-          for (var i = 0; i < svc.value.keys.length; i++) {
-            var p = svc.value.pairs[svc.value.keys[i]];
+        var svc = servicesMapOf(doc);
+        if (svc) {
+          for (var i = 0; i < svc.keys.length; i++) {
+            var p = svc.pairs[svc.keys[i]];
             // A service written in a way this parser cannot open at all
             // (kind !== 'map') has no keys to check — that is what "skip
             // anything inside a sealed region" means here.
@@ -10577,6 +10580,7 @@
   var API = {
     parse: parse,
     serialise: serialise,
+    servicesMap: servicesMapOf,
     buildForm: buildForm,
     setPart: setPart,
     renameService: renameService,
