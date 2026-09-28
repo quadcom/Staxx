@@ -280,6 +280,14 @@ switch ($action) {
   case 'read':
     $body = staxx_read_stack($name, $error);
     if ($body === null) staxx_fail($error);
+    // PLAN_196 item 1 — the row menu's policy and pin writers want the file
+    // and its fingerprint only. Everything below is for the editor opening;
+    // each of those writers is followed by a save, which keeps the
+    // before-copy itself (staxx_save_stack()), so skipping the seed here
+    // loses nothing.
+    if (($_POST['lite'] ?? '') === '1') {
+      staxx_reply(['ok' => true, 'name' => $name, 'body' => $body, 'fingerprint' => md5($body)]);
+    }
     // PLAN_102 5a — a compose file dropped into the folder by hand has no
     // history until something is saved over it, and until then the file is
     // its own only copy. Somebody opening the editor is the earliest moment

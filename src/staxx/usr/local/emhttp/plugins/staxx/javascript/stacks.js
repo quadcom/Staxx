@@ -4573,7 +4573,9 @@
   // fingerprint, eol} shape findImageOwner() below answers with either way,
   // so every caller handles "which file" with one shape, not two.
   function mainImageOwner(name) {
-    return call('read', { name: name }).then(function (r) {
+    // PLAN_196 item 1 — only the file and its fingerprint are used below, so
+    // `lite` skips the editor-only extras (history seed, moved, watch, icons).
+    return call('read', { name: name, lite: '1' }).then(function (r) {
       if (!r || !r.ok) return { ok: false, why: (r && r.error) || 'Could not read the stack.' };
       return { ok: true, isOverride: false, fileName: '', text: r.body, fingerprint: r.fingerprint,
                eol: r.body.indexOf('\r\n') >= 0 ? '\r\n' : '\n' };
@@ -5088,7 +5090,9 @@
       return;
     }
 
-    call('read', { name: openedName }).then(function (readRes) {
+    // PLAN_196 item 1 — this reads then saves straight away, so `lite`
+    // skips the editor-only extras (history seed, moved, watch, icons).
+    call('read', { name: openedName, lite: '1' }).then(function (readRes) {
       if (!readRes || !readRes.ok) {
         showError((readRes && readRes.error) || 'Could not read the stack to change this setting.');
         return;
@@ -5421,7 +5425,9 @@
   // as before.
   function writeUpdatePolicyForServices(name, services, policyField, value, onRefuse) {
     var report = onRefuse || failed;
-    return call('read', { name: name }).then(function (readRes) {
+    // PLAN_196 item 1 — this reads then saves straight away, so `lite`
+    // skips the editor-only extras (history seed, moved, watch, icons).
+    return call('read', { name: name, lite: '1' }).then(function (readRes) {
       if (!readRes || !readRes.ok) {
         report('Could not change this setting', (readRes && readRes.error) || 'Could not read the stack.');
         return null;
@@ -5934,7 +5940,9 @@
     var modeSkel = updMenuRowSkeleton('mode', 'Updates');
     var notifySkel = updMenuRowSkeleton('notify', 'Notifications');
 
-    call('read', { name: name }).then(function (readRes) {
+    // PLAN_196 item 1 — run on every row-menu open, and only the file's
+    // text is used below, so `lite` skips the editor-only extras.
+    call('read', { name: name, lite: '1' }).then(function (readRes) {
       if (!readRes || !readRes.ok) {
         var msg = (readRes && readRes.error) || 'Could not read this stack.';
         modeSkel.body.querySelector('.staxx-menu-updloading').textContent = msg;
