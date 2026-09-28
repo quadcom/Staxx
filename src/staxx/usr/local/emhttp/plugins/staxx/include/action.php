@@ -1359,9 +1359,10 @@ switch ($action) {
   /* ---- PLAN_165 §5 — the sweep for stacks taken over before this plan ----
    *
    * Read-only list, and the reclaim that moves a chosen subset (or every
-   * safe row when none is named) into StaXX's own store. Neither shells out
-   * — both cost a directory scan and the compose metadata staxx_list_
-   * stacks() already reads for the table itself.
+   * safe row when none is named) into StaXX's own store. Neither pulls or
+   * starts anything. Both read each stack's remembered compose metadata and
+   * the template folder, and ask Docker for its container names only when
+   * some stack names a container.
    */
   case 'unraid-templates':
     staxx_reply(['ok' => true, 'templates' => staxx_unraid_templates_at_risk()]);
@@ -1443,8 +1444,9 @@ switch ($action) {
    *
    * Cheap on purpose, so the page can ask on every poll: one read of the
    * update state file, plus the compose metadata staxx_compose_meta() already
-   * caches to disk for the table itself. No docker call happens here at all —
-   * that only ever happens in the detached check pass 'update-check' starts.
+   * caches to disk for the table itself. No registry or network call happens
+   * here; the only Docker question is compose's own state list, asked once,
+   * and only when a service is set to update automatically.
    * `rows` is keyed both by stack path ("Media/jellyfin") and by
    * "path::service" ("Media/jellyfin::jellyfin"), matching how the table
    * already addresses a service row; `folders` is keyed by folder name.

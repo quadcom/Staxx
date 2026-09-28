@@ -375,12 +375,12 @@ function staxx_expose_config(array $svcX): ?array {
  */
 function staxx_expose_all_configs(): array {
   $out = [];
-  foreach (staxx_list_stacks() as $stack) {
-    if ($stack['file'] === '') continue;
-    $meta = staxx_compose_meta($stack['file']);
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
     foreach ($meta['services'] as $svcName => $svc) {
       $config = staxx_expose_config($svc['x']);
-      if ($config !== null) $out[$stack['name']][$svcName] = $config['domain'];
+      if ($config !== null) $out[$rel][$svcName] = $config['domain'];
     }
   }
   return $out;
@@ -983,12 +983,12 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
 function staxx_expose_status(string &$err): array {
   $err = '';
   $allConfigs = [];
-  foreach (staxx_list_stacks() as $stack) {
-    if ($stack['file'] === '') continue;
-    $meta = staxx_compose_meta($stack['file']);
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
     foreach ($meta['services'] as $svcName => $svc) {
       $c = staxx_expose_config($svc['x']);
-      if ($c !== null) $allConfigs[$stack['name']][$svcName] = $c;
+      if ($c !== null) $allConfigs[$rel][$svcName] = $c;
     }
   }
   if ($allConfigs === []) return [];

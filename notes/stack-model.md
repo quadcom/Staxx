@@ -20,6 +20,11 @@ is its path under the root, `jellyfin` or `Media/jellyfin`, and `staxx_valid_pat
 splitting on `/` and handing every segment to `staxx_valid_name()` — never by a regex that
 permits a slash, which is the obvious way to write it and also the way out of the stack root.
 
+To turn a stack's path into its compose file, or to walk every stack in display order, use
+`staxx_stack_compose_map()`. `staxx_list_stacks()` builds the full row for every stack (records,
+Docker state, profiles) and is not remembered between calls, so it is only for code that draws or
+returns those rows.
+
 `include/Folders.php` now holds only which folders are shown collapsed, because an empty folder has
 nowhere else to keep it.
 

@@ -208,8 +208,7 @@ function staxx_update_notify_scope_value(array $x, string $event): ?bool {
  * staxx_update_policy() so a caller that already holds a stack's
  * staxx_compose_meta() result — the row table renders one per stack already,
  * see staxx_stack_children() — can resolve every one of its services without
- * staxx_update_policy()'s own staxx_list_stacks() scan, which the row table
- * cannot afford to repeat per service on a server with hundreds of rows.
+ * the stack lookup staxx_update_policy() does first.
  *
  * @param array $meta staxx_compose_meta()'s return for one stack
  * @param array $global staxx_update_settings()'s return

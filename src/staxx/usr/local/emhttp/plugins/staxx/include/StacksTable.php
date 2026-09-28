@@ -1587,9 +1587,8 @@ function staxx_pin_mark_html(array $kids): string {
  * it never earns the mark either, whatever its resolved mode says.
  *
  * Takes $meta directly rather than calling staxx_update_policy() itself:
- * that function's own file lookup walks staxx_list_stacks() to find the
- * file by name, which the row table has already found once for every one of
- * its (potentially hundreds of) rows — see staxx_update_policy_from_meta().
+ * that function looks the file up by name, which the row table has already
+ * done once for every row.
  */
 function staxx_service_updates_itself(array $meta, string $service, string $declaredImage, bool $hasBuild, array $global): bool {
   if (strpos($declaredImage, '@') !== false) return false;

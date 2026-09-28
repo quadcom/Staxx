@@ -428,15 +428,18 @@ function staxx_merge_port_users(array $excludeRels, string $port, string $host):
   if ($hosts === []) return [];
 
   $out = [];
-  foreach (staxx_list_stacks() as $s) {
-    if (in_array($s['name'], $excludeRels, true)) continue;
-    if ($s['file'] === '') continue;
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if (in_array($rel, $excludeRels, true)) continue;
+    if ($file === '') continue;
 
     $text = '';
-    foreach (staxx_compose_files($s['file']) as $f) {
+    foreach (staxx_compose_files($file) as $f) {
       $text .= "\n" . (string)@file_get_contents($f);
     }
-    $envFile = rtrim($s['dir'], '/') . '/.env';
+    // The compose file always sits directly in the stack directory
+    // (staxx_find_compose_file() returns $dir.'/'.$f), so the directory it
+    // was found in is the compose file's own dirname.
+    $envFile = rtrim(dirname($file), '/') . '/.env';
     if (is_file($envFile)) $text .= "\n" . (string)@file_get_contents($envFile);
     if ($text === '') continue;
 
@@ -445,7 +448,7 @@ function staxx_merge_port_users(array $excludeRels, string $port, string $host):
     foreach ($hosts as $h) {
       $hq = preg_quote($h, '/');
       // "<host>:<port>" written together, however it is quoted.
-      if (preg_match('/'.$hq.':'.$port.'\b/', $text)) { $out[] = $s['name']; continue 2; }
+      if (preg_match('/'.$hq.':'.$port.'\b/', $text)) { $out[] = $rel; continue 2; }
 
       // The split shape: the host alone as a setting's own value on one
       // line, the port alone as a setting's own value on another.
@@ -457,7 +460,7 @@ function staxx_merge_port_users(array $excludeRels, string $port, string $host):
         if (!$hasPortLine && preg_match('/[:=]\s*["\']?'.$port.'["\']?\s*$/', $trimmed)) $hasPortLine = true;
         if ($hasHostLine && $hasPortLine) break;
       }
-      if ($hasHostLine && $hasPortLine) { $out[] = $s['name']; continue 2; }
+      if ($hasHostLine && $hasPortLine) { $out[] = $rel; continue 2; }
     }
   }
 

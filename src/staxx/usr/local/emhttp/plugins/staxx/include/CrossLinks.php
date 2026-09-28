@@ -588,16 +588,16 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
   $fuzzyNear  = [];     // part C pass 2 — up to 2 characters' difference
   $thisServer = $hasHostPort && $port !== '' && staxx_crosslinks_is_this_server($host);
 
-  foreach (staxx_list_stacks() as $stack) {
-    if ($stack['name'] === $sourcePath || $stack['file'] === '') continue;
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($rel === $sourcePath || $file === '') continue;
 
-    $meta = staxx_compose_meta($stack['file']);
+    $meta = staxx_compose_meta($file);
     if (!$meta['ok']) continue;
 
     // Read once per stack, not once per service: the flatten behind it is
     // the same work whichever service asked for it.
     $fixedByService = $addressHost !== ''
-      ? staxx_crosslinks_service_fixed_vlan($stack['file'], $drivers) : [];
+      ? staxx_crosslinks_service_fixed_vlan($file, $drivers) : [];
 
     foreach ($meta['services'] as $svcName => $svc) {
       // Route 2 — a name match, gated on a real shared network.
@@ -609,11 +609,11 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
         $via = 'container-name';
       }
       if ($via !== null) {
-        $targetNets = staxx_crosslinks_service_networks($stack['file'])[$svcName] ?? [];
+        $targetNets = staxx_crosslinks_service_networks($file)[$svcName] ?? [];
         $shared     = array_values(array_intersect($sourceNets, $targetNets));
         if ($shared !== []) {
           $candidates[] = [
-            'stack'   => $stack['name'],
+            'stack'   => $rel,
             'service' => $svcName,
             'via'     => $via,
             'network' => $shared[0],
@@ -623,7 +623,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
           // say so, naming the target's own network, rather than falling
           // through to silence. First one found wins, same as everywhere
           // else in this file that has to pick just one.
-          $nearMiss = ['stack' => $stack['name'], 'service' => $svcName, 'network' => $targetNets[0] ?? null];
+          $nearMiss = ['stack' => $rel, 'service' => $svcName, 'network' => $targetNets[0] ?? null];
         }
       }
 
@@ -632,7 +632,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
         $published = (string)($svc['firstPort']['published'] ?? '');
         if ($published !== '' && $published === $port) {
           $candidates[] = [
-            'stack'   => $stack['name'],
+            'stack'   => $rel,
             'service' => $svcName,
             'via'     => 'port',
             'port'    => $published,
@@ -644,7 +644,7 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
       if ($addressHost !== '') {
         $fixed = $fixedByService[$svcName] ?? null;
         if ($fixed !== null && $fixed['vlan'] && strcasecmp($fixed['ip'], $addressHost) === 0) {
-          $candidates[] = ['stack' => $stack['name'], 'service' => $svcName, 'via' => 'fixed-address'];
+          $candidates[] = ['stack' => $rel, 'service' => $svcName, 'via' => 'fixed-address'];
         }
       }
 
@@ -664,10 +664,10 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
             if ($nameLoose[$i] === '') continue;
             if ($fuzzyShared === null) {
               $fuzzyShared = array_values(array_intersect(
-                $sourceNets, staxx_crosslinks_service_networks($stack['file'])[$svcName] ?? []
+                $sourceNets, staxx_crosslinks_service_networks($file)[$svcName] ?? []
               ));
             }
-            $entry = ['stack' => $stack['name'], 'service' => $svcName, 'via' => $vk,
+            $entry = ['stack' => $rel, 'service' => $svcName, 'via' => $vk,
                       'network' => $fuzzyShared[0] ?? null];
             if ($nameLoose[$i] === $targetLoose) {
               $fuzzyLoose[] = $entry;

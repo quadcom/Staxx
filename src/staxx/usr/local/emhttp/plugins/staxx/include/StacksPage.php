@@ -254,9 +254,9 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         refresh, for exactly the reason the clash facts below are: refreshState()
         only ever runs after something has been started or stopped, so a fresh
         page load never makes one and the pill and the first-load window would
-        never appear at all (measured 2026-09-18). Both values cost ~8ms here,
-        because the scan reuses the stack list and container names this render
-        has already read. */ ?>
+        never appear at all (measured 2026-09-18). Both values cost little: the
+        lookup behind them reads the folder scan this render has already done,
+        and the template folder is only read when a stack names a container. */ ?>
      data-unraid-templates="<?= staxx_unraid_templates_movable_count() ?>"
      data-unraid-templates-asked="<?= staxx_unraid_templates_asked() ? '1' : '0' ?>"
      <?php /* PLAN_65/73 — the ports, paths and host listeners already in use,
