@@ -26,14 +26,7 @@ var STACKS_PATH = path.join(ROOT, 'src/staxx/usr/local/emhttp/plugins/staxx/java
 
 var Y = require(MODEL_PATH);
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function skip(name, why) {
   console.log('  skip  ' + name + ' (' + why + ')');
@@ -957,5 +950,4 @@ if (HAS_TIDY) {
 
 /* ---- summary -------------------------------------------------------------- */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

@@ -33,17 +33,10 @@ var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-
 
 var ROOT = path.join(__dirname, '..');
 
-var pass = 0, fail = 0;
+var check = require('./lib/check.js'), ok = check.ok;
 
 function findKind(list, kind) {
   return list.filter(function (c) { return c.kind === kind; });
-}
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
 }
 
 // Same helper links_record.js already uses — proves a written record
@@ -373,5 +366,4 @@ function validateAgainstSchema(text) {
   ok('once recorded, the editor has nothing left to ask about this pair', visible.length === 0, visible.length);
 })();
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

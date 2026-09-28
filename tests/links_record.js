@@ -21,14 +21,7 @@ var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-
 
 var ROOT = path.join(__dirname, '..');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 // Runs the whole compose document written back by `text` through the same
 // jsonschema Draft202012Validator tests/validate_schema.py uses, so a link
@@ -469,5 +462,4 @@ function computeOffer(form, mineEp, oldVal, newVal) {
      Y.serialise(doc).indexOf('WouldHaveBeenWritten') < 0);
 })();
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

@@ -30,14 +30,7 @@ var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-
 // move too, and fixing it is a separate change.
 var VOCAB_SNAPSHOT = require('./vocab-snapshot.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function firstDiff(a, b) {
   var A = a.split('\n'), B = b.split('\n');
@@ -11242,5 +11235,4 @@ function notifyField(form, service) {
 
 /* ---- result ------------------------------------------------------------- */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
-process.exit(fail ? 1 : 0);
+check.done();

@@ -23,14 +23,7 @@ var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose
 var M = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-examine.js');
 var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-write.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 /* =========================================================================
  * Loading a fixture pair as raw text, and as descriptors for examine()
@@ -2330,5 +2323,4 @@ console.log('\nT. PLAN_179 P1/P2');
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

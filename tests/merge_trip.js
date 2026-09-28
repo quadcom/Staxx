@@ -29,14 +29,8 @@ var MW = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/merge-w
 var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference between the sources and
                                             // buildMergedText()'s own output must be accounted for.
 
-var pass = 0, fail = 0, skip = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
+var skip = 0;
 
 // PLAN_179 — every call this file makes to buildMergedText() is audited in the same pass, so a
 // silent change slipped into any of these round-two probes fails here too, not only in
@@ -731,5 +725,4 @@ function unretire(text, newName, date) {
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed, ' + skip + ' skipped');
-process.exit(fail ? 1 : 0);
+check.done(', ' + skip + ' skipped');

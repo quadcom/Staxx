@@ -20,14 +20,7 @@
 
 var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 // 32 hex characters — the minimum this project's digest shape accepts.
 var GOOD_DIGEST = 'sha256:' + 'abcdef0123456789abcdef0123456789';
@@ -473,5 +466,4 @@ console.log('\n11. Round trip — releasing removes the note "Pinned" added, and
      out);
 })();
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-if (fail > 0) process.exit(1);
+check.done();
