@@ -204,6 +204,18 @@ ok('a symlink resolving outside the stack folder is flagged outside',
 ok('a symlink resolving inside the stack folder is not flagged outside',
    ($linkByPath['inside-link']['outside'] ?? true) === false);
 
+// PLAN_192 item 6 — a link written as an absolute path inside the stack
+// folder, but pointing at something that does not exist, has nothing to
+// vouch for it being inside the tree, so it now counts as outside too
+// (staxx_relocate_link_outside()'s own rule, shared here since PLAN_192).
+symlink($root.'/zzc155link/no-such-file', $root.'/zzc155link/broken-inside');
+staxx_scan_stacks_reset();
+$err = ''; $brokenListing = staxx_merge_files('zzc155link', $err);
+$brokenByPath = [];
+foreach (($brokenListing['files'] ?? []) as $entry) $brokenByPath[$entry['path']] = $entry;
+ok('a broken symlink written as an absolute path inside the folder is flagged outside',
+   ($brokenByPath['broken-inside']['outside'] ?? false) === true);
+
 /* ========================================================================
  * B. Refusals — every one leaves every stack, and the disk, exactly as it
  *    was before the call

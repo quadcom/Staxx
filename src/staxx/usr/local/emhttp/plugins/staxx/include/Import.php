@@ -644,6 +644,19 @@ function staxx_import_find_override(string $file, string $dir): string {
 }
 
 /**
+ * A project's `indirect` file, read exactly as written — never rebuilt from
+ * the project's own folder name, because the two are allowed to disagree
+ * (PenPot_Complete's indirect points at a differently-capitalised
+ * Penpot_Complete). '' when the file is missing or empty, which both
+ * staxx_import_resolve_project_file() and staxx_import_project_file() treat
+ * as "fall through to the next tier".
+ */
+function staxx_import_indirect_target(string $dir): string {
+  if (!is_file($dir.'/indirect')) return '';
+  return rtrim(trim((string)@file_get_contents($dir.'/indirect')), '/');
+}
+
+/**
  * Where a Compose Manager project's compose file actually lives, and how
  * that was worked out — the tier that answered matters more than the path
  * itself, since it is the thing most likely to be wrong.
@@ -652,21 +665,13 @@ function staxx_import_find_override(string $file, string $dir): string {
  *                                     or 'flash'; file is '' if none found.
  */
 function staxx_import_resolve_project_file(string $dir, string $project): array {
-  // Tier 1: an `indirect` file, when present, names the real folder — used
-  // exactly as written, never rebuilt from the project's own folder name,
-  // because the two are allowed to disagree (PenPot_Complete's indirect
-  // points at a differently-capitalised Penpot_Complete).
-  $indirect = $dir.'/indirect';
-  if (is_file($indirect)) {
-    $target = rtrim(trim((string)@file_get_contents($indirect)), '/');
-    if ($target !== '') {
-      foreach (STAXX_COMPOSE_FILENAMES as $f) {
-        if (is_file($target.'/'.$f)) return [$target.'/'.$f, 'indirect'];
-      }
-      // indirect exists and was read, but nothing compose-shaped is there
-      // (yet, or any more) — the tier is still the honest answer.
-      return ['', 'indirect'];
-    }
+  // Tier 1: an `indirect` file, when present, names the real folder.
+  $target = staxx_import_indirect_target($dir);
+  if ($target !== '') {
+    // indirect exists and was read; found or not, the tier is still the
+    // honest answer — nothing compose-shaped there (yet, or any more)
+    // reports '' rather than falling through to a lower tier.
+    return [staxx_find_compose_file($target), 'indirect'];
   }
 
   // Tier 2: a running container's own label says which file started it.
@@ -980,11 +985,8 @@ function staxx_import_file_differs(string $a, string $b): bool {
  *   3. The project's own folder on the flash drive.
  */
 function staxx_import_project_file(string $dir, string $project): string {
-  $indirect = $dir.'/indirect';
-  if (is_file($indirect)) {
-    $target = rtrim(trim((string)@file_get_contents($indirect)), '/');
-    if ($target !== '') return staxx_find_compose_file($target);
-  }
+  $target = staxx_import_indirect_target($dir);
+  if ($target !== '') return staxx_find_compose_file($target);
 
   // byFile lists each project's config files in the order compose reported
   // them — main file first, override second — so the first match found here
