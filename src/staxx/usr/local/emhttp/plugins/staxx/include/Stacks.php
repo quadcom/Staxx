@@ -1924,9 +1924,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     if ($parts[0] !== 'services' || count($parts) < 3) continue;
     $service = $parts[1];
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
+      $meta['services'][$service] = staxx_meta_blank_service();
     }
 
     // Which networks this service names, regardless of what else is nested
@@ -1992,9 +1990,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // never sees at all (see staxx_first_ports()'s own comment for why).
   foreach (staxx_first_ports($yaml) as $service => $port) {
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
+      $meta['services'][$service] = staxx_meta_blank_service();
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -2013,9 +2009,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   }
   foreach ($rawProfiles as $service => $profiles) {
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
+      $meta['services'][$service] = staxx_meta_blank_service();
     }
     $meta['services'][$service]['profiles'] = $profiles;
   }
@@ -3337,9 +3331,12 @@ function staxx_validate_compose(string $yaml, string &$error, string $dir = '', 
   // Judge this on the exit code, not on whether anything was printed. Compose
   // writes deprecation notices and other warnings to stderr for files that are
   // perfectly valid; treating any output as failure would reject them.
-  $lines = [];
-  $code  = 1;
-  @exec('timeout -k 2 20 '.$cmd.' '.$projectFlag.$fileArgs.'config -q </dev/null 2>&1', $lines, $code);
+  // The trailing 2>&1 is inside the command staxx_sh() runs, so compose's own
+  // warnings survive; staxx_sh() otherwise discards stderr with its outer
+  // 2>/dev/null, and its timeout still exits 124, which is tested below.
+  $code = 1;
+  $out  = staxx_sh($cmd.' '.$projectFlag.$fileArgs.'config -q 2>&1', 20, $code);
+  $lines = $out === '' ? [] : explode("\n", $out);
 
   @unlink($tmpfile);
   @rmdir($tmpdir);
@@ -3482,10 +3479,7 @@ function staxx_selftest(): array {
   // itself, so this reply cannot hang. Anything needing docker or compose is a
   // probe instead — see staxx_probes() — run one at a time so a command
   // that never returns can be identified rather than just suspected.
-  $composePath = '';
-  foreach (staxx_compose_paths() as $path) {
-    if (is_file($path) && is_executable($path)) { $composePath = $path; break; }
-  }
+  $composePath = staxx_compose_found_path();
 
   $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
 
@@ -3865,8 +3859,7 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   $error = '';
 
   if (!staxx_valid_path($name)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return false;
   }
   // A stack may sit one folder down, but the folder has to be there already —
@@ -6977,8 +6970,7 @@ function staxx_bundle_write(array $bundle, string $rel, string &$error): bool {
   $error = '';
 
   if (!staxx_valid_path($rel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return false;
   }
   $refusal = staxx_create_refusal($rel, false);
@@ -7180,8 +7172,7 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
 
   if (!staxx_valid_path($rel)) { $error = 'Invalid stack name.'; return ''; }
   if (!staxx_valid_name($newLeaf)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return '';
   }
 
@@ -8408,7 +8399,7 @@ function staxx_exec_kill(string $id): void {
 function staxx_exec_stop(string $id): void {
   if (!preg_match('/^[0-9a-f]{16}$/', $id)) return;
   staxx_exec_kill($id);
-  @exec('rm -rf '.escapeshellarg(STAXX_EXEC_DIR.'/'.$id));
+  staxx_rmtree(STAXX_EXEC_DIR.'/'.$id, realpath(STAXX_EXEC_DIR) ?: STAXX_EXEC_DIR);
 }
 
 /**
@@ -8425,7 +8416,7 @@ function staxx_exec_reap(): void {
     if (time() - $seen > STAXX_LOG_STALE) {
       $sessDir = dirname($hb);
       staxx_exec_kill(basename($sessDir));
-      @exec('rm -rf '.escapeshellarg($sessDir));
+      staxx_rmtree($sessDir, realpath(STAXX_EXEC_DIR) ?: STAXX_EXEC_DIR);
     }
   }
 }

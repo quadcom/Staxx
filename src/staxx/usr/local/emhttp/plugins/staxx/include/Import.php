@@ -1246,8 +1246,7 @@ function staxx_import_note(array $about): string {
 function staxx_import_prepare_dir(string $rel, string &$error): string {
   $error = '';
   if (!staxx_valid_path($rel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return '';
   }
 

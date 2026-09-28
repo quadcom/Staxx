@@ -882,6 +882,10 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   file_put_contents($tmp, $yaml);
   $checkMeta = staxx_compose_meta($tmp);
   @unlink($tmp);
+  // staxx_compose_meta() caches its answer to disk keyed by this temp path's
+  // own md5, same as any other file it reads — but this path is never read
+  // again, so that cached copy would otherwise sit there forever.
+  @unlink(STAXX_META_DIR.'/'.md5($tmp).'.json');
   if (!$checkMeta['ok']) {
     $error = 'The supplied file could not be checked, so nothing was changed.';
     return '';

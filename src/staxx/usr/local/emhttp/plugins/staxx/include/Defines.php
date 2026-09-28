@@ -578,9 +578,7 @@ function staxx_compose(): array {
     }
   }
 
-  foreach (staxx_compose_paths() as $path) {
-    if (is_file($path) && is_executable($path)) { $info['path'] = $path; break; }
-  }
+  $info['path'] = staxx_compose_found_path();
   if ($info['path'] === '') {
     $found = trim(staxx_sh('command -v docker-compose', 5));
     if ($found !== '' && is_file($found)) $info['path'] = $found;

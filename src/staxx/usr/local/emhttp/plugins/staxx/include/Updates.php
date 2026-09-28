@@ -327,13 +327,7 @@ function staxx_release_notes_trim(string $body): array {
   // false outright on a malformed string, and staxx_record_write_index() would
   // then fail the whole write silently, taking this stack's compose history
   // down with it. Drop any trailing incomplete sequence.
-  while ($window !== '' && (ord($window[strlen($window) - 1]) & 0xc0) === 0x80) {
-    $window = substr($window, 0, -1);
-  }
-  if ($window !== '' && (ord($window[strlen($window) - 1]) & 0x80) !== 0) {
-    $window = substr($window, 0, -1);
-  }
-  return ['notes' => $window, 'cut' => true];
+  return ['notes' => staxx_utf8_trim_tail($window), 'cut' => true];
 }
 
 /**
@@ -441,13 +435,7 @@ function staxx_changelog_fetch(string $project, string $from, string $to): array
       // the middle of a multi-byte character, which json_encode() refuses
       // outright — taking the whole record write down with it. Drop any
       // trailing incomplete sequence, exactly as staxx_release_notes_trim().
-      $subject = substr($subject, 0, STAXX_CHANGES_LINE_MAX);
-      while ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0xc0) === 0x80) {
-        $subject = substr($subject, 0, -1);
-      }
-      if ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0x80) !== 0) {
-        $subject = substr($subject, 0, -1);
-      }
+      $subject = staxx_utf8_trim_tail(substr($subject, 0, STAXX_CHANGES_LINE_MAX));
       if ($subject === '') continue;
       $cut = true;
     }

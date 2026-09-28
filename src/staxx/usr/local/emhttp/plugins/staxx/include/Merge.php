@@ -714,8 +714,7 @@ function staxx_merge_stacks_impl(
     return false;
   }
   if (!staxx_valid_path($newRel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, must start '
-           . 'with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return false;
   }
   if (is_dir(staxx_stack_dir($newRel))) {
