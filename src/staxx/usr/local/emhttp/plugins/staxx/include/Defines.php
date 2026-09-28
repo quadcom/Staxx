@@ -1878,6 +1878,71 @@ function staxx_docker_ps_raw(): array {
 }
 
 /**
+ * PLAN_190 item 2 — one `docker inspect` over every container, the ten
+ * tab-separated fields staxx_container_net() (the address column) and
+ * staxx_import_taken_facts() (the "already taken" facts) each used to ask
+ * for with a template of their own. Remembered for the request; both
+ * callers used to run this same pass separately, once each, on every
+ * render and every refresh.
+ *
+ * Field order: {{.Id}}, {{.HostConfig.NetworkMode}}, the container's own IP
+ * list, the published port bindings, the exposed ports (these five are
+ * staxx_container_net()'s own template, unchanged), then {{.Name}}, the
+ * port map with `\x1f` separators, the writable bind mounts with `\x1f`,
+ * the compose project `with` label (these four are
+ * staxx_import_taken_facts()'s own template, unchanged), then the literal
+ * `end`.
+ *
+ * A REAL tab, not the two characters `\t` — `docker inspect --format`
+ * prints `\t` literally rather than translating it, unlike `docker ps
+ * --format`; see staxx_container_net()'s own comment for what got silently
+ * lost here before. Every map is reached with `index`, never dotted access,
+ * for the same reason: a key Docker omits entirely (a container exposing no
+ * ports) fails dotted access with "map has no entry for key", where `index`
+ * just returns nothing. The trailing `end` field is not decoration either —
+ * PHP's `exec()` trims trailing whitespace from every line it collects, so
+ * a field that is never empty at the end is what stops a container with
+ * nothing in its last real field from arriving one field short and being
+ * discarded as malformed.
+ *
+ * Piped rather than a separate `ps` round trip, exit code ignored: one
+ * broken container on this server makes `inspect` print an error and exit
+ * non-zero, but the other containers are still reported on stdout. A line
+ * with fewer than ten fields, or an empty first field, is dropped.
+ *
+ * @return array<int, string[]> one string[10] per container
+ */
+function staxx_docker_inspect_rows(): array {
+  static $rows = null;
+  if ($rows !== null) return $rows;
+
+  $rows = [];
+  if (!staxx_docker_running()) return $rows;
+
+  $tab = "\t";
+  $fmt = '{{.Id}}'.$tab.'{{.HostConfig.NetworkMode}}'.$tab
+       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$v.IPAddress}},{{end}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}'.$tab
+       . '{{range $p, $v := index .Config "ExposedPorts"}}{{$p}},{{end}}'.$tab
+       . '{{.Name}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{$p}}={{.HostPort}}'."\x1f".'{{end}}{{end}}'.$tab
+       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab
+       . '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}'.$tab.'end';
+
+  $docker = escapeshellarg(staxx_docker_bin());
+  $out    = staxx_sh(
+    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
+  );
+
+  foreach (explode("\n", $out) as $line) {
+    $c = explode("\t", $line);
+    if (count($c) < 10 || $c[0] === '') continue;
+    $rows[] = $c;
+  }
+  return $rows;
+}
+
+/**
  * Containers on the system grouped by their compose project.
  *
  * This is the grouping key the whole stack presentation rests on: compose

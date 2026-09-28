@@ -2777,57 +2777,14 @@ function staxx_container_net(): array {
   $net = [];
   if (!staxx_docker_running()) return $net;
 
-  // A REAL tab, not the two characters \t.
-  //
-  // `docker ps --format` translates \t into a tab; `docker inspect --format`
-  // does NOT, and prints it literally. The two commands do not agree, and the
-  // difference is silent — every line comes back as one field, every row is
-  // discarded for being too short, and the answer is simply an empty list with
-  // no error anywhere. Written this way it cannot be got wrong by eye.
-  $tab = "\t";
-
-  // Every map is reached with `index`, never with dotted notation.
-  //
-  // `.Config.ExposedPorts` looks equivalent to `index .Config "ExposedPorts"`
-  // and is not. Docker omits that key entirely for a container that exposes no
-  // ports, and dotted access to a key that is ABSENT — as opposed to empty —
-  // fails the whole record with "map has no entry for key". On this server that
-  // silently dropped seven containers out of seventy-nine, including every
-  // host-network one. `index` returns nothing for a missing key instead.
-  //
-  // Ranging over the result is then safe either way: `range` over nothing
-  // produces nothing, where `len` would raise its own error on nil.
-  //
-  // The trailing "end" is not decoration. PHP's exec() TRIMS TRAILING
-  // WHITESPACE from every line it collects, and a container with neither
-  // published nor exposed ports ends its record with two empty fields — so the
-  // two tabs holding them open are trimmed away and the row arrives with three
-  // fields instead of five. It is then discarded for being malformed. That is
-  // what silently lost the same seven containers a second time, after the
-  // template itself had been fixed. A field that is never empty at the end
-  // means there is no trailing whitespace to lose.
-  $fmt = '{{.Id}}'.$tab.'{{.HostConfig.NetworkMode}}'.$tab
-       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$v.IPAddress}},{{end}}'.$tab
-       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}'.$tab
-       . '{{range $p, $v := index .Config "ExposedPorts"}}{{$p}},{{end}}'.$tab.'end';
-
-  // Piped rather than two round trips. One container on this server is in a
-  // broken state and makes inspect print an error and exit non-zero; the other
-  // containers are still reported, so the output is used regardless of the exit
-  // code and stderr is discarded.
-  $docker = escapeshellarg(staxx_docker_bin());
-  $out    = staxx_sh(
-    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
-  );
-
   $hostIp = staxx_host_ip();
 
-  foreach (explode("\n", $out) as $line) {
-    $c = explode("\t", $line);
-    if (count($c) < 5) continue;
-
+  // The first five of staxx_docker_inspect_rows()'s ten fields are this
+  // function's own template, unchanged — see that function's docblock for
+  // the traps (the real tab, `index` over dotted access, the trailing
+  // "end" field) recorded there rather than twice.
+  foreach (staxx_docker_inspect_rows() as $c) {
     [$id, $mode, $ips, $bindings, $exposed] = $c;
-    if ($id === '') continue;
 
     // ---- ports forwarded from this server ----
     $byIp = [];
