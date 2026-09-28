@@ -157,6 +157,7 @@ Four rules run through the whole set:
 | `storage` | What locations the store could move to | — |
 | `storage_alert` | PLAN_181 Part D — the pure alert rule over (percent, clutter bytes, oldest days, thresholds), and the clutter-since merge (an id keeps its remembered date, a new one is stamped today, one no longer in the clutter is dropped), over in-memory lists only | — |
 | `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |
+| `taken_facts` | PLAN_190 item 2 — staxx_import_taken_facts()'s own parsing, fed hand-written rows in the shared inspect template's shape rather than a real Docker call: the port-on-every-address dedup, empty ports/mounts, a read-only mount left out, a host path with a space, a missing compose label, and a short (nine-field) row dropped | — |
 | `takeover` | The route an imported Compose Manager project takes instead of a handover. Every case is a refusal, on purpose | `STORE_ROOT` |
 | `unraid_templates` | The sweep for stacks taken over before this plan: classifying every Unraid template still naming a StaXX stack's container (`ours`/`absent`/`unraid`), and reclaiming only the first two | `STAXX_UNRAID_TEMPLATES_DIR` and `STAXX_AUTOUPDATE_FILE` at `/tmp` |
 | `update_mode_convert` | The one-pass rewrite of old `update.mode` spellings (`off`, `notify`) to `manual`, run once at install, and its undo | `STORE_ROOT` at `/tmp` |
