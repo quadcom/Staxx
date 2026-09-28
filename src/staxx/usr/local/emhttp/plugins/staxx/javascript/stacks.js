@@ -3406,8 +3406,14 @@
     // boxHtml() below, which `open: true` switches on. A declared network's
     // name is deliberately not one of these: it is a closed dropdown of the
     // server's own networks, with a sentinel for inventing a new name.
+    //
+    // `tagbox: true` marks the image field alone (PLAN_206) — a browser
+    // <datalist> cannot hold headings or folded groups, so this one field
+    // gets a list StaXX draws itself instead (see boxHtml()'s tagbox branch
+    // and tagBoxOpen()/tagBoxRender() further down). cap_add/cap_drop and
+    // profiles keep the plain datalist just below, unchanged.
     if (which === 'value' && f.binder === 'setting' && f.target === 'image') {
-      return { hint: 'an image already on this server, or a fresh one to pull', options: imageOptions(), open: true };
+      return { hint: 'an image already on this server, or a fresh one to pull', options: imageOptions(), open: true, tagbox: true };
     }
     if (which === 'value' && f.binder === 'list' && (f.listKey === 'cap_add' || f.listKey === 'cap_drop')) {
       var capOptions = safeVocab('capability');
@@ -3480,16 +3486,31 @@
     // cheaper than a second choice-shaped branch just to defer this.
     var opts = choice ? optionsHtml(choice, p.value) : null;
 
-    // image, cap_add/cap_drop and profiles suggest without ever refusing: the
-    // list is a convenience, and a value the server has not seen yet is still
+    // cap_add/cap_drop and profiles suggest without ever refusing: the list
+    // is a convenience, and a value the server has not seen yet is still
     // legal, so those keep a text box with a <datalist> hung off it. A
     // declared network's name is not one of them — it either names a network
     // the server has (a real dropdown) or one this file invents (a plain box
     // with the X back to the dropdown), which is why choiceFor() never
     // answers `open` for it.
+    //
+    // The image field is `open` too but never takes this datalist branch
+    // (see choiceFor()'s `tagbox` marker) — a plain box with no `list`
+    // attribute at all, so nothing but a pick ever changes what is typed.
+    // staxx-imgbox is what tagBoxOpen()'s delegated listeners key off, and
+    // what closeOnOutside() below treats as "inside" the open list.
     var listId = 'staxx-dl-' + index + '-' + which;
 
-    var control = choice && choice.open
+    var control = choice && choice.tagbox
+      ? '<input type="text" class="staxx-input staxx-imgbox"' +
+              ' data-row="' + index + '" data-part="' + which + '"' +
+              ' value="' + esc(p.value) + '"' +
+              ' role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-autocomplete="list"' +
+              ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+              ' title="' + esc(boxTitle) + '"' +
+              ' spellcheck="false"' + NOFILL +
+              (dead ? ' disabled' : '') + '>'
+      : choice && choice.open
       ? '<input type="text" class="staxx-input" list="' + listId + '"' +
               ' data-row="' + index + '" data-part="' + which + '"' + (rename || '') +
               ' value="' + esc(p.value) + '"' +
@@ -8819,6 +8840,7 @@
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
+    tagBoxClose();               // PLAN_206 — the box it was open for is about to be replaced
     formHost.innerHTML = form.ok ? renderForm(form) : brokenFormHtml(form);
     formHost.scrollTop = scrollWas;
     paintServiceIcons();   // PLAN_85 — every render repaints from serviceIcons, set once by openEditor()
@@ -16213,42 +16235,30 @@
 
   // Unlike imgLoad()/netLoad(), this never redraws the form — a repo is
   // looked up while its box is being typed in, and a redraw would take the
-  // caret with it. mergeTags() below splices the tags straight into that one
-  // box's own suggestion list instead. Cached per repo for the session, a
-  // negative result (registry does not carry it, or was never going to be
-  // asked, see action.php's `tags` case) included, so a
-  // private registry is asked about once and a re-opened stack costs
-  // nothing.
+  // caret with it. tagBoxRender() below splices the tags straight into that
+  // one box's own list instead (PLAN_206 — this used to feed a <datalist>
+  // via mergeTags(), removed once the image box got its own list; tagsFor()
+  // itself, and its cache, are unchanged and still shared with the Compose
+  // pane's own suggestions). Cached per repo for the session, a negative
+  // result (registry does not carry it, or was never going to be asked, see
+  // action.php's `tags` case) included, so a private registry is asked
+  // about once and a re-opened stack costs nothing.
+  //
+  // tagFailed is display-only: it is never read by tagsFor() itself, so a
+  // repo that failed once is still retried in full the next time anything
+  // asks for it — this only remembers what to show meanwhile.
+  var tagFailed = {};   // repo -> true once tagsFor() has resolved null for it
+
   function tagLoad(box) {
     var repo = repoOf(box.value);
-    if (!repo) return;
+    if (!repo) { if (tagBoxBox === box) tagBoxRender(); return; }
 
     // The box may have moved on to a different repo, or vanished (removed,
-    // or the form redrew under it), by the time this lands. tags is null on
-    // a network hiccup, not "no tags" — nothing to merge in that case.
+    // or the form redrew under it), by the time this lands.
     tagsFor(repo).then(function (tags) {
-      if (tags && box.isConnected && repoOf(box.value) === repo) mergeTags(box, repo, tags);
+      if (tags === null) tagFailed[repo] = true; else delete tagFailed[repo];
+      if (tagBoxBox === box && box.isConnected && repoOf(box.value) === repo) tagBoxRender();
     });
-  }
-
-  function mergeTags(box, repo, tags) {
-    var dl = document.getElementById(box.getAttribute('list') || '');
-    if (!dl || !tags.length) return;
-
-    var known = {};
-    var existing = dl.querySelectorAll('option');
-    for (var i = 0; i < existing.length; i++) known[existing[i].value] = true;
-
-    var frag = document.createDocumentFragment();
-    for (var t = 0; t < tags.length; t++) {
-      var full = repo + ':' + tags[t];
-      if (known[full]) continue;
-      var opt = document.createElement('option');
-      opt.value = full;
-      opt.textContent = full;
-      frag.appendChild(opt);
-    }
-    dl.appendChild(frag);
   }
 
   function scheduleTagLoad(box) {
@@ -16337,21 +16347,361 @@
     showSuggest(hit);
   }
 
+  // Whether `el` is the Image box specifically — the one place choiceFor()
+  // answers `tagbox: true` — read straight off MODEL rather than trusting a
+  // class alone, the same check imageBoxTagLoad() used before this box got
+  // its own list.
+  function isImageBox(el) {
+    if (!el || el.dataset.part !== 'value' || !el.dataset.row) return false;
+    var f = MODEL && MODEL.fields[el.dataset.row | 0];
+    return !!(f && f.binder === 'setting' && f.target === 'image');
+  }
+
+  /* ---- PLAN_206 — the Image box's own grouped tag list -------------------
+   * A browser <datalist> cannot hold headings or folded groups, so this one
+   * field gets a list StaXX draws and filters itself instead, sharing
+   * groupTags() so it groups exactly the way the pin window does, and
+   * modelled on the Compose pane's own #staxx-suggest for opening, closing
+   * and picking — the one other place a StaXX-drawn list sits under a
+   * typing box on this page. cap_add/cap_drop/profiles are untouched: they
+   * keep their datalist. */
+
+  var tagBoxPanel = null;   // the one shared <div>, built lazily, appended to <body>
+  var tagBoxBox   = null;   // the <input> it is open for, or null when closed
+  var tagBoxRows  = [];     // pickable rows in visual order, rebuilt on every render
+  var tagBoxOn    = -1;     // index into tagBoxRows, or -1 for "nothing highlighted"
+
+  function tagBoxEl() {
+    if (tagBoxPanel) return tagBoxPanel;
+    tagBoxPanel = document.createElement('div');
+    tagBoxPanel.className = 'staxx-tagbox';
+    tagBoxPanel.setAttribute('role', 'listbox');
+    tagBoxPanel.hidden = true;
+    // Appended to the editor's own <dialog>, not <body> — a dialog opened
+    // with showModal() paints in the browser's top layer, above everything
+    // else in the document, so a panel left outside it would be drawn
+    // underneath the very form it belongs to.
+    modal.appendChild(tagBoxPanel);
+
+    // mousedown, not click — same reasoning as #staxx-suggest's own listener:
+    // it fires before the box would lose focus, so preventDefault() keeps
+    // focus (and whatever is typed) exactly where it is while the pick lands.
+    tagBoxPanel.addEventListener('mousedown', function (event) {
+      var fold = event.target.closest('[data-tagbox-fold]');
+      if (fold) { event.preventDefault(); tagBoxToggleFold(fold); return; }
+      var row = event.target.closest('[data-tagbox-row]');
+      if (!row) return;
+      event.preventDefault();
+      tagBoxPick(row.dataset.tagboxRow);
+    });
+    return tagBoxPanel;
+  }
+
+  // repoOf() already knows where the split falls (a registry port's own
+  // colon is not the tag separator) — the tag half is emphasised, the repo
+  // is not, since the tag is the part that usually differs between rows.
+  function tagBoxRowHtml(full) {
+    var repo = repoOf(full);
+    var tag = full.slice(repo.length + 1);
+    return '<div class="staxx-tagbox-row" role="option" data-tagbox-row="' + esc(full) + '">' +
+             esc(repo) + ':<span class="staxx-tagbox-tag">' + esc(tag) + '</span>' +
+           '</div>';
+  }
+
+  function tagBoxRowsHtml(list) {
+    return list.map(tagBoxRowHtml).join('');
+  }
+
+  // Same fold shape askTagPick() draws (.staxx-tagpick-group/-groupbtn), so
+  // this list looks exactly like the pin window's without a second copy of
+  // those rules (see the stylesheet's own comment on them).
+  function tagBoxGroupHtml(key, heading, list, open) {
+    var listId = 'staxx-tagbox-group-' + key;
+    return '<div class="staxx-tagpick-group">' +
+      '<button type="button" class="staxx-tagpick-groupbtn" data-tagbox-fold ' +
+        'aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + listId + '">' +
+        '<i class="fa fa-chevron-' + (open ? 'down' : 'right') + '"></i> ' +
+        esc(heading) + ' (' + list.length + ')' +
+      '</button>' +
+      '<div id="' + esc(listId) + '"' + (open ? '' : ' hidden') + '>' + tagBoxRowsHtml(list) + '</div>' +
+    '</div>';
+  }
+
+  // Same starts-then-contains rule repoTagMatches() applies, over a list of
+  // already-full strings rather than bare tags it would have to build the
+  // repo prefix onto itself.
+  function tagBoxMatches(list, prefix) {
+    var pl = prefix.toLowerCase(), starts = [], contains = [];
+    for (var i = 0; i < list.length; i++) {
+      var at = list[i].toLowerCase().indexOf(pl);
+      if (at === 0) starts.push(list[i]);
+      else if (at > 0) contains.push(list[i]);
+    }
+    return starts.concat(contains);
+  }
+
+  // Builds the whole panel's markup for whatever `box` currently holds.
+  // Takes the box rather than reading tagBoxBox itself so a stale async
+  // lookup can be checked against it before calling in (see tagLoad()).
+  function tagBoxHtml(box) {
+    var val = box.value || '';
+    var lastSlash = val.lastIndexOf('/'), lastColon = val.lastIndexOf(':');
+    var hasColon = lastColon > lastSlash;
+    var repo = hasColon ? val.slice(0, lastColon) : val;
+    var tagPart = hasColon ? val.slice(lastColon + 1) : null;
+    var filtering = hasColon && tagPart.length > 0;
+
+    var above = '';
+    if (repo) {
+      var have = tagCache.hasOwnProperty(repo);
+      if (!have && !tagFailed[repo]) {
+        above = '<p class="staxx-tagbox-status">Looking up tags…</p>';
+      } else if (!have || !tagCache[repo].length) {
+        above = '<p class="staxx-tagbox-status">No tags found for this image.</p>';
+      } else {
+        var currentTag = hasColon && !filtering ? tagPart : '';
+        var grouped = groupTags(tagCache[repo], currentTag);
+        var top = grouped.top, groups = grouped.groups;
+        if (filtering) {
+          top = tagBoxMatches(top, tagPart);
+          groups = groups
+            .map(function (g) { return { key: g.key, heading: g.heading, list: tagBoxMatches(g.list, tagPart) }; })
+            .filter(function (g) { return g.list.length; });
+        }
+        var topFull = top.map(function (t) { return repo + ':' + t; });
+        var topHtml = topFull.length ? '<div class="staxx-tagbox-top">' + tagBoxRowsHtml(topFull) + '</div>' : '';
+        var firstOpen = topHtml ? -1 : 0;
+        above = topHtml + groups.map(function (g, i) {
+          var full = g.list.map(function (t) { return repo + ':' + t; });
+          return tagBoxGroupHtml(g.key, g.heading, full, filtering || i === firstOpen);
+        }).join('');
+      }
+    }
+
+    // "On this server" — the datalist's own full list, filtered on the
+    // whole typed value (repo and tag both), whether or not a ':' has been
+    // typed yet. Open by default only while the box is empty, so an
+    // otherwise-blank panel is never one tap away from looking empty.
+    var serverAll = imageOptions().map(function (o) { return o[0]; });
+    var serverList = val ? tagBoxMatches(serverAll, val) : serverAll;
+    var serverOpen = !repo || (filtering && serverList.length > 0);
+    return above + tagBoxGroupHtml('server', 'On this server', serverList, serverOpen);
+  }
+
+  // Which rows are actually pickable right now — folded groups' rows are in
+  // the DOM but hidden, and arrow-key movement must skip over them.
+  function tagBoxSyncRows() {
+    tagBoxRows = [];
+    var els = tagBoxEl().querySelectorAll('[data-tagbox-row]');
+    for (var i = 0; i < els.length; i++) {
+      if (!els[i].closest('[hidden]')) tagBoxRows.push(els[i]);
+    }
+  }
+
+  function tagBoxHighlight() {
+    for (var i = 0; i < tagBoxRows.length; i++) {
+      var on = i === tagBoxOn;
+      tagBoxRows[i].classList.toggle('staxx-tagbox-row--on', on);
+      tagBoxRows[i].setAttribute('aria-selected', on ? 'true' : 'false');
+      if (on) tagBoxRows[i].id = 'staxx-tagbox-opt-' + i;
+    }
+    if (!tagBoxBox) return;
+    if (tagBoxOn >= 0) {
+      tagBoxBox.setAttribute('aria-activedescendant', 'staxx-tagbox-opt-' + tagBoxOn);
+      tagBoxRows[tagBoxOn].scrollIntoView({ block: 'nearest' });
+    } else {
+      tagBoxBox.removeAttribute('aria-activedescendant');
+    }
+  }
+
+  // Up from the first row (or from the typing position itself) goes back to
+  // the typing position rather than wrapping onto the last row — a list
+  // that wraps silently is easy to lose track of.
+  function tagBoxMove(delta) {
+    if (!tagBoxRows.length) return;
+    if (tagBoxOn === -1 && delta < 0) return;
+    var next = tagBoxOn + delta;
+    tagBoxOn = next < 0 ? -1 : Math.min(next, tagBoxRows.length - 1);
+    tagBoxHighlight();
+  }
+
+  function tagBoxToggleFold(btn) {
+    var open = btn.getAttribute('aria-expanded') !== 'true';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var icon = btn.querySelector('i');
+    if (icon) icon.className = 'fa fa-chevron-' + (open ? 'down' : 'right');
+    var listEl = document.getElementById(btn.getAttribute('aria-controls'));
+    if (listEl) listEl.hidden = !open;
+    tagBoxSyncRows();
+    if (tagBoxOn >= tagBoxRows.length) tagBoxOn = tagBoxRows.length - 1;
+    tagBoxHighlight();
+  }
+
+  // Right opens the first closed heading, Left closes the first open one —
+  // there are at most three (Other rolling tags, Version numbers, On this
+  // server), so "first" reads the same as "the nearest one" in practice.
+  function tagBoxFoldNav(dir) {
+    var btns = tagBoxEl().querySelectorAll('[data-tagbox-fold]');
+    for (var i = 0; i < btns.length; i++) {
+      var open = btns[i].getAttribute('aria-expanded') === 'true';
+      if ((dir > 0 && !open) || (dir < 0 && open)) { tagBoxToggleFold(btns[i]); return; }
+    }
+  }
+
+  // .staxx-modal's own layout containment (container-type: inline-size,
+  // PLAN_145's own comment on that rule) makes it the containing block for
+  // any fixed-position descendant, this panel included, since nothing sits
+  // between it and the dialog. A plain box.getBoundingClientRect() is still
+  // viewport coordinates, so the dialog's own rect has to be subtracted
+  // back out, or the panel would land offset by wherever the dialog itself
+  // sits on screen.
+  function tagBoxPosition(box) {
+    var panel = tagBoxEl();
+    var r = box.getBoundingClientRect();
+    var m = modal.getBoundingClientRect();
+    var left = r.left - m.left;
+    var below = r.bottom - m.top;
+    panel.style.left = left + 'px';
+    panel.style.top = below + 'px';
+    panel.style.width = NARROW.matches ? r.width + 'px' : '';
+    // Flips above the box when there is no room below, the same trick
+    // placeCaretPanel() uses for #staxx-suggest and .staxx-keyhelp.
+    if (below + panel.offsetHeight > m.height) {
+      var above = (r.top - m.top) - panel.offsetHeight;
+      panel.style.top = Math.max(0, above) + 'px';
+    }
+  }
+
+  // Re-renders whatever is already open — called on every keystroke, and
+  // once a tag lookup lands (tagLoad()) — never before the panel is open,
+  // and never for a box that has moved on (tagLoad() checks that itself).
+  function tagBoxRender() {
+    if (!tagBoxBox) return;
+    tagBoxEl().innerHTML = tagBoxHtml(tagBoxBox);
+    tagBoxSyncRows();
+    tagBoxOn = -1;
+    tagBoxHighlight();
+    tagBoxPosition(tagBoxBox);
+  }
+
+  function tagBoxOpen(box) {
+    if (tagBoxBox === box) return;
+    tagBoxBox = box;
+    box.setAttribute('aria-expanded', 'true');
+    tagBoxEl().hidden = false;
+    tagBoxRender();
+  }
+
+  function tagBoxClose() {
+    if (!tagBoxBox) return;
+    tagBoxBox.setAttribute('aria-expanded', 'false');
+    tagBoxBox.removeAttribute('aria-activedescendant');
+    tagBoxBox = null;
+    tagBoxRows = [];
+    tagBoxOn = -1;
+    if (tagBoxPanel) { tagBoxPanel.hidden = true; tagBoxPanel.innerHTML = ''; }
+  }
+
+  // Puts `value` in the box exactly as typing would: fires the box's own
+  // `input` and `change` so the same listener that writes a typed value
+  // writes a picked one too (imageBoxTagLoad()'s own input listener, and the
+  // ordinary commit/debounce path every other box already goes through).
+  function tagBoxPick(value) {
+    var box = tagBoxBox;
+    if (!box) return;
+    box.value = value;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+    tagBoxClose();
+    box.focus({ preventScroll: true });
+  }
+
   // Typing in the image box, or landing on it, is what makes its repo worth
   // asking the registry about — delegated, since the box is redrawn whenever
   // the form is (adding a service, undo, reparse...).
   //
-  // 'focus' does not bubble, so this delegated pair uses 'focusin' instead —
-  // reaching the same box the moment it is tabbed or clicked into, before
-  // anything has been typed.
-  function imageBoxTagLoad(event) {
+  // Opening tracks a real user gesture rather than plain focus: 'focus' does
+  // not bubble so this uses 'focusin', but a script putting focus on the box
+  // itself (nothing does today, but a future redraw might) would otherwise
+  // open the list without anyone having asked for it. tagBoxGestureTarget is
+  // set in a capture-phase mousedown, and tagBoxTabPending on a Tab keydown
+  // — both consumed (reset) the instant a focusin checks them, so a later
+  // scripted focus with no fresh gesture right behind it never opens the
+  // list (PLAN_206 item 3).
+  var tagBoxGestureTarget = null;
+  var tagBoxTabPending = false;
+  document.addEventListener('mousedown', function (event) { tagBoxGestureTarget = event.target; }, true);
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Tab') tagBoxTabPending = true;
+  }, true);
+
+  function imageBoxFocusIn(event) {
     var el = event.target;
-    if (el.dataset.part !== 'value' || !el.dataset.row) return;
-    var f = MODEL && MODEL.fields[el.dataset.row | 0];
-    if (f && f.binder === 'setting' && f.target === 'image') scheduleTagLoad(el);
+    if (!isImageBox(el)) return;
+    scheduleTagLoad(el);
+    var byGesture = tagBoxTabPending || tagBoxGestureTarget === el;
+    tagBoxTabPending = false;
+    tagBoxGestureTarget = null;
+    if (byGesture) tagBoxOpen(el);
   }
-  formHost.addEventListener('input', imageBoxTagLoad);
-  formHost.addEventListener('focusin', imageBoxTagLoad);
+
+  function imageBoxInput(event) {
+    var el = event.target;
+    if (!isImageBox(el)) return;
+    scheduleTagLoad(el);
+    // tagBoxOpen() already renders once when it actually opens the panel;
+    // re-render explicitly only for a keystroke that finds it already open,
+    // so typing is never drawn twice over.
+    if (tagBoxBox === el) tagBoxRender(); else tagBoxOpen(el);
+  }
+
+  formHost.addEventListener('focusin', imageBoxFocusIn);
+  formHost.addEventListener('input', imageBoxInput);
+
+  // Arrow keys, Enter and Right/Left fold navigation — delegated the same
+  // way, and only while the list is actually open for this box. Escape is
+  // NOT handled here: closeOnOutside() below already closes "a small panel
+  // only" on Escape (PLAN_195's rule), the same way the outline, the link
+  // popovers, the password generator and the Sections panel all do, so a
+  // second Escape reaches the editor exactly as it always has.
+  formHost.addEventListener('keydown', function (event) {
+    if (!tagBoxBox || event.target !== tagBoxBox) return;
+    if (event.isComposing || event.keyCode === 229) return;
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      tagBoxMove(event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      tagBoxFoldNav(1);
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      tagBoxFoldNav(-1);
+    } else if (event.key === 'Enter') {
+      if (tagBoxOn < 0) return;   // nothing highlighted — leave the typed text alone
+      event.preventDefault();
+      tagBoxPick(tagBoxRows[tagBoxOn].dataset.tagboxRow);
+    }
+  });
+
+  // A click outside, or Tab away, closes it. Escape goes through the same
+  // shared mechanism as the outline, the link popovers, the password
+  // generator and the Sections panel, so it behaves the same way here too
+  // (see the keydown comment just above) — .staxx-imgbox is the box itself,
+  // so a click landing back on it (picking up typing again) never counts as
+  // "outside". Tab away is a plain loss of focus, caught below instead:
+  // 'focusout' bubbles (unlike 'blur') so it can be delegated the same way,
+  // and it never fires for a pick or a fold toggle, since both keep focus on
+  // the box with the panel's own mousedown preventDefault().
+  closeOnOutside(function () { return !!tagBoxBox; }, '.staxx-tagbox, .staxx-imgbox', tagBoxClose);
+  formHost.addEventListener('focusout', function (event) {
+    if (event.target === tagBoxBox) tagBoxClose();
+  });
+
+  // It never closes because a tag reply landed (tagLoad() re-renders in
+  // place instead) and it is never repositioned on scroll — closed instead,
+  // same as #staxx-suggest.
+  formHost.addEventListener('scroll', function () { if (tagBoxBox) tagBoxClose(); }, { passive: true });
 
   function devShellHtml() {
     return '<div class="staxx-devhead">' +
@@ -24260,22 +24610,28 @@
     return a < b ? -1 : (a > b ? 1 : 0);   // neither has digits — alphabetical
   }
 
-  // `beforePinTag` (PLAN_188 part D follow-up) is the bare tag the service
-  // was pinned from — tagFromPinnedRef() reading its own "was <ref>" note —
-  // or '' when there is none to offer.
+  // `currentTag` is the bare tag to force onto the top row first — the
+  // service's before-pin tag for askTagPick(), or the tag half of whatever
+  // is already typed for the Image box's own list (PLAN_206 item 1) — or ''
+  // when there is none to offer.
   //
   // PLAN_188 part F (2026-09-26, Adrian from the phone: the flat list "is a
-  // big list of noise"). A top row always shows that before-pin tag, then
+  // big list of noise"). A top row always shows that current tag, then
   // whichever of the plan's named nine the image actually has, in their own
   // order. Everything else sits behind two folded headings so the dialog
   // opens short: every OTHER tag with no digit in it at all (nginx's own
   // "alpine", "mainline", "perl" and so on — a real image's rolling tags are
   // rarely limited to the plan's named nine), alphabetically; then every tag
   // that does carry a version number, newest first, as before. A group with
-  // nothing in it is not rendered, and both start folded — unless the top
-  // row itself is empty, in which case the first group that has anything
-  // opens already, so the dialog is never one tap away from looking blank.
-  function askTagPick(repo, tags, beforePinTag) {
+  // nothing in it is left out of the returned list, same as before this was
+  // pulled out of askTagPick() itself.
+  //
+  // Shared with the Image box's own list (tagBoxRender(), further down) so
+  // it groups tags exactly the way the pin window does — PLAN_206 item 1.
+  // askTagPick() below must still draw byte-identical output; that was
+  // proved with a throwaway probe over three real tag lists before the old
+  // inline version of this was removed.
+  function groupTags(tags, currentTag) {
     var MOVING = ['latest', 'main', 'master', 'develop', 'dev', 'stable', 'beta', 'nightly', 'edge'];
     var movingIndex = {};
     MOVING.forEach(function (m, i) { movingIndex[m] = i; });
@@ -24291,9 +24647,21 @@
     versions.sort(compareTagsNewestFirst);
 
     var top = planListed.slice();
-    if (beforePinTag) {
-      top = [beforePinTag].concat(top.filter(function (t) { return t !== beforePinTag; }));
+    if (currentTag) {
+      top = [currentTag].concat(top.filter(function (t) { return t !== currentTag; }));
     }
+
+    var groups = [
+      { key: 'other', heading: 'Other rolling tags', list: otherMoving },
+      { key: 'versions', heading: 'Version numbers', list: versions }
+    ].filter(function (g) { return g.list.length; });
+
+    return { top: top, groups: groups };
+  }
+
+  function askTagPick(repo, tags, beforePinTag) {
+    var grouped = groupTags(tags, beforePinTag);
+    var top = grouped.top;
 
     function tagButtonsHtml(list, markFirstAsBeforePin) {
       return '<ul class="staxx-tagpick-list">' + list.map(function (t, i) {
@@ -24305,10 +24673,7 @@
 
     var topHtml = top.length ? tagButtonsHtml(top, !!beforePinTag) : '';
 
-    var groupDefs = [
-      { key: 'other', heading: 'Other rolling tags', list: otherMoving },
-      { key: 'versions', heading: 'Version numbers', list: versions }
-    ].filter(function (g) { return g.list.length; });
+    var groupDefs = grouped.groups;
 
     // Same fold shape the import list's own groups use (.staxx-chevron,
     // fa-chevron-right/down, aria-expanded/aria-controls) — a heading button

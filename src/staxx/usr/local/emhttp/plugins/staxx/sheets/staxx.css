@@ -10644,6 +10644,72 @@ div.title.staxx-has-titlebar {
   flex: 1 1 auto;
 }
 
+/* PLAN_206 — the Image box's own grouped list, appended into #staxx-modal
+ * itself (never <body>: a <dialog> opened with showModal() paints in the
+ * top layer, above everything outside it) and positioned with script
+ * (tagBoxPosition()) the same way #staxx-suggest is. It reuses
+ * .staxx-tagpick-group/-groupbtn above for its folded headings rather than
+ * a second copy of those rules, so it looks like the pin window's list
+ * without one being kept in step with the other by hand. Unscoped, like
+ * .staxx-suggest just below in the sheet — Unraid's own input reset (the
+ * constraint .staxx-scaffold .staxx-xxx rules exist for) targets real form
+ * controls, and nothing in here is one: the box itself is styled as the
+ * ordinary .staxx-input it already is, and every row is a plain div. */
+.staxx-tagbox {
+  position: fixed;
+  z-index: 3;
+  min-width: 22rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  padding: 0.4rem 0 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: var(--sm-pop-shadow);
+}
+
+.staxx-tagbox[hidden] {
+  display: none;
+}
+
+.staxx-tagbox-status {
+  margin: 0.3rem 1rem 0.6rem;
+  color: var(--sm-muted);
+}
+
+.staxx-tagbox-top {
+  margin-bottom: 0.4rem;
+}
+
+.staxx-tagbox-row {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+}
+
+.staxx-tagbox-row:hover {
+  background: var(--sm-fill);
+}
+
+/* The keyboard-driven highlight, not hover — arrow keys move this, so it
+   has to read clearly on its own rather than leaning on :hover, which the
+   mouse may not even be over (same reasoning as .staxx-suggest-row--on). */
+.staxx-tagbox-row--on {
+  background: var(--sm-fill-2);
+  color: var(--sm-accent);
+}
+
+.staxx-tagbox-tag {
+  font-weight: 700;
+}
+
+@media (max-width: 45rem) {
+  .staxx-tagbox {
+    min-width: 0;
+  }
+}
+
 /* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
    input reset (trap 3, header) on background and border-radius, decided
    only by source order otherwise. */
