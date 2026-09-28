@@ -5090,42 +5090,18 @@
       return;
     }
 
-    // PLAN_196 item 1 — this reads then saves straight away, so `lite`
-    // skips the editor-only extras (history seed, moved, watch, icons).
-    call('read', { name: openedName, lite: '1' }).then(function (readRes) {
-      if (!readRes || !readRes.ok) {
-        showError((readRes && readRes.error) || 'Could not read the stack to change this setting.');
-        return;
-      }
-
-      var diskDoc  = YAML.parse(readRes.body);
-      var diskForm = YAML.buildForm(diskDoc, netDrivers(), envNameList());
-      diskForm.doc = diskDoc;
-      var diskField = policyFieldFor(diskForm.fields, service, policyField);
-      if (!diskField || diskField.policy.unreadable ||
-          !YAML.setPart(diskDoc, diskForm, diskField.id, 'value', value)) {
-        showError('That value cannot be written as it stands — edit this one in the Compose view.');
-        return;
-      }
-
-      var diskText = YAML.serialise(diskDoc);
-      call('save', { name: openedName, body: withEol(diskText, composeEol), 'new': '0',
-                      fingerprint: readRes.fingerprint }).then(function (saveRes) {
-        if (!saveRes || !saveRes.ok) {
-          // Nothing landed anywhere — the throwaway parse above is already
-          // discarded, and MODEL was never touched, so there is nothing to
-          // put back.
-          showError((saveRes && saveRes.error ? saveRes.error : 'Save failed.') + strayWarning(saveRes || {}));
-          return;
-        }
-        serviceIcons = saveRes.icons || serviceIcons;
-        applyUpdatePolicyLocally([service], policyField, value,
-                                  saveRes.fingerprint || readRes.fingerprint, diskText);
-        paintServiceIcons();
-        // The write already reached disk — repaint the row now rather than
-        // leaving its image line and thumbtack mark stale (Adrian, 2026-09-28).
-        refreshRows();
-      });
+    // PLAN_196 item 4 — the same disk-read/single-edit/save shape as the
+    // row menu and bulk panel use, through writeUpdatePolicyForServices()
+    // below; only the wording and the refusal surface (showError, not a
+    // dialog) stay the editor's own.
+    writeUpdatePolicyForServices(openedName, [service], policyField, value,
+      function (title, message) { showError(message); },
+      { read: 'Could not read the stack to change this setting.',
+        writeError: function () { return 'That value cannot be written as it stands — edit this one in the Compose view.'; } }
+    ).then(function (applied) {
+      // The write already reached disk — repaint the row now rather than
+      // leaving its image line and thumbtack mark stale (Adrian, 2026-09-28).
+      if (applied && applied.length) refreshRows();
     });
   }
 
@@ -5450,13 +5426,25 @@
   // collect each one's own sentence rather than a dialog popping up per
   // stack. Every existing caller passes nothing and gets the dialog exactly
   // as before.
-  function writeUpdatePolicyForServices(name, services, policyField, value, onRefuse) {
+  //
+  // `words`, if given, overrides the two sentences below so the editor's own
+  // wording survives sharing this function (PLAN_196 item 4): `words.read`
+  // for an unreadable stack, `words.writeError(svc)` for a value that
+  // cannot be written. Every other caller passes nothing and gets the
+  // multi-service wording.
+  function writeUpdatePolicyForServices(name, services, policyField, value, onRefuse, words) {
     var report = onRefuse || failed;
+    words = words || {};
+    if (!words.writeError) {
+      words.writeError = function (svc) {
+        return 'That cannot be written as it stands for "' + svc + '" — edit it in the Compose view.';
+      };
+    }
     // PLAN_196 item 1 — this reads then saves straight away, so `lite`
     // skips the editor-only extras (history seed, moved, watch, icons).
     return call('read', { name: name, lite: '1' }).then(function (readRes) {
       if (!readRes || !readRes.ok) {
-        report('Could not change this setting', (readRes && readRes.error) || 'Could not read the stack.');
+        report('Could not change this setting', (readRes && readRes.error) || words.read || 'Could not read the stack.');
         return null;
       }
 
@@ -5480,19 +5468,21 @@
         var svc = services[i];
         var diskField = policyFieldFor(diskForm.fields, svc, policyField);
         if (!diskField || diskField.policy.unreadable) continue;
-        // A pinned service's update choice is left exactly as it stands —
-        // Adrian, 2026-09-26, on the bulk Updates… panel: "changing the
-        // update setting for an item that is pinned, I think it should
-        // ignore changing that setting on that stack." A stack-wide row
-        // menu (several services in one write) is the same shape for one
-        // stack, so the same rule applies here rather than only in the
-        // bulk panel. The Pinned choice itself is reached a different way
-        // entirely (choosePinnedInEditor()/the row menu's own single-
-        // service branch), never through this function.
-        if (svcIsPinned(diskForm.fields, svc)) { pinnedSkipped++; continue; }
+        // A pinned service's update CHOICE (the "When"/mode field) is left
+        // exactly as it stands, wherever it is written from — editor, row
+        // menu or bulk panel — because that choice is reached a different
+        // way entirely once a service is pinned (choosePinnedInEditor()/
+        // openReleaseInEditor(), or the row menu's own single-service
+        // branch), never through this function. A notify tick is a
+        // different kind of setting — whether to be told about a build the
+        // pin already refuses — so it IS written to a pinned service.
+        // Ruled by Adrian: bulk panel, 2026-09-26, "changing the update
+        // setting for an item that is pinned, I think it should ignore
+        // changing that setting on that stack"; the pinned/notify split,
+        // 2026-09-28 (PLAN_196 item 4, D3).
+        if (policyField === 'mode' && svcIsPinned(diskForm.fields, svc)) { pinnedSkipped++; continue; }
         if (!YAML.setPart(diskDoc, diskForm, diskField.id, 'value', value)) {
-          report('Could not change this setting',
-                 'That cannot be written as it stands for "' + svc + '" — edit it in the Compose view.');
+          report('Could not change this setting', words.writeError(svc));
           return null;
         }
         applied.push(svc);
@@ -11084,13 +11074,14 @@
   });
 
   // Shared by the editor's little panels below (outline, link popovers, the
-  // password generator, the tab menu): a click outside the panel closes it,
-  // and Escape closes it and calls preventDefault() — which is what stops
-  // the editor dialog's own Escape (its `cancel` handler further down) from
-  // closing the whole editor as well. The Sections panel just below is a
-  // fifth case with its own click/Escape pair, left as it is (Q1 in
-  // PLAN_195): its Escape does NOT preventDefault, so it closes both the
-  // panel and, if nothing is unsaved, the editor underneath it.
+  // password generator, the tab menu, and the Sections panel): a click
+  // outside the panel closes it, and Escape closes it and calls
+  // preventDefault() — which is what stops the editor dialog's own Escape
+  // (its `cancel` handler further down) from closing the whole editor as
+  // well. The Sections panel used to have its own pair that skipped
+  // preventDefault(), so its Escape closed the panel and the editor
+  // underneath it in one keypress; ruled 2026-09-28 (PLAN_195 Q1) that it
+  // should behave like the other four.
   var outsidePanels = [];
   function closeOnOutside(isOpen, inside, close, after) {
     outsidePanels.push({ isOpen: isOpen, inside: inside, close: close, after: after });
@@ -11118,19 +11109,12 @@
     for (var k in sectionsOpen) if (sectionsOpen[k]) return true;
     return false;
   }
-  document.addEventListener('click', function (event) {
-    if (!modal.open || !anySectionsOpen()) return;
-    if (event.target.closest('.staxx-sections')) return;
+  function closeSectionsPanel() {
     sectionsOpen = {};
     flushPending();
     reparse();
-  });
-  document.addEventListener('keydown', function (event) {
-    if (event.key !== 'Escape' || !modal.open || !anySectionsOpen()) return;
-    sectionsOpen = {};
-    flushPending();
-    reparse();
-  });
+  }
+  closeOnOutside(anySectionsOpen, '.staxx-sections', closeSectionsPanel);
 
   /* ---- structure outline --------------------------------------------------
    *
@@ -27248,14 +27232,20 @@
     'container-access': {
       tab: 'general', label: 'Container access', rowHints: true
     },
+    // PLAN_195 Q2, ruled 2026-09-28 (show them): these three blocks' own
+    // rows carry `help` text of their own (UPDATE_CHECK/UPDATE_CHECK_TIME;
+    // UPDATE_DELAY_HOURS/UPDATE_WINDOW/UPDATE_WINDOW_START/UPDATE_WINDOW_END;
+    // HUB_USER/HUB_TOKEN) that settingsBlockHtml() only draws when a block
+    // opts in with rowHints, same as "Container access" and "Unused image
+    // management" above and below.
     'update-check': {
-      tab: 'updates', label: 'Check for image updates',
+      tab: 'updates', label: 'Check for image updates', rowHints: true,
       help: 'How often to check, and when. Leaving this off means nothing is ever looked up. ' +
             'The middle of the night is a sensible time, since a check costs a little server ' +
             'effort even though it is cheap.'
     },
     'install-timing': {
-      tab: 'updates', label: 'When to install',
+      tab: 'updates', label: 'When to install', rowHints: true,
       help: 'Only used when Updates above is set to Automatic. An update sits on its row ' +
             'counting down the delay; if the delay runs out outside the quiet hours, it waits ' +
             'for them to open rather than installing in the middle of anything. The quiet time ' +
@@ -27268,7 +27258,7 @@
             'compose file.'
     },
     'hub-access': {
-      tab: 'registries', label: 'Docker Hub access',
+      tab: 'registries', label: 'Docker Hub access', rowHints: true,
       help: 'Used when checking your images for updates. Signed out, Docker Hub allows this ' +
             'server about ten checks an hour; signed in, about a hundred. Create a token from ' +
             'Docker Hub’s Account Settings → Security → Personal access tokens, ' +
@@ -27618,8 +27608,9 @@
   // then one small labelled control per row that claims this block. Called
   // once, at the block's first row; settingsFieldHtml() is never used here.
   // A subfield carries no help text of its own unless the block opts in with
-  // rowHints (so far only "Unused image management") — every other block's
-  // per-row `help` stays the dead leftover it already was before this one.
+  // rowHints ("Container access", "Check for image updates", "When to
+  // install", "Docker Hub access" and "Unused image management") — every
+  // other block's per-row `help` stays the dead leftover it already was.
   function settingsBlockHtml(blockId, values) {
     var def = SETTINGS_BLOCKS[blockId];
     if (!def) return '';
@@ -31654,8 +31645,9 @@
       }).then(function (applied) {
         doneCount++;
         // null is a genuine refusal; [] means every service in this stack
-        // was pinned and so silently left alone (Adrian, 2026-09-26) —
-        // neither a change nor a refusal, so it counts as neither.
+        // was pinned, which only skips the update CHOICE (Adrian,
+        // 2026-09-26) — so it only happens for the mode panel, never the
+        // notify one, and counts as neither a change nor a refusal.
         if (applied && applied.length) changed++;
         else if (!applied) refusals.push({ name: stackLabel(name), reason: reason });
         var line = selectBar && selectBar.querySelector('.staxx-bulkpanel-progress');

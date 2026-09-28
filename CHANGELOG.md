@@ -6,6 +6,9 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- Notification ticks now save for a pinned service from the row menu and from Select, Notifications…, the same as in the editor. A pinned service's update choice is still left alone everywhere.
+- In the editor, Escape on the Sections list now closes just the list, like the other small panels, and leaves the editor open.
+- Settings, Updates now shows the explanation under each update-check, timing and Docker Hub setting, like the other settings with their own notes.
 - In the marks legend, every sample chip now shows the same explanation as the real one when you hover over it, and pressing one opens an example of the window the real chip opens.
 - StaXX's windows now fade in and out the same way for everyone. A fade moves nothing, so it is kept even when your system asks for less motion; real movement, such as sliding or spinning, still stops.
 - On the Manage tab, Download all now saves the container's whole log as a file.
