@@ -5978,15 +5978,10 @@
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
               (f.movedAdvice ? ' staxx-fieldrow--moved' : '') +
               (f.watchAdvice && f.watchAdvice.length ? ' staxx-fieldrow--watch' : '') +
-              // Every apply*Advice() runs BEFORE this markup replaces
-              // formHost.innerHTML, so their own classList.toggle() calls
-              // land on rows that are about to be thrown away. The advice
-              // TEXT survives because it is read off the field here; the row
-              // modifier only survives if it is written here too. Left out,
-              // a clash/connection stripe appeared only after the next edit
-              // happened to run refreshRanges() — which read as a stripe
-              // that meant "you just changed something", rather than the
-              // standing fact it is.
+              // reparse() grafts every advisory onto the fields before this
+              // markup is built and paints no rows itself, so each row
+              // modifier is written here from the field; paintAdviceRows()
+              // writes the same classes onto rows that already exist.
               (f.clashAdvice ? ' staxx-fieldrow--clash' : '') +
               (f.linkAdvice && f.linkAdvice.length ? ' staxx-fieldrow--link' : '') +
               (f.crossAdvice ? ' staxx-fieldrow--cross' : '') +
@@ -7295,13 +7290,41 @@
     paintDots(list);
   }
 
+  // One pass over the rows already on screen, bringing each one's advice
+  // stripes and note into line with what the grafts above put on its field.
+  // reparse() never needs it: fieldHtml() writes the same classes and note
+  // when it builds a fresh row.
+  function paintAdviceRows() {
+    if (!MODEL) return;
+    var rows = formHost.querySelectorAll('.staxx-fieldrow');
+    for (var r = 0; r < rows.length; r++) {
+      var f = MODEL.fields[rows[r].dataset.row | 0];
+      var cl = rows[r].classList;
+      cl.toggle('staxx-fieldrow--moved', !!(f && f.movedAdvice));
+      cl.toggle('staxx-fieldrow--clash', !!(f && f.clashAdvice));
+      cl.toggle('staxx-fieldrow--watch', !!(f && f.watchAdvice && f.watchAdvice.length));
+      cl.toggle('staxx-fieldrow--link',  !!(f && f.linkAdvice && f.linkAdvice.length));
+      cl.toggle('staxx-fieldrow--cross', !!(f && f.crossAdvice));
+      var advice = rows[r].querySelector('[data-advice]');
+      if (advice && f) { advice.innerHTML = adviceText(f); advice.hidden = !advice.innerHTML; }
+    }
+  }
+
+  // One advisory changed outside a parse (a reply landed, a dismissal):
+  // re-graft it, then paint rows and dots once.
+  function repaintAdvice(graft) {
+    graft();
+    paintAdviceRows();
+    redrawDots();
+  }
+
   // Grafts the read reply's move advice (PLAN_61, movedFacts) onto the Image
-  // field it names, and repaints whatever is already on screen to match —
-  // the row's own border, its note (via adviceText()) and movedSpots, which
-  // feeds the editor's underline and gutter dot. buildForm() itself never
-  // learns the registry exists; this is the one place that reads movedFacts,
-  // called after every buildForm() call since reparse() and refreshRanges()
-  // both replace MODEL.fields wholesale.
+  // field it names — the row's own border, its note (via adviceText()) and
+  // movedSpots, which feeds the editor's underline and gutter dot — and
+  // paints no rows itself; paintAdviceRows() brings existing rows into line.
+  // buildForm() itself never learns the registry exists; this is the one
+  // place that reads movedFacts, called after every buildForm() call since
+  // reparse() and refreshRanges() both replace MODEL.fields wholesale.
   function applyMovedAdvice() {
     movedSpots = [];
     if (!MODEL) return;
@@ -7338,23 +7361,6 @@
         movedSpots.push({ line: spot.line, col: spot.col, len: spot.len, fact: candidate });
       }
     }
-
-    // Rows may not exist yet — reparse() calls this before drawing the form,
-    // so fieldHtml() picks up f.movedAdvice on first paint instead. When they
-    // do exist (refreshRanges(), or a second call after reparse()'s own
-    // render), bring them into line without a full redraw.
-    var rows = formHost.querySelectorAll('.staxx-fieldrow');
-    for (var r = 0; r < rows.length; r++) {
-      var field = MODEL.fields[rows[r].dataset.row | 0];
-      rows[r].classList.toggle('staxx-fieldrow--moved', !!(field && field.movedAdvice));
-      var advice = rows[r].querySelector('[data-advice]');
-      if (advice && field) {
-        advice.innerHTML = adviceText(field);
-        advice.hidden = !advice.innerHTML;
-      }
-    }
-
-    redrawDots();
   }
 
   // The field a clash's spot belongs to — matched by line/col rather than by
@@ -7415,19 +7421,7 @@
       clashSpots.push(h);
     });
 
-    var rows = formHost.querySelectorAll('.staxx-fieldrow');
-    for (var r = 0; r < rows.length; r++) {
-      var field = MODEL.fields[rows[r].dataset.row | 0];
-      rows[r].classList.toggle('staxx-fieldrow--clash', !!(field && field.clashAdvice));
-      var advice = rows[r].querySelector('[data-advice]');
-      if (advice && field) {
-        advice.innerHTML = adviceText(field);
-        advice.hidden = !advice.innerHTML;
-      }
-    }
-
     paintClashSummary(hits);
-    redrawDots();
   }
 
   // The one text spot a field's connection underline sits on — the value
@@ -7686,17 +7680,6 @@
       });
     });
 
-    var rows = formHost.querySelectorAll('.staxx-fieldrow');
-    for (var r = 0; r < rows.length; r++) {
-      var field = MODEL.fields[rows[r].dataset.row | 0];
-      rows[r].classList.toggle('staxx-fieldrow--link', !!(field && field.linkAdvice && field.linkAdvice.length));
-      var advice = rows[r].querySelector('[data-advice]');
-      if (advice && field) {
-        advice.innerHTML = adviceText(field);
-        advice.hidden = !advice.innerHTML;
-      }
-    }
-
     // The top note's own two extra lists (section 5, and section 4's "way
     // back" for a rejected record): every readLinks() record, split into
     // what staleLinks() says no longer resolves and what is rejected but
@@ -7714,7 +7697,6 @@
     }
 
     paintLinkSummary(visible, rejectedLive, stale);
-    redrawDots();
   }
 
   // The one click handler for every button linkRecordBtn() writes — the
@@ -7885,7 +7867,7 @@
     var key = crossKey(f.service, f.target);
     if (crossTimer) clearTimeout(crossTimer);
     if (!YAML.crossLooksLikeAddress(value)) {
-      if (crossState[key]) { delete crossState[key]; applyCrossAdvice(); }
+      if (crossState[key]) { delete crossState[key]; repaintAdvice(applyCrossAdvice); }
       return;
     }
     var service = f.service, target = f.target;
@@ -7907,11 +7889,11 @@
     call('link-match', { name: openedName, service: service, value: value }, 8000)
       .then(function (res) {
         if (mySeq !== crossSeq || !MODEL) return;   // typing (or a reparse) has moved on
-        if (!res || !res.ok) { delete crossState[key]; applyCrossAdvice(); return; }
+        if (!res || !res.ok) { delete crossState[key]; repaintAdvice(applyCrossAdvice); return; }
 
         if (res.kind === 'self') {
           crossState[key] = { key: key, status: 'self', sourceService: service, sourceTarget: target, reason: res.reason };
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         // PLAN_94 part A — a real name, blocked by no shared network. Carried
@@ -7919,7 +7901,7 @@
         if (res.kind === 'unreachable') {
           crossState[key] = { key: key, status: 'blocked', sourceService: service, sourceTarget: target,
             reason: res.reason, blocked: res.blocked || null };
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         if (res.kind === 'none') {
@@ -7933,24 +7915,24 @@
           } else {
             delete crossState[key];
           }
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         if (res.kind !== 'match' || !res.candidates || !res.candidates.length) {
           delete crossState[key];
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
 
         var reachable = YAML.crossReachableCandidates(res.candidates);
         if (!reachable.length) {
           crossState[key] = { key: key, status: 'unreachable', sourceService: service, sourceTarget: target, candidate: res.candidates[0] };
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         if (reachable.length > 1) {
           crossState[key] = { key: key, status: 'pick', sourceService: service, sourceTarget: target, candidates: reachable, value: value };
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         startCrossCredentials(key, service, target, reachable[0], value);
@@ -8017,7 +7999,7 @@
   function startCrossCredentials(key, service, target, candidate, value) {
     var mySeq = ++crossSeq;
     crossState[key] = { key: key, status: 'loading', sourceService: service, sourceTarget: target, candidate: candidate, value: value };
-    applyCrossAdvice();
+    repaintAdvice(applyCrossAdvice);
 
     call('link-creds', { stack: candidate.stack, service: candidate.service }, 8000)
       .then(function (creds) {
@@ -8025,13 +8007,13 @@
         if (!creds || !creds.ok) {
           crossState[key] = { key: key, status: 'error', sourceService: service, sourceTarget: target, candidate: candidate,
             value: value, message: (creds && creds.error) || 'That stack’s settings could not be read.' };
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         if (!creds.known) {
           crossState[key] = { key: key, status: 'unknown-image', sourceService: service, sourceTarget: target, candidate: candidate,
             value: value, image: creds.image, settingNames: creds.settingNames || [] };
-          applyCrossAdvice();
+          repaintAdvice(applyCrossAdvice);
           return;
         }
         resolveCrossFields(key, service, target, candidate, creds.fields || {}, creds.image, value);
@@ -8070,7 +8052,7 @@
 
     crossState[key] = { key: key, status: 'ready', sourceService: service, sourceTarget: target, candidate: candidate,
       value: value, image: image, writes: writes, drift: drift, unresolved: unresolved };
-    applyCrossAdvice();
+    repaintAdvice(applyCrossAdvice);
   }
 
   function crossPickBtnHtml(key, idx, c) {
@@ -8235,18 +8217,6 @@
           title: plainFromHtml(f.crossAdvice) });
       }
     }
-
-    var rows = formHost.querySelectorAll('.staxx-fieldrow');
-    for (var r = 0; r < rows.length; r++) {
-      var field = MODEL.fields[rows[r].dataset.row | 0];
-      rows[r].classList.toggle('staxx-fieldrow--cross', !!(field && field.crossAdvice));
-      var advice = rows[r].querySelector('[data-advice]');
-      if (advice && field) {
-        advice.innerHTML = adviceText(field);
-        advice.hidden = !advice.innerHTML;
-      }
-    }
-    redrawDots();
   }
 
   // "Fill these in" — condition 3's button: writes every matched box
@@ -8540,7 +8510,7 @@
         watchFacts[service] = (watchFacts[service] || []).filter(function (f) {
           return f.setting !== setting;
         });
-        applyWatchAdvice();
+        repaintAdvice(applyWatchAdvice);
         refreshUpdates();   // the row's own "N to look at" pill carries the same count
       });
   }
@@ -8575,17 +8545,6 @@
       });
     });
 
-    var rows = formHost.querySelectorAll('.staxx-fieldrow');
-    for (var r = 0; r < rows.length; r++) {
-      var field2 = MODEL.fields[rows[r].dataset.row | 0];
-      rows[r].classList.toggle('staxx-fieldrow--watch', !!(field2 && field2.watchAdvice && field2.watchAdvice.length));
-      var advice = rows[r].querySelector('[data-advice]');
-      if (advice && field2) {
-        advice.innerHTML = adviceText(field2);
-        advice.hidden = !advice.innerHTML;
-      }
-    }
-
     paintWatchNote(leftover);
   }
 
@@ -8610,11 +8569,13 @@
     var form = YAML.buildForm(doc, netDrivers(), envNameList());
     form.doc = doc;
     MODEL = form;
-    applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
-    applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
-    applyWatchAdvice();   // ditto, for PLAN_62's author-example findings
-    applyLinkAdvice();    // ditto, for PLAN_70 stage 2's connection marks
-    applyCrossAdvice();   // ditto, for PLAN_70 stage 5's cross-stack lookup, if any is in flight or answered
+    // Grafted before renderForm() below, which draws every row with its
+    // stripes and note already on it.
+    applyMovedAdvice();
+    applyClashAdvice();
+    applyWatchAdvice();
+    applyLinkAdvice();
+    applyCrossAdvice();
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
@@ -8789,11 +8750,15 @@
     var fresh = YAML.buildForm(doc, netDrivers(), envNameList());
     fresh.doc = doc;
     MODEL = fresh;
-    applyMovedAdvice();   // rows already exist here, so this brings them into line itself
-    applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
-    applyWatchAdvice();   // ditto, for PLAN_62's author-example findings
-    applyLinkAdvice();    // ditto, for PLAN_70 stage 2's connection marks
-    applyCrossAdvice();   // ditto, for PLAN_70 stage 5's cross-stack lookup, if any is in flight or answered
+    // Grafted onto the fields; paintAdviceRows() below brings the rows that
+    // already exist into line in one pass, rather than each function doing
+    // its own.
+    applyMovedAdvice();
+    applyClashAdvice();
+    applyWatchAdvice();
+    applyLinkAdvice();
+    applyCrossAdvice();
+    paintAdviceRows();
 
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
@@ -8818,15 +8783,6 @@
       if (say) {
         say.innerHTML = commandSayText(f);
         say.hidden = !say.innerHTML;
-      }
-
-      // A dangling reference or a ${VAR} note can appear or clear as the
-      // value is typed, so it is refreshed the same way as the command
-      // gloss above — in place, not by redrawing the row under the caret.
-      var advice = rows[i].querySelector('[data-advice]');
-      if (advice) {
-        advice.innerHTML = adviceText(f);
-        advice.hidden = !advice.innerHTML;
       }
 
       // Which tool a value box carries is otherwise decided only at render
@@ -10320,7 +10276,7 @@
           // revives — dropping it here too just clears the surfaces without
           // waiting for the next reparse() to notice.
           delete movedFacts[dismissField.service];
-          applyMovedAdvice();
+          repaintAdvice(applyMovedAdvice);
           refreshUpdates();   // the row's own pill carries the same fact (Stage 2)
         });
       return;
@@ -23281,12 +23237,12 @@
       // clash this resolves elsewhere (or a fresh one docker just picked up)
       // clears or appears on its own rather than waiting for the next edit.
       TAKEN = res.taken || { ports: [], paths: [], host: [] };
-      if (MODEL) applyClashAdvice();
-      // PLAN_70 stage 2 — same call site, same reason: nothing this refresh
-      // touches changes what a connection is, but every other pass that
-      // rebuilds or re-applies advice runs this too, so it does not fall
-      // out of step with the rest.
-      if (MODEL) applyLinkAdvice();
+      // PLAN_70 stage 2 — same call site as the clash graft just below, same
+      // reason: nothing this refresh touches changes what a connection is,
+      // but every other pass that rebuilds or re-applies advice runs this
+      // too, so it does not fall out of step with the rest. One row pass and
+      // one dots draw for both grafts, not one each.
+      if (MODEL) { applyClashAdvice(); applyLinkAdvice(); paintAdviceRows(); redrawDots(); }
 
       // New rows arrive with empty statistics cells. Re-collect them and ask
       // for figures immediately rather than leaving a table of em dashes until
