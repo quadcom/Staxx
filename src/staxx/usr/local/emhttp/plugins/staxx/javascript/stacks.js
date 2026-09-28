@@ -1631,6 +1631,14 @@
   var textAtOpen  = '';    // what the file said when it opened — the dirty check
   var composeEol  = '\n';  // the compose file's own line ending — put back on save(), see withEol()
   var openedName  = '';    // the rel this editor opened at — what save() renames FROM
+
+  // The editor is open and has a parsed form, on `name` when one is given.
+  // openedName and MODEL both outlive a close (the close listener resets the
+  // file tabs but neither of these), so neither alone says this.
+  function editorShowing(name) {
+    return modal.open && !!MODEL && (name === undefined || openedName === name);
+  }
+
   var fingerprintAtOpen = '';  // content hash of the file when this editor opened it — save()
                                 // sends it back so the server can refuse a write that would
                                 // overwrite a change made elsewhere since (see PLAN_60 3.1)
@@ -4593,8 +4601,8 @@
   // loadCompanion() re-reads it fresh, the same read every ordinary tab
   // switch already does, rather than trying to patch the box in place.
   function adoptImageOwnerWrite(name, owner, newText) {
-    if (!owner.isOverride) { if (openedName === name && MODEL) adoptRolledBackText(newText); return; }
-    if (openedName === name && fileOpen === owner.fileName) loadCompanion(owner.fileName);
+    if (!owner.isOverride) { if (editorShowing(name)) adoptRolledBackText(newText); return; }
+    if (editorShowing(name) && fileOpen === owner.fileName) loadCompanion(owner.fileName);
   }
 
   // Releasing a pin removes exactly the "was <ref>" note it added
@@ -4925,9 +4933,13 @@
   // This is the second of the two writes PLAN_150 asks for: the disk copy
   // (writeUpdatePolicy() below) is written separately, on its own throwaway
   // parse of what is on disk right now, specifically so that landing this
-  // one never carries any unsaved typing along with it. pushUndo() here
-  // snapshots the open document as it stood a moment ago, so Undo puts THAT
-  // back — it does not, and must not, un-write the file.
+  // one never carries any unsaved typing along with it. `services` is every
+  // service the disk write actually touched — one for the editor's own
+  // "When" row, several for a stack-wide row-menu tick — written through the
+  // ONE open MODEL and given ONE undo entry between them, so a person who
+  // ticked a whole stack gets one Undo that puts all of it back, not one per
+  // container. Every service's field is found FIRST, before anything is
+  // pushed, so a missing one refuses cleanly rather than half-writing.
   //
   // `savedFingerprint`/`savedText` are set once the disk write already
   // succeeded — see the refusal branch's own comment for what happens then,
@@ -4938,37 +4950,49 @@
   // unrelated field someone is still typing into), and the dirty check has
   // to keep comparing against what disk truly has, not against a snapshot
   // that quietly folded an unrelated unsaved edit in as if it were saved.
-  function applyUpdatePolicyLocally(service, policyField, value, savedFingerprint, savedText) {
-    var f = policyFieldFor(MODEL.fields, service, policyField);
-    if (!f) {
-      showError('This row lost track of its place in the open document — reopen the stack to see the change.');
-      return;
+  function applyUpdatePolicyLocally(services, policyField, value, savedFingerprint, savedText) {
+    var fields = [];
+    for (var i = 0; i < services.length; i++) {
+      var f = policyFieldFor(MODEL.fields, services[i], policyField);
+      if (!f) {
+        showError('This row lost track of its place in the open document — reopen the stack to see the change.');
+        return;
+      }
+      fields.push(f);
     }
 
-    pushUndo(policyField === 'mode'
-      ? 'changing when "' + service + '" updates itself'
-      : 'changing "' + service + '"’s update notifications');
+    var n = services.length;
+    var what = policyField === 'mode'
+      ? (n === 1 ? 'changing when "' + services[0] + '" updates itself'
+                 : 'changing when ' + n + ' services update themselves')
+      : (n === 1 ? 'changing "' + services[0] + '"’s update notifications'
+                 : 'changing ' + n + ' services’ update notifications');
+    pushUndo(what);
 
-    var ok = YAML.setPart(MODEL.doc, MODEL, f.id, 'value', value);
-    if (!ok) {
-      undoStack.pop(); updateUndo();
-      if (savedFingerprint) {
-        // The disk copy already has this change — only the OPEN document
-        // could not follow it (the person's own unsaved edit sits in a
-        // shape this field's write cannot safely reach). Silently doing
-        // nothing here would leave the box looking unchanged while the file
-        // underneath it already is, which is exactly the mismatch this
-        // whole feature exists to prevent. fingerprintAtOpen is deliberately
-        // NOT updated: the next ordinary Save now refuses as a conflict —
-        // safe, if inconvenient — rather than silently overwriting the
-        // change that just landed with whatever this copy still says.
-        showError('This was saved to the file, but the open copy could not be updated to match. ' +
-                   'Reopen the stack to see it — saving from here first would be refused, on purpose, ' +
-                   'rather than risk overwriting it.');
-      } else {
-        showError('That value cannot be written as it stands — edit this one in the Compose view.');
+    for (var j = 0; j < fields.length; j++) {
+      if (!YAML.setPart(MODEL.doc, MODEL, fields[j].id, 'value', value)) {
+        // restoreUndo(), not a plain pop — an earlier service in this same
+        // batch may already have landed in MODEL.doc, and that has to come
+        // back out too, not just the undo entry.
+        restoreUndo();
+        if (savedFingerprint) {
+          // The disk copy already has this change — only the OPEN document
+          // could not follow it (the person's own unsaved edit sits in a
+          // shape this field's write cannot safely reach). Silently doing
+          // nothing here would leave the box looking unchanged while the file
+          // underneath it already is, which is exactly the mismatch this
+          // whole feature exists to prevent. fingerprintAtOpen is deliberately
+          // NOT updated: the next ordinary Save now refuses as a conflict —
+          // safe, if inconvenient — rather than silently overwriting the
+          // change that just landed with whatever this copy still says.
+          showError('This was saved to the file, but the open copy could not be updated to match. ' +
+                     'Reopen the stack to see it — saving from here first would be refused, on purpose, ' +
+                     'rather than risk overwriting it.');
+        } else {
+          showError('That value cannot be written as it stands — edit this one in the Compose view.');
+        }
+        return;
       }
-      return;
     }
 
     yamlPane.value = YAML.serialise(MODEL.doc);
@@ -5015,7 +5039,7 @@
     clearError();
 
     if (!openedName) {
-      applyUpdatePolicyLocally(service, policyField, value, null);
+      applyUpdatePolicyLocally([service], policyField, value, null);
       return;
     }
 
@@ -5046,7 +5070,7 @@
           return;
         }
         serviceIcons = saveRes.icons || serviceIcons;
-        applyUpdatePolicyLocally(service, policyField, value,
+        applyUpdatePolicyLocally([service], policyField, value,
                                   saveRes.fingerprint || readRes.fingerprint, diskText);
         paintServiceIcons();
       });
@@ -5221,7 +5245,7 @@
             return;
           }
 
-          if (openedName !== name || !MODEL) {
+          if (!editorShowing(name)) {
             onFail('Open this stack to release this pin.');
             return;
           }
@@ -5424,15 +5448,12 @@
         serviceIcons = saveRes.icons || serviceIcons;
         // An editor already open on this SAME stack is kept in step with
         // what disk now says, same reasoning as applyUpdatePolicyLocally()
-        // itself — run once per service the write actually touched, with
-        // the saved fingerprint/text landed only on the last of them so
-        // fingerprintAtOpen ends up set exactly once.
-        if (openedName === name && MODEL) {
-          applied.forEach(function (svc, idx) {
-            applyUpdatePolicyLocally(svc, policyField, value,
-              idx === applied.length - 1 ? (saveRes.fingerprint || readRes.fingerprint) : null,
-              idx === applied.length - 1 ? diskText : null);
-          });
+        // itself — one call for every service the write actually touched,
+        // one undo entry for the lot, rather than one render and one Undo
+        // step per service.
+        if (editorShowing(name)) {
+          applyUpdatePolicyLocally(applied, policyField, value,
+            saveRes.fingerprint || readRes.fingerprint, diskText);
         }
         paintServiceIcons();
         return applied;
@@ -5647,7 +5668,10 @@
             }
             if (saveRes.icons) serviceIcons = saveRes.icons;
             adoptImageOwnerWrite(name, owner, pinned.yaml);
-            if (openedName === name && MODEL) reparse();
+            // The main-file case already reparsed inside adoptImageOwnerWrite()
+            // (adoptRolledBackText() does that itself); an override on its own
+            // tab does not, so only that case needs its own reparse here.
+            if (owner.isOverride && editorShowing(name)) reparse();
             paintServiceIcons();
             done(true);
           });
@@ -5764,7 +5788,13 @@
                 (modeInSameFile ? Promise.resolve(true)
                   : writeUpdatePolicyForServices(name, [service], 'mode', clickedValue)
                 ).then(function () {
-                  if (openedName === name && MODEL) reparse();
+                  // The main-file case reparsed already, inside
+                  // adoptImageOwnerWrite() above; an override whose mode
+                  // write went through writeUpdatePolicyForServices() just
+                  // now reparsed there too. The one case neither of those
+                  // covers: an override with the mode in that SAME file,
+                  // written in-memory above with no reparse of its own.
+                  if (owner2.isOverride && modeInSameFile && editorShowing(name)) reparse();
                   paintServiceIcons();
 
                   var rows = containerRows(name, service);
@@ -8710,7 +8740,7 @@
   // the first parse, when every .env name still reads as declared by
   // nothing — and its own latch would make that the only time it ever asked.
   function dollarRecheck() {
-    if (openedName && MODEL) reparse();
+    if (openedName && editorShowing()) reparse();
   }
 
   function maybeOfferDollarFixes() {
@@ -23143,7 +23173,7 @@
       // but every other pass that rebuilds or re-applies advice runs this
       // too, so it does not fall out of step with the rest. One row pass and
       // one dots draw for both grafts, not one each.
-      if (MODEL) { applyClashAdvice(); applyLinkAdvice(); paintAdviceRows(); redrawDots(); }
+      if (editorShowing()) { applyClashAdvice(); applyLinkAdvice(); paintAdviceRows(); redrawDots(); }
 
       // New rows arrive with empty statistics cells. Re-collect them and ask
       // for figures immediately rather than leaving a table of em dashes until
