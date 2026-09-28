@@ -20017,6 +20017,7 @@
 
         entry.text  += part.text || '';
         entry.offset = part.offset;
+        if (part.text && entry.onText) entry.onText(part.text);
 
         // The busy pill keeps its one fixed label for the whole job (see the
         // note above pullProgress()); it is only repainted if something else
@@ -20166,7 +20167,9 @@
   // opts.done instead, once this job's entry is removed above.
   //
   // opts: rows (spun/marked together), verb (for the busy/fail wording),
-  // show (stream into the output dialog as it grows), done(job).
+  // show (stream into the output dialog as it grows), onText(text) (called
+  // with each new slice of log text as it arrives, for a caller with its own
+  // output window rather than the shared one `show` streams into), done(job).
   function track(job, opts) {
     opts = opts || {};
     // Restored across a reload (see restoreJobsFromStorage()) rather than
@@ -20178,6 +20181,7 @@
       rows:      opts.rows || [],
       verb:      opts.verb || '',
       show:      !!opts.show,
+      onText:    opts.onText,
       atBottom:  true,
       offset:    0,
       text:      '',
@@ -29056,7 +29060,7 @@
   var imagesCancel = document.getElementById('staxx-images-cancel');
   var imagesRemove = document.getElementById('staxx-images-remove');
   var imagesData   = null;   // the last { groups, totals } the server sent
-  var imagesWatch  = null;   // the running job's poll timer, while removal is in progress
+  var imagesWatch  = null;   // the "still running" backstop timer, while removal is in progress
 
   // In the order the window shows them. PLAN_181 item 9: 'keep' (roll-back
   // copies) is no longer in this list at all — Adrian's ruling 2026-09-25 is
@@ -29449,22 +29453,6 @@
     imagesUpdateRemoveButton();
   }
 
-  function imagesJobPoll(job, offset, deadline) {
-    call('job', { job: job, offset: offset }, 15000).then(function (res) {
-      if (!imagesModal.open || !res.ok) return;
-      var pre = document.getElementById('staxx-images-joblog');
-      if (pre && res.text) pre.textContent += res.text;
-      if (res.done) {
-        imagesMsg.textContent = '';
-        imagesCancel.textContent = 'Close';
-        imagesRemove.hidden = true;
-        return;
-      }
-      if (Date.now() > deadline) { imagesMsg.textContent = 'Still running — check the job log.'; return; }
-      imagesWatch = setTimeout(function () { imagesJobPoll(job, res.offset, deadline); }, 1000);
-    });
-  }
-
   function runImagesRemove() {
     var ids = [];
     imagesBody.querySelectorAll('.staxx-images-check:checked').forEach(function (box) {
@@ -29482,7 +29470,32 @@
       }
       imagesBody.innerHTML = '<pre class="staxx-images-joblog" id="staxx-images-joblog"></pre>';
       imagesCancel.textContent = 'Close';
-      imagesJobPoll(res.job, 0, Date.now() + 900000);
+      // The shared job tracker already polls every tracked job in one
+      // request; this used to run its own once-a-second poll of the same
+      // job on top of it. No rows are spun or marked — nothing on the table
+      // changes while images are removed — so this is streamed straight
+      // into the window's own log instead.
+      var finished = false;
+      imagesWatch = setTimeout(function () {
+        if (!finished) imagesMsg.textContent = 'Still running — check the job log.';
+      }, 900000);
+      track(res.job, {
+        rows: [],
+        verb: 'images',
+        onText: function (text) {
+          if (!imagesModal.open) return;
+          var pre = document.getElementById('staxx-images-joblog');
+          if (pre) pre.textContent += text;
+        },
+        done: function () {
+          finished = true;
+          imagesStopWatch();
+          if (!imagesModal.open) return;
+          imagesMsg.textContent = '';
+          imagesCancel.textContent = 'Close';
+          imagesRemove.hidden = true;
+        }
+      });
     });
   }
 
