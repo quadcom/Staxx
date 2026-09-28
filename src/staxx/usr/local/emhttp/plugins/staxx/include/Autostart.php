@@ -84,11 +84,7 @@ function staxx_autostart_format(array $lines): string {
 
 /** Write the file atomically — a temp file plus rename, so a reader never sees half a list. */
 function staxx_autostart_write(array $lines): bool {
-  $dir = dirname(STAXX_AUTOSTART_FILE);
-  $tmp = $dir.'/.'.basename(STAXX_AUTOSTART_FILE).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, staxx_autostart_format($lines)) === false) return false;
-  if (!@rename($tmp, STAXX_AUTOSTART_FILE)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(STAXX_AUTOSTART_FILE, staxx_autostart_format($lines));
 }
 
 /**

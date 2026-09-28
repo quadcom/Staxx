@@ -102,7 +102,7 @@ ok('fingerprint is empty for a stack with no compose file',
 
 ok('writes a text file', staxx_write_file($rel, '.env', "A=1\r\nB=2\r\n", true, $err), $err);
 ok('keeps CRLF',         file_get_contents($dir.'/.env') === "A=1\r\nB=2\r\n");
-ok('leaves no temp file', count(glob($dir.'/.env.*.staxx-tmp')) === 0);
+ok('leaves no temp file', count(glob($dir.'/..env.*.tmp')) === 0);
 
 ok('writes an LF file', staxx_write_file($rel, 'lf.env', "C=3\nD=4\n", true, $err), $err);
 ok('keeps LF, invents no CR', file_get_contents($dir.'/lf.env') === "C=3\nD=4\n");
@@ -121,7 +121,7 @@ ok('refuses over the cap',
    !staxx_write_file($rel, 'big.bin', str_repeat('x', STAXX_FILE_MAX + 1), false, $err), $err);
 ok('accepts exactly the cap',
    staxx_write_file($rel, 'big.bin', str_repeat('x', STAXX_FILE_MAX), false, $err), $err);
-ok('leaves no temp file after a refusal', count(glob($dir.'/big.bin.*.staxx-tmp')) === 0);
+ok('leaves no temp file after a refusal', count(glob($dir.'/.big.bin.*.tmp')) === 0);
 
 /* ------------------------------------------------------------- reading -- */
 

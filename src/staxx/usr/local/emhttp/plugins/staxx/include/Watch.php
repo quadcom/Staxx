@@ -414,10 +414,7 @@ function staxx_watch_body_path(string $image): string {
 /** Write-then-rename, same as every other cache write in this plugin. */
 function staxx_watch_store_body(string $image, string $body): void {
   if (!is_dir(STAXX_WATCH_DIR) && !@mkdir(STAXX_WATCH_DIR, 0755, true)) return;
-  $path = staxx_watch_body_path($image);
-  $tmp  = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $body) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write(staxx_watch_body_path($image), $body);
 }
 
 /**

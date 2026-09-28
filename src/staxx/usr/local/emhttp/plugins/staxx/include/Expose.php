@@ -320,11 +320,7 @@ function staxx_expose_json_write(string $rel, array $data): bool {
   if (!is_dir($dir) && !@mkdir($dir, 0700, true)) return false;
   $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
   if ($encoded === false) return false;
-  $file = staxx_expose_json_path($rel);
-  $tmp  = $dir.'/.expose.json.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(staxx_expose_json_path($rel), $encoded);
 }
 
 /** Replaces one service's entry and writes the whole file back. */

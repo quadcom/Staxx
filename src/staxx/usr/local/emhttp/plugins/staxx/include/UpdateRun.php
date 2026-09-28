@@ -1239,10 +1239,7 @@ function staxx_update_queue_write(array $queue): bool {
   $encoded = json_encode($queue, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($encoded === false) return false;
 
-  $tmp = STAXX_UPDATE_DIR.'/.queue.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, staxx_update_queue_path())) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(staxx_update_queue_path(), $encoded);
 }
 
 /**

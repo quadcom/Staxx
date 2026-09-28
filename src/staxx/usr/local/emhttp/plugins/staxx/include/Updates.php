@@ -163,10 +163,7 @@ function staxx_update_state_save(array $state): bool {
   $dir = dirname($file);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
 
-  $tmp = $dir.'/.'.basename($file).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
-  @chmod($file, 0600);
+  if (!staxx_atomic_write($file, $encoded, 0600)) return false;
 
   staxx_update_state_cache($merged);
   return true;

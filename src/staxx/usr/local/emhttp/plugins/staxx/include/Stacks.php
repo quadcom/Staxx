@@ -1787,9 +1787,7 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
   $json = json_encode(['key' => $key, 'meta' => $meta]);
   if ($json === false) return;
 
-  $tmp = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $json) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write($path, $json);
 }
 
 /** The blank shape a service's meta starts from before anything is read
@@ -3937,21 +3935,14 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   // written is checked against what was asked for before the file is put in
   // place. A reader — compose, or the next open of this stack — never sees a
   // half-written file either way.
-  $tmp = $file.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $yaml);
-  if ($written === false || $written !== strlen($yaml)) {
-    @unlink($tmp);
-    $error = 'Could not write '.$file;
-    return false;
-  }
+  //
   // Owner-only: a compose file can hold every password the containers it
   // describes were given. This is moot on /boot — that filesystem takes its
   // mode from how it is mounted, whatever chmod says — but it matters the
   // moment the data store is pointed at an array share, which the setting invites.
-  @chmod($tmp, 0600);
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $yaml, 0600, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file
+                                  : 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
   // Keep the file as it now stands too — not only as it stood before. The
@@ -4649,10 +4640,7 @@ function staxx_autoupdate_write(array $data): bool {
   $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
 
-  $tmp = $dir.'/.'.basename(STAXX_AUTOUPDATE_FILE).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $json) === false) return false;
-  if (!@rename($tmp, STAXX_AUTOUPDATE_FILE)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(STAXX_AUTOUPDATE_FILE, $json);
 }
 
 /**
@@ -7105,19 +7093,9 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
     }
   }
 
-  // Pid-suffixed, not a fixed name: two concurrent saves of the same
-  // companion file would otherwise share one temp file, and whichever
-  // rename() lost the race would report an error for content that had
-  // already landed under the other save's name.
-  $tmp = $path.'.'.getmypid().'.staxx-tmp';
-  if (@file_put_contents($tmp, $body) === false) {
-    $error = 'Could not write '.$tmp;
-    return false;
-  }
-  @chmod($tmp, 0644);
-  if (!@rename($tmp, $path)) {
-    @unlink($tmp);
-    $error = 'Could not save "'.$file.'" — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($path, $body, 0644, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$path
+                                  : 'Could not save "'.$file.'" — the temporary file could not be put in place.';
     return false;
   }
 

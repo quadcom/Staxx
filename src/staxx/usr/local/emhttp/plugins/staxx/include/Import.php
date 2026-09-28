@@ -1689,19 +1689,16 @@ function staxx_handoff_write(
 
   $id   = bin2hex(random_bytes(16));
   $path = STAXX_HANDOFF_DIR.'/'.$id.'.json';
-  $tmp  = $path.'.tmp';
 
   $json = json_encode(['app' => $record, 'xml' => $xml, 'kind' => $kind, 'xmlTemplate' => $xmlTemplate]);
-  if ($json === false || @file_put_contents($tmp, $json) === false) {
+  if ($json === false) {
     $error = 'Could not write the handoff file.';
-    @unlink($tmp);
     return '';
   }
-  @chmod($tmp, 0600);
 
-  if (!@rename($tmp, $path)) {
-    $error = 'Could not put the handoff file in place.';
-    @unlink($tmp);
+  if (!staxx_atomic_write($path, $json, 0600, $failed)) {
+    $error = $failed === 'write' ? 'Could not write the handoff file.'
+                                  : 'Could not put the handoff file in place.';
     return '';
   }
 

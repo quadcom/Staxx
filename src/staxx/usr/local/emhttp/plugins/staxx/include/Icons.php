@@ -346,10 +346,7 @@ function staxx_icon_write(string $path, string $body): bool {
 
   // Written beside the target and moved into place, so a download interrupted
   // half way never becomes a cached icon that is permanently broken.
-  $tmp = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $body) === false) return false;
-  if (!@rename($tmp, $path)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write($path, $body);
 }
 
 /** Fetch a URL, or null. Time-limited, because nothing here may hang. */

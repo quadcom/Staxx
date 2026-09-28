@@ -222,11 +222,7 @@ function staxx_crypt_selftest_write(array $result): bool {
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
   $json = json_encode($result, JSON_PRETTY_PRINT);
   if ($json === false) return false;
-  $tmp = $file.'.tmp-'.getmypid();
-  if (@file_put_contents($tmp, $json) === false) { @unlink($tmp); return false; }
-  @chmod($tmp, 0600);
-  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write($file, $json, 0600);
 }
 
 /**

@@ -1458,11 +1458,7 @@ function staxx_storage_alert_refresh(string &$error): array {
   if ($sinceFile !== '') {
     $dir = dirname($sinceFile);
     if (is_dir($dir) || @mkdir($dir, 0755, true)) {
-      $tmp = $dir.'/.'.basename($sinceFile).'.'.getmypid().'.tmp';
-      if (@file_put_contents($tmp, json_encode($since, JSON_PRETTY_PRINT)) !== false) {
-        @rename($tmp, $sinceFile);
-        @chmod($sinceFile, 0600);
-      }
+      staxx_atomic_write($sinceFile, json_encode($since, JSON_PRETTY_PRINT), 0600);
     }
   }
 
@@ -1470,11 +1466,7 @@ function staxx_storage_alert_refresh(string &$error): array {
   if ($alertFile !== '') {
     $dir = dirname($alertFile);
     if (is_dir($dir) || @mkdir($dir, 0755, true)) {
-      $tmp = $dir.'/.'.basename($alertFile).'.'.getmypid().'.tmp';
-      if (@file_put_contents($tmp, json_encode($result, JSON_PRETTY_PRINT)) !== false) {
-        @rename($tmp, $alertFile);
-        @chmod($alertFile, 0600);
-      }
+      staxx_atomic_write($alertFile, json_encode($result, JSON_PRETTY_PRINT), 0600);
     }
   }
 

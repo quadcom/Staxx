@@ -162,10 +162,7 @@ function staxx_detail_cache_read(string $image): ?array {
 function staxx_detail_cache_write(string $image, array $bundle): void {
   if (!is_dir(STAXX_DETAIL_DIR) && !@mkdir(STAXX_DETAIL_DIR, 0755, true)) return;
   $bundle['at'] = time();
-  $path = staxx_detail_cache_path($image);
-  $tmp  = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, json_encode($bundle)) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write(staxx_detail_cache_path($image), json_encode($bundle));
 }
 
 /* ------------------------------------------------------------- one image -- */
@@ -540,11 +537,7 @@ function staxx_health_turned_away_write(array $data): bool {
   $dir = dirname($file);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
 
-  $tmp = $dir.'/.'.basename($file).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
-  @chmod($file, 0600);
-  return true;
+  return staxx_atomic_write($file, $encoded, 0600);
 }
 
 /**

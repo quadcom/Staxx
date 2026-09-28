@@ -150,26 +150,6 @@ function staxx_record_read(string $rel): array {
 }
 
 /**
- * Write one file into the record directory atomically — a temporary name in
- * the same directory, then rename() over the target — so a reader never sees
- * a half-written index or a truncated history file. Returns false on any
- * failure and cleans up its own temporary file; never throws or warns.
- */
-function staxx_record_atomic_write(string $path, string $data): bool {
-  $tmp = $path.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $data);
-  if ($written === false || $written !== strlen($data)) {
-    @unlink($tmp);
-    return false;
-  }
-  if (!@rename($tmp, $path)) {
-    @unlink($tmp);
-    return false;
-  }
-  return true;
-}
-
-/**
  * Encode and write the index. The one place record.json is ever written.
  *
  * Callers that only touch the compose-edit history (staxx_record_capture(),
@@ -196,7 +176,7 @@ function staxx_record_write_index(string $rel, array $record): bool {
 
   $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
-  return staxx_record_atomic_write(staxx_record_dir($rel).'/record.json', $json."\n");
+  return staxx_atomic_write(staxx_record_dir($rel).'/record.json', $json."\n");
 }
 
 /**
@@ -264,7 +244,7 @@ function staxx_record_capture(string $rel, string $file, string &$note): bool {
   }
 
   $n = $next;
-  if (!staxx_record_atomic_write(staxx_record_history_path($rel, $n), $bytes)) {
+  if (!staxx_atomic_write(staxx_record_history_path($rel, $n), $bytes)) {
     $note = 'The previous version could not be kept, so this save cannot be undone from the history.';
     return false;
   }
@@ -537,6 +517,6 @@ function staxx_profiles_write(string $rel, array $names, array $declared): bool 
 
   $dir = staxx_record_dir($rel);
   if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) return false;
-  return staxx_record_atomic_write($path, implode("\n", $keep)."\n");
+  return staxx_atomic_write($path, implode("\n", $keep)."\n");
 }
 ?>

@@ -146,16 +146,9 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
     return false;
   }
 
-  $tmp = $file.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $json."\n");
-  if ($written === false || $written !== strlen($json) + 1) {
-    @unlink($tmp);
-    $error = 'Could not write '.$file;
-    return false;
-  }
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $json."\n", null, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file
+                                  : 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
 
