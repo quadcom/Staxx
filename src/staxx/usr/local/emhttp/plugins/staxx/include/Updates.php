@@ -141,10 +141,10 @@ function staxx_update_state(): array {
 
 /**
  * Write the state file, merged over the defaults so a save that only touches
- * one key can never drop the rest. Written temp-then-rename, same as
- * staxx_autostart_write(), and skipped entirely when the encoded content is
- * byte-identical to what is already there — flash has finite writes, and this
- * runs after every single image on every check.
+ * one key can never drop the rest. Written through staxx_atomic_write(), and
+ * skipped entirely when the encoded content is byte-identical to what is
+ * already there, so a save that changes nothing writes nothing. A check pass
+ * saves once, at its end.
  */
 function staxx_update_state_save(array $state): bool {
   $merged  = array_merge(staxx_update_state_defaults(), staxx_update_state(), $state);

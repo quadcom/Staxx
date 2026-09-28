@@ -13,7 +13,7 @@ early return, and each `require_once`s by absolute path.
 | `StacksTable.php` | Renders table rows; `staxx_state_snapshot()` for cheap refreshes |
 | `StacksPage.php` | Page shell, asset tags, CSRF handoff to the client |
 | `Icons.php` | Owns each service's icon, stored in `.staxx` beside the compose file |
-| `Images.php` | The "Scan stored images" window (Storage tab): grouping unused images, the removal job — sits beside `UpdateRun.php`'s weekly cleanup and calls its keep-set, never edits it |
+| `Images.php` | The "Scan stored images" window (Storage tab): grouping unused images, the removal job — calls `UpdateRun.php`'s keep-set (`staxx_update_keep_digests()`) and never edits it; also the storage alert that replaced the weekly cleanup |
 | `Stats.php` | Reads what the background collector wrote; GPU/CPU/mem/net |
 | `action.php` | The single JSON endpoint |
 
@@ -22,3 +22,7 @@ may hang: a page that waits forever on `docker` is worse than one that fails vis
 goes to `sh -c` as one argument rather than trailing `timeout` directly — written the other way,
 `timeout 120 cd /x && foo` time-limits the `cd`, which fails, short-circuits the `&&`, and reports
 success while `foo` never runs.
+
+The one exception is `staxx_detach()` (Defines.php), which starts a job that must outlive the
+request and so cannot carry `staxx_sh()`'s time limit; it returns at once. Every file that must
+never be seen half-written goes through `staxx_atomic_write()`.

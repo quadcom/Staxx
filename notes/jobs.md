@@ -5,6 +5,8 @@
 Compose commands can take minutes, so `staxx_start_job()` detaches them with `setsid`, writes
 output to `/tmp/staxx/jobs/<id>.log`, and returns a job id the page polls via the `job`
 action. Completion is signalled by a `STAXX_JOB_END <exit-code>` sentinel appended to the log.
+Every job launcher starts through `staxx_spawn_job()`, so the log's first line and its
+permissions are written in one place.
 
 Verbs are an allowlist (`staxx_job_verbs()`) with separate whole-stack and single-service forms;
 a verb missing a form for a given scope is refused rather than falling back to the other. A service
