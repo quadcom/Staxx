@@ -36829,7 +36829,10 @@
   function mergeEnvChangeCurrentName(change) {
     var envText = (mergeState.built && mergeState.built.env) || '';
     var line = envText.split('\n')[change.line] || '';
-    var m = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(line);
+    // ENV_KEY_RE already reads past an "export " prefix — this used to use
+    // its own narrower copy, which left this box blank for an exported
+    // line (PLAN_198's bug fix; the fault's sibling below has the same fix).
+    var m = ENV_KEY_RE.exec(line);
     return m ? m[1] : '';
   }
 
@@ -37000,7 +37003,9 @@
       content.textContent = line;
       lrow.appendChild(content);
 
-      var m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+      // ENV_KEY_RE reads past an "export " prefix, so an exported line
+      // gets its family stripe too (PLAN_198's bug fix).
+      var m = ENV_KEY_RE.exec(line);
       if (m && nameToRoot[m[1]]) {
         lrow.classList.add('staxx-merge-envname');
         lrow.dataset.mergeEnvFamily = nameToRoot[m[1]];

@@ -873,7 +873,13 @@
           // dedupe only ever fires when the values already match, the
           // value the wizard would write is right here, not worth a second
           // lookup back into this source's own .env for.
-          sameValue.push({ name: line.name, stack: s.name, value: line.value });
+          // `lead` (an "export " prefix, or a leading space the name
+          // would otherwise absorb) carries through so a "keep both"
+          // answer, or the struck line's own preview, shows this setting
+          // exactly as its author wrote it.
+          var sameValueEntry = { name: line.name, stack: s.name, value: line.value };
+          if (line.lead) sameValueEntry.lead = line.lead;
+          sameValue.push(sameValueEntry);
           // `dedupe`/`name` mark this placeholder so merge-write.js can
           // find it by identity rather than parsing its own wording back
           // out of `text` — that text is only ever shown at all when a

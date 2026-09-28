@@ -10662,6 +10662,12 @@
     redactText: redactText,
     redactEnv: redactEnv,
     secretEnvNames: secretEnvNames,
+    // PLAN_198 — the one rule for reading a ".env" line's name and value
+    // (an optional leading "export " is part of the syntax, not the
+    // name), shared with merge-write.js's own readEnvText() so a merge
+    // reads a settings file the same way redactEnv() above already does.
+    // No 'g' flag, so sharing the one RegExp object is safe.
+    envLineRe: ENV_LINE_RE,
     // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
     // CHOICES table — see the comment above VOCAB for what stayed behind.
     vocab: vocab,

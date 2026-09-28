@@ -1760,6 +1760,41 @@ console.log('\nQ. Settings-join per-entry overrides');
      /^DB_PASSWORD_DEMO_WEB=websecret/m.test(missing.env));
 })();
 
+(function () {
+  // PLAN_198's bug fix: a settings line written "export NAME=value" is read
+  // the way Docker Compose reads it — previously "export HOST" was taken
+  // as the whole name, so a wired address resolved against an empty value.
+  var a = MW.descriptorFromText('appA', 'services:\n  app:\n    image: foo\n    environment:\n      DB: ${HOST}\n',
+    'export HOST=db1\nPORT=5432\n', []);
+  ok('a rewired value resolves against the exported name, not "export HOST"',
+     a.compose.services.app.environmentResolved.DB.value === 'db1');
+  ok('the .env line\'s own name drops the "export " prefix, kept separately as `lead`',
+     a.env.lines[0].name === 'HOST' && a.env.lines[0].lead === 'export ');
+  ok('an ordinary line carries no `lead` key at all',
+     !('lead' in a.env.lines[1]));
+
+  // The joined settings file writes the line back exactly as its author
+  // wrote it — "export " and all.
+  var b = { name: 'appB', text: 'services:\n  other:\n    image: bar\n', envText: 'OTHER=1\n' };
+  var built = MW.buildMergedText([{ name: 'appA', text: a.text, envText: 'export HOST=db1\nPORT=5432\n' }, b],
+    { date: '2026-09-15', name: 'appmerged' });
+  ok('the joined .env carries the exported line written exactly as the author wrote it',
+     built.env.indexOf('export HOST=db1') >= 0);
+
+  // Both sources set the same exported line — folded as a duplicate, and a
+  // "keep both" answer writes the second one back in the same shape.
+  var appA2 = { name: 'appA', text: a.text, envText: 'export HOST=db1\nPORT=5432\n' };
+  var appB2 = { name: 'appB', text: 'services:\n  other:\n    image: bar\n', envText: 'export HOST=db1\n' };
+  var descA2 = MW.descriptorFromText('appA', appA2.text, appA2.envText, []);
+  var descB2 = MW.descriptorFromText('appB', appB2.text, appB2.envText, []);
+  var join = M.examine([descA2, descB2]).findings.filter(function (f) { return f.kind === 'settings-join'; })[0];
+  var changeKey = join.key + '|dedupe|0';
+  var decisions = {}; decisions[changeKey] = 'keep-both';
+  var w2 = MW.buildMergedText([appA2, appB2], { date: '2026-09-15', name: 'appmerged', decisions: decisions });
+  ok('"keep both" on a duplicate exported line writes the second one back the same way',
+     (w2.env.match(/^export HOST=db1$/mg) || []).length === 2);
+})();
+
 /* =========================================================================
  * C3 — a paired override is applied onto the main file's own document
  * before anything else reads it (PLAN_155's dry-run corrections). An

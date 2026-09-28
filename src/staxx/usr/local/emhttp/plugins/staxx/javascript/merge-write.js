@@ -897,6 +897,15 @@
   // clash, so the two can never disagree about what a "ports:" entry means.
   function splitPortEntry(entry) { return ME.parsePortSpec(entry); }
 
+  // A settings-file line, read the same way compose-model.js's own
+  // envLineRe reads it (redactEnv() and the "export NAME=value" export
+  // redaction) — so a name here is never anything the model itself would
+  // disagree with. Previously took everything before the first "=" as the
+  // name, so "export HOST=db1" read as a setting called "export HOST":
+  // a compose value resolving ${HOST} against that .env found nothing and
+  // came out empty, even though the merged settings file itself still
+  // carried "export HOST=db1" (bug fixed in PLAN_198 — see its own
+  // comment there for what was probed).
   function readEnvText(text) {
     if (text == null) return null;
     var lines = String(text).split(/\r?\n/);
@@ -905,9 +914,16 @@
     lines.forEach(function (raw) {
       if (raw.trim() === '') { out.push({ type: 'blank' }); return; }
       if (/^\s*#/.test(raw)) { out.push({ type: 'comment', text: raw }); return; }
-      var eq = raw.indexOf('=');
-      if (eq < 0) { out.push({ type: 'comment', text: raw }); return; }
-      out.push({ type: 'setting', name: raw.slice(0, eq), value: raw.slice(eq + 1), comment: '' });
+      var m = CM.envLineRe.exec(raw);
+      if (!m) { out.push({ type: 'comment', text: raw }); return; }
+      var entry = { type: 'setting', name: m[3], value: m[4], comment: '' };
+      // Carried only when there is something to carry ("export ", or a
+      // leading space the name would otherwise absorb) — an ordinary
+      // "NAME=value" line gets no `lead` key at all, so every existing
+      // descriptor and joined line is unchanged.
+      var lead = m[1] + (m[2] || '');
+      if (lead) entry.lead = lead;
+      out.push(entry);
     });
     return { lines: out };
   }
@@ -2350,7 +2366,10 @@
           var entry = envFinding.facts.joinedLines.filter(function (l) {
             return l.dedupe && l.stack === sv.stack && l.name === sv.name;
           })[0];
-          if (entry) { entry.type = 'setting'; entry.name = sv.name; entry.value = sv.value; entry.comment = ''; delete entry.dedupe; }
+          if (entry) {
+            entry.type = 'setting'; entry.name = sv.name; entry.value = sv.value; entry.comment = ''; delete entry.dedupe;
+            if (sv.lead) entry.lead = sv.lead;
+          }
         }
       });
 
@@ -2372,7 +2391,7 @@
           l._finalLine = envLines.length; envLines.push(l.text); return;
         }
         l._finalLine = envLines.length;
-        envLines.push(l.name + '=' + l.value + (l.comment ? '  # ' + l.comment : ''));
+        envLines.push((l.lead || '') + l.name + '=' + l.value + (l.comment ? '  # ' + l.comment : ''));
       });
       envText = envLines.join('\n') + '\n';
 
@@ -2403,7 +2422,7 @@
         changes.push({
           key: sv.changeKey, stack: sv.stack, file: 'env', line: entry ? entry._finalLine : null,
           sourceLine: sourceEnvLine(sv.stack, sv.name),
-          removed: true, removedText: sv.name + '=' + sv.value,
+          removed: true, removedText: (sv.lead || '') + sv.name + '=' + sv.value,
           title: 'Already set above, so not repeated',
           reason: 'Both stacks said the same thing.', struckComment: null
         });
