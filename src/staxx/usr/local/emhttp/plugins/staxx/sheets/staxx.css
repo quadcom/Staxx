@@ -110,6 +110,7 @@
   --sm-hairline: rgba(128, 128, 128, 0.22);
 
   --sm-radius: 0.4rem;
+  --sm-pop-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);   /* every floating popover */
 
   /* The width of a stat column's little graph (.staxx-spark) — and, since
      PLAN_121, the same width a blank figure or a column heading centres
@@ -5057,7 +5058,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-outline[hidden] {
@@ -5127,7 +5128,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-pwgen[hidden] {
@@ -6442,7 +6443,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-scaffold .staxx-sectionrow {
@@ -7226,7 +7227,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   /* Plain body text, not a status colour — the mark already said what kind
      of connection this is; the popover just names the other side. */
   color: var(--sm-fg);
@@ -7265,7 +7266,7 @@ div.title.staxx-has-titlebar {
   border-radius: var(--sm-radius);
   background-color: var(--background-color, #1c1c1c);
   color: var(--sm-fg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   font-size: 1.2rem;
   line-height: 1.4;
 }
@@ -7614,11 +7615,6 @@ div.title.staxx-has-titlebar {
   cursor: default;
 }
 
-.staxx-scaffold .staxx-input--check {
-  width: auto;
-  padding: 0;
-}
-
 /* PLAN_104 — the ports note is the compose file's own commented-out block,
    shown and edited as one box (see portsNoteHtml() in stacks.js). Monospace
    and left as typed, the same as the note itself keeps every line as
@@ -7685,7 +7681,6 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-fieldhint,
-.staxx-fieldmap,
 .staxx-fieldnote {
   margin: 0.5rem 0 0;
   color: var(--sm-muted);
@@ -7736,7 +7731,6 @@ div.title.staxx-has-titlebar {
   outline-offset: 0.1rem;
 }
 
-.staxx-fieldmap code,
 .staxx-fieldhint code {
   padding: 0.1rem 0.4rem;
   border-radius: 0.2rem;
@@ -8275,7 +8269,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-tabmenu[hidden] {
@@ -8688,7 +8682,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
 }
 
 .staxx-suggest[hidden] {
@@ -8746,7 +8740,7 @@ div.title.staxx-has-titlebar {
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-bg);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   pointer-events: none;
 }
 
@@ -13201,10 +13195,6 @@ dialog::backdrop {
     max-width: calc(100vw - 2rem);
   }
 
-  .staxx-bar {
-    flex-wrap: wrap;
-  }
-
   /* The list reads as a divider across the page on a phone, rather than
      another card floating in the middle of it — settled live with Adrian,
      2026-09-13. This can't live on the row, and can't live in a @container
@@ -15182,7 +15172,7 @@ dialog::backdrop {
   background: var(--background-color, #1c1c1c);
   border: 0.1rem solid var(--sm-line);
   border-radius: var(--sm-radius);
-  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  box-shadow: var(--sm-pop-shadow);
   display: flex;
   flex-direction: column;
   align-items: center;
