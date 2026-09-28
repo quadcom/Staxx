@@ -1691,9 +1691,9 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
        the self-test. It never opens on its own; every call site in stacks.js
        chooses to open it. A <dialog> cannot scroll the page behind it, which
        is the whole reason the old page-bottom panel this replaced is gone —
-       Adrian's word for that panel was "annoying". Same recipe as
-       .staxx-settings: own class, own :not([open]), ::backdrop and
-       @starting-style. -->
+       Adrian's word for that panel was "annoying". Own class, like
+       .staxx-settings; its open and close fade is the shared one in
+       staxx.css under "Every dialog". -->
   <dialog class="staxx-logdlg" id="staxx-log-dlg" aria-labelledby="staxx-log-title">
 
     <div class="staxx-logdlg-head">
@@ -1714,8 +1714,8 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
        button above and from the row menu's "What do these marks mean?" item,
        which used to send the reader to docs/guide/marks.md on GitHub; this
        replaces that trip entirely, chips still visible on the page behind it.
-       Same recipe as .staxx-logdlg: own class, own :not([open]), ::backdrop
-       and @starting-style. The body is built by renderLegend() in stacks.js,
+       Own class, like .staxx-logdlg; its open and close fade is the shared
+       one in staxx.css under "Every dialog". The body is built by renderLegend() in stacks.js,
        from the page's own chip classes and data-mark names — never
        hand-written lookalike markup, which is the exact drift this replaces. -->
   <dialog class="staxx-legend" id="staxx-legend" aria-labelledby="staxx-legend-title">
