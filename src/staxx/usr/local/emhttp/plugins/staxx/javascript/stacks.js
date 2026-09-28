@@ -2581,6 +2581,12 @@
       .replace(/"/g, '&quot;');
   }
 
+  // For a value spliced into a double-quoted attribute selector.
+  function cssEsc(s) {
+    s = String(s);
+    return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(s) : s.replace(/["\\]/g, '\\$&');
+  }
+
   // A click on a <dialog>'s own backdrop targets the dialog element itself
   // (it fires no backdrop event of its own), so the only way to tell a
   // backdrop click from one on the dialog's own padding is to measure the
@@ -8353,7 +8359,7 @@
         return;
       }
     }
-    var svcSection = formHost.querySelector('.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]');
+    var svcSection = formHost.querySelector('.staxx-svc[data-service="' + cssEsc(service) + '"]');
     if (svcSection) svcSection.scrollIntoView({ block: 'start' });
   }
 
@@ -8724,7 +8730,7 @@
       var f = YAML.fieldById(MODEL, fid);
       if (!f || !f.dollarFixes || !f.dollarFixes.length) break;
       var fix = f.dollarFixes[0];
-      var row = formHost.querySelector('[data-field-row="' + fid.replace(/"/g, '\\"') + '"]');
+      var row = formHost.querySelector('[data-field-row="' + cssEsc(fid) + '"]');
       var box = row && row.querySelector('input[data-part="' + fix.part + '"]');
       if (!box) break;   // not on the form to write through — nothing more to do here
       box.value = fix.to;
@@ -9566,8 +9572,8 @@
       if (modalBody.dataset.view === 'yaml') setView(defaultView());
 
       var grp = formHost.querySelector('.staxx-svc[data-service="' +
-                svc.replace(/"/g, '\\"') + '"] .staxx-formgroup[data-group="' +
-                flagKey.replace(/"/g, '\\"') + '"]');
+                cssEsc(svc) + '"] .staxx-formgroup[data-group="' +
+                cssEsc(flagKey) + '"]');
       if (!grp) return;
 
       // block: 'start', not the 'center' used for a single row elsewhere in
@@ -9588,8 +9594,8 @@
 
     // Switched off: the panel is still open and the form has not moved, but
     // the redraw took focus with it. Land it back on the box just clicked.
-    var back = formHost.querySelector('[data-flag="' + flagKey.replace(/"/g, '\\"') +
-               '"][data-service="' + svc.replace(/"/g, '\\"') + '"]');
+    var back = formHost.querySelector('[data-flag="' + cssEsc(flagKey) +
+               '"][data-service="' + cssEsc(svc) + '"]');
     if (back) back.focus();
   });
 
@@ -9657,7 +9663,7 @@
     if (line < 0) return;
 
     var id  = YAML.fieldAtLine(MODEL, line);
-    var row = id && formHost.querySelector('[data-field-row="' + id.replace(/"/g, '\\"') + '"]');
+    var row = id && formHost.querySelector('[data-field-row="' + cssEsc(id) + '"]');
     if (!row) return;
 
     // The new row is in the form, so the form has to be on screen to show it.
@@ -10134,7 +10140,7 @@
       sectionsOpen[secSvc] = !sectionsOpen[secSvc];
       flushPending();
       reparse();
-      var freshBtn = formHost.querySelector('[data-sections="' + secSvc.replace(/"/g, '\\"') + '"]');
+      var freshBtn = formHost.querySelector('[data-sections="' + cssEsc(secSvc) + '"]');
       if (freshBtn) freshBtn.focus();
       return;
     }
@@ -10578,7 +10584,7 @@
       // Naming it is the first thing to do with a container nobody has
       // named yet. A real click on its own rename pencil, not a copy of what
       // that click does, so the two can never drift apart.
-      var newPencil = formHost.querySelector('[data-svc-rename][data-service="' + newSvcName + '"]');
+      var newPencil = formHost.querySelector('[data-svc-rename][data-service="' + cssEsc(newSvcName) + '"]');
       if (newPencil) newPencil.click();
       return;
     }
@@ -10612,7 +10618,7 @@
 
           // structuralEdit() just redrew the whole form, which took focus with
           // it — land it back on the pencil for the section that now exists.
-          var pencil = formHost.querySelector('[data-svc-rename][data-service="' + next + '"]');
+          var pencil = formHost.querySelector('[data-svc-rename][data-service="' + cssEsc(next) + '"]');
           if (pencil) pencil.focus();
         }
       });
@@ -10647,8 +10653,8 @@
 
           // structuralEdit() just redrew the whole form, which took focus with
           // it — land it back on the pencil for the row that now exists.
-          var pencil = formHost.querySelector('[data-decl-rename][data-decl-kind="' + declKind +
-                      '"][data-decl-name="' + next + '"]');
+          var pencil = formHost.querySelector('[data-decl-rename][data-decl-kind="' + cssEsc(declKind) +
+                      '"][data-decl-name="' + cssEsc(next) + '"]');
           if (pencil) pencil.focus();
         }
       });
@@ -10914,7 +10920,7 @@
       return;
     }
     structuralEdit(-1, '');
-    var svcSel = '.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]';
+    var svcSel = '.staxx-svc[data-service="' + cssEsc(service) + '"]';
     var ta = formHost.querySelector(svcSel + ' [data-portsnote]');
     if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
   }
@@ -11060,7 +11066,7 @@
     // structuralEdit() just redrew the whole form, taking focus with it —
     // land it back on the grip that moved, at its new spot, so a keyboard
     // move can be repeated without hunting the row down again.
-    var svcSel = '.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]';
+    var svcSel = '.staxx-svc[data-service="' + cssEsc(service) + '"]';
     var grp    = formHost.querySelector(svcSel + ' .staxx-formgroup--ports');
     var rows   = grp ? grp.querySelectorAll(':scope > .staxx-fieldrow') : [];
     var landed = rows[Math.min(to, rows.length - 1)];
@@ -12941,7 +12947,7 @@
     }
 
     focusField(id, false);
-    var row = formHost.querySelector('[data-field-row="' + id.replace(/"/g, '\\"') + '"]');
+    var row = formHost.querySelector('[data-field-row="' + cssEsc(id) + '"]');
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
 
@@ -14831,7 +14837,7 @@
   // against rapid clicks — a click that lands mid-slide just retargets the
   // transition, which is what a carousel should do.
   function caPageStep(key, dir) {
-    var deck = caList.querySelector('[data-deck="' + key + '"]');
+    var deck = caList.querySelector('[data-deck="' + cssEsc(key) + '"]');
     if (!deck) return;
     var grid = deck.firstElementChild.firstElementChild;
     var pages = caDeckPages(grid).pages;
@@ -16960,7 +16966,7 @@
     var svcSection = null;
     if (focusService) {
       svcSection = formHost.querySelector(
-        '.staxx-svc[data-service="' + focusService.replace(/"/g, '\\"') + '"]');
+        '.staxx-svc[data-service="' + cssEsc(focusService) + '"]');
       if (svcSection) svcSection.scrollIntoView({ block: 'start' });
     }
 
@@ -19669,14 +19675,8 @@
   // A stack row and the container rows underneath it move together: a command
   // is issued to the whole stack, so the whole stack shows it is working.
   function stackRows(name) {
-    var out = [];
     var row = rowFor(name);
-    if (row) out.push(row);
-    Array.prototype.forEach.call(
-      document.querySelectorAll('.staxx-container-row[data-in-stack="' + name + '"]'),
-      function (r) { out.push(r); }
-    );
-    return out;
+    return (row ? [row] : []).concat(serviceRows(name));
   }
 
   // The container rows of one stack whose menu targets this service —
@@ -19712,16 +19712,13 @@
   // answer, so it is only counted once.
   function stackTagMissingServices(stack) {
     var seen = {}, out = [];
-    Array.prototype.forEach.call(
-      document.querySelectorAll('.staxx-container-row[data-in-stack="' + stack + '"]'),
-      function (row) {
-        var entry = updatePillEntry(updatePillEl(row));
-        if (!entry || entry.state !== 'tagmissing') return;
-        var btn = row.querySelector('[data-menu="container"]');
-        var svc = btn && btn.dataset.service;
-        if (svc && !seen[svc]) { seen[svc] = true; out.push(svc); }
-      }
-    );
+    serviceRows(stack).forEach(function (row) {
+      var entry = updatePillEntry(updatePillEl(row));
+      if (!entry || entry.state !== 'tagmissing') return;
+      var btn = row.querySelector('[data-menu="container"]');
+      var svc = btn && btn.dataset.service;
+      if (svc && !seen[svc]) { seen[svc] = true; out.push(svc); }
+    });
     return out;
   }
 
@@ -19763,16 +19760,8 @@
   // old ones away.
   function rowsForKey(key) {
     var sep = key.indexOf('\u0000');
-    if (sep === -1) return stackRows(key);
-    var stack = key.slice(0, sep), service = key.slice(sep + 1);
-    var rows = [];
-    Array.prototype.forEach.call(
-      document.querySelectorAll(
-        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
-      ),
-      function (r) { rows.push(r); }
-    );
-    return rows;
+    if (sep === -1) return stackRows(key);   // no separator: the whole stack
+    return serviceRows(key.slice(0, sep), key.slice(sep + 1));
   }
 
   function paintFailure(rows, verb) {
@@ -20694,6 +20683,21 @@
     return rowsHost
       ? rowsHost.querySelector('.staxx-stack-row[data-stack-row="' + name + '"]')
       : null;
+  }
+
+  // Container rows of one stack; with a service, only the rows whose OWN
+  // data-service is that key (a replica's is "service/container").
+  function serviceRows(stack, service) {
+    var sel = '.staxx-container-row[data-in-stack="' + stack + '"]' +
+              (service === undefined ? '' : '[data-service="' + service + '"]');
+    return Array.prototype.slice.call(document.querySelectorAll(sel));
+  }
+
+  // A key with no separator is a stack row; otherwise stack + sep + service.
+  function forEachKeyRow(key, sep, fn) {
+    var at = key.indexOf(sep);
+    if (at === -1) { fn(rowFor(key)); return; }
+    serviceRows(key.slice(0, at), key.slice(at + sep.length)).forEach(fn);
   }
 
   // Paint one row's state cell, address cell and status dot, unless it is
@@ -22011,21 +22015,10 @@
   var lastUpdateRows    = {};
   var lastUpdateFolders = {};
 
+  // Every replica of a service shares one answer — same reason containerRows()
+  // above answers a service with more than one row.
   function paintUpdateRow(key, entry) {
-    var sep = key.indexOf('::');
-    if (sep === -1) {
-      paintUpdatePill(rowFor(key), entry);
-      return;
-    }
-    var stack = key.slice(0, sep), service = key.slice(sep + 2);
-    // Every replica of a service shares one answer — same reason
-    // containerRows() above answers a service with more than one row.
-    Array.prototype.forEach.call(
-      document.querySelectorAll(
-        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
-      ),
-      function (row) { paintUpdatePill(row, entry); }
-    );
+    forEachKeyRow(key, '::', function (row) { paintUpdatePill(row, entry); });
   }
 
   // Re-applies the pills already in hand, with no request of its own —
@@ -22052,13 +22045,6 @@
    */
   var lastPendingRows = {};
 
-  // The status area a chip belongs inside — the update pill's own host, so
-  // both land in the same place and staxx_pending_chip_html()'s ordering
-  // (after the update pill) only has to be matched once, here.
-  function pendingChipHost(row) {
-    return updatePillHost(row);
-  }
-
   // The server hands back ready-made markup (unlike paintUpdatePill, which
   // builds its own from plain facts) because the chip's own data attributes
   // are already baked in by staxx_pending_chip_html() — this only has to
@@ -22067,7 +22053,7 @@
   // cheap enough that the state poll already does the equivalent every time
   // it repaints a cell.
   function paintPendingChip(row, entry) {
-    var host = pendingChipHost(row);
+    var host = updatePillHost(row);
     if (!host) return;
     var chip = host.querySelector('.staxx-pendingchip');
     if (chip) chip.parentNode.removeChild(chip);
@@ -22085,18 +22071,7 @@
   }
 
   function paintPendingRow(key, entry) {
-    var sep = key.indexOf('::');
-    if (sep === -1) {
-      paintPendingChip(rowFor(key), entry);
-      return;
-    }
-    var stack = key.slice(0, sep), service = key.slice(sep + 2);
-    Array.prototype.forEach.call(
-      document.querySelectorAll(
-        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
-      ),
-      function (row) { paintPendingChip(row, entry); }
-    );
+    forEachKeyRow(key, '::', function (row) { paintPendingChip(row, entry); });
   }
 
   // PLAN_71 stage 6 — the one quiet line above the fields, shown only while
@@ -31861,15 +31836,12 @@
         var extras  = [];
         if (row.dataset.soleService)  extras.push(row.dataset.soleService);
         if (row.dataset.imageDeclared) extras.push(row.dataset.imageDeclared);
-        Array.prototype.forEach.call(
-          document.querySelectorAll('.staxx-container-row[data-in-stack="' + name + '"]'),
-          function (kid) {
-            if (kid.dataset.service)   extras.push(kid.dataset.service);
-            if (kid.dataset.container) extras.push(kid.dataset.container);
-            var img = kid.querySelector('.staxx-image-text');
-            if (img && img.textContent) extras.push(img.textContent);
-          }
-        );
+        serviceRows(name).forEach(function (kid) {
+          if (kid.dataset.service)   extras.push(kid.dataset.service);
+          if (kid.dataset.container) extras.push(kid.dataset.container);
+          var img = kid.querySelector('.staxx-image-text');
+          if (img && img.textContent) extras.push(img.textContent);
+        });
         out.push({
           name: name, label: stackLabel(name), folder: row.dataset.inFolder || '',
           iconHtml: iconBtn ? iconBtn.innerHTML : '', extras: extras
@@ -33680,10 +33652,7 @@
       return rowFor(desc.name);
     }
     if (desc.type === 'container') {
-      return document.querySelector(
-        '.staxx-container-row[data-in-stack="' + desc.stack + '"]' +
-        '[data-service="' + desc.service + '"]'
-      );
+      return serviceRows(desc.stack, desc.service)[0] || null;
     }
     return null;
   }
@@ -34960,13 +34929,6 @@
     pop.style.left = (left - origin.left) + 'px';
   }
 
-  // A CSS.escape() a bare string when the browser has one, otherwise the
-  // string itself — every attribute-value selector this file builds from
-  // user- or server-supplied text goes through this rather than repeating
-  // the same feature test at each call site.
-  function mergeCssEsc(s) {
-    return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(s) : s;
-  }
 
   // Wires one line-number mark to open cardBuilder(change)'s own card (the
   // existing mergeReasonCard()/mergeEnvReasonCard() DOM, reused verbatim so
@@ -34991,7 +34953,7 @@
       var anchor = mark;
       var mergedCode = document.getElementById('staxx-merge-merged-code');
       if (mergedCode && !mergedCode.contains(mark)) {
-        var twin = mergedCode.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + mergeCssEsc(change.key) + '"]');
+        var twin = mergedCode.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + cssEsc(change.key) + '"]');
         if (twin) {
           var srcRow = mark.closest('.staxx-merge-codeline'), mergedRow = twin.closest('.staxx-merge-codeline');
           if (srcRow && mergedRow) mergeAlignAndFlash(srcRow, mergedRow);
@@ -35018,7 +34980,7 @@
       // panes alone so a pass of the pointer never scrolls anything.
       var mergedCodeEl = document.getElementById('staxx-merge-merged-code');
       if (mergedCodeEl && mergedCodeEl.contains(mark)) {
-        var srcTwin = document.querySelector('#staxx-merge-srctrack [data-merge-change-key="' + mergeCssEsc(change.key) + '"]');
+        var srcTwin = document.querySelector('#staxx-merge-srctrack [data-merge-change-key="' + cssEsc(change.key) + '"]');
         mergeAlignSourceToMerged(srcTwin, mark.closest('.staxx-merge-codeline'));
       }
       open();
@@ -35031,7 +34993,7 @@
   // so a decision needing a further answer (step 4's "Choose a name") does
   // not make the person hover all over again to reach the field it opens.
   function mergeReopenMarkForKey(key) {
-    var selector = mergeCssEsc(key);
+    var selector = cssEsc(key);
     var mark = mergeModal && mergeModal.querySelector('.staxx-merge-gmark[data-merge-mark-key="' + selector + '"]');
     // Focus alone opens the card only while the document itself has focus;
     // the mark's own click handler always ends with its card open (C17).
@@ -36324,7 +36286,7 @@
     // that band. Rows with a merged twin leave the badge to the twin.
     Array.prototype.forEach.call(document.querySelectorAll('#staxx-merge-srctrack [data-merge-change-key]'), function (row) {
       var k = row.dataset.mergeChangeKey;
-      if (codeEl.querySelector('[data-merge-change-key="' + mergeCssEsc(k) + '"]')) return;
+      if (codeEl.querySelector('[data-merge-change-key="' + cssEsc(k) + '"]')) return;
       var text = row.querySelector('.staxx-merge-codetext');
       if (!text) return;
       var old = text.querySelector('.staxx-merge-badge');
@@ -36891,7 +36853,7 @@
       var idx = mergeSourceIdxForRel(change.stack);
       if (idx >= 0 && idx !== mergeState.srcIdx) mergeShowSource(idx, true);
     }
-    var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key;
+    var selector = cssEsc(key);
     var mergedPane = document.getElementById('staxx-merge-merged-code');
     var mergedRow = mergedPane && mergedPane.querySelector('[data-merge-change-key="' + selector + '"]');
     var sourceRow = document.querySelector('#staxx-merge-srctrack [data-merge-change-key="' + selector + '"]');
@@ -36982,7 +36944,7 @@
     mergeState.walkLast = target.key;
 
     if (target.kind === 'env') {
-      var selector = mergeCssEsc(target.key);
+      var selector = cssEsc(target.key);
       var mergedPane = document.getElementById('staxx-merge-settings-merged-code');
       var mark = mergedPane && mergedPane.querySelector('[data-merge-mark-key="' + selector + '"]');
       var rowEl = mark && mark.closest('.staxx-merge-codeline');
@@ -36996,8 +36958,8 @@
       var f = mergeFindingByKey(target.key);
       var path = f && f.facts && f.facts.path;
       var rel = f && (f.kind === 'unreferenced' ? f.stack : (f.facts.sources && f.facts.sources[0]));
-      var pane = rel && mergeModal.querySelector('.staxx-merge-sourcepane[data-merge-src-rel="' + mergeCssEsc(rel) + '"]');
-      var nameEl = pane && path && pane.querySelector('.staxx-merge-filename[data-path="' + mergeCssEsc(path) + '"]');
+      var pane = rel && mergeModal.querySelector('.staxx-merge-sourcepane[data-merge-src-rel="' + cssEsc(rel) + '"]');
+      var nameEl = pane && path && pane.querySelector('.staxx-merge-filename[data-path="' + cssEsc(path) + '"]');
       var frow = nameEl && nameEl.closest('.staxx-merge-filerow');
       if (frow) {
         frow.scrollIntoView({ block: 'center' });
@@ -37653,14 +37615,14 @@
   // never call this at all.
   function mergeTreeRowHoverOn(rel, orig) {
     if (!mergeModal) return;
-    var pane = mergeModal.querySelector('.staxx-merge-sourcepane[data-merge-src-rel="' + mergeCssEsc(rel) + '"]');
+    var pane = mergeModal.querySelector('.staxx-merge-sourcepane[data-merge-src-rel="' + cssEsc(rel) + '"]');
     if (!pane) return;
     var color = mergeColorFor(rel);
     pane.classList.add('staxx-merge-srchl');
     pane.style.setProperty('--hl', color);
     var head = pane.querySelector('.staxx-merge-pane-head');
     if (head) head.classList.add('staxx-merge-srchl');
-    var nameEl = pane.querySelector('.staxx-merge-filename[data-path="' + mergeCssEsc(orig) + '"]');
+    var nameEl = pane.querySelector('.staxx-merge-filename[data-path="' + cssEsc(orig) + '"]');
     var frow = nameEl && nameEl.closest('.staxx-merge-filerow');
     if (frow) {
       frow.classList.add('staxx-merge-filehl');
@@ -39754,7 +39716,7 @@
       var envFamilyEl = target.closest && target.closest('[data-merge-env-family]');
       if (envFamilyEl) {
         var root = envFamilyEl.dataset.mergeEnvFamily;
-        var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(root) : root;
+        var selector = cssEsc(root);
         var familyEls = document.querySelectorAll('#staxx-merge-step4 [data-merge-env-family="' + selector + '"]');
         familyEls.forEach(function (el) {
           el.classList.add('staxx-merge-codeline--flash');
@@ -39833,7 +39795,7 @@
       var changedRow = target.closest && target.closest('.staxx-merge-sourcepane [data-merge-change-key], #staxx-merge-merged-code [data-merge-change-key]');
       if (changedRow) {
         var ckey = changedRow.dataset.mergeChangeKey;
-        var selector = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(ckey) : ckey;
+        var selector = cssEsc(ckey);
         var inMerged = !!changedRow.closest('#staxx-merge-merged-code');
         var mergedRow = inMerged ? changedRow : document.querySelector('#staxx-merge-merged-code [data-merge-change-key="' + selector + '"]');
         var srcRow = inMerged ? document.querySelector('.staxx-merge-sourcepane [data-merge-change-key="' + selector + '"]') : changedRow;
