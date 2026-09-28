@@ -33668,8 +33668,35 @@
     }).join('');
   }
 
+  // Every stat cell a row carries, found once and cached on the row element
+  // itself rather than filled in by rebindStatRows() — so a row that
+  // function never saw (one built after the fact) still works, and a row
+  // rebindStatRows() replaced wholesale is a new element with no map, which
+  // simply builds a fresh one rather than risking a stale one pointing at a
+  // detached cell. Only a future change that rewrites a stat cell in place
+  // without replacing its row would leave this map stale.
+  function statCells(row) {
+    if (row.staxxCells) return row.staxxCells;
+    var map = {};
+    ['cpu', 'mem', 'net', 'gpu'].forEach(function (metric) {
+      var td = row.querySelector('[data-stat="' + metric + '"]');
+      map[metric] = td ? {
+        td:    td,
+        value: td.querySelector('.staxx-statv'),
+        spark: td.querySelector('.staxx-spark')
+      } : null;
+    });
+    // Read once here rather than on every call: staxx_render_rows() writes
+    // data-gpu-file once, when the row is built, and never changes it.
+    var gpuTd = map.gpu && map.gpu.td;
+    map.vendors = ((gpuTd && gpuTd.dataset.gpuFile) || '').split(/\s+/).filter(Boolean);
+    row.staxxCells = map;
+    return map;
+  }
+
   function cell(row, metric) {
-    return row.querySelector('[data-stat="' + metric + '"]');
+    var c = statCells(row)[metric];
+    return c ? c.td : null;
   }
 
   /* Writes only what actually changed.
@@ -33684,21 +33711,20 @@
    * rewriting every cell of every row three times a minute and touching
    * nothing at all. */
   function setCell(row, metric, text, values, peakFloor, blank) {
-    var td = cell(row, metric);
-    if (!td) return;
-    var value = td.querySelector('.staxx-statv');
-    if (value && value.staxxTxt !== text) {
-      value.innerHTML = text;
-      value.staxxTxt = text;
+    var c = statCells(row)[metric];
+    if (!c) return;
+    if (c.value && c.value.staxxTxt !== text) {
+      c.value.innerHTML = text;
+      c.value.staxxTxt = text;
     }
-    sparkline(td.querySelector('.staxx-spark'), values, peakFloor);
+    sparkline(c.spark, values, peakFloor);
     // PLAN_121 item 1: a blank cell (no live figure — stopped, never run, the
     // collector still warming up) has no graph to sit its dash against, so it
     // borrows the graph's own footprint instead — see .staxx-cell--blank in
     // staxx.css. Toggled here rather than left to the caller so a figure
     // landing later always clears it, whichever of setCell's several callers
     // painted the blank dash in the first place.
-    setClass(td, 'staxx-cell--blank', !!blank);
+    setClass(c.td, 'staxx-cell--blank', !!blank);
   }
 
   // Same reasoning as setCell for the two things a row carries outside its
@@ -33805,8 +33831,7 @@
   // The vendors a row's compose file asks for, read off the GPU cell — that
   // is where staxx_render_rows() writes data-gpu-file, not on the row itself.
   function gpuFileVendors(row) {
-    var td = cell(row, 'gpu');
-    return ((td && td.dataset.gpuFile) || '').split(/\s+/).filter(Boolean);
+    return statCells(row).vendors;
   }
 
   function blankFigures(row) {
@@ -33928,13 +33953,13 @@
       // A numeric total is left exactly where it already sat — folder totals
       // are right-aligned by design and only the blank state was wrong.
       var put = function (metric, text, blank) {
-        var wrap = tr.querySelector('[data-stat="' + metric + '"]');
-        var td = wrap && wrap.querySelector('.staxx-statv');
-        if (td && td.staxxTxt !== text) {        // see setCell
-          td.innerHTML = text;
-          td.staxxTxt = text;
+        var c = statCells(tr)[metric];
+        if (!c) return;
+        if (c.value && c.value.staxxTxt !== text) {   // see setCell
+          c.value.innerHTML = text;
+          c.value.staxxTxt = text;
         }
-        if (wrap) setClass(wrap, 'staxx-cell--blank', !!blank);
+        setClass(c.td, 'staxx-cell--blank', !!blank);
       };
 
       if (!any) {
