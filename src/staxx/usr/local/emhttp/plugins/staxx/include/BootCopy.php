@@ -347,7 +347,7 @@ function staxx_boot_sweep(): array {
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $rel  = $found['rel'];
-    $main = staxx_find_compose_file($found['dir']);
+    $main = $found['file'];
     if ($main === '') continue;
 
     $shelfDir = staxx_boot_stacks_root().'/'.$rel;

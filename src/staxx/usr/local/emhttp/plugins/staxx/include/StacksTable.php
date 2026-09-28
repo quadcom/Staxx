@@ -845,7 +845,7 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
   foreach (staxx_scan_stacks()['stacks'] as $s) {
     if (isset($skip[$s['rel']])) continue;
 
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
 
     $meta = staxx_compose_meta($file);

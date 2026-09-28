@@ -293,8 +293,7 @@ function staxx_project_clashes(bool $reset = false): array {
 
   $projectOf = [];
   foreach (staxx_scan_stacks()['stacks'] as $found) {
-    $file = staxx_find_compose_file($found['dir']);
-    $projectOf[$found['rel']] = staxx_stack_project_guess($file, $found['leaf']);
+    $projectOf[$found['rel']] = staxx_stack_project_guess($found['file'], $found['leaf']);
   }
 
   $groups = [];
@@ -328,8 +327,7 @@ function staxx_name_free(string $leaf, string $ownPath = '', ?string &$error = n
   $guess = staxx_project_name($leaf);
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     if ($found['rel'] === $ownPath) continue;
-    $file = staxx_find_compose_file($found['dir']);
-    if (staxx_stack_project_guess($file, $found['leaf']) !== $guess) continue;
+    if (staxx_stack_project_guess($found['file'], $found['leaf']) !== $guess) continue;
 
     // Always written: every caller hands in a variable it has not set yet,
     // so testing it for null here would leave the refusal with no sentence.
@@ -1114,8 +1112,12 @@ function staxx_compose_file_args(array $files): string {
  * re-derive it from is_dir() by hand. 'ok' => true with empty arrays is the
  * genuinely different case: the root was read and there is nothing in it.
  *
- * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string}>,
+ * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string, file:string}>,
  *               folders: string[], ok: bool, error: string}
+ *
+ * `file` is the compose file found in `dir`, or '' for a folder member that
+ * has none; like the rest of the scan it is fixed for the request until
+ * staxx_scan_stacks_reset().
  */
 function staxx_scan_stacks(bool $reset = false): array {
   static $cache = null;
@@ -1152,8 +1154,9 @@ function staxx_scan_stacks(bool $reset = false): array {
     // may act on. A linked stack must never reach that code as a stack.
     if (is_link($dir) || !is_dir($dir)) continue;
 
-    if (staxx_find_compose_file($dir) !== '') {
-      $out['stacks'][] = ['rel' => $entry, 'dir' => $dir, 'folder' => '', 'leaf' => $entry];
+    $file = staxx_find_compose_file($dir);
+    if ($file !== '') {
+      $out['stacks'][] = ['rel' => $entry, 'dir' => $dir, 'folder' => '', 'leaf' => $entry, 'file' => $file];
       continue;
     }
 
@@ -1169,7 +1172,8 @@ function staxx_scan_stacks(bool $reset = false): array {
       if (is_link($kidDir) || !is_dir($kidDir)) continue;
 
       $out['stacks'][] = [
-        'rel' => $entry.'/'.$kid, 'dir' => $kidDir, 'folder' => $entry, 'leaf' => $kid
+        'rel' => $entry.'/'.$kid, 'dir' => $kidDir, 'folder' => $entry, 'leaf' => $kid,
+        'file' => staxx_find_compose_file($kidDir)
       ];
     }
   }
@@ -1196,6 +1200,31 @@ function staxx_scan_stacks(bool $reset = false): array {
 function staxx_scan_stacks_reset(): void {
   staxx_scan_stacks(true);
   staxx_project_clashes(true); // grouped from the same scan; see its own comment
+  staxx_stack_compose_map(true);
+}
+
+/**
+ * Every stack's compose file, keyed by the stack's path under the root
+ * ("jellyfin", "Media/jellyfin"), '' for a stack folder that has none, in
+ * exactly the order the stack list shows them: leaf name, natural and
+ * case-insensitive, the full path breaking a tie. The cheap way to turn a
+ * stack's name into its file, or to walk every stack in display order,
+ * without building staxx_list_stacks()'s rows (which read every record and
+ * ask Docker). Built from the request-cached scan; cleared by the same reset.
+ *
+ * @return array<string,string> stack path => absolute compose file path, or ''
+ */
+function staxx_stack_compose_map(bool $reset = false): array {
+  static $map = null;
+  if ($reset) { $map = null; return []; }
+  if ($map !== null) return $map;
+  $map = [];
+  foreach (staxx_scan_stacks()['stacks'] as $found) $map[$found['rel']] = $found['file'];
+  uksort($map, function ($a, $b) {
+    $by = strnatcasecmp(staxx_path_leaf($a), staxx_path_leaf($b));
+    return $by !== 0 ? $by : strnatcasecmp($a, $b);
+  });
+  return $map;
 }
 
 /**
@@ -2199,10 +2228,11 @@ function staxx_compose_files_mtime(string $file): int {
 function staxx_list_stacks(): array {
   $stacks = [];
   $clashes = staxx_project_clashes();
+  $scan = array_column(staxx_scan_stacks()['stacks'], null, 'rel');
 
-  foreach (staxx_scan_stacks()['stacks'] as $found) {
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    $found  = $scan[$rel];
     $dir    = $found['dir'];
-    $file   = staxx_find_compose_file($dir);
     $clash  = $clashes[$found['rel']] ?? [];
     // Locked stacks report no state — same reasoning, and the same one-line
     // guard, as staxx_stack_states(); see its comment for why a green row on
@@ -2277,14 +2307,7 @@ function staxx_list_stacks(): array {
     ];
   }
 
-  // Sorted by what the page shows, not by what is on disk, or the list reads as
-  // though it were in no order at all. The full path breaks a tie so two
-  // stacks sharing a leaf name (one in a folder, one without) keep a stable
-  // order between refreshes.
-  usort($stacks, function ($a, $b) {
-    $by = strnatcasecmp($a['leaf'], $b['leaf']);
-    return $by !== 0 ? $by : strnatcasecmp($a['name'], $b['name']);
-  });
+  // Already in display order: staxx_stack_compose_map() owns the sort.
   return $stacks;
 }
 
@@ -3160,9 +3183,10 @@ function staxx_can_run(): bool {
 function staxx_stack_states(): array {
   $out     = [];
   $clashes = staxx_project_clashes();
+  $scan = array_column(staxx_scan_stacks()['stacks'], null, 'rel');
 
-  foreach (staxx_scan_stacks()['stacks'] as $found) {
-    $file  = staxx_find_compose_file($found['dir']);
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    $found = $scan[$rel];
     $clash = $clashes[$found['rel']] ?? [];
     // A locked stack is reported as having no state at all, and deliberately.
     // staxx_state_for() falls back to matching on the project name, which

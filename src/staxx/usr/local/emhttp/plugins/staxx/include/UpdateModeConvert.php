@@ -270,7 +270,7 @@ function staxx_update_mode_convert_run(): array {
   $converted = [];
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $rel  = $found['rel'];
-    $file = staxx_find_compose_file($found['dir']);
+    $file = $found['file'];
     if ($file === '') continue;
 
     $change = staxx_update_convert_file($rel, $file);

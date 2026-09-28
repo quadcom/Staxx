@@ -146,7 +146,7 @@ function staxx_import_taken_sources(bool $reset = false): array {
 
   $out = ['byId' => [], 'byName' => []];
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
     $x = staxx_compose_meta($file)['x'] ?? [];
     $id   = (string)($x['imported.id']   ?? '');
@@ -1580,7 +1580,7 @@ function staxx_import_backfill(array $templates): array {
   $changed = [];
 
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
 
     $meta = staxx_compose_meta($file);

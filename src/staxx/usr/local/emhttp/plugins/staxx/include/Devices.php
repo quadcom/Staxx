@@ -532,7 +532,7 @@ function staxx_device_claims(): array {
   $out = [];
 
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    $file = staxx_find_compose_file($s['dir']);
+    $file = $s['file'];
     if ($file === '') continue;
 
     $yaml = (string)@file_get_contents($file);

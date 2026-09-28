@@ -390,7 +390,7 @@ function staxx_update_clock(string $stack, string $service, string $image): arra
     foreach (staxx_scan_stacks()['stacks'] as $s) {
       if ($s['rel'] !== $stack) continue;
       if (staxx_review_file($s['dir']) === '') {
-        $st = staxx_state_for(staxx_find_compose_file($s['dir']), $s['leaf']);
+        $st = staxx_state_for($s['file'], $s['leaf']);
         $running = stripos($st['status'] ?? '', 'running') !== false;
       }
       break;
