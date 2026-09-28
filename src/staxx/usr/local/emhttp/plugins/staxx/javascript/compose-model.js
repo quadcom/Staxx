@@ -4055,7 +4055,7 @@
    */
 
   function pad(n) {
-    return n > 0 ? new Array(n + 1).join(' ') : '';
+    return n > 0 ? ' '.repeat(n) : '';
   }
 
   // The services: map of a parsed document, or null when the file has none

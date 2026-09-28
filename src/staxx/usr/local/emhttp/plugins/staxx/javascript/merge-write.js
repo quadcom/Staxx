@@ -1094,8 +1094,8 @@
     var range = findKeyChildRange(doc, p.start, p.end, keyRe);
 
     if (!range) {
-      var keyIndent = new Array(p.indent + 3).join(' ');
-      var itemIndent = new Array(p.indent + 5).join(' ');
+      var keyIndent = ' '.repeat(p.indent + 2);
+      var itemIndent = ' '.repeat(p.indent + 4);
       var lines = [keyIndent + key + ':'];
       values.forEach(function (v) { lines.push(itemIndent + '- ' + v); });
       var firstItemLine = p.end + 1;
@@ -1114,7 +1114,7 @@
       existing.push(m[2].trim());
       if (itemIndent2 === null) itemIndent2 = m[1];
     }
-    if (itemIndent2 === null) itemIndent2 = new Array(p.indent + 5).join(' ');
+    if (itemIndent2 === null) itemIndent2 = ' '.repeat(p.indent + 4);
 
     var toAdd = values.filter(function (v) { return existing.indexOf(String(v)) === -1; });
     if (!toAdd.length) return;
@@ -1139,8 +1139,8 @@
     var range = findKeyChildRange(doc, p.start, p.end, keyRe);
 
     if (!range) {
-      var keyIndent = new Array(p.indent + 3).join(' ');
-      var childIndent = new Array(p.indent + 5).join(' ');
+      var keyIndent = ' '.repeat(p.indent + 2);
+      var childIndent = ' '.repeat(p.indent + 4);
       var lines = [keyIndent + key + ':'];
       entries.forEach(function (e) { lines.push(childIndent + e[0] + ': ' + e[1]); });
       var firstLine = p.end + 1;
@@ -1165,7 +1165,7 @@
       }
     }
     if (isList === null) isList = false;
-    if (itemIndent === null) itemIndent = new Array(p.indent + 5).join(' ');
+    if (itemIndent === null) itemIndent = ' '.repeat(p.indent + 4);
 
     var toAppend = [];
     entries.forEach(function (e) {
@@ -1263,8 +1263,8 @@
     var range = findKeyChildRange(doc, p.start, p.end, keyRe);
 
     if (!range) {
-      var keyIndent = new Array(p.indent + 3).join(' ');
-      var itemIndent = new Array(p.indent + 5).join(' ');
+      var keyIndent = ' '.repeat(p.indent + 2);
+      var itemIndent = ' '.repeat(p.indent + 4);
       var at = p.end;
       // No networks: key at all means this service was on the project's
       // implicit default network (PLAN_155 C15's own rule). Writing
@@ -1287,7 +1287,7 @@
       var mm = /^(\s*)[^:\s][^:]*:/.exec(doc.lines[i]);
       if (mm) { isMap = true; itemIndent2 = mm[1]; break; }
     }
-    if (isMap === null) { isMap = false; itemIndent2 = new Array(p.indent + 5).join(' '); }
+    if (isMap === null) { isMap = false; itemIndent2 = ' '.repeat(p.indent + 4); }
 
     var newLine = itemIndent2 + (isMap ? (netName + ':') : ('- ' + netName));
     var at2 = range.end;
@@ -1375,7 +1375,7 @@
       return;
     }
 
-    var keyIndent = new Array(p.indent + 3).join(' ');
+    var keyIndent = ' '.repeat(p.indent + 2);
     var newLine2 = keyIndent + key + ': ' + valueText;
     CM.splice(doc, p.end, 0, [newLine2]);
     changes.push(overrideChangeRecord(stackRel, p.end, newLine2, overrideLeaf));
@@ -2844,7 +2844,7 @@
       blocks.order.forEach(function (key, ki) {
         var block = blocks.blocks[key];
         var pIndent = svcMap.pairs[key].indent;
-        var pad = new Array(pIndent + 1).join(' ');
+        var pad = ' '.repeat(pIndent);
 
         var blockStartFinal = finalLines.length;
         if (ki === 0 && headerLines.length) finalLines = finalLines.concat(headerLines);
@@ -3107,13 +3107,13 @@
         j++;
       }
       if (already) return;
-      var childPad = new Array(indent + 3).join(' ');
+      var childPad = ' '.repeat(indent + 2);
       CM.splice(doc, lastItemLine + 1, 0, [childPad + '- retired']);
       return;
     }
 
     // No profiles: key at all — add one as the service's own last key.
-    var childPad2 = new Array(p.indent + 3).join(' ');
+    var childPad2 = ' '.repeat(p.indent + 2);
     CM.splice(doc, p.end, 0, [childPad2 + 'profiles: ["retired"]']);
   }
 
