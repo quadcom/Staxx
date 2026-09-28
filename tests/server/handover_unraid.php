@@ -370,12 +370,26 @@ foreach (staxx_docker_container_names() as $borrowedName => $info) { $borrowed =
 if ($borrowed === '') {
   ok('SKIPPED — no container at all on this box to borrow a name from', true);
 } else {
+  // staxx_pending_diff() only flags what the file actually declares, so a
+  // service that names nothing but container_name and `build: .` diffs to
+  // nothing — the diff is empty by construction, not because the container
+  // matches. Give the file an explicit image guaranteed to differ from the
+  // real one, read straight off the borrowed container, so the mismatch is
+  // real rather than an artefact of what the fixture left out.
+  $realImage = trim(shell_exec(
+    'docker inspect --format '.escapeshellarg('{{.Config.Image}}').' '.escapeshellarg($borrowed)
+  ) ?? '');
+  $fakeImage = 'staxx-test-not-this:never';
+  if ($realImage === $fakeImage) {
+    ok('the fake image must differ from the borrowed container\'s real image', false, $realImage);
+  }
+
   $unreadRel = 'zzd2unread';
   $unreadDir = $root.'/'.$unreadRel;
   @exec('rm -rf '.escapeshellarg($unreadDir));
   mkdir($unreadDir, 0755, true);
   file_put_contents($unreadDir.'/compose.yaml',
-    "services:\n  ghost:\n    build: .\n    container_name: ".$borrowed."\n");
+    "services:\n  ghost:\n    image: ".$fakeImage."\n    container_name: ".$borrowed."\n");
 
   $cmpUnread = staxx_intruder_compare($unreadRel, $borrowed);
   $unreadDiff = $cmpUnread['diff'] ?? [];

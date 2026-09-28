@@ -139,9 +139,13 @@ mkdir($roundtripDir, 0755, true);
 ok('writes the handover note', staxx_handover_write($roundtripDir, $targets, '2026-08-18T12:00:00+00:00'));
 ok('is then found present', staxx_handover_file($roundtripDir) === STAXX_HANDOVER_FILE);
 
+// staxx_handover_read() adds 'unraid' (PLAN_165) to every target, null here
+// since none of these targets held an Unraid template — the write side
+// above never set the key at all.
+$expected = array_map(fn($t) => $t + ['unraid' => null], $targets);
 $readBack = staxx_handover_read($roundtripDir);
 ok('reads back the same targets, in order, restart policy included',
-   ($readBack['targets'] ?? null) === $targets, json_encode($readBack));
+   ($readBack['targets'] ?? null) === $expected, json_encode($readBack));
 ok('reads back the same timestamp', ($readBack['when'] ?? '') === '2026-08-18T12:00:00+00:00');
 
 @exec('rm -rf '.escapeshellarg($roundtripDir));
