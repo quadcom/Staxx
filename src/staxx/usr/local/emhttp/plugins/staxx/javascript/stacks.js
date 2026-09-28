@@ -16370,6 +16370,7 @@
   var tagBoxBox   = null;   // the <input> it is open for, or null when closed
   var tagBoxRows  = [];     // pickable rows in visual order, rebuilt on every render
   var tagBoxOn    = -1;     // index into tagBoxRows, or -1 for "nothing highlighted"
+  var tagBoxOpenValue = ''; // what the box held at the moment it opened — see tagBoxHtml()
 
   function tagBoxEl() {
     if (tagBoxPanel) return tagBoxPanel;
@@ -16449,7 +16450,16 @@
     var hasColon = lastColon > lastSlash;
     var repo = hasColon ? val.slice(0, lastColon) : val;
     var tagPart = hasColon ? val.slice(lastColon + 1) : null;
-    var filtering = hasColon && tagPart.length > 0;
+    // Opening on a box that already holds a full "repo:tag" must show the
+    // FULL grouped list, current tag first — the same as the pin window —
+    // not filter it down to nothing else. `changed` is what tells that
+    // apart from an actual edit: only once the box holds something other
+    // than what it held the moment it opened does typing (or a paste) start
+    // filtering. A pasted bare repo (no ':') still shows the new repo's
+    // full list; a pasted "repo:tag" filters on the tag part, same rule
+    // either way (PLAN_206 follow-up, 2026-09-28).
+    var changed = val !== tagBoxOpenValue;
+    var filtering = changed && hasColon && tagPart.length > 0;
 
     var above = '';
     if (repo) {
@@ -16479,11 +16489,12 @@
     }
 
     // "On this server" — the datalist's own full list, filtered on the
-    // whole typed value (repo and tag both), whether or not a ':' has been
-    // typed yet. Open by default only while the box is empty, so an
-    // otherwise-blank panel is never one tap away from looking empty.
+    // whole typed value (repo and tag both) once the value has changed
+    // since opening, same as the tag groups above; open by default only
+    // while the box is empty, so an otherwise-blank panel is never one tap
+    // away from looking empty.
     var serverAll = imageOptions().map(function (o) { return o[0]; });
-    var serverList = val ? tagBoxMatches(serverAll, val) : serverAll;
+    var serverList = changed && val ? tagBoxMatches(serverAll, val) : serverAll;
     var serverOpen = !repo || (filtering && serverList.length > 0);
     return above + tagBoxGroupHtml('server', 'On this server', serverList, serverOpen);
   }
@@ -16597,11 +16608,20 @@
     tagBoxPosition(tagBoxBox);
   }
 
-  function tagBoxOpen(box) {
+  // `openValue` is what to treat as "unedited" — left out (click, Tab, plain
+  // focus) it is the box's own current value, so opening on an existing
+  // "repo:tag" shows the full grouped list rather than filtering on it.
+  // imageBoxInput() passes `null` instead, since typing is what opened the
+  // list in the first place and the very first keystroke must filter too —
+  // `null` can never equal a real (string) value, so tagBoxHtml() reads
+  // that open as already "changed" from the moment it renders.
+  function tagBoxOpen(box, openValue) {
     if (tagBoxBox === box) return;
     tagBoxBox = box;
+    tagBoxOpenValue = openValue === undefined ? box.value : openValue;
     box.setAttribute('aria-expanded', 'true');
     tagBoxEl().hidden = false;
+    dismissUpdCard();   // the box's own hover card would sit over the top of this
     tagBoxRender();
   }
 
@@ -16674,7 +16694,7 @@
     // tagBoxOpen() already renders once when it actually opens the panel;
     // re-render explicitly only for a keystroke that finds it already open,
     // so typing is never drawn twice over.
-    if (tagBoxBox === el) tagBoxRender(); else tagBoxOpen(el);
+    if (tagBoxBox === el) tagBoxRender(); else tagBoxOpen(el, null);
   }
 
   formHost.addEventListener('focusin', imageBoxFocusIn);
@@ -22086,6 +22106,11 @@
   function showUpdCard() {
     var pill = updCardPill;
     if (!pill || NARROW.matches) return;
+    // PLAN_206 — the Image box carries an adopted title of its own (its
+    // hint), so it matches [data-tip] same as any other control; while its
+    // own list is open for it, that card would only pop up over the top of
+    // the list, so it is skipped for as long as tagBoxBox says so.
+    if (pill === tagBoxBox) return;
     var card = ensureUpdCard();
     // A <dialog> paints in the top layer, over everything in the scaffold, so
     // a card left in the scaffold would sit unseen behind the editor or the
