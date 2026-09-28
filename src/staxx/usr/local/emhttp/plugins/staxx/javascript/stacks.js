@@ -715,9 +715,9 @@
   var pickerMsg   = document.getElementById('staxx-picker-msg');
   var pickerNew   = document.getElementById('staxx-picker-newname');
 
-  // The removal confirmation. May be null while the markup has not landed yet
-  // on a stale page — guarded the same way suggestBox and findBar are above;
-  // removeStack() falls back to window.confirm() when it is missing.
+  // The removal confirmation. Always present: it is rendered unconditionally
+  // by the same PHP response that loads this script (StacksPage.php), so
+  // there is no stale-page case to guard here as suggestBox and findBar do.
   var confirmModal  = document.getElementById('staxx-confirm');
   var confirmTitle  = document.getElementById('staxx-confirm-title');
   var confirmBody   = document.getElementById('staxx-confirm-body');
@@ -734,10 +734,8 @@
   // rest of this dialog already is, and hidden except when a caller passes
   // askConfirm() an extraLabel.
   var confirmExtra  = document.getElementById('staxx-confirm-extra');
-  // showInfo()'s bad-news marker, and the shared window.* fallback for both
-  // it and askText() when the dialog markup is missing (PLAN_137).
+  // showInfo()'s bad-news marker.
   var confirmBadicon = document.getElementById('staxx-confirm-badicon');
-  function noDialogFallback(msg) { window.alert(msg); }
 
   // PLAN_84 phase 3 — the "fill in this stack's details" chooser. Its own
   // dialog rather than a shape squeezed into #staxx-confirm above — see the
@@ -8724,7 +8722,7 @@
   }
 
   function maybeOfferDollarFixes() {
-    if (dollarModalOffered || !confirmModal) return;
+    if (dollarModalOffered) return;
     // null is "not fetched yet", not "nothing is declared" — the same
     // distinction envVars exists to keep, for the same reason.
     if (envKeys() === null) return;
@@ -12043,18 +12041,6 @@
     // freshly generated password or hash is neither, and a dialog is a
     // place a live credential can end up somewhere the Sanitise screenshot
     // tick cannot reach. A generic example carries the point instead.
-    var plainMsg = 'This value contains a dollar sign. In a compose file, a dollar sign is where '
-      + 'Compose starts reading the name of a variable, so the copy has each dollar sign written '
-      + 'twice — for example, a single $ becomes $$ — which is how you tell Compose you mean a real '
-      + 'dollar sign. The container still receives the value exactly as it reads on screen. If you '
-      + 'are pasting this somewhere that is not a compose file — an .env file, or an application\'s '
-      + 'own settings — a single dollar sign is what belongs there, and the box above holds that '
-      + 'plain version for you to select and copy by hand. Copy the doubled version now?';
-
-    if (!confirmModal) {
-      if (window.confirm(plainMsg)) pwgenCopyText(input, escaped, sayFn);
-      return;
-    }
     askConfirm({
       title: 'This value contains a dollar sign',
       bodyHtml: '<p>In a compose file, a dollar sign is where Compose starts reading the name of a '
@@ -12118,10 +12104,6 @@
     // Somebody's working password (or hash) quietly replaced is a broken
     // application and a lost credential, so this asks first and names what
     // is there now rather than describing it vaguely.
-    if (!confirmModal) {
-      if (window.confirm('"' + pwgenTargetLabel(el) + '" already holds "' + was + '". Replace it?')) doFill();
-      return;
-    }
     askConfirm({
       title: 'Replace the value in ' + pwgenTargetLabel(el) + '?',
       bodyHtml: '<p>It already holds <code>' + esc(was) + '</code>.</p>',
@@ -19765,15 +19747,7 @@
     return out;
   }
 
-  // A one-service stack draws no container rows at all, so
-  // stackTagMissingServices() (which reads them) can never see it — this
-  // reads the stack row's own services cell instead. That cell prints the
-  // service name as plain text with the running image's sub-line, if any, as
-  // a sibling span rather than folded into the same text — so cloning the
-  // cell and dropping that span leaves exactly the declared service list.
-  // Returns the one service name, or '' when the stack does not declare
-  // exactly one.
-   // The one service a single-service stack declares, straight off the row.
+  // The one service a single-service stack declares, straight off the row.
   // Read as an attribute rather than scraped out of the services cell's text:
   // that cell is display copy — it also carries "none declared" and the parse
   // errors — and a service name is what compose is handed, so it has to come
@@ -24186,7 +24160,6 @@
   // askConfirm()'s callers do.
   function showInfo(title, bodyHtml, opts) {
     opts = opts || {};
-    if (!confirmModal) { noDialogFallback(title); return Promise.resolve(); }
     claimConfirm();
     confirmSetBusy(false);
     confirmMsg.textContent = '';
@@ -24209,7 +24182,6 @@
   // the same shape prompt() itself returns, so a caller converts by simply
   // awaiting this instead.
   function askText(title, label, value) {
-    if (!confirmModal) return Promise.resolve(window.prompt(label, value || ''));
     claimConfirm();
     confirmSetBusy(false);
     confirmMsg.textContent = '';
@@ -24405,62 +24377,60 @@
       });
   }
 
-  if (confirmModal) {
-    // Enter in the text field submits it, same as a form would — askText()
-    // is the only caller that ever fills the body with an <input>.
-    confirmBody.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && event.target && event.target.id === 'staxx-confirm-textinput') {
-        event.preventDefault();
-        if (!confirmBusy) settleConfirm(true);
-      }
-    });
-
-    confirmCancel.addEventListener('click', function () {
-      closeConfirm();
-      settleConfirm(false);
-    });
-
-    confirmModal.addEventListener('close', function () {
-      // A close whose own epoch no longer matches the current one is a
-      // stale echo of an earlier closeConfirm() call (see confirmEpoch's
-      // own comment above) — a newer question has since taken over the
-      // dialog, and this event is not a real dismissal of THAT one, so
-      // nothing here is settled. `-1` (never armed by closeConfirm() at
-      // all — Escape's own default action, or a backdrop click reaching
-      // native close some other way) always settles normally.
-      var stale = confirmClosingEpoch !== -1 && confirmClosingEpoch !== confirmEpoch;
-      confirmClosingEpoch = -1;
-      if (!stale) settleConfirm(false);
-    });
-
-    // A request in flight must finish before Escape can close the dialog —
-    // otherwise a fetch already sent could still delete everything after the
-    // dialog the person thought they backed out of has gone.
-    confirmModal.addEventListener('cancel', function (event) {
-      if (confirmBusy) event.preventDefault();
-    });
-
-    // Same hit-test the picker and editor use: <dialog> fires no backdrop
-    // click of its own, because a click on the backdrop targets the dialog
-    // element itself.
-    confirmModal.addEventListener('click', function (event) {
-      if (event.target !== confirmModal || confirmBusy) return;
-      var r = confirmModal.getBoundingClientRect();
-      if (event.clientX < r.left || event.clientX > r.right ||
-          event.clientY < r.top  || event.clientY > r.bottom) closeConfirm();
-    });
-
-    confirmGo.addEventListener('click', function () {
-      if (confirmBusy) return;
-      settleConfirm(true);
-    });
-
-    if (confirmExtra) {
-      confirmExtra.addEventListener('click', function () {
-        if (confirmBusy) return;
-        settleConfirm('extra');
-      });
+  // Enter in the text field submits it, same as a form would — askText()
+  // is the only caller that ever fills the body with an <input>.
+  confirmBody.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && event.target && event.target.id === 'staxx-confirm-textinput') {
+      event.preventDefault();
+      if (!confirmBusy) settleConfirm(true);
     }
+  });
+
+  confirmCancel.addEventListener('click', function () {
+    closeConfirm();
+    settleConfirm(false);
+  });
+
+  confirmModal.addEventListener('close', function () {
+    // A close whose own epoch no longer matches the current one is a
+    // stale echo of an earlier closeConfirm() call (see confirmEpoch's
+    // own comment above) — a newer question has since taken over the
+    // dialog, and this event is not a real dismissal of THAT one, so
+    // nothing here is settled. `-1` (never armed by closeConfirm() at
+    // all — Escape's own default action, or a backdrop click reaching
+    // native close some other way) always settles normally.
+    var stale = confirmClosingEpoch !== -1 && confirmClosingEpoch !== confirmEpoch;
+    confirmClosingEpoch = -1;
+    if (!stale) settleConfirm(false);
+  });
+
+  // A request in flight must finish before Escape can close the dialog —
+  // otherwise a fetch already sent could still delete everything after the
+  // dialog the person thought they backed out of has gone.
+  confirmModal.addEventListener('cancel', function (event) {
+    if (confirmBusy) event.preventDefault();
+  });
+
+  // Same hit-test the picker and editor use: <dialog> fires no backdrop
+  // click of its own, because a click on the backdrop targets the dialog
+  // element itself.
+  confirmModal.addEventListener('click', function (event) {
+    if (event.target !== confirmModal || confirmBusy) return;
+    var r = confirmModal.getBoundingClientRect();
+    if (event.clientX < r.left || event.clientX > r.right ||
+        event.clientY < r.top  || event.clientY > r.bottom) closeConfirm();
+  });
+
+  confirmGo.addEventListener('click', function () {
+    if (confirmBusy) return;
+    settleConfirm(true);
+  });
+
+  if (confirmExtra) {
+    confirmExtra.addEventListener('click', function () {
+      if (confirmBusy) return;
+      settleConfirm('extra');
+    });
   }
 
   // The one dialog's body. Nothing is destroyed any more, so there is no
@@ -24548,29 +24518,6 @@
   }
 
   function removeStack(name, label, retiredInto) {
-    if (!confirmModal) {
-      // Markup from before this dialog existed. It has no plan to list, so
-      // it just states what removal now does before asking once.
-      var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
-      var stoppedLine = retiredInto
-        ? 'This stack was ' + retiredInto + ' and cannot be started.'
-        : 'Its containers are stopped and removed.';
-      if (!window.confirm(
-            'Remove "' + label + '"?\n\n' +
-            stoppedLine + where + '\n\n' +
-            'Nothing is deleted — the whole folder is zipped up and kept for you.\n\n' +
-            'The container’s own data in appdata is untouched.')) {
-        return;
-      }
-      call('archive', { name: name, confirm: '1' }, 120000).then(function (res) {
-        if (!res.ok) { failed('Could not remove ' + label, res.error); return; }
-        var row = rowFor(name);
-        if (row) row.classList.add('staxx-row--leave');
-        setTimeout(refreshRows, 140);
-      });
-      return;
-    }
-
     confirmMsg.textContent = '';
 
     // Read alongside the archive dry-run rather than after it: the compose
@@ -27370,11 +27317,6 @@
     {
       key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates', tab: 'updates',
       block: 'update-check', sublabel: 'How often',
-      group: 'Image updates',
-      groupHelp: 'Checking asks each image\'s registry whether a newer version of the same tag ' +
-            'exists. It only ever tells you — nothing is downloaded and nothing is restarted. ' +
-            'A check across many images can take a few minutes, but it runs quietly in the ' +
-            'background rather than holding up the page.',
       choices: [
         ['off',    'Never'],
         ['daily',  'Every day'],
@@ -27803,14 +27745,6 @@
 
   function settingsFieldHtml(row, value, values) {
     var control = settingsControlHtml(row, value);
-    // A row can open a labelled group (Docker Hub sign-in, so far the only
-    // one) — the heading and its explanation sit above the first field in
-    // that group rather than being a field of their own.
-    var head = row.group ?
-      '<div class="staxx-settings-group">' +
-        '<h4 class="staxx-settings-group-title">' + esc(row.group) + '</h4>' +
-        (row.groupHelp ? '<p class="staxx-hint">' + row.groupHelp + '</p>' : '') +
-      '</div>' : '';
     // PLAN_68 Part B section 5: the way back to the storage chooser for
     // anyone who declined the one-time banner. One entry point, reached two
     // ways — this line and the banner both open the same #staxx-storage-dlg,
@@ -27931,7 +27865,7 @@
     // relies on that), only the control-and-hint pair and the within block
     // move into the two columns.
     if (row.key === 'BOOT_COPY' && withinHtml) {
-      return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
+      return '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
                '<span>' + esc(row.label) + '</span>' +
                '<div class="staxx-subgrid">' +
                  '<div class="staxx-subfield">' +
@@ -27943,7 +27877,7 @@
                '</div>' +
              '</div>';
     }
-    return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
+    return '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              shotsHtml +
@@ -28917,17 +28851,10 @@
   }
 
   // Closing with something unsaved asks first, through the project's own
-  // yes/no dialog rather than window.confirm() — askConfirm() is guarded the
-  // same way removeStack() guards it, falling back to window.confirm() on a
-  // stale page with no #staxx-confirm markup.
+  // yes/no dialog rather than window.confirm().
   function closeSettingsAsk() {
     if (!settingsModal || !settingsModal.open || settingsBusy) return;
     if (!settingsDirty()) { settingsModal.close(); return; }
-
-    if (!confirmModal) {
-      if (window.confirm('Settings has changes that have not been saved. Discard them?')) settingsModal.close();
-      return;
-    }
 
     askConfirm({
       title: 'Discard changes?',
@@ -37281,12 +37208,6 @@
     var i = 0;
     while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
     return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + ' ' + units[i];
-  }
-
-  function mergeJoinNames(names) {
-    if (names.length <= 1) return names.join('');
-    if (names.length === 2) return names.join(' and ');
-    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
   }
 
   function mergeFindingsByKind(kind) {
