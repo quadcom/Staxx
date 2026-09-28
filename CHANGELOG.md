@@ -6,6 +6,8 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- The CPU column now shows each stack's share of the whole processor, from 0 to 100%, instead of counting each processor thread as 100%.
+- The little graphs in the CPU, Memory, Network and GPU columns now each have their own colour.
 - A stack's row menu and a container's row menu now have Recreate, which rebuilds the containers from the file. The orange restart-pending chip's window has a Recreate now button that rebuilds only the services that no longer match. While Unraid's padlock is locked, the stack menu no longer offers moving the stack into a folder.
 - The Image box in the editor's form now lists tags the same way the pin window does: the usual choices on top, with other rolling tags, version numbers and the images already on this server folded below. You can still type any value of your own.
 - The copy of each stack kept on the flash drive is now rewritten only when its files have actually changed, so the dates it shows mean a real change, and the flash drive is written to less often.

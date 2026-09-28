@@ -24,6 +24,7 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Stats.php';       // staxx_cpu_threads(), for the running-container CPU figure below
 require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
@@ -257,7 +258,12 @@ function staxx_images_broken_entry(array $ps, bool $imagePresent, array $running
     ));
     if ($statCode === 0 && $statOut !== '') {
       $cols = explode("\t", $statOut);
-      if (isset($cols[0]) && trim($cols[0]) !== '') $entry['cpu'] = trim($cols[0]);
+      if (isset($cols[0]) && trim($cols[0]) !== '') {
+        // Docker's own figure is per core ("119.00%" on a busy thread); divide
+        // by the thread count so this matches the same share-of-the-whole-
+        // processor reading the Stacks page shows for the same container.
+        $entry['cpu'] = sprintf('%.1f%%', staxx_percent(trim($cols[0])) / staxx_cpu_threads());
+      }
       if (isset($cols[1]) && trim($cols[1]) !== '') $entry['mem'] = trim($cols[1]);
     }
   }

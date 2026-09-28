@@ -117,6 +117,20 @@ function staxx_percent(string $text): float {
   return (float)str_replace('%', '', trim($text));
 }
 
+/**
+ * How many CPU threads the server has, so a per-core Docker figure can be
+ * turned into a share of the whole processor. Read once per request — the
+ * count of `processor` lines in /proc/cpuinfo does not change mid-request.
+ */
+function staxx_cpu_threads(): int {
+  static $threads = null;
+  if ($threads !== null) return $threads;
+
+  $count = preg_match_all('/^processor\s*:/m', (string)@file_get_contents('/proc/cpuinfo'));
+  $threads = max(1, (int)$count);
+  return $threads;
+}
+
 /* ----------------------------------------------------------- containers -- */
 
 /**
@@ -163,7 +177,11 @@ function staxx_stats_containers(): array {
     $out[$row['Name']] = [
       'id'       => (string)($row['Container'] ?? ''),
       'name'     => (string)$row['Name'],
-      'cpu'      => staxx_percent((string)($row['CPUPerc'] ?? '')),
+      // Docker reports CPU per core (a busy single core reads 100%, so the
+      // top on a 12-thread box is 1200%); dividing by the thread count turns
+      // it into a 0-100% share of the whole processor, which is what a
+      // person actually wants to read.
+      'cpu'      => staxx_percent((string)($row['CPUPerc'] ?? '')) / staxx_cpu_threads(),
       'memUsed'  => $memUsed,
       'memLimit' => $memLimit,
       'memPct'   => staxx_percent((string)($row['MemPerc'] ?? '')),

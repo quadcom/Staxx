@@ -2487,6 +2487,16 @@ div.title.staxx-has-titlebar {
   stroke: none;
 }
 
+/* PLAN_207: one colour per measure, so the four graphs in a row read apart at
+   a glance. CPU keeps the accent; the Dashboard tile's statistics window
+   (PLAN_183) uses the same four. */
+.staxx-stacks [data-stat="mem"] .staxx-spark-line { stroke: #4aa3df; }
+.staxx-stacks [data-stat="mem"] .staxx-spark-fill { fill: #4aa3df; }
+.staxx-stacks [data-stat="net"] .staxx-spark-line { stroke: #8bc34a; }
+.staxx-stacks [data-stat="net"] .staxx-spark-fill { fill: #8bc34a; }
+.staxx-stacks [data-stat="gpu"] .staxx-spark-line { stroke: #b388ff; }
+.staxx-stacks [data-stat="gpu"] .staxx-spark-fill { fill: #b388ff; }
+
 /* Down and up on their own lines: a transfer rate is two numbers, and putting
    them side by side makes the column jump about as the digits change. */
 .staxx-net {
