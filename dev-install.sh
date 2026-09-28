@@ -33,36 +33,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${HERE}/${PLUGIN}"
 MODE="${1:-install}"
 
-# The app was called stack.manager until 2026-08-18. Carry a pre-rename install
-# across before anything else touches either path. mv rather than cp: two config
-# folders that both look valid is worse than one. The "new does not exist" guard
-# makes a re-run a no-op rather than a clobber. STACK_ROOT holds an absolute
-# path — rewrite it or it points at the folder the stacks just moved out of.
-OLD_CFG_DIR="/boot/config/plugins/stack.manager"
-if [[ -d "${OLD_CFG_DIR}" && ! -d "${CFG_DIR}" ]]; then
-  echo "==> Migrating settings from ${OLD_CFG_DIR} to ${CFG_DIR}"
-  mv "${OLD_CFG_DIR}" "${CFG_DIR}"
-  if [[ -f "${CFG_DIR}/stack.manager.cfg" ]]; then
-    mv "${CFG_DIR}/stack.manager.cfg" "${CFG_DIR}/${PLUGIN}.cfg"
-  fi
-  sed -i 's#/boot/config/plugins/stack\.manager#/boot/config/plugins/staxx#g' \
-    "${CFG_DIR}/${PLUGIN}.cfg" 2>/dev/null || true
-  echo "    stacks now at $(grep -o '"[^"]*"' <<<"$(grep '^STACK_ROOT' "${CFG_DIR}/${PLUGIN}.cfg")" | tr -d '"')"
-fi
-rm -rf "/usr/local/emhttp/plugins/stack.manager"   # stale tree; rebuilt at boot anyway
-rm -rf "/tmp/stack.manager"                        # a cache, regenerates
-
 case "${MODE}" in
   --remove|--purge)
-    # Captured before --purge deletes CFG_DIR below — otherwise the marker
-    # this check depends on is already gone, so purge destroyed the record
-    # of a live sign-in without ever signing out of it.
-    had_login=0
-    [[ -f "${CFG_DIR}/hub_login" ]] && had_login=1
-
-    # Before the plugin folder goes, since the script that undoes it lives
-    # there. Removes only a compose StaXX itself installed.
-    bash "${DEST}/scripts/ensure-compose" --remove 2>/dev/null || true
+    # Both install routes run this same script, so neither can drift from the
+    # other — see scripts/uninstall for what it does and why. Run before the
+    # plugin folder goes, since the script (and ensure-compose itself) live
+    # inside it, and before the purge below deletes the marker its own Hub
+    # sign-out reads.
+    bash "${DEST}/scripts/uninstall" || true
 
     echo "==> Removing ${DEST}"
     rm -rf "${DEST}"
@@ -72,20 +50,6 @@ case "${MODE}" in
     else
       echo "    Settings kept at ${CFG_DIR} (use --purge to remove them)"
     fi
-
-    # Unraid's cron builder concatenates every *.cron file under a plugin's own
-    # folder on the flash drive into root's crontab, so leaving ours behind keeps
-    # the server scheduling passes whose scripts have just been deleted.
-    rm -f "${CFG_DIR}/${PLUGIN}.cron"
-    if [[ -x /usr/local/sbin/update_cron ]]; then /usr/local/sbin/update_cron || true; fi
-
-    # Only ever undo a sign-in StaXX performed — never an administrator's own.
-    if [[ "${had_login}" -eq 1 ]]; then
-      timeout -k 2 10 docker logout >/dev/null 2>&1 || true
-      rm -f "${CFG_DIR}/hub_login"
-    fi
-
-    rm -rf "/tmp/${PLUGIN}"   # job logs, stats snapshots, icon cache — all regenerate
 
     # Undo the registration marker below, so nothing of a dev install lingers.
     rm -f "/var/log/plugins/${PLUGIN}.plg"
@@ -144,18 +108,10 @@ chmod 0755 "${DEST}/event/"*   2>/dev/null || true
 mkdir -p /var/log/plugins
 [[ -f "/var/log/plugins/${PLUGIN}.plg" ]] || touch "/var/log/plugins/${PLUGIN}.plg"
 
+# Both install routes run this same script, so neither can drift from the
+# other — see scripts/postinstall for what it does and why.
 echo "==> Seeding settings"
-mkdir -p "${CFG_DIR}"
-if [[ ! -f "${CFG_DIR}/${PLUGIN}.cfg" ]]; then
-  cp "${DEST}/default.cfg" "${CFG_DIR}/${PLUGIN}.cfg"
-  echo "    created ${CFG_DIR}/${PLUGIN}.cfg from defaults"
-else
-  echo "    kept existing ${CFG_DIR}/${PLUGIN}.cfg"
-fi
-# Holds a Docker Hub access token, so no other login on the box may read it.
-chmod 0600 "${CFG_DIR}/${PLUGIN}.cfg" 2>/dev/null || true
-bash "${DEST}/scripts/apply_settings"
-bash "${DEST}/scripts/ensure-compose" || true
+bash "${DEST}/scripts/postinstall"
 
 echo
 echo "==> Environment"
