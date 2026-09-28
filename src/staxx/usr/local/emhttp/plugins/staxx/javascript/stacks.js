@@ -3859,6 +3859,27 @@
     return names;
   }
 
+  // The plain-text and escaped-HTML wordings for a live port/path clash
+  // (PLAN_65) genuinely differ — the HTML sites say a port is "published
+  // by", the plain ones say "used by" — so this is two functions, not one
+  // shared by both, but each still names its own site's sentence once.
+  function clashSentence(c) {
+    return c.kind === 'port'
+      ? (c.host
+          ? 'Port ' + c.mine + '/' + c.proto + ' is already held by the server itself' +
+            (c.holder ? ' (' + c.holder + ')' : '') + ' — this will not start.'
+          : 'Port ' + c.mine + '/' + c.proto + ' is already used by "' + c.container + '".')
+      : '"' + c.mine + '" is already used by "' + c.container + '".';
+  }
+  function clashSentenceHtml(c) {
+    return c.kind === 'port'
+      ? (c.host
+          ? 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already held by the server itself' +
+            (c.holder ? ' (' + esc(c.holder) + ')' : '') + ' — this will not start.'
+          : 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already published by "' + esc(c.container) + '".')
+      : '"' + esc(c.mine) + '" is already used by "' + esc(c.container) + '".';
+  }
+
   function adviceText(f) {
     var advice = f.advice || [];
     var out = '';
@@ -3943,14 +3964,7 @@
     // go, since applyClashAdvice() rebuilds this from nothing on every pass.
     if (f.clashAdvice) {
       var cl = f.clashAdvice;
-      out += '<p class="staxx-fieldnote">' +
-             (cl.kind === 'port'
-               ? (cl.host
-                   ? 'Port ' + esc(cl.mine) + '/' + esc(cl.proto) + ' is already held by the server itself' +
-                     (cl.holder ? ' (' + esc(cl.holder) + ')' : '') + ' — this will not start.'
-                   : 'Port ' + esc(cl.mine) + '/' + esc(cl.proto) + ' is already published by "' + esc(cl.container) + '".')
-               : '"' + esc(cl.mine) + '" is already used by "' + esc(cl.container) + '".') +
-             '</p>';
+      out += '<p class="staxx-fieldnote">' + clashSentenceHtml(cl) + '</p>';
     }
     // Every connection detectLinks() found this field taking part in
     // (linkAdvice is grafted on nowhere else — see applyLinkAdvice()):
@@ -7308,16 +7322,11 @@
     }
     // clashSpots (PLAN_65), same reasoning.
     if (composeActive && clashSpots.length) {
-      // Same wording paintClashSummary() leads with, built here rather than
-      // shared — that function's shape is "first hit plus a count", which a
-      // single marker's tooltip does not want.
+      // Same wording paintClashSummary() leads with (clashSentence()) — a
+      // single marker's tooltip just wants the one sentence, not its
+      // "first hit plus a count" shape.
       list = list.concat(clashSpots.map(function (h) {
-        return { line: h.line, level: 'warn', message: h.kind === 'port'
-          ? (h.host
-              ? 'Port ' + h.mine + '/' + h.proto + ' is already held by the server itself' +
-                (h.holder ? ' (' + h.holder + ')' : '') + ' — this will not start.'
-              : 'Port ' + h.mine + '/' + h.proto + ' is already used by "' + h.container + '".')
-          : '"' + h.mine + '" is already used by "' + h.container + '".' };
+        return { line: h.line, level: 'warn', message: clashSentence(h) };
       }));
     }
     // linkSpots (PLAN_70 stage 2), same reasoning. paintDots() only knows
@@ -7433,12 +7442,7 @@
   function paintClashSummary(hits) {
     if (!hits.length) { clashNote.hidden = true; clashNote.textContent = ''; return; }
     var first = hits[0], extra = hits.length - 1;
-    var lead = first.kind === 'port'
-      ? (first.host
-          ? 'Port ' + first.mine + '/' + first.proto + ' is already held by the server itself' +
-            (first.holder ? ' (' + first.holder + ')' : '') + ' — this will not start.'
-          : 'Port ' + first.mine + '/' + first.proto + ' is already used by "' + first.container + '".')
-      : '"' + first.mine + '" is already used by "' + first.container + '".';
+    var lead = clashSentence(first);
     clashNote.textContent = lead +
       (extra ? '  And ' + extra + ' more clash' + (extra > 1 ? 'es' : '') + ' with what is already running.' : '');
     clashNote.hidden = false;
@@ -7580,11 +7584,9 @@
     // dropped straight into the popover's own markup, but (see otherName()'s
     // own comment above) it is pre-escaped content, not an attribute-safe
     // string — its literal quote marks would end aria-label/title early. The
-    // plain version below is escaped exactly once, the same trick this
-    // file's other plain/HTML sentence pairs already use (see otherName()).
-    var plainOther = other.environment !== undefined ? '"' + other.service + '"’s "' + other.environment + '"'
-      : other.volume !== undefined ? '"' + other.service + '"’s "' + other.volume + '"'
-      : '"' + other.service + '"';
+    // plain version undoes that one escaping pass (plainFromHtml()) rather
+    // than building the words a second time.
+    var plainOther = plainFromHtml(linkEndpointWord(other));
     var plainLabel = 'Linked to ' + plainOther + '.';
     return '<span class="staxx-linkmarkwrap">' +
       '<button type="button" class="staxx-linkmark ' + kindClass + '" data-linkmark="1" ' +
@@ -7900,6 +7902,20 @@
   // contain a colon, so no two different pairs can produce the same key.
   function crossKey(service, target) { return service + '::' + target; }
 
+  // Every write to crossState is this shape or a delete of it, always
+  // followed by the same repaint — named once so the thirteen call sites
+  // cannot drift apart on either the fields or the redraw. No status
+  // deletes the entry instead of storing one; extra's own fields (a plain
+  // for...in copy, since the file uses no Object.assign) ride alongside the
+  // shared ones in whatever order it gave them.
+  function crossSet(key, service, target, status, extra) {
+    if (!status) { delete crossState[key]; repaintAdvice(applyCrossAdvice); return; }
+    var entry = { key: key, status: status, sourceService: service, sourceTarget: target };
+    for (var k in extra) entry[k] = extra[k];
+    crossState[key] = entry;
+    repaintAdvice(applyCrossAdvice);
+  }
+
   var crossTimer = null;   // the 800ms debounce handle — one in flight at a time, see the section comment above
   var crossSeq   = 0;      // bumped by every link-match/link-creds request sent, so a superseded reply cannot paint
   var crossState = {};     // crossKey() -> the last known lookup for that box; see runCrossMatch()/startCrossCredentials()
@@ -7911,7 +7927,7 @@
     var key = crossKey(f.service, f.target);
     if (crossTimer) clearTimeout(crossTimer);
     if (!YAML.crossLooksLikeAddress(value)) {
-      if (crossState[key]) { delete crossState[key]; repaintAdvice(applyCrossAdvice); }
+      if (crossState[key]) crossSet(key, f.service, f.target, null);
       return;
     }
     var service = f.service, target = f.target;
@@ -7933,19 +7949,16 @@
     call('link-match', { name: openedName, service: service, value: value }, 8000)
       .then(function (res) {
         if (mySeq !== crossSeq || !MODEL) return;   // typing (or a reparse) has moved on
-        if (!res || !res.ok) { delete crossState[key]; repaintAdvice(applyCrossAdvice); return; }
+        if (!res || !res.ok) { crossSet(key, service, target, null); return; }
 
         if (res.kind === 'self') {
-          crossState[key] = { key: key, status: 'self', sourceService: service, sourceTarget: target, reason: res.reason };
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, 'self', { reason: res.reason });
           return;
         }
         // PLAN_94 part A — a real name, blocked by no shared network. Carried
         // as its own reply rather than dropped, per CrossLinks.php's contract.
         if (res.kind === 'unreachable') {
-          crossState[key] = { key: key, status: 'blocked', sourceService: service, sourceTarget: target,
-            reason: res.reason, blocked: res.blocked || null };
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, 'blocked', { reason: res.reason, blocked: res.blocked || null });
           return;
         }
         if (res.kind === 'none') {
@@ -7954,29 +7967,24 @@
           // which fills in the corrected name and lets this same check run
           // again rather than confirming anything by itself.
           if (res.suggestions && res.suggestions.length) {
-            crossState[key] = { key: key, status: 'suggestions', sourceService: service, sourceTarget: target,
-              suggestions: res.suggestions };
+            crossSet(key, service, target, 'suggestions', { suggestions: res.suggestions });
           } else {
-            delete crossState[key];
+            crossSet(key, service, target, null);
           }
-          repaintAdvice(applyCrossAdvice);
           return;
         }
         if (res.kind !== 'match' || !res.candidates || !res.candidates.length) {
-          delete crossState[key];
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, null);
           return;
         }
 
         var reachable = YAML.crossReachableCandidates(res.candidates);
         if (!reachable.length) {
-          crossState[key] = { key: key, status: 'unreachable', sourceService: service, sourceTarget: target, candidate: res.candidates[0] };
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, 'unreachable', { candidate: res.candidates[0] });
           return;
         }
         if (reachable.length > 1) {
-          crossState[key] = { key: key, status: 'pick', sourceService: service, sourceTarget: target, candidates: reachable, value: value };
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, 'pick', { candidates: reachable, value: value });
           return;
         }
         startCrossCredentials(key, service, target, reachable[0], value);
@@ -8028,11 +8036,10 @@
   // box, already in MODEL, no server call needed: this is the file already
   // open in the browser.
   function crossServiceImage(service) {
-    for (var i = 0; i < MODEL.fields.length; i++) {
-      var f = MODEL.fields[i];
-      if (f.service === service && f.binder === 'setting' && f.target === 'image' && f.parts && f.parts.value) return f.parts.value.value;
-    }
-    return '';
+    var f = findFieldBy(function (f) {
+      return f.service === service && f.binder === 'setting' && f.target === 'image' && f.parts && f.parts.value;
+    });
+    return f ? f.parts.value.value : '';
   }
 
   function crossSlotLabel(slot) { return slot === 'user' ? 'username' : 'password'; }
@@ -8042,22 +8049,19 @@
   // CrossLinks.php).
   function startCrossCredentials(key, service, target, candidate, value) {
     var mySeq = ++crossSeq;
-    crossState[key] = { key: key, status: 'loading', sourceService: service, sourceTarget: target, candidate: candidate, value: value };
-    repaintAdvice(applyCrossAdvice);
+    crossSet(key, service, target, 'loading', { candidate: candidate, value: value });
 
     call('link-creds', { stack: candidate.stack, service: candidate.service }, 8000)
       .then(function (creds) {
         if (mySeq !== crossSeq || !MODEL) return;
         if (!creds || !creds.ok) {
-          crossState[key] = { key: key, status: 'error', sourceService: service, sourceTarget: target, candidate: candidate,
-            value: value, message: (creds && creds.error) || 'That stack’s settings could not be read.' };
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, 'error', { candidate: candidate,
+            value: value, message: (creds && creds.error) || 'That stack’s settings could not be read.' });
           return;
         }
         if (!creds.known) {
-          crossState[key] = { key: key, status: 'unknown-image', sourceService: service, sourceTarget: target, candidate: candidate,
-            value: value, image: creds.image, settingNames: creds.settingNames || [] };
-          repaintAdvice(applyCrossAdvice);
+          crossSet(key, service, target, 'unknown-image', { candidate: candidate,
+            value: value, image: creds.image, settingNames: creds.settingNames || [] });
           return;
         }
         resolveCrossFields(key, service, target, candidate, creds.fields || {}, creds.image, value);
@@ -8094,9 +8098,8 @@
       }
     });
 
-    crossState[key] = { key: key, status: 'ready', sourceService: service, sourceTarget: target, candidate: candidate,
-      value: value, image: image, writes: writes, drift: drift, unresolved: unresolved };
-    repaintAdvice(applyCrossAdvice);
+    crossSet(key, service, target, 'ready', { candidate: candidate,
+      value: value, image: image, writes: writes, drift: drift, unresolved: unresolved });
   }
 
   function crossPickBtnHtml(key, idx, c) {
@@ -9427,11 +9430,7 @@
     // nothing to lose, so it falls straight through to the ordinary
     // tick/untick logic below like any other section.
     if (flagKey === 'expose' && !box.checked) {
-      var domField = null;
-      for (var dfi = 0; dfi < MODEL.fields.length; dfi++) {
-        var df = MODEL.fields[dfi];
-        if (df.service === svc && df.target === 'x-unraid.expose.domain') { domField = df; break; }
-      }
+      var domField = findFieldBy(function (f) { return f.service === svc && f.target === 'x-unraid.expose.domain'; });
       var domVal = domField && domField.parts && domField.parts.value ? domField.parts.value.value : '';
       if (domField && !domField.absent && String(domVal || '').trim() !== '') {
         box.checked = true;   // stays ticked unless the confirm below says yes
@@ -10050,9 +10049,7 @@
           exposeApplyBtn.disabled = false;
           return;
         }
-        exposeCheckLoaded = false;
-        loadExposeCheck();
-        loadExposeStatus();
+        refreshExposeViews();
       });
       return;
     }
@@ -10484,14 +10481,9 @@
       // already sets network_mode. Checked before any undo entry is pushed,
       // so a refusal here leaves nothing to take back.
       if (listKey === 'networks') {
-        var svcNm = null;
-        for (var nmi = 0; nmi < MODEL.fields.length; nmi++) {
-          var nmf = MODEL.fields[nmi];
-          if (nmf.service === add.dataset.service && nmf.binder === 'setting' && nmf.target === 'network_mode') {
-            svcNm = nmf;
-            break;
-          }
-        }
+        var svcNm = findFieldBy(function (f) {
+          return f.service === add.dataset.service && f.binder === 'setting' && f.target === 'network_mode';
+        });
         if (svcNm && !svcNm.absent) {
           setYamlStatus(add.dataset.service + ' already sets network_mode, and compose does not allow a ' +
                         'service to have both network_mode and networks — remove network_mode first.');
@@ -11539,9 +11531,8 @@
   // plugin's own data file — not shipped in a page data attribute, since the
   // list is far too big to send on every page load for a tool used rarely.
   function pwgenLoadWords() {
-    var first = !pwgenWordsPromise;
-    if (first) setPwgenNote('Loading the word list…');
     if (!pwgenWordsPromise) {
+      setPwgenNote('Loading the word list…');
       pwgenWordsPromise = fetch('/plugins/staxx/data/words.json')
         .then(function (r) { return r.json(); })
         .then(function (data) {
@@ -11570,7 +11561,7 @@
       }, function () {
         pwgenValue.value = '';
         if (pwgenStrength) pwgenStrength.textContent = '';
-        if (pwgenFill) pwgenFill.disabled = true;
+        pwgenSetFillDisabled(true);
         updatePwgenHashBtn();
         setPwgenNote('The word list could not be read — character mode still works.');
       });
@@ -11904,9 +11895,8 @@
         // Typed by hand, so there is no recipe to read the strength off —
         // it is inferred from the value itself, and said to be a guess.
         if (pwgenStrength) pwgenStrength.textContent = pwgenTypedStrength(pwgenValue ? pwgenValue.value : '');
-        pwgenClearHash();
+        pwgenClearHash();   // already runs updatePwgenAvailability() — the Fill button goes off with the hash
         updatePwgenHashBtn();
-        updatePwgenAvailability();
         return;
       }
       if (id === 'staxx-pwgen-length' || id === 'staxx-pwgen-count' || id === 'staxx-pwgen-sep') pwgenGenerate();
@@ -18614,14 +18604,7 @@
     // tooltip just above.
     var clash = spotAt(clashSpots, lc.line, lc.col);
     if (clash) {
-      keyHelp.innerHTML = '<strong>Already in use</strong><p>' +
-        (clash.kind === 'port'
-          ? (clash.host
-              ? 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already held by the server itself' +
-                (clash.holder ? ' (' + esc(clash.holder) + ')' : '') + ' — this will not start.'
-              : 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already published by "' + esc(clash.container) + '".')
-          : '"' + esc(clash.mine) + '" is already used by "' + esc(clash.container) + '".') +
-        '</p>';
+      keyHelp.innerHTML = '<strong>Already in use</strong><p>' + clashSentenceHtml(clash) + '</p>';
       placeCaretPanel(keyHelp, lc.line, lc.col, false);
       return;
     }
@@ -20259,12 +20242,7 @@
   // case, where more than one stack's own name is worth keeping straight.
   function clashLineHtml(c) {
     var lead = c.stack ? '<strong>' + esc(c.stack) + '</strong>: ' : '';
-    return '<li>' + lead + (c.kind === 'port'
-      ? (c.host
-          ? 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already held by the server itself' +
-            (c.holder ? ' (' + esc(c.holder) + ')' : '') + ' — this will not start.'
-          : 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already published by "' + esc(c.container) + '".')
-      : '"' + esc(c.mine) + '" is already used by "' + esc(c.container) + '".') + '</li>';
+    return '<li>' + lead + clashSentenceHtml(c) + '</li>';
   }
 
   // The double confirmation decision 4 asks for — a checkbox, THEN a button,
