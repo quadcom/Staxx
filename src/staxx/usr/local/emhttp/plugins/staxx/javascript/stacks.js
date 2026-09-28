@@ -8896,21 +8896,8 @@
       var next = el.value.trim();
       if (!next || next === was) return;
 
-      clearError();
-      flushPending();
-      pushUndo('renaming the network "' + was + '" to "' + next + '"');
-      var renamed = YAML.renameDeclared(MODEL.doc, 'networks', was, next);
-      if (!renamed.ok) {
-        undoStack.pop();
-        updateUndo();
-        showError(renamed.error);
-        return;
-      }
-
-      structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
-                    (renamed.refs > 0
-                      ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
-                      : '.'));
+      var why = renameDeclaredUndoable('networks', was, next);
+      if (why !== null) { showError(why); return; }
 
       // structuralEdit() just redrew the whole form, which took focus with it
       // — land back on the renamed row's own box, found by its row. Not by
@@ -9227,27 +9214,14 @@
       return;
     }
 
-    clearError();
-    flushPending();
-    pushUndo('renaming the network "' + was + '" to "' + first + '"');
-    var renamed = YAML.renameDeclared(MODEL.doc, 'networks', was, first);
-    if (!renamed.ok) {
-      undoStack.pop();
-      updateUndo();
-      showError(renamed.error);
-      return;
-    }
-
     // Kept back before the rename redraws the form, so the box that is on its
     // way out can still be slid out afterwards — the redraw replaces the whole
     // form, and without a copy there would be nothing left to animate and the
     // dropdown would simply snap into place.
     var going = box.cloneNode(true);
 
-    structuralEdit(-1, 'Renamed "' + was + '" to "' + first + '"' +
-                  (renamed.refs > 0
-                    ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
-                    : '.'));
+    var why = renameDeclaredUndoable('networks', was, first);
+    if (why !== null) { showError(why); return; }
 
     // A rename leaves the field set as it was, so the row keeps its index.
     var arriving = formHost.querySelector('[data-rename][data-row="' + index + '"]');
@@ -9633,6 +9607,24 @@
     if (typeof failMsg === 'function') failMsg(r);
     else setYamlStatus(failMsg || (r && r.error) || '');
     return null;
+  }
+
+  function renamedSay(was, next, refs) {
+    return 'Renamed "' + was + '" to "' + next + '"' +
+      (refs > 0 ? '. ' + refs + (refs === 1 ? ' reference' : ' references') + ' updated.' : '.');
+  }
+
+  // One undoable rename of a declared name; renameDeclared() carries every
+  // reference with it. Returns null once the form has been redrawn with the
+  // "Renamed …" line, or the refusal text for the caller to show.
+  function renameDeclaredUndoable(kind, was, next) {
+    clearError();
+    var why = null;
+    var r = undoableEdit('renaming the ' + (DECL_WORD[kind] || 'declaration') + ' "' + was + '" to "' + next + '"',
+      function () { return YAML.renameDeclared(MODEL.doc, kind, was, next); },
+      function (res) { why = res.error || ''; });
+    if (r) structuralEdit(-1, renamedSay(was, next, r.refs));
+    return why;
   }
 
   // Puts text in the compose box and repaints its gutter and colours.
@@ -10169,20 +10161,8 @@
       var nfNext  = netFixBtn.dataset.netfixTo;
       if (!nfField || !nfWas || !nfNext || nfNext === nfWas) return;
 
-      clearError();
-      flushPending();
-      pushUndo('renaming the network "' + nfWas + '" to "' + nfNext + '"');
-      var nfRenamed = YAML.renameDeclared(MODEL.doc, 'networks', nfWas, nfNext);
-      if (!nfRenamed.ok) {
-        undoStack.pop();
-        updateUndo();
-        showError(nfRenamed.error);
-        return;
-      }
-      structuralEdit(-1, 'Renamed "' + nfWas + '" to "' + nfNext + '"' +
-                    (nfRenamed.refs > 0
-                      ? '. ' + nfRenamed.refs + (nfRenamed.refs === 1 ? ' reference' : ' references') + ' updated.'
-                      : '.'));
+      var why = renameDeclaredUndoable('networks', nfWas, nfNext);
+      if (why !== null) showError(why);
       return;
     }
 
@@ -10539,20 +10519,14 @@
         say: showError,
         save: function (next) {
           clearError();
-          flushPending();
-          pushUndo('renaming the service "' + was + '" to "' + next + '"');
-          var renamed = YAML.renameService(MODEL.doc, was, next);
-          if (!renamed.ok) {
-            undoStack.pop();
-            updateUndo();
-            return renamed.error;
-          }
+          var why = null;
+          var renamed = undoableEdit('renaming the service "' + was + '" to "' + next + '"',
+            function () { return YAML.renameService(MODEL.doc, was, next); },
+            function (res) { why = res.error; });
+          if (renamed === null) return why;
 
           serviceRenamed = true;
-          structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
-                        (renamed.refs > 0
-                          ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
-                          : '.'));
+          structuralEdit(-1, renamedSay(was, next, renamed.refs));
 
           // structuralEdit() just redrew the whole form, which took focus with
           // it — land it back on the pencil for the section that now exists.
@@ -10567,27 +10541,14 @@
     if (declRename) {
       var declKind = declRename.dataset.declKind;
       var was = declRename.dataset.declName;
-      var declWord = DECL_WORD[declKind] || 'declaration';
       var nameHost = declRename.closest('.staxx-declname').querySelector('.staxx-declname-text');
       if (!nameHost) return;
 
       inlineName(nameHost, was, {
         say: showError,
         save: function (next) {
-          clearError();
-          flushPending();
-          pushUndo('renaming the ' + declWord + ' "' + was + '" to "' + next + '"');
-          var renamed = YAML.renameDeclared(MODEL.doc, declKind, was, next);
-          if (!renamed.ok) {
-            undoStack.pop();
-            updateUndo();
-            return renamed.error;
-          }
-
-          structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
-                        (renamed.refs > 0
-                          ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
-                          : '.'));
+          var why = renameDeclaredUndoable(declKind, was, next);
+          if (why !== null) return why;
 
           // structuralEdit() just redrew the whole form, which took focus with
           // it — land it back on the pencil for the row that now exists.
