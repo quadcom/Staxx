@@ -1177,8 +1177,7 @@ function staxx_update_keep_digests(string $excludeStack = ''): array {
   $keep = [];
   foreach ($images as $ref => $entry) {
     if (!isset($currentRefs[$ref])) continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    $repo = staxx_image_match_repo($ref);
     if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
   }
 
@@ -1197,8 +1196,7 @@ function staxx_update_keep_digests(string $excludeStack = ''): array {
     $meta = staxx_compose_meta($file);
     $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
     if ($ref === '') continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    $repo = staxx_image_match_repo($ref);
     foreach (staxx_update_history($stack, $service) as $d) $keep[$repo][] = $d;
   }
 

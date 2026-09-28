@@ -514,70 +514,30 @@ function staxx_image_tag_part(string $image): string {
  * on any failure, the same contract as staxx_image_tags() this delegates to
  * for Docker Hub and its two linuxserver mirrors.
  *
- * For everything else, the standard registry conversation: ask the host's
- * /v2/ root, read the WWW-Authenticate challenge it answers with for the
- * token realm and service, fetch a pull-scoped token from that realm (many
- * public hosts need none at all — a host with no challenge is already
- * anonymous), then list the repository's tags. Registry v2 answers in
- * lexical order with no dates, unlike Hub's "most recently pushed" — so
- * nothing here or downstream may assume recency for this route.
+ * For everything else, the shared registry conversation in Defines.php:
+ * split the reference, get a pull-scoped bearer token (its challenge is
+ * cached per host, the token per host+repo, so a registry already asked
+ * this request costs nothing extra), then list the repository's tags.
+ * Registry v2 answers in lexical order with no dates, unlike Hub's "most
+ * recently pushed" — so nothing here or downstream may assume recency for
+ * this route.
  *
  * @return string[]
  */
 function staxx_registry_tags(string $image): array {
   if (staxx_hub_repo_path($image) !== '') return staxx_image_tags($image);
 
-  $ref = trim($image);
-  $ref = preg_replace('/@sha256:[0-9a-f]+$/', '', $ref);
-  $slash = strrpos($ref, '/');
-  $colon = strrpos($ref, ':');
-  if ($colon !== false && ($slash === false || $colon > $slash)) $ref = substr($ref, 0, $colon);
+  $r = staxx_registry_ref(preg_replace('/@sha256:[0-9a-f]+$/', '', trim($image)));
+  // A repository of at least two segments on a named host: the same set of
+  // references this function has always asked about. Hub went above.
+  if ($r['repo'] === '' || $r['host'] === 'docker.io' || strpos($r['repo'], '/') === false) return [];
 
-  $slash = strpos($ref, '/');
-  if ($slash === false) return []; // no host and not Hub-eligible — nothing to ask
-  $host = substr($ref, 0, $slash);
-  $repo = substr($ref, $slash + 1);
-  if ($host === '' || $repo === '') return [];
+  $why   = '';
+  $token = staxx_registry_token($r['host'], $r['repo'], $why);
+  if ($why !== '') return [];
 
-  // Same shape a Hub repository name is held to, just without the one-slash
-  // limit — a generic registry allows deeper paths (ghcr.io/org/team/name).
-  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$#D', $repo)) {
-    return [];
-  }
-
-  // The ping needs the response headers, not the body, so it goes through
-  // curl directly rather than staxx_hub_json() (which is -f and throws the
-  // body away on anything but 2xx). A host with no challenge at all is
-  // already anonymous, so an empty realm below is not itself a failure.
-  $headers = staxx_sh(
-    'curl -sS -L --max-time 6 -D /dev/stdout -o /dev/null '.escapeshellarg('https://'.$host.'/v2/'), 8
-  );
-
-  $realm = '';
-  $service = '';
-  foreach (explode("\n", $headers) as $line) {
-    if (preg_match('/^www-authenticate:\s*(.+)$/i', trim($line), $m)) {
-      // The realm is whatever the remote registry says it is — a hostile one
-      // could name a file:// path or an internal address, so only an actual
-      // http(s) realm is accepted before it is ever used to build a URL.
-      if (preg_match('/realm="([^"]+)"/i', $m[1], $rm) && preg_match('#^https?://#i', $rm[1])) {
-        $realm = $rm[1];
-      }
-      if (preg_match('/service="([^"]+)"/i', $m[1], $sm)) $service = $sm[1];
-      break;
-    }
-  }
-
-  $bearer = [];
-  if ($realm !== '') {
-    $tokenUrl = $realm.'?scope='.rawurlencode('repository:'.$repo.':pull');
-    if ($service !== '') $tokenUrl .= '&service='.rawurlencode($service);
-    $token = staxx_hub_json($tokenUrl, [], 6, 8);
-    $bearerToken = (string)($token['token'] ?? ($token['access_token'] ?? ''));
-    if ($bearerToken !== '') $bearer = ['Authorization: Bearer '.$bearerToken];
-  }
-
-  $data = staxx_hub_json('https://'.$host.'/v2/'.$repo.'/tags/list', $bearer, 6, 8);
+  $url  = staxx_registry_scheme($r['host']).'://'.staxx_registry_api_host($r['host']).'/v2/'.$r['repo'].'/tags/list';
+  $data = staxx_hub_json($url, $token !== '' ? ['Authorization: Bearer '.$token] : [], 6, 8);
   if ($data === null || !isset($data['tags']) || !is_array($data['tags'])) return [];
 
   $tags = [];
@@ -1382,6 +1342,18 @@ function staxx_image_local_verdict(string $out): array {
 }
 
 /**
+ * The repository half of a reference to match RepoDigests against — Hub's
+ * own rewrite when the reference is Hub-eligible, else the reference with
+ * its tag stripped. Never staxx_update_local_repo(), which answers a
+ * different question (the name local Docker stores an image under, with no
+ * Hub rewrite) — see notes/constraints.md.
+ */
+function staxx_image_match_repo(string $ref): string {
+  $repo = staxx_hub_repo_path($ref);
+  return $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($ref));
+}
+
+/**
  * What is actually sitting on disk for one image reference — the digest
  * Docker recorded when it pulled it, comparable to staxx_image_remote()'s
  * digest with no conversion either side.
@@ -1411,11 +1383,10 @@ function staxx_image_local(string $image): array {
   $data = staxx_image_local_verdict($out);
   if ($data === [] || !empty($data['unknown'])) return $data;
 
-  $repo = staxx_hub_repo_path($image);
   // The reference's own repository half, used to pick the matching
   // RepoDigests entry — a locally cached image can hold digests from more
   // than one tag/repo alias.
-  $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($image));
+  $wantRepo = staxx_image_match_repo($image);
 
   $digests = [];
   foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
@@ -1472,8 +1443,7 @@ function staxx_image_id_digest(string $imageId, string $ref): array {
   $data = staxx_image_local_verdict($out);
   if ($data === [] || !empty($data['unknown'])) return $data;
 
-  $repo = staxx_hub_repo_path($ref);
-  $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($ref));
+  $wantRepo = staxx_image_match_repo($ref);
 
   $digests = [];
   foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
