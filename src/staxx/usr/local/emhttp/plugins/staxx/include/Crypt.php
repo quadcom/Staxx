@@ -67,6 +67,43 @@ function staxx_crypt_recipe_id(): string {
   return $id = $bytes !== false ? md5($bytes) : '';
 }
 
+/** Whether the hashing container is meant to stay running (CRYPT_MODE=always). */
+function staxx_crypt_always(): bool { return (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always'; }
+
+/** The image tag one recipe id builds under. */
+function staxx_crypt_tag(string $recipeId): string { return 'staxxcrypt:'.substr($recipeId, 0, 12); }
+
+/**
+ * The build command for one recipe id, byte for byte what
+ * staxx_crypt_do_build() runs. $context is already shell-quoted (a real
+ * scratch folder) or the display placeholder staxx_crypt_recipe() shows —
+ * either way it is the last thing appended, unescaped, onto the command.
+ */
+function staxx_crypt_build_cmd(string $recipeId, string $context): string {
+  return staxx_docker_bin().' build --label '.escapeshellarg('staxx.crypt=1')
+    .' --label '.escapeshellarg('staxx.crypt.recipe='.$recipeId)
+    .' -t '.escapeshellarg(staxx_crypt_tag($recipeId)).' '.$context;
+}
+
+/**
+ * The create command for one recipe id, byte for byte what
+ * staxx_crypt_do_build() runs. The restart policy is set at creation time
+ * so "always-running" actually survives a reboot rather than only a
+ * `docker start` done once now — a reboot on 2026-08-27 killed a container
+ * created with the default policy (`no`) and nothing ever brought it back,
+ * while the setting still said always. staxx_crypt_apply_mode() keeps this
+ * in step if the setting changes later without a rebuild. No volume, no
+ * port, no network, nothing mounted — it reads a password and prints a
+ * hash, and anything more is a way in. --read-only was confirmed on the
+ * server 2026-08-26 not to break any of the three tools: none of them need
+ * to write anything.
+ */
+function staxx_crypt_create_cmd(string $recipeId): string {
+  return staxx_docker_bin().' create --name '.escapeshellarg(STAXX_CRYPT_CONTAINER)
+    .' --network none --read-only --restart '.escapeshellarg(staxx_crypt_always() ? 'unless-stopped' : 'no')
+    .' '.escapeshellarg(staxx_crypt_tag($recipeId));
+}
+
 /**
  * What the Settings panel's "Show the recipe" button asks for — the whole
  * point of building this on the machine rather than fetching an image is
@@ -82,22 +119,15 @@ function staxx_crypt_recipe(): array {
     return ['ok' => false, 'error' => 'The recipe file is missing: it should be at '.$path.'.'];
   }
 
-  // Both commands are written the same way staxx_crypt_do_build() writes
+  // Both commands are written the same way staxx_crypt_do_build() runs
   // them, off the same recipe id and the same setting, so what is shown is
   // today's real tag rather than a stand-in worked out later. Two commands
   // and not one: the build is where the labels that identify our own images
   // come from, and the create is where "no network, read-only" is set — a
   // person asking whether this is safe needs to see both halves.
   $recipeId = staxx_crypt_recipe_id();
-  $tag      = 'staxxcrypt:'.substr($recipeId, 0, 12);
-  $restart  = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'unless-stopped' : 'no';
-
-  $build = staxx_docker_bin().' build --label '.escapeshellarg('staxx.crypt=1')
-    .' --label '.escapeshellarg('staxx.crypt.recipe='.$recipeId)
-    .' -t '.escapeshellarg($tag).' <a copy of the folder holding the recipe above>';
-
-  $create = staxx_docker_bin().' create --name '.escapeshellarg(STAXX_CRYPT_CONTAINER)
-    .' --network none --read-only --restart '.escapeshellarg($restart).' '.escapeshellarg($tag);
+  $build    = staxx_crypt_build_cmd($recipeId, '<a copy of the folder holding the recipe above>');
+  $create   = staxx_crypt_create_cmd($recipeId);
 
   return ['ok' => true, 'dockerfile' => $bytes, 'build' => $build, 'create' => $create];
 }
@@ -293,7 +323,7 @@ function staxx_crypt_state(?string $status = null): array {
     'built'         => $images !== [],
     'recipeCurrent' => $builtRecipeId !== '' && $builtRecipeId === $recipeId,
     'container'     => $status ?? staxx_crypt_container_status(),
-    'mode'          => (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'always' : 'ondemand',
+    'mode'          => staxx_crypt_always() ? 'always' : 'ondemand',
     'formats'       => $formats,
     'checkedAt'     => $selftest['recipeId'] === $builtRecipeId ? $selftest['at'] : 0,
   ];
@@ -419,7 +449,7 @@ function staxx_crypt_hash(string $password, string $format, string &$error): str
     return '';
   }
 
-  $mode = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'always' : 'ondemand';
+  $mode = staxx_crypt_always() ? 'always' : 'ondemand';
 
   if ($status === 'stopped') {
     $c = null;
@@ -548,7 +578,7 @@ function staxx_crypt_apply_mode(): void {
   $status = staxx_crypt_container_status();
   if ($status === 'missing') return;
 
-  $mode    = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'always' : 'ondemand';
+  $mode    = staxx_crypt_always() ? 'always' : 'ondemand';
   $restart = $mode === 'always' ? 'unless-stopped' : 'no';
   staxx_sh(
     staxx_docker_bin().' update --restart '.escapeshellarg($restart).' '.escapeshellarg(STAXX_CRYPT_CONTAINER),
@@ -624,15 +654,10 @@ function staxx_crypt_do_build(string &$error): bool {
     return false;
   }
 
-  $tag = 'staxxcrypt:'.substr($recipeId, 0, 12);
+  $tag = staxx_crypt_tag($recipeId);
   echo "Building $tag ...\n";
   $code = null;
-  echo staxx_sh(
-    staxx_docker_bin().' build --label '.escapeshellarg('staxx.crypt=1')
-    .' --label '.escapeshellarg('staxx.crypt.recipe='.$recipeId)
-    .' -t '.escapeshellarg($tag).' '.escapeshellarg($scratch),
-    600, $code
-  )."\n";
+  echo staxx_sh(staxx_crypt_build_cmd($recipeId, escapeshellarg($scratch)), 600, $code)."\n";
   staxx_rmtree($scratch, $scratch); // best-effort tidy-up; a leftover scratch folder is harmless either way
   if ($code !== 0) { $error = 'The image failed to build.'; return false; }
 
@@ -643,22 +668,7 @@ function staxx_crypt_do_build(string &$error): bool {
   // runs from the explicit build/rebuild the person just asked for.
   staxx_sh(staxx_docker_bin().' rm -f '.escapeshellarg(STAXX_CRYPT_CONTAINER), 10);
 
-  // The restart policy is set at creation time so "always-running" actually
-  // survives a reboot rather than only a `docker start` done once now — a
-  // reboot on 2026-08-27 killed a container created with the default policy
-  // (`no`) and nothing ever brought it back, while the setting still said
-  // always. staxx_crypt_apply_mode() below keeps this in step if the
-  // setting changes later without a rebuild.
-  $restart = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'unless-stopped' : 'no';
-  echo staxx_sh(
-    staxx_docker_bin().' create --name '.escapeshellarg(STAXX_CRYPT_CONTAINER)
-    // No volume, no port, no network, nothing mounted — it reads a password
-    // and prints a hash, and anything more is a way in. --read-only was
-    // confirmed on the server 2026-08-26 not to break any of the three
-    // tools: none of them need to write anything.
-    .' --network none --read-only --restart '.escapeshellarg($restart).' '.escapeshellarg($tag),
-    30, $code
-  )."\n";
+  echo staxx_sh(staxx_crypt_create_cmd($recipeId), 30, $code)."\n";
   if ($code !== 0) { $error = 'The container could not be created.'; return false; }
 
   echo "Running the self-test ...\n";
@@ -674,7 +684,7 @@ function staxx_crypt_do_build(string &$error): bool {
   // wrong for always-running: the mode promises the container is already up,
   // so without this the first hash after a build quietly pays the start cost
   // the person chose that mode to avoid.
-  if ((string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always') {
+  if (staxx_crypt_always()) {
     echo "Starting it, because the mode is always-running ...\n";
     staxx_sh(staxx_docker_bin().' start '.escapeshellarg(STAXX_CRYPT_CONTAINER), 15);
   }

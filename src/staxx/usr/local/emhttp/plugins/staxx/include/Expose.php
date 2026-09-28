@@ -154,6 +154,17 @@ function staxx_npm_login(string &$err): string {
   return $token;
 }
 
+/** The NPM proxy host that already serves $domain, or null. */
+function staxx_npm_find_host(array $hosts, string $domain): ?array {
+  foreach ($hosts as $h) if (in_array($domain, (array)($h['domain_names'] ?? []), true)) return $h;
+  return null;
+}
+
+/** One authenticated request to NPM's API; $path is after "/api/". */
+function staxx_npm_call(string $method, string $url, string $token, string $path, ?array $body, string &$err): array {
+  return staxx_expose_http($method, rtrim($url, '/').'/api/'.$path, $body, ['Authorization: Bearer '.$token], $err);
+}
+
 /**
  * Nginx Proxy Manager's own version, from the same unauthenticated endpoint
  * phase 0 measured answering without a token (GET /api/).
@@ -181,9 +192,7 @@ function staxx_npm_version(string $url, string &$err): string {
  */
 function staxx_npm_certificates(string $url, string $token, string &$err): array {
   $err = '';
-  [, $json] = staxx_expose_http(
-    'GET', rtrim($url, '/').'/api/nginx/certificates', null, ['Authorization: Bearer '.$token], $err
-  );
+  [, $json] = staxx_npm_call('GET', $url, $token, 'nginx/certificates', null, $err);
   if ($err !== '') return [];
   if (!is_array($json)) {
     $err = 'Nginx Proxy Manager did not answer with a certificate list.';
@@ -360,19 +369,24 @@ function staxx_expose_config(array $svcX): ?array {
  * ever applied (Entries that already exist: "Several services sharing one
  * domain within StaXX: refused at check time").
  *
- * @return array<string, array<string, string>> rel => service => domain
+ * @return array<string, array<string, array>> rel => service => its config
  */
-function staxx_expose_all_configs(): array {
+function staxx_expose_configs(): array {
   $out = [];
   foreach (staxx_stack_compose_map() as $rel => $file) {
     if ($file === '') continue;
     $meta = staxx_compose_meta($file);
     foreach ($meta['services'] as $svcName => $svc) {
       $config = staxx_expose_config($svc['x']);
-      if ($config !== null) $out[$rel][$svcName] = $config['domain'];
+      if ($config !== null) $out[$rel][$svcName] = $config;
     }
   }
   return $out;
+}
+
+/** @return array<string, array<string, string>> rel => service => domain */
+function staxx_expose_all_configs(): array {
+  return array_map(fn($svcs) => array_map(fn($c) => $c['domain'], $svcs), staxx_expose_configs());
 }
 
 /**
@@ -405,9 +419,7 @@ function staxx_expose_target(string $rel, string $service, string &$err): ?array
  * reads the id, domain_names, meta and the fields it owns from these. */
 function staxx_npm_proxy_hosts(string $url, string $token, string &$err): array {
   $err = '';
-  [, $json] = staxx_expose_http(
-    'GET', rtrim($url, '/').'/api/nginx/proxy-hosts', null, ['Authorization: Bearer '.$token], $err
-  );
+  [, $json] = staxx_npm_call('GET', $url, $token, 'nginx/proxy-hosts', null, $err);
   if ($err !== '') return [];
   if (!is_array($json)) {
     $err = 'Nginx Proxy Manager did not answer with a list of proxy hosts.';
@@ -501,9 +513,7 @@ function staxx_npm_host_payload(array $target, array $config, int $certId, array
 
 function staxx_npm_create_host(string $url, string $token, array $payload, string &$err): ?array {
   $err = '';
-  [$code, $json] = staxx_expose_http(
-    'POST', rtrim($url, '/').'/api/nginx/proxy-hosts', $payload, ['Authorization: Bearer '.$token], $err
-  );
+  [$code, $json] = staxx_npm_call('POST', $url, $token, 'nginx/proxy-hosts', $payload, $err);
   if ($err !== '') return null;
   if ($code >= 300 || !is_array($json) || !isset($json['id'])) {
     $err = 'Nginx Proxy Manager refused to create the proxy entry'
@@ -515,9 +525,7 @@ function staxx_npm_create_host(string $url, string $token, array $payload, strin
 
 function staxx_npm_update_host(string $url, string $token, int $id, array $payload, string &$err): ?array {
   $err = '';
-  [$code, $json] = staxx_expose_http(
-    'PUT', rtrim($url, '/').'/api/nginx/proxy-hosts/'.$id, $payload, ['Authorization: Bearer '.$token], $err
-  );
+  [$code, $json] = staxx_npm_call('PUT', $url, $token, 'nginx/proxy-hosts/'.$id, $payload, $err);
   if ($err !== '') return null;
   if ($code >= 300 || !is_array($json)) {
     $err = 'Nginx Proxy Manager refused to update the proxy entry'
@@ -529,10 +537,7 @@ function staxx_npm_update_host(string $url, string $token, int $id, array $paylo
 
 function staxx_npm_set_enabled(string $url, string $token, int $id, bool $enabled, string &$err): bool {
   $err = '';
-  [$code, ] = staxx_expose_http(
-    'POST', rtrim($url, '/').'/api/nginx/proxy-hosts/'.$id.'/'.($enabled ? 'enable' : 'disable'),
-    null, ['Authorization: Bearer '.$token], $err
-  );
+  [$code, ] = staxx_npm_call('POST', $url, $token, 'nginx/proxy-hosts/'.$id.'/'.($enabled ? 'enable' : 'disable'), null, $err);
   if ($err !== '') return false;
   if ($code >= 300) {
     $err = 'Nginx Proxy Manager refused to switch that proxy entry '.($enabled ? 'on' : 'off').'.';
@@ -543,9 +548,7 @@ function staxx_npm_set_enabled(string $url, string $token, int $id, bool $enable
 
 function staxx_npm_delete_host(string $url, string $token, int $id, string &$err): bool {
   $err = '';
-  [$code, ] = staxx_expose_http(
-    'DELETE', rtrim($url, '/').'/api/nginx/proxy-hosts/'.$id, null, ['Authorization: Bearer '.$token], $err
-  );
+  [$code, ] = staxx_npm_call('DELETE', $url, $token, 'nginx/proxy-hosts/'.$id, null, $err);
   if ($err !== '') return false;
   if ($code >= 300 && $code !== 404) {
     $err = 'Nginx Proxy Manager refused to delete that proxy entry.';
@@ -709,10 +712,7 @@ function staxx_expose_plan_service(
     if ($certErr !== '') { $err = $certErr; return []; }
   }
 
-  $host = null;
-  foreach ($npmHosts as $h) {
-    if (in_array($config['domain'], (array)($h['domain_names'] ?? []), true)) { $host = $h; break; }
-  }
+  $host = staxx_npm_find_host($npmHosts, $config['domain']);
 
   $steps = [];
 
@@ -810,10 +810,7 @@ function staxx_expose_apply_step(
       return true;
     }
 
-    $host = null;
-    foreach ($npmHosts as $h) {
-      if (in_array($config['domain'], (array)($h['domain_names'] ?? []), true)) { $host = $h; break; }
-    }
+    $host = staxx_npm_find_host($npmHosts, $config['domain']);
     if ($host === null) {
       $err = 'That proxy entry has disappeared from Nginx Proxy Manager since this was checked.';
       return false;
@@ -977,15 +974,7 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
  */
 function staxx_expose_status(string &$err): array {
   $err = '';
-  $allConfigs = [];
-  foreach (staxx_stack_compose_map() as $rel => $file) {
-    if ($file === '') continue;
-    $meta = staxx_compose_meta($file);
-    foreach ($meta['services'] as $svcName => $svc) {
-      $c = staxx_expose_config($svc['x']);
-      if ($c !== null) $allConfigs[$rel][$svcName] = $c;
-    }
-  }
+  $allConfigs = staxx_expose_configs();
   if ($allConfigs === []) return [];
 
   $cfg    = staxx_cfg();
@@ -1007,10 +996,7 @@ function staxx_expose_status(string &$err): array {
     foreach ($svcs as $svcName => $config) {
       $npmState = null;
       if ($token !== '') {
-        $host = null;
-        foreach ($hosts as $h) {
-          if (in_array($config['domain'], (array)($h['domain_names'] ?? []), true)) { $host = $h; break; }
-        }
+        $host = staxx_npm_find_host($hosts, $config['domain']);
         if ($host !== null && (($host['meta']['staxx'] ?? '') === $rel.'/'.$svcName)) {
           $tErr = ''; $ce = '';
           $target = staxx_expose_target($rel, $svcName, $tErr);
@@ -1097,10 +1083,7 @@ function staxx_expose_remove(string $rel, string $onlyService, string $npmChoice
     if ($npmId > 0 && $npmChoice !== 'keep') {
       $keptNpm = false;
       $getErr = '';
-      [, $host] = staxx_expose_http(
-        'GET', rtrim($npmUrl, '/').'/api/nginx/proxy-hosts/'.$npmId, null,
-        ['Authorization: Bearer '.$token], $getErr
-      );
+      [, $host] = staxx_npm_call('GET', $npmUrl, $token, 'nginx/proxy-hosts/'.$npmId, null, $getErr);
       if (is_array($host) && (($host['meta']['staxx'] ?? '') === $rel.'/'.$svcName)) {
         $stepErr = '';
         $ok = $npmChoice === 'delete'
