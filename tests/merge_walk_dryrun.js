@@ -36,16 +36,9 @@ var AUDIT = require('./merge_audit.js');   // PLAN_179 — every difference betw
 
 var FIXTURES = path.join(__dirname, 'fixtures', 'merge-walk');
 
-var argv = process.argv.slice(2);
-var CHECK = argv.indexOf('--check') >= 0;
-var outArg = argv.filter(function (a) { return a !== '--check'; })[0];
-var OUT_DIR = outArg ? path.resolve(outArg) : path.join(FIXTURES, '.dryrun');
-
-var checkFails = [];   // {trap, message} — printed and turned into the exit code under --check
-
-function section(title) {
-  console.log('\n' + title);
-}
+var D = require('./lib/dryrun.js')(FIXTURES, 'DEV-TESTING');
+var CHECK = D.CHECK, OUT_DIR = D.OUT_DIR, checkFails = D.fails,
+    section = D.section, fail = D.fail, storeNameFor = D.storeNameFor;
 
 function readText(leafName, rel) {
   var p = path.join(FIXTURES, leafName, rel);
@@ -127,7 +120,6 @@ function findOverrideName(leafName) {
 // a source identity built by string concatenation elsewhere and taken apart
 // with split('/') silently breaks the moment that identity already holds a
 // "/", which a store path always does once a stack sits inside a folder.
-function storeNameFor(leafName) { return 'DEV-TESTING/' + leafName; }
 
 // Runs the whole walkthrough — reading, examine(), buildMergedText(),
 // merge-suggest.apply(), retireText() — for one pick order, printing as it
@@ -298,8 +290,6 @@ var ORDER_B = ['t155-admin', 't155-cache', 't155-db', 't155-web'];
 
 var resultA = runWalk('A', ORDER_A);
 var resultB = runWalk('B', ORDER_B);
-
-function fail(trap, message) { checkFails.push({ trap: trap, message: message }); }
 
 // PLAN_155 C7's own assertion, run against BOTH orders: every "- <key>:/…"
 // mount under a service must name a key actually declared under the merged
@@ -602,7 +592,7 @@ if (CHECK) {
 
   if (checkFails.length) {
     console.log('  FAILED:');
-    checkFails.forEach(function (f) { console.log('    trap ' + f.trap + ': ' + f.message); });
+    checkFails.forEach(function (f) { console.log('    trap ' + f.key + ': ' + f.message); });
     process.exit(1);
   }
   console.log('  all checks passed');
@@ -610,6 +600,6 @@ if (CHECK) {
   // The storage-integrity check above always runs, --check or not, because
   // it is cheap and it is the one this whole rework exists to prove.
   console.log('\nSTORAGE INTEGRITY FAILURES (see PLAN_155 C7):');
-  checkFails.forEach(function (f) { console.log('  trap ' + f.trap + ': ' + f.message); });
+  checkFails.forEach(function (f) { console.log('  trap ' + f.key + ': ' + f.message); });
   process.exitCode = 1;
 }
