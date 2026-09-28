@@ -31103,7 +31103,7 @@
       // button runs. No confirm: it behaves like Start/Restart above, which
       // do not ask either.
       menuItem('Recreate', 'repeat', function () { run(name, 'recreate', afterRun('recreate', name)); },
-               { disabled: !CAN_RUN, hint: why || 'Rebuilds every container in this stack from the file as it stands now.' });
+               { disabled: !CAN_RUN, hint: why || 'Rebuilds every container.' });
       // Fetches the new image and rebuilds the container on it. Offered
       // unconditionally, the same as Start/Stop above, and not only once a
       // check has found something: pulling an image that has not moved and
@@ -31352,7 +31352,7 @@
     // now; the stack menu's own Recreate does every service, this does one.
     menuItem('Recreate', 'repeat', function () {
       run(stack, 'recreate', afterRun('recreate', stack, service), service);
-    }, { disabled: !CAN_RUN, hint: why || 'Rebuilds this one container from the file as it stands now.' });
+    }, { disabled: !CAN_RUN, hint: why });
 
     // Read once, up here, so both this item's hint and the image-gated items
     // further down share the one pill reading.
