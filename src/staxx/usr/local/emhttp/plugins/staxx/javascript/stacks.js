@@ -22787,8 +22787,8 @@
       // into one run-on paragraph.
       html += '<p>What changed:<br>' + esc(detail).replace(/\n/g, '<br>') + '</p>';
     }
-    html += '<p>Restarting the stack rebuilds these from the file as it stands now — ' +
-            'nothing is wrong until you do.</p>';
+    html += '<p>Recreate now rebuilds only these services from the file as it stands now. ' +
+            'The others keep running.</p>';
     return html;
   }
 
@@ -22798,8 +22798,25 @@
     var changed  = pendingNames(chip.dataset.changed);
     var absent   = pendingNames(chip.dataset.absent);
     var leftover = pendingNames(chip.dataset.leftover);
+    var title = stackLabel(stack) + ' — restart pending';
+    var body  = pendingPanelHtml(edited, changed, absent, leftover, '');
 
-    showInfo(stackLabel(stack) + ' — restart pending', pendingPanelHtml(edited, changed, absent, leftover, ''));
+    // PLAN_177 — the chip's own window gains a Recreate now button, which
+    // runs 'up' (rebuilds only the services that no longer match the file,
+    // starts any absent one, removes leftovers) rather than 'recreate' (every
+    // container), since the chip's job is to fix only what drifted. With no
+    // way to run anything (CAN_RUN false) this stays the plain notice it was
+    // before — a button that could never do anything is worse than none.
+    if (CAN_RUN) {
+      askConfirm({ title: title, bodyHtml: body, goLabel: 'Recreate now', cancelLabel: 'Close', danger: false })
+        .then(function (went) {
+          if (!went) return;
+          closeConfirm();
+          run(stack, 'up', afterRun('up', stack));
+        });
+    } else {
+      showInfo(title, body);
+    }
 
     pendingSeq++;
     var mySeq = pendingSeq;
@@ -31081,6 +31098,12 @@
                { disabled: !CAN_RUN, hint: why });
       menuItem('Stop', 'stop', function () { run(name, 'down', afterRun('down', name)); },
                { disabled: !CAN_RUN || !running });
+      // PLAN_177 — rebuilds every container in this stack from the file as it
+      // stands now, the same command the editor's own Manage-tab Recreate
+      // button runs. No confirm: it behaves like Start/Restart above, which
+      // do not ask either.
+      menuItem('Recreate', 'repeat', function () { run(name, 'recreate', afterRun('recreate', name)); },
+               { disabled: !CAN_RUN, hint: why || 'Rebuilds every container in this stack from the file as it stands now.' });
       // Fetches the new image and rebuilds the container on it. Offered
       // unconditionally, the same as Start/Stop above, and not only once a
       // check has found something: pulling an image that has not moved and
@@ -31217,41 +31240,54 @@
     menuItems.classList.add('staxx-menu-items--split');
     menuTarget = menuCol2;
 
-    // The section shows even with no folders yet — "New folder" is what it is
-    // for at that point, and it was the one moment it used to be missing.
-    menuSeparator('Move to folder');
-    FOLDERS.forEach(function (f) {
-      menuItem(f.name, f.id === inFolder ? 'check-square-o' : 'folder-o', function () {
-        call('folder-assign', { name: name, folder: f.id }).then(function (r) {
-          if (!r.ok) { failed('Could not move ' + label, r.error); return; }
-          refreshRows();
-        });
-      }, { disabled: f.id === inFolder });
-    });
+    // PLAN_177 decision 5 — while Unraid's own padlock is locked, dragging a
+    // stack is already refused (sortLocked/applySortLock, above), so moving
+    // one into a folder from the menu would offer something the lock is
+    // meant to stop. sortLocked is declared with var further down in this
+    // same scope, so it is hoisted; a menu is only ever built after load,
+    // once it has a real value.
+    if (!sortLocked) {
+      // The section shows even with no folders yet — "New folder" is what it is
+      // for at that point, and it was the one moment it used to be missing.
+      menuSeparator('Move to folder');
+      FOLDERS.forEach(function (f) {
+        menuItem(f.name, f.id === inFolder ? 'check-square-o' : 'folder-o', function () {
+          call('folder-assign', { name: name, folder: f.id }).then(function (r) {
+            if (!r.ok) { failed('Could not move ' + label, r.error); return; }
+            refreshRows();
+          });
+        }, { disabled: f.id === inFolder });
+      });
 
-    // Creating a folder and filing this stack into it as one gesture, which is
-    // the whole reason for asking from here rather than pressing New folder on
-    // the toolbar and then coming back to move the stack.
-    menuItem('New folder…', 'plus', function () {
-      askNewFolder(function (id, shown) {
-        // Redrawn either way: the folder exists from here on, so it belongs on
-        // the page whether or not the stack made it inside.
-        call('folder-assign', { name: name, folder: id }).then(function (r) {
-          if (!r.ok) {
-            failed('"' + shown + '" was created, but ' + label + ' could not be moved into it', r.error);
-          }
-          refreshRows();
+      // Creating a folder and filing this stack into it as one gesture, which is
+      // the whole reason for asking from here rather than pressing New folder on
+      // the toolbar and then coming back to move the stack.
+      menuItem('New folder…', 'plus', function () {
+        askNewFolder(function (id, shown) {
+          // Redrawn either way: the folder exists from here on, so it belongs on
+          // the page whether or not the stack made it inside.
+          call('folder-assign', { name: name, folder: id }).then(function (r) {
+            if (!r.ok) {
+              failed('"' + shown + '" was created, but ' + label + ' could not be moved into it', r.error);
+            }
+            refreshRows();
+          });
         });
       });
-    });
 
-    if (inFolder) {
-      menuItem('Remove from folder', 'level-up', function () {
-        call('folder-assign', { name: name, folder: '' }).then(function (r) {
-          if (!r.ok) { failed('Could not move ' + label, r.error); return; }
-          refreshRows();
+      if (inFolder) {
+        menuItem('Remove from folder', 'level-up', function () {
+          call('folder-assign', { name: name, folder: '' }).then(function (r) {
+            if (!r.ok) { failed('Could not move ' + label, r.error); return; }
+            refreshRows();
+          });
         });
-      });
+      }
+    } else {
+      // Nothing went into the second column, so it goes rather than leaving
+      // an empty, bordered strip beside the menu.
+      menuCol2.remove();
+      menuItems.classList.remove('staxx-menu-items--split');
     }
 
     // Back to the first column: everything from here down carries on beneath
@@ -31311,6 +31347,12 @@
     menuItem('Stop', 'stop', function () {
       run(stack, 'down', afterRun('down', stack, service), service);
     }, { disabled: !CAN_RUN || !up });
+
+    // PLAN_177 — rebuilds just this one container from the file as it stands
+    // now; the stack menu's own Recreate does every service, this does one.
+    menuItem('Recreate', 'repeat', function () {
+      run(stack, 'recreate', afterRun('recreate', stack, service), service);
+    }, { disabled: !CAN_RUN, hint: why || 'Rebuilds this one container from the file as it stands now.' });
 
     // Read once, up here, so both this item's hint and the image-gated items
     // further down share the one pill reading.
