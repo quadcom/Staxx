@@ -1,0 +1,23 @@
+# StaXX — every gate that runs without PHP. Used by release.yml on every push
+# and by publish.yml before anything is built, so the two can never check
+# different things. Copyright 2026, StaXX contributors. GPL-2.0.
+name: Check
+description: Syntax-check every browser script and run every local suite and the schema self-test.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v5
+      with:
+        node-version: '24'
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.x'
+    - name: Install schema test dependencies
+      shell: bash
+      run: pip install pyyaml jsonschema
+    # Every check this checkout has, found by listing rather than naming:
+    # the set differs between branches, and a named list fails the gate on
+    # a branch that lacks one of them.
+    - name: Check
+      shell: bash
+      run: node tests/run-local.js

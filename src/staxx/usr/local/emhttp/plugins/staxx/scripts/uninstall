@@ -1,0 +1,32 @@
+#!/bin/bash
+# StaXX — the removal steps both routes share: the manifest's removal block
+# and dev-install.sh's --remove/--purge branch run this same script, so
+# neither can drift from the other. Called with `bash`, never relied on to be
+# executable itself. Runs before the plugin folder and the settings folder are
+# deleted — the Hub sign-out below reads the marker from the settings folder,
+# so it must go first.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+# Removes only a compose StaXX itself installed — one Compose Manager or the
+# user put there is left alone. Run before the plugin folder is deleted, since
+# this script (and ensure-compose itself) live inside it.
+bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose --remove 2>/dev/null || true
+
+# Unraid's cron builder concatenates every *.cron file under a plugin's own
+# folder on the flash drive into root's crontab, so leaving ours behind keeps
+# the server scheduling passes whose scripts have just been deleted.
+rm -f "/boot/config/plugins/staxx/staxx.cron"
+if [[ -x /usr/local/sbin/update_cron ]]; then /usr/local/sbin/update_cron || true; fi
+
+# Only ever undo a sign-in this plugin performed — never an administrator's own
+# Docker Hub session from outside StaXX. timeout, not a bare docker logout: a
+# wedged Docker daemon must not hang a plugin removal.
+if [[ -f "/boot/config/plugins/staxx/hub_login" ]]; then
+  timeout -k 2 10 docker logout >/dev/null 2>&1 || true
+  rm -f "/boot/config/plugins/staxx/hub_login"
+fi
+
+rm -rf "/tmp/staxx"   # job logs, stats snapshots, icon cache — all regenerate

@@ -8,9 +8,7 @@
 # on Windows — the package must carry Unix permissions and ownership.
 #
 # Usage:
-#   ./pkg_build.sh                     build with today's date as the version
-#   ./pkg_build.sh 2026.08.09          build a specific version
-#   ./pkg_build.sh 2026.08.09 --update-plg   ...and stamp it into the .plg
+#   ./pkg_build.sh <version> [--update-plg]    e.g. ./pkg_build.sh 00.05.00
 #
 # Copyright 2026, StaXX contributors. GPL-2.0.
 
@@ -25,7 +23,8 @@ SRC_DIR="${REPO_ROOT}/src/${NAME}"
 OUT_DIR="${REPO_ROOT}/build"
 PLG="${REPO_ROOT}/${NAME}.plg"
 
-VERSION="${1:-$(date +%Y.%m.%d)}"
+VERSION="${1:-}"
+[[ -n "${VERSION}" ]] || { echo "usage: ./pkg_build.sh <version> [--update-plg]    e.g. ./pkg_build.sh 00.05.00" >&2; exit 1; }
 UPDATE_PLG="${2:-}"
 
 PKG_NAME="${NAME}-${VERSION}-${ARCH}-${BUILD}"

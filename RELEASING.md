@@ -305,12 +305,13 @@ padding should make that gate unreachable; it is there for the day something els
 
 *Moved here from `CLAUDE.md` on 2026-09-17; it was written there on 2026-09-04.*
 
-**What the deploy route cannot prove**, and so is worth an occasional real install: the manifest's
-own install and removal scripts. `dev-install.sh` mirrors the parts that matter day to day — seeding
-the config, running `apply_settings`, writing the registration marker — but the legacy
-`stack.manager` → `staxx` settings migration, the older-package cleanup, and the whole removal path
-only ever run through a genuine plugin install. The migration is the one that touches somebody's
-existing settings, so it is the one worth actually exercising rather than reasoning about.
+**What the deploy route cannot prove**, and so is worth an occasional real install: the package step
+itself. Both routes now run the same `scripts/postinstall` and `scripts/uninstall` — the legacy
+`stack.manager` → `staxx` settings migration, the update-setting tidy-up, the Hub sign-out and the
+rest install and remove identically either way. What only a genuine plugin install exercises is
+`upgradepkg` and `removepkg`, the older-package cleanup, and the Plugin Manager's own handling of the
+manifest. `dev-install.sh` writing the registration marker is dev-only bookkeeping around the same
+shared scripts, not a second copy of what they do.
 
 **Measured 2026-09-04, both paths clean on Adrian's box** — but one trap: `dev-install.sh` writes an
 empty *file* at `/var/log/plugins/staxx.plg` as its registration marker, where Unraid keeps a
