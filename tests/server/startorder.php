@@ -175,6 +175,52 @@ ok('the moved stack takes the folder\'s old place in root',
    $start['root'] === ['stack:zzsoheld', 'stack:zzsoloose1', 'stack:zzsoloose2'],
    implode(',', $start['root']));
 
+/* ------------------------------ Stacks-page folder icons (PLAN_183 §8) -- */
+
+require_once '/usr/local/emhttp/plugins/staxx/include/Dashboard.php';
+
+$iconDir = staxx_dash_icons_dir();
+@mkdir($iconDir, 0755, true);
+foreach (['zzso-a.png', 'zzso-orphan.png'] as $f) file_put_contents($iconDir.'/'.$f, 'x');
+mkdir($root.'/zzsoI', 0755, true);
+staxx_scan_stacks_reset();
+
+$err = '';
+ok('set a folder icon', staxx_folder_set_icon('zzsoI', 'zzso-a.png', $err), $err);
+ok('a folder that does not exist takes no icon', !staxx_folder_set_icon('zzsoNoSuch', 'zzso-a.png', $err) && $err !== '', $err);
+ok('load returns the icon and version 4',
+   (staxx_folders_load(true)['icons']['zzsoI'] ?? '') === 'zzso-a.png' && staxx_folders_load()['version'] === 4);
+
+$err = '';
+staxx_folder_collapse('zzsoI', true, $err);
+ok('an unrelated save keeps the icon', (staxx_folders_load(true)['icons']['zzsoI'] ?? '') === 'zzso-a.png');
+
+staxx_dash_icons_prune(['items' => []]);
+ok('pruning keeps a file only folders.json references', is_file($iconDir.'/zzso-a.png'));
+ok('pruning deletes a file nothing references', !is_file($iconDir.'/zzso-orphan.png'));
+
+$err = '';
+ok('rename the folder', staxx_folder_rename('zzsoI', 'zzsoI2', $err), $err);
+$icons = staxx_folders_load(true)['icons'];
+ok('the icon follows a rename', ($icons['zzsoI2'] ?? '') === 'zzso-a.png' && !isset($icons['zzsoI']), json_encode($icons));
+
+$err = '';
+ok('delete the folder', staxx_folder_delete('zzsoI2', $err), $err);
+ok('the icon goes with the folder', (staxx_folders_load(true)['icons'] ?? []) === []);
+
+$err = '';
+mkdir($root.'/zzsoI3', 0755, true);
+staxx_scan_stacks_reset();
+staxx_folder_set_icon('zzsoI3', 'zzso-a.png', $err);
+ok('an empty name removes the icon',
+   staxx_folder_set_icon('zzsoI3', '', $err) && (staxx_folders_load(true)['icons'] ?? []) === [], $err);
+
+// An older version 3 file has no `icons` key and loads as "no icons", the rest untouched.
+file_put_contents(staxx_folders_file(), json_encode(['version' => 3, 'collapsed' => ['zzsoI3' => true]]));
+$old = staxx_folders_load(true);
+ok('a version 3 file loads with no icons and its collapsed flags intact',
+   $old['icons'] === [] && ($old['collapsed']['zzsoI3'] ?? false) === true && $old['version'] === 4);
+
 @exec('rm -rf '.escapeshellarg(dirname($root)));
 
 echo $fails === 0 ? "\nAll good.\n" : "\n$fails case(s) failed.\n";

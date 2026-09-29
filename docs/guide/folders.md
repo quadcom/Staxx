@@ -55,6 +55,20 @@ first.
 The same naming rules above apply. Every stack inside moves with it, and nothing about how they run
 changes.
 
+## Choosing a folder icon
+
+![The Stacks page with the DEV-TESTING folder showing a picture in place of its folder symbol, and its menu open listing Folder icon… and Remove icon among the folder actions](../images/guide/folders-folder-icon.png)
+
+1. Open the folder's own menu.
+2. Choose **Folder icon…**.
+3. Pick a picture in the icon picker. Its tabs are covered in [the Dashboard tile editor](dashboard-tile.md).
+4. Press **Use this icon**.
+
+The picture appears to the left of the folder's name.
+
+To go back to the plain folder, open the folder's menu and choose **Remove icon**. It is shown only
+while the folder has an icon.
+
 ## Folder icons
 
 A collapsed folder's own row carries a picture for every app inside it:
@@ -81,7 +95,7 @@ Click it to go to the editor, where you can fix the problem.
 
 ## Running everything in a folder
 
-![The folder menu: Start everything, Stop everything, Check this folder, Update this folder, Rename folder, Delay and Delete folder](../images/guide/the-stack-list-folder-menu.png)
+![The folder menu: Start everything, Stop everything, Check this folder, Update this folder, Rename folder, Folder icon…, Remove icon, Delay and Delete folder](../images/guide/the-stack-list-folder-menu.png)
 
 Open the folder's own menu:
 
@@ -91,6 +105,8 @@ Open the folder's own menu:
 | Stop everything | Stops every stack in the folder. |
 | Check this folder | Checks every image in the folder for updates. |
 | Update this folder | Installs every update waiting in the folder. See [updating everything at once](updates.md). |
+| Folder icon… | Opens the icon picker so you can put a picture beside the folder's name. |
+| Remove icon | Puts the plain folder back. Shown only when the folder has an icon. |
 
 Each stack runs its own outcome, and its row shows its own result. One stack failing to start does
 not stop the others.

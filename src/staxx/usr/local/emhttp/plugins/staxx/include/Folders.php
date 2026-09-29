@@ -52,7 +52,9 @@ function staxx_folders_file(): string {
  * Shape:
  *   version    int
  *   collapsed  map of folder name => true
- *   start      the boot/display order block — see staxx_start_defaults()
+ *   icons      map of folder name => file name under config/icons/dash/
+ *              (the Stacks-page folder icon; VERSION 4)
+ *   start     the boot/display order block — see staxx_start_defaults()
  *
  * Only the collapsed ones are listed, so a folder nobody has touched needs no
  * entry and deleting this file loses nothing but which folders were shut.
@@ -79,7 +81,7 @@ function staxx_folders_load(bool $fresh = false): array {
   static $cache = null;
   if ($cache !== null && !$fresh) return $cache;
 
-  $empty = ['version' => 3, 'collapsed' => [], 'start' => staxx_start_defaults()];
+  $empty = ['version' => 4, 'collapsed' => [], 'icons' => [], 'start' => staxx_start_defaults()];
 
   $file = staxx_folders_file();
   if ($file === '' || !is_file($file)) return $cache = $empty;
@@ -102,9 +104,16 @@ function staxx_folders_load(bool $fresh = false): array {
     if (is_string($name) && $on) $collapsed[$name] = true;
   }
 
+  // A version 3 file has no `icons` key and loads as "no icons".
+  $icons = [];
+  foreach ((array)($data['icons'] ?? []) as $name => $file) {
+    if (is_string($name) && $name !== '' && is_string($file) && $file !== '') $icons[$name] = $file;
+  }
+
   return $cache = [
-    'version'   => 3,
+    'version'   => 4,
     'collapsed' => $collapsed,
+    'icons'     => $icons,
     'start'     => staxx_start_normalise($data['start'] ?? []),
   ];
 }
@@ -599,6 +608,10 @@ function staxx_folder_rename(string $from, string $to, string &$error): bool {
       unset($data['collapsed'][$from]);
       $data['collapsed'][$to] = true;
     }
+    if (isset($data['icons'][$from])) {
+      $data['icons'][$to] = $data['icons'][$from];
+      unset($data['icons'][$from]);
+    }
 
     $start = $data['start'];
     $idx = array_search($from, $start['folders'], true);
@@ -692,6 +705,7 @@ function staxx_folder_delete(string $name, string &$error): bool {
       $idx = array_search($name, $start['folders'], true);
       if ($idx !== false) array_splice($start['folders'], $idx, 1);
       unset($data['collapsed'][$name]);
+      unset($data['icons'][$name]);
 
       // The folder's own spot in the top-level order is taken by the stacks
       // it held, in the order they just left it — an empty folder simply
@@ -851,6 +865,37 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
 }
 
 /**
+ * Set or clear a folder's Stacks-page icon. $icon is a bare file name already
+ * in config/icons/dash/ (checked by the caller, staxx_dash_clean_icon());
+ * '' removes the choice.
+ */
+function staxx_folder_set_icon(string $name, string $icon, string &$error): bool {
+  $error = '';
+  if (!staxx_folder_valid_name($name) || !is_dir(staxx_stack_root().'/'.$name)) {
+    $error = 'No such folder.';
+    return false;
+  }
+
+  return staxx_folders_update(function (array $data) use ($name, $icon): array {
+    if ($icon === '') unset($data['icons'][$name]);
+    else $data['icons'][$name] = $icon;
+    return $data;
+  }, $error);
+}
+
+/**
+ * The address a folder's icon file is loaded from. Written out here rather than
+ * calling staxx_dash_icon_url(): Dashboard.php requires the table file that
+ * requires this one, and a require cycle is not worth one line of address. The
+ * file's mtime rides along so a replaced picture never serves stale.
+ */
+function staxx_folder_pic_url(string $file): string {
+  $cfg   = staxx_config_root();
+  $mtime = ($cfg !== '' && staxx_valid_filename($file)) ? (int)@filemtime($cfg.'/icons/dash/'.$file) : 0;
+  return '/plugins/'.STAXX_PLUGIN.'/include/icon.php?dash='.rawurlencode($file).'&v='.$mtime;
+}
+
+/**
  * Arrange stacks into their folders for rendering.
  *
  * Returns a flat list of rows in display order, because that is what a table
@@ -909,6 +954,7 @@ function staxx_folder_layout(array $stacks): array {
       'id'        => $folder,
       'name'      => $folder,
       'collapsed' => $collapsed,
+      'icon'      => (string)($data['icons'][$folder] ?? ''),
       'count'     => count($members),
       'running'   => $running,
     ];

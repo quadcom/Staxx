@@ -35,3 +35,9 @@ name. Without the tail index a moved stack reads as stopped until it is recreate
 
 A stack's name is its directory name — `jellyfin`, the leaf of `Media/jellyfin` — and there is no
 display-name override.
+
+`folders.json` is version 4. Beside `collapsed` and `start` it carries a top-level `icons` map of
+folder name to a file in `config/icons/dash/`. Renaming a folder moves its entry, deleting one drops
+it, and a version 3 file loads as "no icons". The Dashboard tile's layout is `dashboard.json`, in
+the same `config/` folder. Icon files in `config/icons/dash/` are pruned on every Dashboard save
+unless `dashboard.json` or `folders.json` still names them (the picker's `.cache/` is left alone).

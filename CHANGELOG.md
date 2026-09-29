@@ -6,6 +6,9 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- StaXX now has its own tile on Unraid's Dashboard. Open Settings, General, Edit dashboard tile… to arrange it: drag stacks onto a grid of up to 8 columns, group them into folders, and give each folder an icon from four online icon sets, a plain built-in symbol, your own picture, or one that cycles through the icons of the stacks inside. On the Dashboard, click a folder to open it, right-click a stack or folder to start, stop or restart it, and click a stack for a small window with its CPU, memory and network graphs. The icon sets are hernandito's animated folder icons (used with his permission), ground7's animated icons (MIT), Dashboard Icons by homarr-labs (Apache-2.0) and Tabler Icons (MIT).
+- Folders on the Stacks page can have an icon too: choose Folder icon… from a folder's menu to pick one with the same picker, or Remove icon to go back to the plain folder.
+- Settings has a new About tab showing the installed StaXX version, which Docker Compose is running and whether StaXX installed it, and credits for the work StaXX uses.
 - The CPU column now shows each stack's share of the whole processor, from 0 to 100%, instead of counting each processor thread as 100%.
 - The little graphs in the CPU, Memory, Network and GPU columns now each have their own colour.
 - A stack's row menu and a container's row menu now have Recreate, which rebuilds the containers from the file. The orange restart-pending chip's window has a Recreate now button that rebuilds only the services that no longer match. While Unraid's padlock is locked, the stack menu no longer offers moving the stack into a folder.

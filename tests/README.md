@@ -120,6 +120,7 @@ Four rules run through the whole set:
 | `compose_ensure` | Whether StaXX installs its own Docker Compose only when none already answers, verifies it against the pinned checksum, and removes only what it installed | opt-in live case `STAXX_LIVE_COMPOSE=1` |
 | `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the compose-profile flags, the job-log tailer, the log follower and the shell — no real session is ever opened | `STORE_ROOT` at `/tmp`; `SHELL_ENABLED` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file), from `STAXX_SHELL_ENABLED` (default `true`) |
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
+| `dashboard` | PLAN_183 — dashboard.json's own normalising rules (grid limits, cell collisions, a project kept once and dropped once gone, an icon field coerced back to `auto`), the icon picker's address allowlist refusing a bad prefix or a `..` path with no fetch ever attempted, an "SVG" that is really HTML refused, and the save/prune round trip (needs docker compose reachable; skips that part otherwise) | `STORE_ROOT` at `/tmp` |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`; `IMAGE_LOOKUP=false` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
 | `devices` | The two compose readers behind the device badge and the GPU column: device paths, reservations, runtime and gpus keys | — |
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
@@ -154,7 +155,7 @@ Four rules run through the whole set:
 | `review` | The review lock, the job-runner refusal, and that a rename or a folder move keeps the lock | `STORE_ROOT` at `/tmp` |
 | `rollback` | That a rollback target must be a version this service itself recorded, not merely digest-shaped | `STORE_ROOT` |
 | `settings` | The settings allowlist, validator and atomic writer, and how the two halves of the config layer together | backs up both config files |
-| `startorder` | The top level's own order — folders and loose stacks interleaved by `root`, both directly and through the layout — plus the refusals on save and what a folder rename or removal does to it | `STORE_ROOT` |
+| `startorder` | The top level's own order — folders and loose stacks interleaved by `root`, both directly and through the layout — plus the refusals on save and what a folder rename or removal does to it, and the Stacks-page folder icons (survive an unrelated save, follow a rename, go on delete, a version 3 file loads with none, pruning keeps a file only folders.json references) | `STORE_ROOT` |
 | `storage` | What locations the store could move to | — |
 | `storage_alert` | PLAN_181 Part D — the pure alert rule over (percent, clutter bytes, oldest days, thresholds), and the clutter-since merge (an id keeps its remembered date, a new one is stamped today, one no longer in the clutter is dropped), over in-memory lists only | — |
 | `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |

@@ -15,8 +15,15 @@
  * preview — a picture sitting loose anywhere else in the stack's own folder
  * tree, addressed relative to the stack's directory rather than to .staxx.
  *
- * What counts as safe to serve is decided once, in staxx_icon_serve_path()
- * and staxx_icon_serve_tree_path() (include/Icons.php), so this page and
+ * `dash=<file>` (PLAN_183) serves a picked or uploaded Dashboard-tile icon
+ * instead — a bare file name inside the store's own config/icons/dash/
+ * folder, never a stack's. `stack`/`file`/`path` and `dash` are mutually
+ * exclusive; `dash` is tried first only because it is checked first below,
+ * not because one takes precedence over the other in any meaningful sense.
+ *
+ * What counts as safe to serve is decided once, in staxx_icon_serve_path(),
+ * staxx_icon_serve_tree_path() (include/Icons.php) and
+ * staxx_dash_icon_serve_path() (include/Dashboard.php), so this page and
  * its own test suite can never quietly disagree about it.
  *
  * This program is free software; you can redistribute it and/or
@@ -26,6 +33,7 @@
 ?>
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Dashboard.php';
 
 function staxx_icon_serve_fail(): void {
   http_response_code(404);
@@ -35,10 +43,14 @@ function staxx_icon_serve_fail(): void {
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') staxx_icon_serve_fail();
 
-$stack = (string)($_GET['stack'] ?? '');
-$real  = isset($_GET['path']) && $_GET['path'] !== ''
-  ? staxx_icon_serve_tree_path($stack, (string)$_GET['path'])
-  : staxx_icon_serve_path($stack, (string)($_GET['file'] ?? ''));
+if (isset($_GET['dash']) && $_GET['dash'] !== '') {
+  $real = staxx_dash_icon_serve_path((string)$_GET['dash']);
+} else {
+  $stack = (string)($_GET['stack'] ?? '');
+  $real  = isset($_GET['path']) && $_GET['path'] !== ''
+    ? staxx_icon_serve_tree_path($stack, (string)$_GET['path'])
+    : staxx_icon_serve_path($stack, (string)($_GET['file'] ?? ''));
+}
 if ($real === '') staxx_icon_serve_fail();
 
 $types = [

@@ -53,6 +53,8 @@ This guide is written in English only.
   and a local DNS name in Pi-hole, and what the DNS mark on the stack list means.
 - **[Folders](folders.md)** — grouping stacks on the list: making a folder, moving a stack in or
   out, running everything inside one at once, renaming, and deleting.
+- **[Dashboard tile](dashboard-tile.md)** — putting a StaXX tile on Unraid's Dashboard: arranging
+  folders and stacks on it, choosing folder icons, and using it.
 - **[Create a new stack](making-a-stack.md)** — starting a stack with nothing but a name: the
   skeleton you are given, the settings offered as comments, every refusal and why, and the single
   folder that comes out of it.
@@ -74,7 +76,7 @@ This guide is written in English only.
 - **[Recovery and redundancy](recovery-and-redundancy.md)** — undoing your own edits or an app's own
   update from the stack editor's History and Versions tabs, and bringing every stack back if the
   data store is lost.
-- **[Settings](settings.md)** — how to open the settings panel, what its six tabs are, and how to
+- **[Settings](settings.md)** — how to open the settings panel, what its seven tabs are, and how to
   save or cancel a change.
 - **[General tab](settings-general.md)** — where StaXX appears, installing apps, and switching
   container shells and file browsing on or off.
@@ -88,6 +90,8 @@ This guide is written in English only.
   StaXXCrypt, and connecting to Nginx Proxy Manager and Pi-hole.
 - **[Self-test tab](settings-self-test.md)** — the health check on the Settings panel, and what its
   backup line does and does not tell you
+- **[About tab](settings-about.md)** — the version of StaXX and Docker Compose you are running, the
+  work by others StaXX uses, and the services it contacts
 
 <!-- pages:end -->
 

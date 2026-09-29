@@ -204,6 +204,23 @@ through a single endpoint. `src/staxx/` mirrors the install paths on the server;
 
 GPL-2.0, matching `unraid/webgui`.
 
+## Credits
+
+StaXX uses work by these people and projects. Settings, About lists the same credits inside StaXX.
+
+- [hernandito's animated folder icons](https://github.com/hernandito/unRAID-Docker-Folder-Animated-Icons---Alternate-Colors):
+  offered in the Dashboard tile's icon picker, used with the author's permission. StaXX ships none
+  of these files; your server downloads the one you pick.
+- [ground7's animated icons](https://github.com/ground7/unraid-animated-svgs), MIT licence,
+  copyright 2020 Josiah Hutchinson.
+- [Dashboard Icons](https://github.com/homarr-labs/dashboard-icons) by homarr-labs, Apache-2.0.
+  The logos remain their owners' trademarks.
+- [Tabler Icons](https://github.com/tabler/tabler-icons) by Paweł Kuna, MIT licence.
+- [selfh.st icons](https://selfh.st/icons/), CC-BY-4.0, for the app icons on stacks.
+- [Docker Compose](https://github.com/docker/compose), Apache-2.0, Docker Inc., which StaXX
+  installs when a server has none.
+- [Community Applications](https://ca.unraid.net/), whose app feed and images the importer reads.
+
 ## Prior art
 
 Studied while scoping this. None of their code is used here.

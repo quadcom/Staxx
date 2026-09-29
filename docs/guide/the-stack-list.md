@@ -238,7 +238,7 @@ Autostart and Delay work the same way here as on the stack menu, but apply to th
 
 ![A collapsed folder row named Media, reading 16 stacks and 12 running, with the row of small app pictures for everything inside it ringed](../images/guide/the-stack-list-folder-row.png)
 
-![The folder menu open: Start everything, Stop everything, Check this folder, Update this folder, Rename folder, Delay and Delete folder](../images/guide/the-stack-list-folder-menu.png)
+![The folder menu open: Start everything, Stop everything, Check this folder, Update this folder, Rename folder, Folder icon…, Remove icon, Delay and Delete folder](../images/guide/the-stack-list-folder-menu.png)
 A folder row shows totals for everything filed inside it in place of its own Services, State and
 Address, plus small icons for every stack it holds.
 
@@ -251,6 +251,8 @@ Click its picture to open the folder menu.
 | Check this folder | Checks every image in the folder for updates. |
 | Update this folder | Installs every update waiting in the folder. |
 | Rename folder | Renames it in place. |
+| Folder icon… | Opens the icon picker so you can put a picture beside the folder's name. See [Folders](folders.md). |
+| Remove icon | Puts the plain folder back. Shown only when the folder has an icon. |
 | Delay | How long to wait before the next thing starts. |
 | Delete folder | Deletes the folder. Stacks inside are moved back to the top level first, not deleted. |
 

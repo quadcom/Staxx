@@ -1948,12 +1948,17 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
                         data-menu="folder"
                         data-folder="<?= htmlspecialchars($row['id']) ?>"
                         data-label="<?= htmlspecialchars($row['name']) ?>"
+                        data-folder-icon="<?= htmlspecialchars($row['icon'] ?? '') ?>"
                         data-boot="<?= $fMode ?>"
                         data-boot-wait="<?= $fWait ?>"
                         data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
                         aria-haspopup="menu" aria-expanded="false"
                         title="<?= _('Folder actions') ?>">
+                  <? if (($row['icon'] ?? '') !== ''): ?>
+                  <img class="staxx-folder-pic" src="<?= htmlspecialchars(staxx_folder_pic_url($row['icon'])) ?>" alt="">
+                  <? else: ?>
                   <i class="fa fa-folder<?= $row['collapsed'] ? '' : '-open' ?>"></i>
+                  <? endif ?>
                 </button>
                 <span class="staxx-spinner"><i class="fa fa-refresh fa-spin"></i></span>
                 <span class="staxx-dot<?= $row['running'] ? ' staxx-dot--up' : '' ?>"></span>

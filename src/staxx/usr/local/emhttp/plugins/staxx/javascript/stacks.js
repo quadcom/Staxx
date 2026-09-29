@@ -27983,7 +27983,7 @@
   // tab strip in StacksPage.php lists its buttons. Kept as plain keys rather
   // than a {key, label} pair, because the labels already live on the buttons
   // themselves — nothing here needs to know the words.
-  var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries', 'selftest'];
+  var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries', 'selftest', 'about'];
 
   // Second live-tuned round, 2026-09-03: a handful of rows share one titled
   // box instead of each getting its own. The rows themselves stay in
@@ -29217,6 +29217,48 @@
     // #settings hash all end up calling setSettingsTab() rather than each
     // needing its own copy of this line.
     if (tab === 'selftest') runSelfTest();
+    if (tab === 'about') loadAbout();
+  }
+
+  // Settings → About: version, Docker Compose and credits, all from the
+  // server's 'about' action. Every value is escaped before it is spliced in.
+  function loadAbout() {
+    var pane = document.getElementById('staxx-about-pane');
+    if (!pane) return;
+    function section(key, title, body) {
+      return '<div class="staxx-field" data-key="' + key + '"><span>' + esc(title) + '</span>' + body + '</div>';
+    }
+    function hint(text) { return '<span class="staxx-hint">' + esc(text) + '</span>'; }
+    function fact(text) { return '<div class="staxx-about-fact">' + esc(text) + '</div>'; }
+    pane.innerHTML = section('about-loading', 'About', hint('Reading…'));
+    call('about', {}).then(function (res) {
+      pane = document.getElementById('staxx-about-pane');
+      if (!pane) return;
+      if (!res.ok) {
+        pane.innerHTML = section('about-loading', 'About', hint('Could not read the details: ' + (res.error || 'no reply.')));
+        return;
+      }
+      var cv = res.compose || {};
+      var composeText = !cv.version
+        ? 'Docker Compose was not found on this server.'
+        : 'Version ' + cv.version + (cv.source === 'staxx' ? ', installed by StaXX.'
+            : cv.source === 'found' ? ', already on this server.' : '.');
+      var html = section('about-staxx', 'StaXX', fact(res.version
+        ? 'Version ' + res.version + '.'
+        : 'This is a development copy, not installed from a manifest.'));
+      html += section('about-compose', 'Docker Compose', fact(composeText));
+      html += section('about-credits', 'Credits',
+        '<span class="staxx-hint">' + esc('StaXX uses the following work by others.') + '</span>' +
+        '<ul class="staxx-about-list">' + (res.credits || []).map(function (c) {
+          return '<li><a class="staxx-about-name" href="' + esc(c.url) + '" target="_blank" rel="noopener">' + esc(c.name) +
+            '</a> — ' + esc(c.use) + '<span class="staxx-about-licence">' + esc(c.licence) + '</span></li>';
+        }).join('') + '</ul>');
+      html += section('about-services', 'Services StaXX contacts',
+        '<ul class="staxx-about-list">' + (res.services || []).map(function (s) {
+          return '<li><b class="staxx-about-name">' + esc(s.name) + '</b> — ' + esc(s.use) + '</li>';
+        }).join('') + '</ul>');
+      pane.innerHTML = html;
+    });
   }
 
   function openSettings(focusId) {
@@ -29247,6 +29289,10 @@
             '<button type="button" class="staxx-btn staxx-selftest-copy" id="staxx-selftest-copy">Copy</button>' +
           '</div>';
         }
+        // Read-only: no setting to read back. loadAbout() fills it when the tab is shown.
+        if (tab === 'about') {
+          return '<div class="staxx-settings-pane" data-pane="about" id="staxx-about-pane"></div>';
+        }
         // A blocked row only draws its box once, at the block's first row in
         // this tab — every later row of the same block draws nothing.
         var seenBlocks = {};
@@ -29268,7 +29314,20 @@
         // belongs beside the icon/description fields it fills in, and the
         // archive list is a read-only view of what removeStack() has kept,
         // so it belongs beside the store it is kept in.
-        if (tab === 'icons') {
+        if (tab === 'general') {
+          // PLAN_183 section 1: a plain button, not a setting — dash-editor.js
+          // owns everything past this click, so this section carries nothing
+          // for saveSettings() to read back.
+          rowsHtml +=
+            '<div class="staxx-field" data-key="dashboard-tile">' +
+              '<span>Dashboard tile</span>' +
+              '<button type="button" class="staxx-btn" id="staxx-edit-dashboard-tile">' +
+              '<i class="fa fa-th-large"></i> Edit dashboard tile…</button>' +
+              '<span class="staxx-hint">Puts a StaXX tile on Unraid\'s Dashboard. Arrange folders ' +
+              'and stacks on it, each with its own icon. Only what you place on it shows on the ' +
+              'tile.</span>' +
+            '</div>';
+        } else if (tab === 'icons') {
           rowsHtml +=
             '<div class="staxx-field" data-key="scaffold-sweep">' +
               '<span>StaXX fields</span>' +
@@ -29517,6 +29576,10 @@
       }
       if (event.target.closest('#staxx-scaffold-sweep')) {
         runScaffoldSweep();
+        return;
+      }
+      if (event.target.closest('#staxx-edit-dashboard-tile')) {
+        if (window.staxxDashEditor) window.staxxDashEditor.open();
         return;
       }
       if (event.target.closest('#staxx-crypt-build')) {
@@ -31545,6 +31608,25 @@
         }
       });
     });
+    // A folder's picture. The picker is the Dashboard editor's own, opened on
+    // its own; the redraw carries the new icon in from the server's rows.
+    menuItem('Folder icon…', 'picture-o', function () {
+      if (!window.staxxDashEditor || !window.staxxDashEditor.pickIcon) return;
+      window.staxxDashEditor.pickIcon(function (picked) {
+        call('folder_icon', { name: id, icon: picked.icon }).then(function (r) {
+          if (!r.ok) { failed('Could not set the folder icon', r.error); return; }
+          refreshRows();
+        });
+      });
+    });
+    if (d.folderIcon) {
+      menuItem('Remove icon', 'times', function () {
+        call('folder_icon', { name: id, icon: '' }).then(function (r) {
+          if (!r.ok) { failed('Could not remove the folder icon', r.error); return; }
+          refreshRows();
+        });
+      });
+    }
     // No start-at-boot switch here — a folder has none of its own, only the
     // stacks and services inside it do.
     addBootWaitField(d, 'folder', id);
@@ -35338,6 +35420,44 @@
       editStack(wantStack, stackLabel(wantStack));
     } else {
       window.history.replaceState(null, '', location.pathname + location.search);
+    }
+  })();
+
+  // PLAN_183: the Dashboard tile's own three address markers — the tile
+  // header's own link (#dashboard-editor), and the statistics window's
+  // "Open in StaXX" and "Logs" foot buttons (#row= and #logs=). Each is
+  // dropped from the address once acted on, the same way #stack= above is,
+  // so a reload never replays it. dash-editor.js loads before this file (see
+  // StacksPage.php) specifically so window.staxxDashEditor already exists
+  // here; the guard below only protects a page where that file is missing.
+  (function () {
+    if (location.hash === '#dashboard-editor') {
+      window.history.replaceState(null, '', location.pathname + location.search);
+      if (window.staxxDashEditor) window.staxxDashEditor.open();
+      return;
+    }
+
+    var rowMatch = location.hash.match(/^#row=(.+)$/);
+    if (rowMatch) {
+      var wantRow = '';
+      try { wantRow = decodeURIComponent(rowMatch[1]); } catch (e) { wantRow = ''; }
+      window.history.replaceState(null, '', location.pathname + location.search);
+      var row = wantRow ? rowFor(wantRow) : null;
+      if (row) {
+        var folderId = row.dataset.inFolder;
+        var folderRow = folderId ? document.querySelector('[data-folder-row="' + folderId + '"]') : null;
+        if (folderRow && !isExpanded(folderRow)) toggleRow(folderRow);
+        row.scrollIntoView({ block: 'center' });
+      }
+      return;
+    }
+
+    var logMatch = location.hash.match(/^#logs=(.+)$/);
+    if (logMatch) {
+      var wantLog = '';
+      try { wantLog = decodeURIComponent(logMatch[1]); } catch (e) { wantLog = ''; }
+      window.history.replaceState(null, '', location.pathname + location.search);
+      if (wantLog && rowFor(wantLog)) editStack(wantLog, stackLabel(wantLog), null, '');
     }
   })();
 

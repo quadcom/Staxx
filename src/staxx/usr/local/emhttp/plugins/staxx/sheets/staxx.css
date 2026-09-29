@@ -11356,6 +11356,7 @@ dialog::backdrop {
 .staxx-settings--wide[data-tab="icons"] .staxx-settings-pane[data-pane="icons"],
 .staxx-settings--wide[data-tab="updates"] .staxx-settings-pane[data-pane="updates"],
 .staxx-settings--wide[data-tab="registries"] .staxx-settings-pane[data-pane="registries"],
+.staxx-settings--wide[data-tab="about"] .staxx-settings-pane[data-pane="about"],
 .staxx-settings--wide[data-tab="selftest"] .staxx-settings-pane[data-pane="selftest"] {
   display: block;
 }
@@ -11385,6 +11386,47 @@ dialog::backdrop {
   margin: 0;
   padding: 0 0.6rem;
   background-color: var(--background-color, #1c1c1c);
+}
+
+/* The field is a column, so a lone button would stretch the full width;
+ * this keeps it the size of its label, at the left. */
+.staxx-settings-pane > .staxx-field[data-key="dashboard-tile"] > .staxx-btn {
+  align-self: flex-start;
+}
+
+/* Settings → About: plain lists of credits and contacted services. */
+.staxx-settings-pane .staxx-about-list {
+  order: 2;
+  margin: 0.6rem 0 0;
+  padding-left: 1.8rem;
+  color: #fff;
+  font-size: 1.3rem;
+  line-height: 1.6;
+}
+.staxx-settings-pane .staxx-about-list li {
+  margin: 0 0 0.6rem;
+}
+.staxx-settings-pane .staxx-about-list .staxx-about-name {
+  font-weight: 700;
+}
+.staxx-settings-pane .staxx-about-list a.staxx-about-name {
+  color: var(--sm-accent);
+  text-decoration: none;
+}
+.staxx-settings-pane .staxx-about-list a.staxx-about-name:hover {
+  text-decoration: underline;
+}
+.staxx-settings-pane .staxx-about-list .staxx-about-licence {
+  display: block;
+  font-size: 1.1rem;
+  color: #b8b8b8;
+}
+/* A readable fact (version lines): white, not the grey a hint uses. */
+.staxx-settings-pane .staxx-about-fact {
+  order: 1;
+  margin: 0.6rem 0 0;
+  color: #fff;
+  font-size: 1.3rem;
 }
 
 /* PLAN_181 settings layout, Adrian 2026-09-25: "all settings can move above

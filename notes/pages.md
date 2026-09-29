@@ -20,3 +20,15 @@ setting is on but the header-menu setting is off. Both markers are **projections
 `/update.php` after a settings save). The indirection exists because `Cond` runs constantly and
 parsing an ini file there — or quoting a config lookup inside an ini header — would be wasteful and
 fragile.
+
+**The Dashboard tile** is `StaXXDashboard.page` (`Menu="Dashboard:0"`). It has **no `Title`**: a
+Title makes Unraid draw a tab bar across the whole Dashboard. Like gpustat and dynamix's DashStats
+it adds one bare `<tbody title=…>` to `$mytiles['staxx']['column2']`. Its header must contain
+`.tile-header-right > .tile-header-right-controls`, because DashStats' `addProperties()` appends its
+collapse chevron there and finds nothing to attach to otherwise. The tile's stylesheet and script
+carry `filemtime` like every other asset.
+
+The tile's editor (`dash-editor.js` and `dash-editor.css`) loads on the StaXX page ahead of
+`stacks.js` and exposes `window.staxxDashEditor` (`open()`, `pickIcon()`). `stacks.js` acts on three
+address markers: `#dashboard-editor` (open the editor), `#row=` (scroll to and highlight a stack's
+row) and `#logs=` (open a stack's logs).

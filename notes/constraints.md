@@ -51,5 +51,8 @@
   first, then the digest or ID, never `-f`, and check the image is actually gone before counting it.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
   invisible to us and change between releases. Every class used is `staxx-`-prefixed.
+- **`1rem` is 10px in the webGUI** (`html{font-size:62.5%}`), so a stylesheet written for 16px draws
+  everything at about 60%. On the Dashboard, Unraid's stock `button` style (uppercase, orange border)
+  must also be fully restated on every StaXX button state, or it shows through on hover and focus.
 - `staxx.plg` is fully populated — real author, real repo, real checksums. Nothing there guards
   against a premature publish any more, so that job now falls to judgement: cut a tagged release

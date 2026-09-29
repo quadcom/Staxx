@@ -66,6 +66,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Dashboard.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -2036,6 +2037,89 @@ switch ($action) {
     $file = staxx_icon_adopt_drop(staxx_stack_dir($name), $filename, $body, $error);
     if ($file === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'file' => $file]);
+
+  /* ---- PLAN_183: the Dashboard tile ----
+   *
+   * Five actions, none of which reuse the store guard above's $name (a
+   * dashboard layout is not one stack) — see notes/endpoint.md for why every
+   * action still lives in this one switch.
+   */
+
+  // ---- the tile's whole state: layout, resolved icon addresses, every
+  // stack's live facts, and the picker's own set summary. Polled every few
+  // seconds while the Dashboard is open (see Dashboard.php's own docblock
+  // for why this stays cheap). ----
+  case 'dash_state':
+    staxx_reply(staxx_dash_state());
+
+  // ---- save the whole layout; normalised and validated before it ever
+  // touches disk (staxx_dash_normalise_layout()) — never trusted as sent. ----
+  case 'dash_save':
+    $layout = staxx_dash_save_layout((string)($_POST['layout'] ?? ''), $error);
+    if ($layout === null) staxx_fail($error);
+    staxx_reply(['ok' => true, 'layout' => $layout]);
+
+  // ---- Settings → About (PLAN_183 section 9): installed version, the
+  // Docker Compose answering on the box, and the credits table. Read-only.
+  // staxx_compose() runs its version probe through staxx_sh() (the no-hang
+  // wrapper) and caches the answer; the marker file is the one ensure-compose
+  // leaves beside a copy it installed. ----
+  case 'about':
+    $aboutFacts   = staxx_manifest_facts();
+    $aboutCompose = staxx_compose();
+    $aboutList    = staxx_about_credits();
+    staxx_reply([
+      'ok'       => true,
+      'version'  => $aboutFacts['version'],
+      'compose'  => [
+        'version' => $aboutCompose['version'],
+        'source'  => !$aboutCompose['available'] ? 'missing'
+                     : (is_file('/usr/local/lib/docker/cli-plugins/docker-compose.staxx') ? 'staxx' : 'found'),
+      ],
+      'credits'  => $aboutList['credits'],
+      'services' => $aboutList['services'],
+    ]);
+
+  // ---- one icon set's cached listing, optionally narrowed to one of
+  // hernandito's own collections. ----
+  case 'dash_icons':
+    $set        = (string)($_POST['set'] ?? '');
+    $collection = (string)($_POST['collection'] ?? '');
+    $reply      = staxx_dash_icons_reply($set, $collection);
+    if (!($reply['ok'] ?? false)) staxx_fail((string)($reply['error'] ?? 'Unknown icon set.'));
+    staxx_reply($reply);
+
+  // ---- download one file the picker offered, and point a folder at the
+  // local copy from then on. ----
+  case 'dash_icon_pick':
+    $picked = staxx_dash_icon_pick((string)($_POST['set'] ?? ''), (string)($_POST['file'] ?? ''), $error);
+    if ($picked === null) staxx_fail($error);
+    staxx_reply(['ok' => true] + $picked);
+
+  // ---- a picture handed over as base64 text in this same urlencoded post
+  // — never multipart, which hangs on this box (see Icons.php's own
+  // icon-drop case for the same reasoning). ----
+  case 'dash_icon_upload':
+    $dashName = (string)($_POST['name'] ?? '');
+    $dashB64  = (string)($_POST['data'] ?? '');
+    $dashBody = $dashB64 === '' ? false : base64_decode($dashB64, true);
+    if ($dashName === '' || $dashBody === false) staxx_fail('Not a picture');
+    $uploaded = staxx_dash_icon_upload($dashName, $dashBody, $error);
+    if ($uploaded === null) staxx_fail($error);
+    staxx_reply(['ok' => true] + $uploaded);
+
+  // ---- a Stacks-page folder's icon: a file already in the dash icon folder
+  // (picked or uploaded through the actions above), or '' to remove it. ----
+  case 'folder_icon':
+    $fiName = (string)($_POST['name'] ?? '');
+    $fiIcon = trim((string)($_POST['icon'] ?? ''));
+    if ($fiIcon !== '' && (!staxx_valid_filename($fiIcon)
+        || !in_array($fiIcon, staxx_dash_icon_files_on_disk(), true))) {
+      staxx_fail('That icon is not on the box any more. Pick it again.');
+    }
+    if (!staxx_folder_set_icon($fiName, $fiIcon, $error)) staxx_fail($error);
+    staxx_reply(['ok' => true, 'icon' => $fiIcon,
+                 'url' => $fiIcon === '' ? '' : staxx_folder_pic_url($fiIcon)]);
 
   // ---- self-test: pure PHP, runs no commands, cannot hang ----
   case 'ping':

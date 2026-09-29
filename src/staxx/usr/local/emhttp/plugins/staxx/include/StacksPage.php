@@ -187,6 +187,14 @@ $healthOfferTag = staxx_asset('javascript/health-offer.js');
 $manageJsFile  = STAXX_ROOT.'/javascript/manage.js';
 $manageJsTag  = staxx_asset('javascript/manage.js');
 $manageCssTag = staxx_asset('sheets/manage.css');
+// PLAN_183 — the Dashboard tile editor's own script and stylesheet, built by
+// a separate agent in parallel with this file (same reasoning as the Manage
+// tab above): a bad edit there costs the editor window, not the rest of the
+// page. It must load before stacks.js, which reads window.staxxDashEditor to
+// act on the #dashboard-editor/#row=/#logs= address markers.
+$dashEditorFile = STAXX_ROOT.'/javascript/dash-editor.js';
+$dashEditorTag = staxx_asset('javascript/dash-editor.js');
+$dashEditorCssTag = staxx_asset('sheets/dash-editor.css');
 $cssTag  = staxx_asset('sheets/staxx.css');
 
 // Password managers ignore autocomplete="off" — that attribute only speaks to
@@ -206,6 +214,9 @@ $nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
      further down, for why it may not exist yet. A missing file 404s quietly;
      nothing here depends on it loading. -->
 <link rel="stylesheet" href="<?= $manageCssTag ?>">
+<!-- The Dashboard tile editor's own stylesheet (PLAN_183) — kept separate for
+     the same reason as manage.css above. A missing file 404s quietly. -->
+<link rel="stylesheet" href="<?= $dashEditorCssTag ?>">
 <!-- PLAN_103 addendum: the first-run dialog's own stylesheet, now needed
      here too — the recovery cards open the very same dialog rather than a
      second picker. See first-run.js's own gate for why it is safe to load
@@ -1591,6 +1602,7 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="updates"><?= _('Updates') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Integrations') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="selftest"><?= _('Self-test') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="about"><?= _('About') ?></button>
     </div>
 
     <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
@@ -1818,6 +1830,14 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
      Must come before stacks.js, which reads that global. -->
 <? if (is_file($firstRunJsFile)): ?>
 <script src="<?= staxx_asset('javascript/first-run.js') ?>"></script>
+<? endif; ?>
+<!-- PLAN_183 — the Dashboard tile editor, a separate file for the same
+     reason as the Manage tab above. Must come before stacks.js: it defines
+     window.staxxDashEditor, which stacks.js calls when the address carries
+     #dashboard-editor. Conditional because it may not exist yet while it is
+     still being written; a missing src would only be a 404. -->
+<? if (is_file($dashEditorFile)): ?>
+<script src="<?= $dashEditorTag ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>
 <!-- PLAN_165 §5/§6 — see the comment on $unraidTemplatesFile above. Loaded

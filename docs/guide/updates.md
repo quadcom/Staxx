@@ -16,7 +16,7 @@ A check runs on the schedule you set, and whenever you press **Check for updates
 
 ## Check cadence
 
-![The Updates tab: Check for image updates with how often and time of day, the Updates tick between Manual and Automatic, a greyed-out When to install box, and three Notify me switches](../images/guide/settings-image-updates.png)
+![The Updates tab: Check for image updates with how often and time of day, the Updates tick between Manual and Automatic, a greyed-out When to install box, and the Notifications ticks](../images/guide/settings-image-updates.png)
 
 A pass runs every hour and asks only the images that are due. [The Updates tab](settings-updates.md)
 sets how often StaXX gives every image a full look, whether due or not. How often one particular

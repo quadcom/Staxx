@@ -2,7 +2,9 @@
 
 <!-- index: 81 | where StaXX appears, installing apps, and switching container shells and file browsing on or off. -->
 
-![The General tab in full: the six tabs across the top, then Show StaXX in with its two small pictures, Docker menu with its two, Installs from the Apps page, and the Container access box holding Container shells and Container files side by side, each with its dropdown](../images/guide/settings-general-tab.png)
+![The General tab in full: the seven tabs across the top, then Show StaXX in with its two small pictures, Docker menu with its two, Installs from the Apps page, and the Container access box holding Container shells and Container files side by side, each with its dropdown, then the Dashboard tile box with its Edit dashboard tile… button](../images/guide/settings-general-tab.png)
+
+![The Dashboard tile box at the foot of the General tab, with its Edit dashboard tile… button and the line saying what it does](../images/guide/settings-general-dashboard-tile.png)
 
 
 | Setting | Choices | Default | What it does |
@@ -12,6 +14,7 @@
 | Installs from the Apps page | Bring them into StaXX / Ask first / Leave them to Unraid | Bring them into StaXX | Bring them in turns each app you install from Unraid's Apps page into a stack; Ask first stops to ask each time; Leave them to Unraid keeps Unraid's own install route. Nothing already installed changes either way. See [adding an app](installing-an-app.md). |
 | Container shells | Allow opening a shell / Do not allow shells | Allow opening a shell | With this on, you can open a command line inside a running container from its Manage tab. With it off, no container on this server can be opened that way from StaXX. |
 | Container files | Allow browsing a container's files / Do not allow file browsing | Follows Container shells, until set on its own | With this on, you can browse, open and edit a running container's files from its Manage tab, and rename, delete or create folders there. With it off, no container on this server can have its files browsed that way from StaXX. Until you change this setting yourself, it follows Container shells: turning shells off also turns files off. Set it once yourself and it stops following shells from then on. |
+| Dashboard tile | **Edit dashboard tile…** button | — | Opens the editor for StaXX's tile on Unraid's Dashboard. Arrange folders and stacks on it, each with its own icon. Only what you place on it shows on the tile. See [the Dashboard tile](dashboard-tile.md). |
 
 Container shells and Container files sit side by side in one box, **Container access**. See
 [the Manage tab](the-manage-tab.md) for where the shell and the file browser are used.

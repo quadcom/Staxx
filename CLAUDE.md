@@ -323,6 +323,7 @@ way, so read the note before arguing with a line.
 - **A redraw keeps its scroll.** Save and restore the panel's position, and when fixing one panel
   check every sibling render in the same pass.
 - **Own the render.** Every class is `staxx-`-prefixed; stock Unraid classes are never borrowed.
+- **`1rem` is 10px in the webGUI.** Write `1.3rem` for 13px text; a stylesheet written for 16px draws everything at ~60%.
 - **`staxx.plg` is fully populated**, so nothing guards against a premature publish but judgement.
 
 ## Writing code
