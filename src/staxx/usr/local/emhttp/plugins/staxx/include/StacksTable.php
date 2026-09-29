@@ -449,7 +449,9 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     $meaning = 'newbuild';
   } elseif ($state === 'error') {
     $meaning = 'failing';
-  } elseif (in_array($state, ['missing', 'tagmissing', 'moved'], true)) {
+  } elseif ($state === 'missing') {
+    $meaning = 'notinstalled';
+  } elseif (in_array($state, ['tagmissing', 'moved'], true)) {
     $meaning = 'notfound';
   } elseif ($state === 'watch') {
     // PLAN_167 — its own meaning, not folded into 'waiting': the two share a
@@ -467,6 +469,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     'waiting'  => 'staxx-updatepill--waiting',
     'failing'  => 'staxx-updatepill--failing',
     'notfound' => 'staxx-updatepill--notfound',
+    'notinstalled' => 'staxx-updatepill--notinstalled',
     // Same blue as 'waiting' on purpose (§3's "worth knowing, nothing to do
     // now") — only the mark tells the two apart.
     'watch'    => 'staxx-updatepill--waiting',
@@ -477,6 +480,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     'waiting'  => 'clock',
     'failing'  => 'warn',
     'notfound' => 'question',
+    'notinstalled' => 'question',
     'watch'    => 'page',
   ][$meaning];
 

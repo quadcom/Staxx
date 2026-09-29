@@ -4497,6 +4497,20 @@ define('STAXX_AUTOUPDATE_FILE', ($staxx_autoupdate_env !== false && $staxx_autou
   ? $staxx_autoupdate_env
   : '/boot/config/plugins/ca.update.applications/DockerUpdateSettings.json');
 
+/* PLAN_211 — the Compose Manager add-on's settings folder and the folder its
+ * plugin code lives in. The add-on counts as uninstalled when neither its
+ * .plg (beside the settings folder) nor the plugin folder exists. Both are
+ * overridable by env so tests/server/leftovers.php can point them at /tmp. */
+$staxx_cm_env = getenv('STAXX_COMPOSE_MANAGER_DIR');
+define('STAXX_COMPOSE_MANAGER_DIR', ($staxx_cm_env !== false && $staxx_cm_env !== '')
+  ? $staxx_cm_env
+  : '/boot/config/plugins/compose.manager');
+
+$staxx_cm_plugin_env = getenv('STAXX_COMPOSE_MANAGER_PLUGIN_DIR');
+define('STAXX_COMPOSE_MANAGER_PLUGIN_DIR', ($staxx_cm_plugin_env !== false && $staxx_cm_plugin_env !== '')
+  ? $staxx_cm_plugin_env
+  : '/usr/local/emhttp/plugins/compose.manager');
+
 /** Where a held template lives once a handover or the §5 sweep has moved it
  * out of Unraid's reach — beside icons/ and updates.json, not a constant
  * because it depends on the store root, which is only known at runtime. */
@@ -5745,6 +5759,374 @@ function staxx_unraid_templates_mark_asked(): bool {
   $path = $root.'/unraid-templates.asked';
   if (@file_put_contents($path, '') === false) return false;
   @chmod($path, 0644);
+  return true;
+}
+
+/* ---------------------------------------------------------- leftovers ----
+ *
+ * PLAN_211 — clearing out what Unraid Docker and Compose Manager left behind:
+ * templates whose container is gone, templates for a plain container the
+ * person no longer wants (the container goes too), and the Compose Manager
+ * settings folder once the add-on is uninstalled. Nothing is deleted: each
+ * clear lands in <store>/archives/leftovers/<stamp>/ with a manifest, and can
+ * be put back (a removed container cannot; its template comes back and
+ * Unraid's Docker tab makes it again). Templates for a container a StaXX
+ * stack declares are not listed here — "Move them into StaXX" owns those.
+ */
+
+/** Sets in <archives>/leftovers are named by this shape and no other. */
+function staxx_leftovers_stamp_ok(string $stamp): bool {
+  return (bool)preg_match('/^\d{8}-\d{6}$/', $stamp);
+}
+
+function staxx_leftovers_root(): string {
+  $a = staxx_archive_root();
+  return $a === '' ? '' : $a.'/leftovers';
+}
+
+/**
+ * One read of every container, with the two labels this needs. null when
+ * Docker cannot be asked: the caller then lists nothing, because "no
+ * containers" would make every template look orphaned.
+ *
+ * @return ?array<int,array{id:string,name:string,state:string,image:string,project:string,workdir:string}>
+ */
+function staxx_leftovers_containers(): ?array {
+  if (!staxx_docker_running()) return null;
+  $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Image}}\t'
+       . '{{.Label "com.docker.compose.project"}}\t'
+       . '{{.Label "com.docker.compose.project.working_dir"}}\tend';
+  $code = 1;
+  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15, $code);
+  if ($code !== 0) return null;
+
+  $rows = [];
+  foreach (explode("\n", $out) as $line) {
+    if (trim($line) === '') continue;
+    $c = explode("\t", $line);
+    if (count($c) < 6) continue;
+    $rows[] = ['id' => $c[0], 'name' => $c[1], 'state' => $c[2], 'image' => $c[3],
+               'project' => $c[4], 'workdir' => $c[5]];
+  }
+  return $rows;
+}
+
+/**
+ * Containers run from inside the Compose Manager folder, counted per project.
+ * Judged by the working_dir label, never the project name: an imported
+ * project keeps its name while running from StaXX's own folder.
+ *
+ * @return array<string,int>
+ */
+function staxx_leftovers_cm_usage(array $rows): array {
+  $dir = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+  $use = [];
+  foreach ($rows as $r) {
+    $wd = rtrim((string)$r['workdir'], '/');
+    if ($wd === '' || strpos($wd.'/', $dir.'/') !== 0) continue;
+    $parts = explode('/', ltrim(substr($wd, strlen($dir)), '/'));
+    $proj  = ($parts[0] === 'projects' && isset($parts[1])) ? $parts[1]
+           : ((string)$r['project'] !== '' ? $r['project'] : 'compose.manager');
+    $use[$proj] = ($use[$proj] ?? 0) + 1;
+  }
+  return $use;
+}
+
+/** Is the add-on gone while its settings folder is still there? */
+function staxx_leftovers_cm_orphaned(): bool {
+  $dir = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+  return is_dir($dir) && !is_file($dir.'.plg') && !is_dir(STAXX_COMPOSE_MANAGER_PLUGIN_DIR);
+}
+
+function staxx_leftovers_manifest(string $stamp): ?array {
+  if (!staxx_leftovers_stamp_ok($stamp) || staxx_leftovers_root() === '') return null;
+  $raw = @file_get_contents(staxx_leftovers_root().'/'.$stamp.'/manifest.json');
+  $m = $raw === false ? null : json_decode($raw, true);
+  return is_array($m) && is_array($m['items'] ?? null) ? $m : null;
+}
+
+function staxx_leftovers_manifest_save(string $stamp, array $m): bool {
+  return staxx_atomic_write(staxx_leftovers_root().'/'.$stamp.'/manifest.json',
+    json_encode($m, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+/** Can this kept item be put back right now? */
+function staxx_leftovers_item_back(string $stamp, array $it): bool {
+  if (!empty($it['restored'])) return false;
+  $set = staxx_leftovers_root().'/'.$stamp;
+  if (($it['kind'] ?? '') === 'compose-manager') {
+    return is_dir($set.'/compose.manager') && !file_exists(rtrim(STAXX_COMPOSE_MANAGER_DIR, '/'));
+  }
+  $file = basename((string)($it['file'] ?? ''));
+  return $file !== '' && is_file($set.'/templates/'.$file) && !file_exists(STAXX_UNRAID_TEMPLATES_DIR.'/'.$file);
+}
+
+/** @return array<int,array{stamp:string,items:array}> newest first */
+function staxx_leftovers_kept(): array {
+  $root = staxx_leftovers_root();
+  if ($root === '') return [];
+  $stamps = [];
+  foreach (glob($root.'/*', GLOB_ONLYDIR) ?: [] as $d) {
+    if (staxx_leftovers_stamp_ok(basename($d))) $stamps[] = basename($d);
+  }
+  rsort($stamps);
+
+  $kept = [];
+  foreach ($stamps as $stamp) {
+    $m = staxx_leftovers_manifest($stamp);
+    if ($m === null) continue;
+    $items = [];
+    foreach ($m['items'] as $it) {
+      $items[] = ['kind' => (string)($it['kind'] ?? ''), 'name' => (string)($it['name'] ?? ''),
+                  'back' => staxx_leftovers_item_back($stamp, $it)];
+    }
+    $kept[] = ['stamp' => $stamp, 'items' => $items];
+  }
+  return $kept;
+}
+
+/**
+ * What can be cleared right now, built fresh from the template folder and one
+ * read of Docker ($rows is that read, injectable for the suite). The reply
+ * shape is the contract with leftovers.js.
+ */
+function staxx_leftovers(?array $rows = null): array {
+  $out = ['templates' => [], 'composeManager' => null, 'kept' => staxx_leftovers_kept()];
+  if ($rows === null) $rows = staxx_leftovers_containers();
+  if ($rows === null) return $out;
+
+  $byName = [];
+  $shape  = [];
+  foreach ($rows as $r) {
+    $byName[$r['name']] = $r;
+    $shape[$r['name']]  = ['id' => $r['id'], 'running' => $r['state'] === 'running', 'project' => $r['project']];
+  }
+
+  // A template naming a container a StaXX stack declares belongs to the
+  // "Move them into StaXX" section, whatever state that container is in.
+  $atRisk = [];
+  foreach (staxx_unraid_templates_at_risk($shape) as $r) $atRisk[$r['template']] = true;
+
+  if (is_dir(STAXX_UNRAID_TEMPLATES_DIR)) {
+    foreach (staxx_unraid_template_xml(STAXX_UNRAID_TEMPLATES_DIR) as $path => $xml) {
+      $name = trim((string)($xml->Name ?? ''));
+      if ($name === '' || isset($atRisk[$path])) continue;
+      $c = $byName[$name] ?? null;
+      if ($c !== null && $c['project'] !== '') continue; // a compose container: not Unraid's to clear
+      $out['templates'][] = [
+        'file'      => basename($path),
+        'name'      => $name,
+        'container' => $c === null ? null : ['id' => $c['id'], 'state' => $c['state'], 'image' => $c['image']],
+      ];
+    }
+    usort($out['templates'], fn($a, $b) => strcasecmp($a['name'], $b['name']));
+  }
+
+  if (staxx_leftovers_cm_orphaned()) {
+    $dir = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+    $use = staxx_leftovers_cm_usage($rows);
+    $projects = [];
+    foreach (glob($dir.'/projects/*', GLOB_ONLYDIR) ?: [] as $p) {
+      $n = basename($p);
+      $projects[] = ['name' => $n, 'containers' => $use[$n] ?? 0];
+      unset($use[$n]);
+    }
+    foreach ($use as $n => $k) $projects[] = ['name' => (string)$n, 'containers' => $k];
+
+    $blocked = [];
+    foreach ($projects as $p) if ($p['containers'] > 0) $blocked[] = $p['name'];
+
+    $du = staxx_sh('du -sb '.escapeshellarg($dir), 15);
+    $out['composeManager'] = ['size' => (int)$du, 'projects' => $projects, 'blockedBy' => $blocked];
+  }
+  return $out;
+}
+
+/**
+ * Starts the clear as a detached job (stopping a running container can take
+ * seconds each). The caller's files are only names: each must be on a fresh
+ * staxx_leftovers() list or it is dropped. Returns the job id, or '' with
+ * $error set.
+ *
+ * @param string[] $files template file names
+ * @param ?array   $rows  a Docker read, injectable for the suite as in staxx_leftovers()
+ */
+function staxx_leftovers_clear_job(array $files, bool $composeManager, string &$error, ?array $rows = null): string {
+  $error = '';
+  if (staxx_leftovers_root() === '') {
+    $error = 'No data store has been chosen yet, so there is nowhere to keep a copy.';
+    return '';
+  }
+  $list = staxx_leftovers($rows);
+
+  $byFile = [];
+  foreach ($list['templates'] as $t) $byFile[$t['file']] = $t;
+  $items = [];
+  foreach ($files as $f) {
+    $f = (string)$f;
+    if (!isset($byFile[$f]) || isset($items[$f])) continue;
+    $t = $byFile[$f];
+    $items[$f] = ['kind' => $t['container'] === null ? 'template' : 'container', 'name' => $t['name'], 'file' => $f]
+               + ($t['container'] === null ? [] : ['id' => $t['container']['id']]);
+  }
+
+  $cm = $list['composeManager'];
+  if ($composeManager && $cm !== null) {
+    if ($cm['blockedBy']) {
+      $error = 'Can\'t remove this yet: the project "'.$cm['blockedBy'][0].'" still has a container. '
+             . 'Bring it into StaXX first, then come back.';
+      return '';
+    }
+    $items['compose-manager'] = ['kind' => 'compose-manager', 'name' => 'compose.manager'];
+  }
+
+  if (!$items) {
+    $error = 'None of the selected items could be cleared — this list may be out of date. Reload the list and try again.';
+    return '';
+  }
+
+  $stamp = date('Ymd-His');
+  for ($i = 1; is_dir(staxx_leftovers_root().'/'.$stamp); $i++) $stamp = date('Ymd-His', time() + $i);
+
+  // Plain data through var_export(), the same pattern staxx_images_remove_job()
+  // uses: nothing the caller typed reaches a shell argument.
+  $php = staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; '
+    .'exit(staxx_leftovers_do_clear('.var_export(array_values($items), true).', '.var_export($stamp, true).') ? 0 : 1);'
+  );
+  return staxx_spawn_job('clearing out leftovers', $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"', $error);
+}
+
+/**
+ * The job body. Per item, in this order so a failure leaves the more
+ * recoverable state: container (docker inspect saved, then rm -f — never -v,
+ * never the image), then the template moved into the set and its Auto Update
+ * entry dropped; or the whole Compose Manager folder moved with mv (it crosses
+ * from the flash drive to the cache pool, which a folder rename() cannot).
+ * The manifest is rewritten after every item.
+ */
+function staxx_leftovers_do_clear(array $items, string $stamp): bool {
+  if (!staxx_leftovers_stamp_ok($stamp) || staxx_leftovers_root() === '') return false;
+  $set = staxx_leftovers_root().'/'.$stamp;
+  if (!is_dir($set) && !@mkdir($set, 0755, true) && !is_dir($set)) { echo "Could not create $set.\n"; return false; }
+
+  $docker = escapeshellarg(staxx_docker_bin());
+  $m  = ['stamp' => $stamp, 'items' => []];
+  $ok = true;
+
+  foreach ($items as $it) {
+    $kind = (string)$it['kind'];
+    $name = (string)$it['name'];
+
+    if ($kind === 'compose-manager') {
+      $src  = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+      $rows = staxx_leftovers_containers();
+      if ($rows === null || !staxx_leftovers_cm_orphaned() || staxx_leftovers_cm_usage($rows)) {
+        echo "Left Compose Manager's folder alone: it is in use, or Docker could not be asked.\n";
+        $ok = false; continue;
+      }
+      echo "Moving Compose Manager's settings folder...\n";
+      staxx_sh('mv -- '.escapeshellarg($src).' '.escapeshellarg($set.'/compose.manager').' 2>&1', 120);
+      if (is_dir($src) || !is_dir($set.'/compose.manager')) {
+        echo "Could not move Compose Manager's folder.\n";
+        $ok = false; continue;
+      }
+      $m['items'][] = ['kind' => 'compose-manager', 'name' => 'compose.manager'];
+      staxx_leftovers_manifest_save($stamp, $m);
+      continue;
+    }
+
+    $file = basename((string)$it['file']);
+    $src  = STAXX_UNRAID_TEMPLATES_DIR.'/'.$file;
+    if (!is_file($src)) { echo "Skipped $file: it is no longer there.\n"; $ok = false; continue; }
+
+    if ($kind === 'container') {
+      $id = (string)($it['id'] ?? '');
+      if (!preg_match('/^[0-9a-f]{64}$/', $id)) { echo "Skipped $name: not a container id.\n"; $ok = false; continue; }
+      echo "Removing the app \"$name\" (stopping it first if it is running)...\n";
+
+      $code = 1;
+      $json = staxx_sh($docker.' inspect '.escapeshellarg($id), 20, $code);
+      $info = $code === 0 ? json_decode($json, true) : null;
+      // Re-checked at the last moment: same name, still no compose project.
+      if (!is_array($info) || ($info[0]['Name'] ?? '') !== '/'.$name
+          || (($info[0]['Config']['Labels']['com.docker.compose.project'] ?? '') !== '')) {
+        echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
+        $ok = false; continue;
+      }
+      @mkdir($set.'/containers', 0755, true);
+      if (@file_put_contents($set.'/containers/'.$file.'.json', $json) === false) {
+        echo "Left \"$name\" alone: its settings could not be saved first.\n";
+        $ok = false; continue;
+      }
+      staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
+      if ($code !== 0) { echo "Docker would not remove \"$name\".\n"; $ok = false; continue; }
+    }
+
+    @mkdir($set.'/templates', 0755, true);
+    if (!@rename($src, $set.'/templates/'.$file)) { echo "Could not move the template $file.\n"; $ok = false; continue; }
+    staxx_unraid_template_xml('', true);
+    $entry = staxx_autoupdate_entry_remove($name);
+    $m['items'][] = ['kind' => $kind, 'name' => $name, 'file' => $file, 'autoupdate' => $entry];
+    staxx_leftovers_manifest_save($stamp, $m);
+    echo "Cleared $name; a copy is kept.\n";
+  }
+  return $ok;
+}
+
+/**
+ * Put one kept item back. A container item restores its template only.
+ * Refuses to overwrite anything that has appeared at the original place.
+ * Original places are recomputed from the constants, never read from disk.
+ */
+function staxx_leftovers_restore(string $stamp, string $kind, string $name, string &$error): bool {
+  $error = '';
+  $m = staxx_leftovers_manifest($stamp);
+  $idx = null;
+  foreach (($m['items'] ?? []) as $i => $it) {
+    if (($it['kind'] ?? '') === $kind && ($it['name'] ?? '') === $name) { $idx = $i; break; }
+  }
+  if ($idx === null) { $error = 'That kept copy is no longer listed. Reload the list and try again.'; return false; }
+  $it  = $m['items'][$idx];
+  $set = staxx_leftovers_root().'/'.$stamp;
+
+  if (!staxx_leftovers_item_back($stamp, $it)) {
+    $error = $kind === 'compose-manager'
+      ? 'Compose Manager\'s folder cannot be put back: something is already at its old place.'
+      : 'That template cannot be put back: another file is already at its old place.';
+    return false;
+  }
+
+  if ($kind === 'compose-manager') {
+    $dest = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+    @mkdir(dirname($dest), 0755, true);
+    staxx_sh('mv -- '.escapeshellarg($set.'/compose.manager').' '.escapeshellarg($dest).' 2>&1', 120);
+    if (!is_dir($dest) || is_dir($set.'/compose.manager')) { $error = 'Could not move the folder back.'; return false; }
+  } else {
+    $file = basename((string)$it['file']);
+    if (!@rename($set.'/templates/'.$file, STAXX_UNRAID_TEMPLATES_DIR.'/'.$file)) {
+      $error = 'Could not move the template back.';
+      return false;
+    }
+    staxx_unraid_template_xml('', true);
+    if (is_array($it['autoupdate'] ?? null)) staxx_autoupdate_entry_restore($name, $it['autoupdate']);
+  }
+
+  $m['items'][$idx]['restored'] = true;
+  staxx_leftovers_manifest_save($stamp, $m);
+  return true;
+}
+
+/** Delete one kept set for good. */
+function staxx_leftovers_forget(string $stamp, string &$error): bool {
+  $error = '';
+  $dir = staxx_leftovers_root().'/'.$stamp;
+  if (!staxx_leftovers_stamp_ok($stamp) || !is_dir($dir)) {
+    $error = 'That kept copy is no longer listed. Reload the list and try again.';
+    return false;
+  }
+  staxx_sh('rm -rf -- '.escapeshellarg($dir), 60);
+  if (is_dir($dir)) { $error = 'Could not delete that kept copy.'; return false; }
   return true;
 }
 

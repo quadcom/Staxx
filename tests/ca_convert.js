@@ -1507,6 +1507,40 @@ var emptyMarkerY = CA.convert(EMPTY_MARKER).yaml;
 ok('an empty [PORT:] marker with no ports: is written unchanged',
    emptyMarkerY.indexOf('webui: "http://[IP]:[PORT:]"') >= 0, emptyMarkerY);
 
+/* ---- a variable or label named twice keeps the last ---------------------- */
+
+function vcfg(t, v) {
+  return { '@attributes': { Name: t, Target: t, Default: v, Type: 'Variable', Required: 'false', Mask: 'false' }, value: v };
+}
+// Two Variable settings with one Target (the paperless-ngx shape).
+var DUP_VAR = {
+  Name: 'dup-var-test', Repository: 'example/dup-var-test', Network: 'bridge',
+  Config: [vcfg('PAPERLESS_TIKA_ENABLED', 'TRUE'), vcfg('PAPERLESS_TIKA_ENABLED', '1')]
+};
+var dupVarY = CA.convert(DUP_VAR).yaml;
+var dupVarR = CA.convert(DUP_VAR);
+ok('a Variable set twice: the file parses', (function () { try { Y.parse(dupVarY); return true; } catch (e) { return false; } })());
+ok('a Variable set twice: the key is written once', count(dupVarY, 'PAPERLESS_TIKA_ENABLED:') === 1, dupVarY);
+ok('a Variable set twice: only the last value is kept',
+   dupVarY.indexOf('PAPERLESS_TIKA_ENABLED: "1"') >= 0 && dupVarY.split(String.fromCharCode(10)).filter(function (l) { return /^\s+PAPERLESS_TIKA_ENABLED:/.test(l); }).join('').indexOf('TRUE') < 0, dupVarY);
+ok('a Variable set twice: carries the note',
+   dupVarR.notes.some(function (n) { return n.indexOf('The variable "PAPERLESS_TIKA_ENABLED" was set more than once') === 0 &&
+     n.indexOf('Kept the last value, "1"') > 0 && n.indexOf('the earlier value, "TRUE"') > 0; }), dupVarR.notes.join(' | '));
+
+// A Variable repeated by an ExtraParams -e; the dropped value had a dollar.
+var DUP_EXTRA = {
+  Name: 'dup-extra-test', Repository: 'example/dup-extra-test', Network: 'bridge',
+  ExtraParams: '-e MODE=fast',
+  Config: [vcfg('MODE', 'a$b')]
+};
+var dupExtraR = CA.convert(DUP_EXTRA);
+ok('a Variable repeated by ExtraParams -e: parses, one key, last value',
+   (function () { try { Y.parse(dupExtraR.yaml); return true; } catch (e) { return false; } })() &&
+   count(dupExtraR.yaml, 'MODE:') === 1 && dupExtraR.yaml.indexOf('MODE: "fast"') >= 0, dupExtraR.yaml);
+ok('a Variable repeated by ExtraParams -e: carries the note, dropped value not in the dollar report',
+   dupExtraR.notes.some(function (n) { return n.indexOf('The variable "MODE" was set more than once') === 0 &&
+     n.indexOf('earlier value, "a$$b"') > 0; }) && dupExtraR.dollarsEscaped.length === 0, JSON.stringify(dupExtraR.notes));
+
 /* ---- summary ------------------------------------------------------------ */
 
 check.done();

@@ -1392,6 +1392,36 @@ switch ($action) {
   case 'unraid-templates-asked':
     staxx_reply(['ok' => staxx_unraid_templates_mark_asked()]);
 
+  /* ---- PLAN_211 — clearing out what Unraid Docker and Compose Manager left behind ----
+   *
+   * `leftovers` is read-only. `leftovers-clear` starts a detached job (the page
+   * follows `job`) for the ticked template files (`templates[]`) and, with
+   * composeManager=1, the add-on's settings folder; the server re-derives the
+   * list and drops anything not on it. Restore and forget act on a kept set
+   * named by `stamp`.
+   */
+  case 'leftovers':
+    staxx_reply(['ok' => true, 'leftovers' => staxx_leftovers()]);
+
+  case 'leftovers-clear':
+    $filesRaw = $_POST['templates'] ?? [];
+    $files    = is_array($filesRaw)
+      ? array_values(array_filter(array_map('strval', $filesRaw), fn($f) => $f !== ''))
+      : [];
+    $job = staxx_leftovers_clear_job($files, ($_POST['composeManager'] ?? '') === '1', $error);
+    if ($job === '') staxx_fail($error);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  case 'leftovers-restore':
+    if (!staxx_leftovers_restore((string)($_POST['stamp'] ?? ''), (string)($_POST['kind'] ?? ''), $name, $error)) {
+      staxx_fail($error);
+    }
+    staxx_reply(['ok' => true]);
+
+  case 'leftovers-forget':
+    if (!staxx_leftovers_forget((string)($_POST['stamp'] ?? ''), $error)) staxx_fail($error);
+    staxx_reply(['ok' => true]);
+
   // ---- the stack table, re-rendered as data ----
   case 'list':
     staxx_reply(['ok' => true, 'stacks' => staxx_list_stacks()]);

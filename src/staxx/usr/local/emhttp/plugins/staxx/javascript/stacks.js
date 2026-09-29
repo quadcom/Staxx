@@ -21428,7 +21428,8 @@
   // PLAN_161 — colour and mark now carry the meaning instead of a sentence;
   // this table is one meaning short of `data-update-state`'s vocabulary
   // because several states share a meaning (rebuild reads as newbuild, a
-  // moved/withdrawn tag reads as notfound) — see paintUpdatePill() below for
+  // moved/withdrawn tag reads as notfound, amber; an image not downloaded yet
+  // reads as notinstalled, blue) — see paintUpdatePill() below for
   // the mapping. `built`/`current`/`unknown` have no row: nothing to say.
   var CHIP_LOOK = {
     update:   { cls: 'staxx-updatepill--update',   mark: 'cloud'    },
@@ -21436,6 +21437,7 @@
     waiting:  { cls: 'staxx-updatepill--waiting',  mark: 'clock'    },
     failing:  { cls: 'staxx-updatepill--failing',  mark: 'warn'     },
     notfound: { cls: 'staxx-updatepill--notfound', mark: 'question' },
+    notinstalled: { cls: 'staxx-updatepill--notinstalled', mark: 'question' },
     // PLAN_167 — same blue as 'waiting' (§3: "worth knowing, nothing to do
     // now"), a different mark: this one is the author's example finding
     // something worth a look, not a countdown, and the two must not draw
@@ -21538,7 +21540,11 @@
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.notfound.cls, mark: CHIP_LOOK.notfound.mark, text: '',
       updState: 'tagmissing',
       updTip: 'The tag "1.2" is no longer published for this image. Open the row menu to pick a different one.',
-      desc: 'The image or its tag is gone from the registry — check the repository.' },
+      desc: 'The tag was withdrawn, or the image moved to another registry — change the image line.' },
+    { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.notinstalled.cls, mark: CHIP_LOOK.notinstalled.mark, text: '',
+      updState: 'missing',
+      updTip: 'This image has not been installed on this server yet, so there is nothing to compare it against.',
+      desc: 'The image has not been downloaded yet — it is fetched when the stack starts.' },
     { tag: 'span', cls: 'staxx-updatepill ' + CHIP_LOOK.watch.cls, mark: CHIP_LOOK.watch.mark, text: '2',
       updState: 'watch',
       updTip: 'The author’s published example does 2 things differently here that this file does not. Open the stack to see them.',
@@ -21784,7 +21790,8 @@
         return 'update';
       case 'rebuild':    return 'newbuild';
       case 'error':      return 'failing';
-      case 'missing': case 'tagmissing': case 'moved': return 'notfound';
+      case 'missing':    return 'notinstalled';
+      case 'tagmissing': case 'moved': return 'notfound';
       case 'watch':      return 'watch';
       default:           return '';
     }
@@ -40169,6 +40176,54 @@
       host.appendChild(card);
     });
     mergeRenderStopStartSwitches(host);
+    var dockerBadge = document.createElement('div');
+    dockerBadge.id = 'staxx-merge-docker';
+    host.appendChild(dockerBadge);
+    mergePaintDockerBadge();
+  }
+
+  // Docker's verdict on the merged file, shown up front. The write validates
+  // and refuses on its own; this only lets the person see the pass before
+  // pressing Merge, and never gates the button. The check posts just the
+  // text (a new stack has no folder yet). Only the newest reply is drawn.
+  var DOCKER_WHALE = '<svg class="staxx-merge-docker-logo" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+    '<path fill="#2496ed" d="M2 13.6h18.6c1.3 0 2.300-.5 2.900-1.500.7.4 1.200 1 1.400 1.800-.5.4-1.200.6-2 .6C19.800 18 15.600 20.500 11 20.500 6 20.500 2.900 17.700 2 13.600z"/>' +
+    '<path fill="#2496ed" d="M4 9.600h2.400v2.400H4zM7 9.600h2.400v2.400H7zM10 9.600h2.400v2.400H10zM13 9.600h2.400v2.400H13zM7 6.700h2.400v2.400H7zM10 6.700h2.400v2.400H10zM13 6.700h2.400v2.400H13zM10 3.800h2.400v2.400H10z"/></svg>';
+
+  function mergePaintDockerBadge() {
+    var el = document.getElementById('staxx-merge-docker');
+    if (!el || !mergeState) return;
+    var d = mergeState.dockerCheck;
+    if (!d) { el.innerHTML = ''; return; }
+    if (d.state === 'checking') {
+      el.className = 'staxx-merge-docker staxx-merge-docker--checking';
+      el.textContent = 'Checking with Docker…';
+      return;
+    }
+    var ok = d.state === 'ok';
+    el.className = 'staxx-merge-docker ' + (ok ? 'staxx-merge-docker--ok' : 'staxx-merge-docker--bad');
+    el.innerHTML = DOCKER_WHALE + '<span class="staxx-merge-docker-text">' +
+      esc(ok ? 'Docker validated' : 'Docker found a problem') + '</span>';
+    if (!ok && d.error) {
+      var pre = document.createElement('pre');
+      pre.className = 'staxx-merge-docker-error';
+      pre.textContent = d.error;
+      el.appendChild(pre);
+    }
+  }
+
+  function mergeDockerCheck(text) {
+    if (!mergeState || !text || mergeState.dockerCheckText === text) return;
+    mergeState.dockerCheckText = text;
+    mergeState.dockerCheck = { state: 'checking' };
+    var seq = mergeState.dockerCheckSeq = (mergeState.dockerCheckSeq || 0) + 1;
+    var state = mergeState;
+    call('check', { body: text }, 60000).then(function (res) {
+      if (mergeState !== state || state.dockerCheckSeq !== seq) return;   // closed, or a newer check owns the badge
+      if (res && res.ok && res.valid) state.dockerCheck = { state: 'ok' };
+      else state.dockerCheck = { state: 'bad', error: (res && res.error) || 'Docker could not check this file.' };
+      mergePaintDockerBadge();
+    });
   }
 
   // A source keeping data in a folder inside its own directory — the one
@@ -40348,6 +40403,7 @@
     var panesWidth = host.getBoundingClientRect().width || 1200;
     var formWidth = mergeStep6FormWidth(panesWidth);
     var text = mergeState.finalText || mergeState.built.text || '';
+    mergeDockerCheck(text);
 
     var formCol = document.createElement('div');
     formCol.className = 'staxx-merge-step6-form staxx-form';

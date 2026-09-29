@@ -412,11 +412,11 @@ function checkLegendVocabulary() {
     }
   });
 
-  // The direct decision-C check: 'question' has to mean exactly one thing
-  // across the whole vocabulary (blue, meaning "notfound" — the image or
-  // its tag is gone from the registry). A second meaning claiming the mark,
-  // red or otherwise, is exactly how the retired chip would sneak back in
-  // under a new name.
+  // The direct decision-C check: 'question' belongs to exactly two meanings,
+  // "notfound" (amber: tag withdrawn or registry moved) and "notinstalled"
+  // (blue: image not downloaded yet), and neither may read as red. Any other
+  // meaning claiming the mark, or a red question chip, is how the retired
+  // chip would sneak back in under a new name.
   var phpMark = readPhpAssoc(phpSrc, 'mark', PHP_FILE);
   var questionMeanings = [];
   if (phpMark) {
@@ -425,13 +425,18 @@ function checkLegendVocabulary() {
   Object.keys(jsLook).forEach(function (k) {
     if (jsLook[k].mark === 'question' && questionMeanings.indexOf(k) < 0) questionMeanings.push(k);
   });
-  if (questionMeanings.length !== 1 || questionMeanings[0] !== 'notfound') {
+  var questionSorted = questionMeanings.slice().sort().join(',');
+  if (questionSorted !== 'notfound,notinstalled') {
     fail('the "question" mark is used by meaning(s) [' + questionMeanings.join(', ') +
-         '] — PLAN_168 decision C says it means exactly one thing ("notfound": blue, the image or its tag ' +
-         'is gone from the registry). It has either drifted to a new meaning or gone missing.');
-  } else if (phpCls && redClasses[phpCls['notfound']]) {
-    fail('meaning "notfound" (the "question" mark) uses class "' + phpCls['notfound'] +
-         '", which this suite reads off the stylesheet as RED — PLAN_168 decision C retired the red question chip.');
+         '] — PLAN_168 decision C allows it for exactly "notfound" (amber) and "notinstalled" (blue). ' +
+         'It has either drifted to another meaning or one of these two has lost it.');
+  } else {
+    ['notfound', 'notinstalled'].forEach(function (m) {
+      if (phpCls && redClasses[phpCls[m]]) {
+        fail('meaning "' + m + '" (the "question" mark) uses class "' + phpCls[m] +
+             '", which this suite reads off the stylesheet as RED — PLAN_168 decision C retired the red question chip.');
+      }
+    });
   }
 }
 

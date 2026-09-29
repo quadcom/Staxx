@@ -6,8 +6,12 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- Settings, Self-test now lists what Unraid Docker and Compose Manager left behind: templates for apps that no longer exist, apps still set up in Unraid's Docker tab that you no longer use, and Compose Manager's settings folder once the add-on is removed. Tick what should go and StaXX clears it, keeping a copy you can put back.
+- A withdrawn tag or an image that moved to another registry now shows an amber chip, since it needs you to change the image line; an image not downloaded yet stays blue.
+- Importing an Unraid template that sets the same variable or label twice now works. StaXX keeps the last value, as Unraid does, and notes the one it left out at the top of the new file.
 - StaXX now has its own tile on Unraid's Dashboard. Open Settings, General, Edit dashboard tile… to arrange it: drag stacks onto a grid of up to 8 columns, group them into folders, and give each folder an icon from four online icon sets, a plain built-in symbol, your own picture, or one that cycles through the icons of the stacks inside. On the Dashboard, click a folder to open it, right-click a stack or folder to start, stop or restart it, and click a stack for a small window with its CPU, memory and network graphs. The icon sets are hernandito's animated folder icons (used with his permission), ground7's animated icons (MIT), Dashboard Icons by homarr-labs (Apache-2.0) and Tabler Icons (MIT).
 - Folders on the Stacks page can have an icon too: choose Folder icon… from a folder's menu to pick one with the same picker, or Remove icon to go back to the plain folder.
+- The merge wizard's last step now shows Docker validated, with the Docker logo, once Docker has checked the merged file, or Docker's own message if it found a problem.
 - Settings has a new About tab showing the installed StaXX version, which Docker Compose is running and whether StaXX installed it, and credits for the work StaXX uses.
 - The CPU column now shows each stack's share of the whole processor, from 0 to 100%, instead of counting each processor thread as 100%.
 - The little graphs in the CPU, Memory, Network and GPU columns now each have their own colour.

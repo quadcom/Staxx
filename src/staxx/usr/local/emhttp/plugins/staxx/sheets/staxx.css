@@ -4095,9 +4095,18 @@ div.title.staxx-has-titlebar {
   color: var(--chip-fg);
 }
 
-/* Same blue as --waiting above, and the same white text — the two are now
-   the identical colour and have to read identically. */
+/* Tag withdrawn or registry moved: the same amber as --update, black text,
+   since the person has to change the image line. */
 .staxx-updatepill--notfound {
+  --chip: #f0a020;
+  background: var(--chip);
+  --chip-fg: #000;
+  color: var(--chip-fg);
+}
+
+/* Image not downloaded yet: the same blue as --waiting, white text; starting
+   the stack fetches it, so nothing is asked of the person. */
+.staxx-updatepill--notinstalled {
   --chip: #58a6ff;
   background: var(--chip);
   --chip-fg: #fff;
@@ -15926,6 +15935,26 @@ dialog::backdrop {
    interactive session): both off by default, a plain divider above them
    since everything before is read-only information and these two are the
    one thing here that is actually chosen. */
+.staxx-merge-docker {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.3rem;
+  color: #fff;
+}
+.staxx-merge-docker--ok .staxx-merge-docker-text { color: #3fb950; }
+.staxx-merge-docker--bad .staxx-merge-docker-text { color: #f85149; }
+.staxx-merge-docker-logo { flex: none; }
+.staxx-merge-docker-error {
+  flex-basis: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  color: #fff;
+  font-size: 1.2rem;
+}
+
 .staxx-merge-step6-switches {
   margin-top: auto;
   padding-top: 1rem;
@@ -16051,3 +16080,90 @@ dialog::backdrop {
 /* PLAN_176: the Remove row is display:flex above, which would beat the hidden
    attribute the page toggles while the domain box is empty. */
 .staxx-scaffold .staxx-expose-remove[hidden] { display: none; }
+
+/* PLAN_211 — "Left behind by Unraid Docker and Compose Manager" in Settings.
+   Readable text is white; the page's warm surfaces are kept. */
+.staxx-scaffold .staxx-leftovers[hidden] { display: none; }
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-group {
+  margin: 0 0 1.2rem;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-group h4 {
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 0.4rem;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-name { color: #fff; }
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-note {
+  font-size: 1.2rem;
+  color: #fff;
+  opacity: .8;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-blocked {
+  margin: 0.4rem 0 0;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-set {
+  margin: 0 0 0.8rem;
+  padding: 0.6rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-setname {
+  margin: 0 0 0.4rem;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-confirm {
+  margin: 0.8rem 0 0;
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-log {
+  max-height: 20rem;
+  overflow: auto;
+  margin: 0.6rem 0 0;
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: #fff;
+  font-size: 1.2rem;
+  white-space: pre-wrap;
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-btn {
+  font: inherit;
+  font-size: 1.2rem;
+  color: #fff;
+  background: var(--sm-fill);
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+}
+
+.staxx-scaffold .staxx-leftovers .staxx-btn:disabled { opacity: .45; cursor: not-allowed; }
