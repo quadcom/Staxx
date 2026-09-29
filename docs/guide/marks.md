@@ -10,6 +10,20 @@ this list does not spell out.
 - **The mark says what it is about.**
 - **Movement says something is happening right now, rather than a standing state.**
 
+## The marks key
+
+![The What the marks mean window over the dimmed stack list: the five colours across the top, then three columns of sample chips for the state column, the update column and the top of the list, with the hover card of the newer image sample open showing Running 1.2, Available 1.3 and Last asked 2 hours ago](../images/guide/marks-key.png)
+
+Right-click any stack row and choose **What do these marks mean?** to open a key to every chip on
+the page, with a sample of each.
+
+Rest your mouse on a sample to read the same explanation the real chip gives. Press a sample that can
+be pressed on a real row to see an example of the window it opens. Each example window is titled
+with **(example)** at the end and uses a made-up stack called **example-app**. Nothing on your server
+changes.
+
+![The example-app restart pending (example) window opened from a sample: the services that no longer match the file and have not started, what changed, and an OK button](../images/guide/marks-key-example.png)
+
 ## The five colours
 
 | Colour | Means |
@@ -31,7 +45,7 @@ this list does not spell out.
 | <img src="../images/guide/marks-mark-clock.png" alt="A clock" width="130"> | A countdown, or something being held back. |
 | <img src="../images/guide/marks-mark-refresh.png" alt="A circular arrow" width="130"> | Something needs restarting or rebuilding to take effect. |
 | <img src="../images/guide/marks-mark-warn.png" alt="A warning triangle" width="130"> | Something has gone wrong, or will. |
-| <img src="../images/guide/marks-mark-question.png" alt="A question mark" width="130"> | The image or its tag is gone from the registry. |
+| <img src="../images/guide/marks-mark-question.png" alt="A question mark" width="130"> | The image is not where StaXX expected it: gone from the registry, or not downloaded yet. |
 | <img src="../images/guide/marks-mark-page.png" alt="A page" width="130"> | The author's own published example. |
 
 The warning triangle is the one mark used for more than a single subject: it always means
@@ -83,7 +97,8 @@ Sits beside the state chip, empty when there is nothing to report.
 | <img src="../images/guide/marks-update-rebuild.png" alt="Amber, diamond mark" width="200"> | Built here, and its base image has moved on | Rebuild when you are ready |
 | <img src="../images/guide/marks-update-restart.png" alt="Amber, circular arrow" width="200"> | The file has changed but the container has not been restarted to match | Restart to apply it |
 | <img src="../images/guide/marks-update-countdown.png" alt="Blue, clock mark, a countdown" width="200"> | An update is waiting and will install on its own; the chip says when | Nothing yet; the figure is when it happens |
-| <img src="../images/guide/marks-update-gone.png" alt="Blue, question mark" width="200"> | The image or its tag is gone from the registry | Check the repository |
+| <img src="../images/guide/marks-update-gone.png" alt="Amber, question mark" width="200"> | The tag was withdrawn, or the image moved to another registry | Change the image line |
+| <img src="../images/guide/marks-update-notinstalled.png" alt="Blue, question mark" width="200"> | The image has not been downloaded yet | Nothing; starting the stack fetches it |
 | <img src="../images/guide/marks-update-findings.png" alt="Blue, page mark, a count" width="200"> | The author's own published example does things this file does not | Open the stack to see what differs |
 | <img src="../images/guide/marks-update-failing.png" alt="Red, warning triangle" width="200"> | The update check itself keeps failing | Worth a look |
 

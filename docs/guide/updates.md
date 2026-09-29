@@ -27,7 +27,7 @@ headers, never the build itself, and only downloading an image spends the allowa
 
 | Image | Asked about |
 |---|---|
-| Pinned to one exact build | Never. |
+| Pinned to one exact build | Never. A weekly reminder lists it while it stays pinned. |
 | A moving tag: `latest`, `main`, `master`, `develop`, `nightly`, `edge`, `stable`, `beta`, `dev`, or no tag at all | Roughly every six hours. |
 | A plain version number | Roughly once a week. |
 | Anything else | Roughly once a day. |
@@ -78,23 +78,10 @@ the example adds or drops entirely is.
 A finding with no matching field, where the example sets something your form has no place for, sits
 in a note at the top of the form instead, with the same button.
 
-## Update pill wordings
+## Update chips
 
-![A stack row with an orange "update ready" pill in the State column, beside a grey stopped pill](../images/guide/updates-pill-row.png)
-
-The State column shows a pill for the container itself; see [the State column](the-stack-list.md#the-state-column). Beside it, when there is something to report, sits an update pill.
-
-| Wording | Meaning |
-|---|---|
-| `update ready`, an old and new version, or a version and "new build" | Something newer is on offer. Press it to fetch and install. |
-| `N updates ready` | More than one service in this stack has an update waiting. |
-| `rebuild ready` | Built here, and the image it builds from has moved on. |
-| `built here` | Built on this server, with no registry to compare it to. |
-| `not installed` | Named in the file, but never pulled. |
-| `tag withdrawn` | This tag no longer exists at the registry. |
-| `registry moved` | The image is now published somewhere else. |
-| `N to look at` | The author's own published example does something this file does not. |
-| `could not check` | The last check failed. Hover the pill for why. |
+Beside the state of each stack, an update chip appears when there is something to report. Each
+chip, its colour and what to do about it is listed in [row marks and icons](marks.md#the-update-column).
 
 Pressing an update pill never starts a stopped stack. On a stopped stack it fetches the new image
 and waits for you to start it. Where only some of a stack's services are running, only those are
@@ -102,7 +89,7 @@ updated, and the stopped ones keep their pill until you next start them.
 
 ## Hovering the pill
 
-![An update pill with its hover card open: a sentence saying a newer version is available, then rows for last asked, next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
+![The amber 8.37.0 update chip on the paperless-gotenberg row with its hover card open: a sentence saying a newer version is available, then Running 8.36.0, Available 8.37.0, Last asked, Next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
 
 Rest your mouse on an update pill, or tab onto it with the keyboard, and a small card opens. A
 sentence at the top repeats what the pill means, and a short table underneath lists whatever StaXX

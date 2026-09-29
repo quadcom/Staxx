@@ -70,13 +70,13 @@ list. The loose stacks below the last folder get a row of titles of their own to
 | Services | The service names inside it, or an error if the file will not read. |
 | State | Running or stopped, plus any update or restart mark. |
 | Address | Where the stack answers — an address, or a network name. |
-| CPU | Processor use, with a small graph. |
+| CPU | The stack's share of the whole processor, from 0 to 100%, with a small graph. |
 | Memory | Memory use, with a small graph. |
 | Network | Network traffic, with a small graph. |
-| GPU | A coloured badge (Intel, AMD or NVIDIA) for a stack whose file asks for a graphics card, plus a use figure and small graph while it is running. The badge stays even when the stack is stopped. The column only appears when a stack on the page has one. |
+| GPU | A coloured badge (Intel, AMD or NVIDIA\*) for a stack whose file asks for a graphics card, plus a use figure and small graph while it is running. The badge stays even when the stack is stopped. The column only appears when a stack on the page has one. |
 | Ports | The ports Docker is actually forwarding, plus the one a service's web page answers on. A stack with its own network address, or on host networking, shows none. |
 
-![The State and Address columns over two running stacks, each address followed by its reachable port in orange](../images/guide/the-stack-list-ports.png)
+\* NVIDIA is coming in a later update.
 
 ## On a tablet or a phone
 
@@ -114,9 +114,12 @@ services as cards of their own.
 | <img src="../images/guide/the-stack-list-row-chips.png" alt="The same row with the block of four chips, WebUI, Repo, Logs and CA, ringed"> | Four chips | Shortcuts out to the app and its project. See the table below. |
 | <img src="../images/guide/the-stack-list-row-name.png" alt="The same row with the stack name ringed, a small orange bolt beneath it"> | Name | The folder this stack lives in, which is also its name. The small bolt under it means it starts when the server boots. |
 
-Two more parts are not on every row. An arrow left of the app picture opens and closes the container
-list, on a stack holding more than one container. A line under the name says how many of them are
-running.
+Two more parts are only on a stack holding more than one container. A cubes button left of the app
+picture opens and closes its container list. A line under the name counts its containers.
+
+![The buildbox stack opened with its cubes button: its own row with both app pictures, 2 containers under the name and a running chip, then one indented row each for buildbox and buildbox-web with their image, state and address, between the NPM, homarr and vaultwarden rows](../images/guide/the-stack-list-row-expanded.png)
+
+Each container gets its own row under the stack, with its image, state and address.
 
 To open a stack's menu, right-click its row.
 
@@ -145,15 +148,21 @@ when you hover it. See [row marks and icons](marks.md) for the full key.
 
 ## The State column
 
-| Example | Meaning |
-|---|---|
-| <img src="../images/guide/the-stack-list-pill-running.png" alt="A green pill reading Up 5 minutes"> | Running. The wording comes straight from Docker. |
-| <img src="../images/guide/the-stack-list-pill-unhealthy.png" alt="A red pill reading Up 10 minutes"> | Running, but the app inside says it is not working. |
-| <img src="../images/guide/the-stack-list-pill-deciding.png" alt="An amber pill reading Up 8 seconds"> | Running. Its own check has not finished deciding yet. |
-| <img src="../images/guide/the-stack-list-pill-stopped.png" alt="A grey pill reading stopped"> | Not running. |
-| <img src="../images/guide/the-stack-list-pill-not-created.png" alt="A grey pill reading not created"> | Never started from the file yet. |
-| <img src="../images/guide/the-stack-list-pill-busy.png" alt="An orange dashed outline pill reading Updating"> | A command is running on this row. It also says Starting, Stopping, Removing or Rebuilding, or, on a first start, Downloading image…, while the image itself is still being fetched. |
-| <img src="../images/guide/the-stack-list-pill-failed.png" alt="A red pill reading Update failed"> | The last command failed. Click it to see what happened. |
+The State column shows whether the stack is running, with an update chip beside it when there is
+something to report. Every chip, its colour and what to do about it is listed in
+[row marks and icons](marks.md).
+
+Hover an update pill, or tab onto it with the keyboard, for a small card with more detail: the
+version running now, the version on offer, when it was last checked, when it is next due, and why
+it is checked that often.
+
+![The amber 8.37.0 update chip on the paperless-gotenberg row with its hover card open: a sentence saying a newer version is available, then Running 8.36.0, Available 8.37.0, Last asked, Next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
+
+When the file has been saved but the stack not yet restarted, an amber chip with a circular arrow
+appears beside the state. Click it to see which services no longer match the file. Press **Recreate now** to rebuild
+only those services. The others keep running.
+
+![The demo-web restart pending window over the dimmed list: when the file was last changed, the line saying nginx no longer matches the file, the sentence that Recreate now rebuilds only these services, and Close and Recreate now at the foot](../images/guide/the-stack-list-restart-pending.png)
 
 An amber **name clash** pill appears here when a stack's folder shares a name with another stack
 elsewhere in your store. Hover it to see the other folder's name; the stack that is actually running
@@ -163,33 +172,9 @@ move or import one under a name already in use.
 
 ![The amber name clash pill in the State column, outlined, with its tooltip open](../images/guide/the-stack-list-name-clash.png)
 
-Beside it, an update pill, shown only when there is something to report:
-
-| Example | Wording | Meaning |
-|---|---|---|
-| <img src="../images/guide/the-stack-list-pill-update-ready.png" alt="An orange pill reading 1.2.3 arrow 1.2.4"> | "update ready", or an old and new version, or a version and "new build" | An update is ready. Press it to install. |
-| <img src="../images/guide/the-stack-list-pill-updates-several.png" alt="An orange pill reading 3 updates ready"> | "N updates ready" | More than one service here has one waiting. |
-| <img src="../images/guide/the-stack-list-pill-rebuild-ready.png" alt="An orange pill reading rebuild ready"> | rebuild ready | Built here, and its base image has moved on. |
-| <img src="../images/guide/the-stack-list-pill-built-here.png" alt="A grey pill reading built here"> | built here | Built on this server. Nothing to compare it to. |
-| <img src="../images/guide/the-stack-list-pill-not-installed.png" alt="A grey pill reading not installed"> | not installed | Named in the file but never pulled. |
-| <img src="../images/guide/the-stack-list-pill-tag-withdrawn.png" alt="A grey pill reading tag withdrawn"> | tag withdrawn | This tag no longer exists at the registry. |
-| <img src="../images/guide/the-stack-list-pill-registry-moved.png" alt="A grey pill reading registry moved"> | registry moved | The image now lives somewhere else. |
-| <img src="../images/guide/the-stack-list-pill-to-look-at.png" alt="A grey pill reading 3 to look at"> | N to look at | The author's own example does something different here. |
-| <img src="../images/guide/the-stack-list-pill-could-not-check.png" alt="A red outlined pill reading could not check"> | could not check | The last check failed. |
-
-Hover an update pill, or tab onto it with the keyboard, for a small card with more detail: the
-version running now, the version on offer, when it was last checked, when it is next due, and why
-it is checked that often.
-
-![An update pill with its hover card open: a sentence saying a newer version is available, then rows for last asked, next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
-
-A chip reading **Restart to apply** appears when the file has been saved but not yet restarted.
-
-<img src="../images/guide/the-stack-list-chip-restart.png" alt="A grey chip reading Restart to apply, with a circular arrow">
-
 ## The row menu
 
-![The whole stack menu open, in two columns: the stack name across the top; on the left Start, a greyed-out Stop, Update, Pull images, Check this image again, Logs, then Edit compose file, Fill in details, Export, then an Autostart switch, a Delay box, What do these marks mean, and Remove stack; on the right the Move to folder list, New folder and Remove from folder](../images/guide/the-stack-list-row-menu.png)
+![The whole stack menu open, in two columns: the stack name across the top; on the left Start, a greyed-out Stop, Recreate with the hint Rebuilds every container, Update, Pull images, Check this image again, Logs, then Edit compose file, Fill in details, Export, then an Autostart switch, a Delay box, the Updates row with Default ticked, three Notifications switches, What do these marks mean, and Remove stack; on the right the Move to folder list, New folder and Remove from folder](../images/guide/the-stack-list-row-menu.png)
 Right-click the row to open it. Items appear in this order, and only when they apply, in two
 columns: what you can do to the stack on the left, where it lives on the right.
 
@@ -197,18 +182,20 @@ columns: what you can do to the stack on the left, where it lives on the right.
 |---|---|
 | Waiting to confirm only | It works, It does not work |
 | Needs review only | Take over and start, Clear the lock only |
-| Running stack | Take over and start (only if something outside StaXX holds its name), Start/Restart, Stop, Update, Pull images, Check this image again |
+| Running stack | Take over and start (only if something outside StaXX holds its name), Start/Restart, Stop, Recreate, Update, Pull images, Check this image again |
 | If an update is waiting | Resume the countdown or Cancel the countdown, Skip this version, What changed |
 | If a tag was withdrawn | Fix the tag… |
 | Always | Logs |
 | Has a file | Edit compose file, Fill in details…, Export… |
 | Has no file | Start a compose file here |
-| Folders | Move to folder (a list), New folder…, Remove from folder (if filed) |
+| Folders | Move to folder (a list), New folder…, Remove from folder (if filed). Unlock Unraid's padlock to see these. |
 | Boot | Autostart (on/off switch), Delay |
-| Updates | Updates — Pinned/Default/Manual/Automatic on a container's own menu, or on a stack's own menu when it holds only one container; Default/Manual/Automatic when it holds several — then a Notifications box with three switches, New image, Image installed and Installation failed, each on or off, starting at the server's own answers until you change one. See [choosing how a container updates](update-policy.md). |
+| Updates | Updates — Pinned/Default/Manual/Automatic on a container's own menu, or on a stack's own menu when it holds only one container; Default/Manual/Automatic when it holds several — then a Notifications box with three switches, New image, Image installed and Installation failed, each on or off, starting at the server's own answers until you change one. A pinned service has one switch instead, **Remind me it is still pinned**. See [choosing how a container updates](update-policy.md). |
 | Profiles | One switch per profile the file declares. See below. |
 | Reference | What do these marks mean? |
 | Last | Remove stack |
+
+**Recreate** rebuilds every container in the stack from the file as it stands now.
 
 ### Profiles
 
@@ -272,9 +259,14 @@ A row of buttons slides open under **Select** once something is chosen: **Start*
 editor has. Choose **Default**, **Manual** or **Automatic** for when updates install — not
 **Pinned**: this window can set several services at once, and a pin fixes each one to its own build
 — with **Immediate** or **Delayed** under Automatic; or set the three notification switches, which
-start from the server's own answers, then press **Apply**. The choice is written to every service in
-every chosen stack except one already pinned to a build, which is left alone with no message, and the
-window reports how many stacks changed and names any that refused.
+start from the server's own answers, then press **Apply**. The update choice is written to every
+service in every chosen stack except one already pinned to a build, which is left alone with no
+message. The notification switches go to every chosen service. The window reports how many stacks
+changed and names any that refused.
+
+When your selection holds a pinned service, **Notifications…** adds a fourth switch, **Remind me it
+is still pinned**, with a line saying how many pinned services it applies to. It is written to those
+services only.
 
 Press a button and each chosen stack runs on its own row, exactly as it does anywhere else on the
 page. One stack failing does not stop the rest, and the bar keeps a running tally as they finish,

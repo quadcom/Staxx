@@ -35,7 +35,7 @@ Two links sit under the Data store box:
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
-| Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save, start or update a stack here a copy of its file is also written to the flash drive, which Unraid already backs up. If the data store were ever lost, StaXX offers to bring every stack back from these copies — see [if the data store is lost](recovery-and-redundancy.md). With it off, no copies are written. |
+| Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | With this on, every time you save, start or update a stack here, its file is copied to the flash drive if it has changed. Unraid already backs up the flash drive, and each copy is dated from when the file last changed. If the data store were ever lost, StaXX offers to bring every stack back from these copies — see [if the data store is lost](recovery-and-redundancy.md). With it off, no copies are written. |
 | Keeping the copies current | On a schedule / Live | On a schedule | How a change made outside StaXX — the file edited by hand and the container recreated at a command line — still reaches the copy above. **On a schedule** compares every stack with its copy once an hour and rewrites the ones that differ; a change made this way can be up to an hour behind. **Live** keeps a small process running that refreshes a stack's copy the moment its container is recreated, however that was done, at the cost of one process that runs all the time; a daily sweep still runs as a backstop. Only means anything while the setting above is on. |
 
 ## Unused image management

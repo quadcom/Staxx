@@ -87,6 +87,15 @@ section you folded, in this browser, so folding **Ports** folds it on every stac
 | Logging | How this service's logs are kept. |
 | Advanced | Anything else the file sets, with no better home. Always shown. |
 
+## The Image box
+
+![The Image box in the Container group holding mariadb:11.4, with its list open underneath: 11.4, latest and beta at the top, then the folded headings Other rolling tags (4), Version numbers (45) and On this server (104)](../images/guide/editor-configure-image-list.png)
+
+Click the **Image** box, or start typing, to open its list. The usual choices sit at the top.
+**Other rolling tags**, **Version numbers** and **On this server** are folded below them; click a
+heading to open it. Type a colon and part of a tag to narrow every group. You can still type any
+value yourself.
+
 ## The Updates box
 
 ![The Updates section of a service in the form: the When to update box with Pinned, Default, Manual and Automatic, Default ticked, and the Notifications box beneath it](../images/guide/editor-configure-when-to-update.png)

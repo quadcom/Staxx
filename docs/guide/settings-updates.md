@@ -7,7 +7,7 @@ installing image updates. It is explained fully in [checking for updates](update
 service can instead be set to Manual, Automatic or Pinned; see
 [choosing how a container updates](update-policy.md).
 
-![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with its three ticks, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with its four ticks, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
 
 ## Image updates
 
@@ -36,7 +36,7 @@ These three only appear while Updates, above, is Automatic.
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
-| Notify me | New image / Image installed / Installation failed, each on or off | Installation failed is on; the other two are off | Three separate switches for when StaXX sends you an Unraid notification: New image when a check finds something waiting, Image installed once an update has gone in, and Installation failed when one hasn't. Any mix of the three can be on at once. A service can take itself out of these messages in its own settings; see [choosing how a container updates](update-policy.md). |
+| Notify me | New image / Image installed / Installation failed / Still pinned (weekly), each on or off | Installation failed and Still pinned (weekly) are on; the other two are off | Four separate switches for when StaXX sends you an Unraid notification: New image when a check finds something waiting, Image installed once an update has gone in, Installation failed when one hasn't, and Still pinned (weekly) once a week listing every container still pinned to an exact build. Any mix can be on at once. A service can take itself out of these messages in its own settings; see [choosing how a container updates](update-policy.md). |
 
 ## Previous image releases to keep
 

@@ -22,11 +22,11 @@ the flash drive holds.
 ![The card shown when the data store exists but is empty: copies of the stacks are on the flash drive, with the newest and oldest dates, where they will be written, and three buttons, Bring back the stacks, Show me what is there and Put the data store somewhere else first](../images/guide/recovery-and-redundancy-store-empty.png)
 
 If the data store exists but is empty, press **Bring back *N* stacks** to write every stack on the
-flash drive into the store. Press **Show me what is there** to list them first, with the date of
-each copy, or **Put the data store somewhere else first** to point the store elsewhere before you
+flash drive into the store. Press **Show me what is there** to list them first, with the date
+each one last changed, or **Put the data store somewhere else first** to point the store elsewhere before you
 restore anything.
 
-![The flash-drive copies list: each stack by its path with the date and time of its copy, and an OK button](../images/guide/recovery-and-redundancy-show-me.png)
+![The flash-drive copies list: each stack by its path with the date and time it last changed, and an OK button](../images/guide/recovery-and-redundancy-show-me.png)
 
 Neither option starts anything — a restored stack sits ready to open and start when you choose to,
 exactly like an imported one, and begins a fresh history of its own. Whether an earlier file or

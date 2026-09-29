@@ -57,7 +57,7 @@ row menu instead.
 
 ## From the row menu
 
-![A stack's row menu open with an Updates row and three Notifications switches near the top, each shown as an orange tick or a red cross](../images/guide/update-policy-menu.png)
+![Part of a two-service stack's row menu: Autostart, Delay, Updates — all 2 with Default ticked beside Manual and Automatic, then Notifications — all 2 with New image, Image installed and Installation failed ticked, and the Default line beneath](../images/guide/update-policy-menu.png)
 
 Open a container's own menu, or a stack's menu, from [the row menu](the-stack-list.md#the-row-menu).
 Both carry the same **Updates** row and the same three **Notifications** switches, working the same
@@ -90,14 +90,20 @@ Turn on **Select** and tick the stacks you want to change, then press **Updates�
   to set every service in every ticked stack at once. A service already pinned to a build is left
   exactly as it is, with no message.
 - **Notifications…** offers the same three switches as a container's own page. Press
-  **Apply to N stacks** to set them for every service in every ticked stack.
+  **Apply to N stacks** to set them for every service in every ticked stack. When the chosen stacks
+  hold a pinned service, a fourth switch, **Remind me it is still pinned**, sets the weekly reminder
+  for the pinned services only.
 
 ## Containers that need an extra step
 
 **Pinned to one exact build.** Choosing **Pinned** fixes a container to the exact build it is
 running right now, after a window asks you to confirm it.
 
-![The Updates row in a pinned service's menu: Pinned ticked, with Default, Manual and Automatic beside it, and the Notifications switches below](../images/guide/update-policy-pinned-menu.png)
+A pinned container's **Notifications** box holds one switch, **Remind me it is still pinned**, in
+place of the other three. With it on, the weekly reminder lists this container while it stays
+pinned. With it off, the reminder leaves it out. It starts on.
+
+![The Updates row in a pinned service's menu: Pinned ticked, with Default, Manual and Automatic beside it, and below it Notifications with the one switch Remind me it is still pinned, ticked](../images/guide/update-policy-pinned-menu.png)
 
 From then on, clicking **Default**, **Manual** or **Automatic** on that same container does not set
 it straight away — it opens a small window listing the tags that image offers instead. Pick one,
