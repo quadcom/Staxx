@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20260929">
+<!ENTITY version              "00.05.00_dev20260930">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "034b8b2df684ff74b5e98051853f9992">
-<!ENTITY packageSHA256        "c6e971ec04f2013234e3aed5b5948188bc3d12f6f443b7aa1dccf51e6838132b">
+<!ENTITY packageMD5           "dac7a7b871b0084702b7a93db02a8ea9">
+<!ENTITY packageSHA256        "eac8d8f68a3a1d7f92733982028c3aaf1270f11febc478b51a562380d82b5afc">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,9 +37,13 @@
 >
 
 <CHANGES>
-###00.05.00_dev20260929
+###00.05.00_dev20260930
+- Settings, Self-test now lists what Unraid Docker and Compose Manager left behind: templates for apps that no longer exist, apps still set up in Unraid's Docker tab that you no longer use, and Compose Manager's settings folder once the add-on is removed. Tick what should go and StaXX clears it, keeping a copy you can put back.
+- A withdrawn tag or an image that moved to another registry now shows an amber chip, since it needs you to change the image line; an image not downloaded yet stays blue.
+- Importing an Unraid template that sets the same variable or label twice now works. StaXX keeps the last value, as Unraid does, and notes the one it left out at the top of the new file.
 - StaXX now has its own tile on Unraid's Dashboard. Open Settings, General, Edit dashboard tile… to arrange it: drag stacks onto a grid of up to 8 columns, group them into folders, and give each folder an icon from four online icon sets, a plain built-in symbol, your own picture, or one that cycles through the icons of the stacks inside. On the Dashboard, click a folder to open it, right-click a stack or folder to start, stop or restart it, and click a stack for a small window with its CPU, memory and network graphs. The icon sets are hernandito's animated folder icons (used with his permission), ground7's animated icons (MIT), Dashboard Icons by homarr-labs (Apache-2.0) and Tabler Icons (MIT).
 - Folders on the Stacks page can have an icon too: choose Folder icon… from a folder's menu to pick one with the same picker, or Remove icon to go back to the plain folder.
+- The merge wizard's last step now shows Docker validated, with the Docker logo, once Docker has checked the merged file, or Docker's own message if it found a problem.
 - Settings has a new About tab showing the installed StaXX version, which Docker Compose is running and whether StaXX installed it, and credits for the work StaXX uses.
 - The CPU column now shows each stack's share of the whole processor, from 0 to 100%, instead of counting each processor thread as 100%.
 - The little graphs in the CPU, Memory, Network and GPU columns now each have their own colour.
@@ -520,7 +524,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20260929-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20260930-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
