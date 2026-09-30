@@ -5886,14 +5886,60 @@ function staxx_leftovers_kept(): array {
 }
 
 /**
- * What can be cleared right now, built fresh from the template folder and one
- * read of Docker ($rows is that read, injectable for the suite). The reply
- * shape is the contract with leftovers.js.
+ * Which of these full container ids can Docker not describe? One
+ * `docker inspect` over all of them prints each healthy id on its own line
+ * and an error naming the full id for a damaged one. Empty input never
+ * reaches Docker.
+ *
+ * @param string[] $ids full 64-character ids
+ * @return string[] the damaged ids
  */
-function staxx_leftovers(?array $rows = null): array {
-  $out = ['templates' => [], 'composeManager' => null, 'kept' => staxx_leftovers_kept()];
+function staxx_leftovers_damaged(array $ids): array {
+  $ids = array_values(array_filter($ids, fn($i) => preg_match('/^[0-9a-f]{64}$/', (string)$i)));
+  if (!$ids) return [];
+  $code = 0;
+  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' inspect --format '.escapeshellarg('{{.Id}}').' '
+                  . implode(' ', array_map('escapeshellarg', $ids)).' 2>&1', 20, $code);
+  return staxx_leftovers_damaged_parse($ids, (string)$out);
+}
+
+/**
+ * Pure half of staxx_leftovers_damaged(): damaged means the id is not echoed
+ * back as a whole line AND an output line containing "Error" names it. An id
+ * that is merely missing with no error (Docker vanishing mid-call) is not
+ * called damaged.
+ *
+ * @param string[] $ids
+ * @return string[]
+ */
+function staxx_leftovers_damaged_parse(array $ids, string $out): array {
+  $lines = array_map('trim', explode("\n", $out));
+  $bad = [];
+  foreach ($ids as $id) {
+    if (in_array($id, $lines, true)) continue;
+    foreach ($lines as $l) {
+      if (strpos($l, 'Error') !== false && strpos($l, $id) !== false) { $bad[] = $id; break; }
+    }
+  }
+  return $bad;
+}
+
+/**
+ * What can be cleared right now, built fresh from the template folder and one
+ * read of Docker ($rows is that read, $damaged the ids Docker cannot describe;
+ * both injectable for the suite). A template's container carries `damaged`;
+ * a damaged container with no template and no compose project goes in the
+ * `damaged` key. The reply shape is the contract with leftovers.js.
+ */
+function staxx_leftovers(?array $rows = null, ?array $damaged = null): array {
+  $out = ['templates' => [], 'composeManager' => null, 'damaged' => [], 'kept' => staxx_leftovers_kept()];
   if ($rows === null) $rows = staxx_leftovers_containers();
   if ($rows === null) return $out;
+  if ($damaged === null) {
+    $damaged = staxx_leftovers_damaged(array_column(array_filter($rows, fn($r) => $r['project'] === ''), 'id'));
+  }
+  $bad = array_flip($damaged);
+  $named = []; // containers some template names: not "Damaged apps" rows
 
   $byName = [];
   $shape  = [];
@@ -5910,16 +5956,25 @@ function staxx_leftovers(?array $rows = null): array {
   if (is_dir(STAXX_UNRAID_TEMPLATES_DIR)) {
     foreach (staxx_unraid_template_xml(STAXX_UNRAID_TEMPLATES_DIR) as $path => $xml) {
       $name = trim((string)($xml->Name ?? ''));
-      if ($name === '' || isset($atRisk[$path])) continue;
+      if ($name === '') continue;
+      $named[$name] = true; // at-risk or not, a template names it
+      if (isset($atRisk[$path])) continue;
       $c = $byName[$name] ?? null;
       if ($c !== null && $c['project'] !== '') continue; // a compose container: not Unraid's to clear
       $out['templates'][] = [
         'file'      => basename($path),
         'name'      => $name,
-        'container' => $c === null ? null : ['id' => $c['id'], 'state' => $c['state'], 'image' => $c['image']],
+        'container' => $c === null ? null : ['id' => $c['id'], 'state' => $c['state'], 'image' => $c['image'],
+                                             'damaged' => isset($bad[$c['id']])],
       ];
     }
     usort($out['templates'], fn($a, $b) => strcasecmp($a['name'], $b['name']));
+  }
+
+  foreach ($rows as $r) {
+    if ($r['project'] === '' && isset($bad[$r['id']]) && !isset($named[$r['name']])) {
+      $out['damaged'][] = ['id' => $r['id'], 'name' => $r['name'], 'state' => $r['state'], 'image' => $r['image']];
+    }
   }
 
   if (staxx_leftovers_cm_orphaned()) {
@@ -5950,14 +6005,18 @@ function staxx_leftovers(?array $rows = null): array {
  *
  * @param string[] $files template file names
  * @param ?array   $rows  a Docker read, injectable for the suite as in staxx_leftovers()
+ * @param string[] $damagedIds ids of template-less damaged containers; each is
+ *                 kept only when it is on the fresh list's `damaged` key
+ * @param ?array   $damaged the damaged ids for that fresh list, injectable for the suite
  */
-function staxx_leftovers_clear_job(array $files, bool $composeManager, string &$error, ?array $rows = null): string {
+function staxx_leftovers_clear_job(array $files, bool $composeManager, string &$error, ?array $rows = null,
+                                   array $damagedIds = [], ?array $damaged = null): string {
   $error = '';
   if (staxx_leftovers_root() === '') {
     $error = 'No data store has been chosen yet, so there is nowhere to keep a copy.';
     return '';
   }
-  $list = staxx_leftovers($rows);
+  $list = staxx_leftovers($rows, $damaged);
 
   $byFile = [];
   foreach ($list['templates'] as $t) $byFile[$t['file']] = $t;
@@ -5967,7 +6026,15 @@ function staxx_leftovers_clear_job(array $files, bool $composeManager, string &$
     if (!isset($byFile[$f]) || isset($items[$f])) continue;
     $t = $byFile[$f];
     $items[$f] = ['kind' => $t['container'] === null ? 'template' : 'container', 'name' => $t['name'], 'file' => $f]
-               + ($t['container'] === null ? [] : ['id' => $t['container']['id']]);
+               + ($t['container'] === null ? [] : ['id' => $t['container']['id'], 'damaged' => !empty($t['container']['damaged'])]);
+  }
+
+  $byId = [];
+  foreach ($list['damaged'] as $d) $byId[$d['id']] = $d;
+  foreach ($damagedIds as $id) {
+    $id = (string)$id;
+    if (!isset($byId[$id]) || isset($items['damaged:'.$id])) continue;
+    $items['damaged:'.$id] = ['kind' => 'damaged', 'name' => $byId[$id]['name'], 'id' => $id];
   }
 
   $cm = $list['composeManager'];
@@ -5998,11 +6065,26 @@ function staxx_leftovers_clear_job(array $files, bool $composeManager, string &$
 }
 
 /**
+ * The plain-listing row for this id, only when its name still matches and it
+ * carries no compose project. The last-moment check for a damaged container,
+ * which `docker inspect` cannot describe.
+ */
+function staxx_leftovers_unlabelled_row(string $id, string $name): ?array {
+  foreach (staxx_leftovers_containers() ?? [] as $r) {
+    if ($r['id'] === $id) return ($r['name'] === $name && $r['project'] === '') ? $r : null;
+  }
+  return null;
+}
+
+/**
  * The job body. Per item, in this order so a failure leaves the more
  * recoverable state: container (docker inspect saved, then rm -f — never -v,
  * never the image), then the template moved into the set and its Auto Update
  * entry dropped; or the whole Compose Manager folder moved with mv (it crosses
  * from the flash drive to the cache pool, which a folder rename() cannot).
+ * A damaged container (inspect fails) keeps its listing row instead of the
+ * inspect output; if Docker refuses to remove it the template is still
+ * cleared. A 'damaged' item is such a container with no template at all.
  * The manifest is rewritten after every item.
  */
 function staxx_leftovers_do_clear(array $items, string $stamp): bool {
@@ -6036,6 +6118,27 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
       continue;
     }
 
+    // A damaged app has no template: only the container goes.
+    if ($kind === 'damaged') {
+      $id = (string)($it['id'] ?? '');
+      if (!preg_match('/^[0-9a-f]{64}$/', $id)) { echo "Skipped $name: not a container id.\n"; $ok = false; continue; }
+      echo "Removing the damaged app \"$name\"...\n";
+      if (staxx_leftovers_unlabelled_row($id, $name) === null) {
+        echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
+        $ok = false; continue;
+      }
+      $code = 1;
+      staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
+      if ($code !== 0) {
+        echo "Docker would not remove the damaged app \"$name\". Turn Docker off and on again in Settings → Docker, then clear it here from \"Damaged apps\".\n";
+        $ok = false; continue;
+      }
+      $m['items'][] = ['kind' => 'damaged', 'name' => $name, 'id' => $id];
+      staxx_leftovers_manifest_save($stamp, $m);
+      echo "Removed the damaged app \"$name\".\n";
+      continue;
+    }
+
     $file = basename((string)$it['file']);
     $src  = STAXX_UNRAID_TEMPLATES_DIR.'/'.$file;
     if (!is_file($src)) { echo "Skipped $file: it is no longer there.\n"; $ok = false; continue; }
@@ -6048,9 +6151,20 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
       $code = 1;
       $json = staxx_sh($docker.' inspect '.escapeshellarg($id), 20, $code);
       $info = $code === 0 ? json_decode($json, true) : null;
-      // Re-checked at the last moment: same name, still no compose project.
-      if (!is_array($info) || ($info[0]['Name'] ?? '') !== '/'.$name
+      $damaged = !empty($it['damaged']);
+      if (!is_array($info)) {
+        // Inspect fails on a damaged container, so fall back to the plain
+        // listing: same id, same name, still no compose project.
+        $row = staxx_leftovers_unlabelled_row($id, $name);
+        if ($row === null) {
+          echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
+          $ok = false; continue;
+        }
+        $damaged = true;
+        $json = json_encode($row + ['damaged' => true], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+      } elseif (($info[0]['Name'] ?? '') !== '/'.$name
           || (($info[0]['Config']['Labels']['com.docker.compose.project'] ?? '') !== '')) {
+        // Re-checked at the last moment: same name, still no compose project.
         echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
         $ok = false; continue;
       }
@@ -6060,7 +6174,11 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
         $ok = false; continue;
       }
       staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
-      if ($code !== 0) { echo "Docker would not remove \"$name\".\n"; $ok = false; continue; }
+      if ($code !== 0) {
+        if (!$damaged) { echo "Docker would not remove \"$name\".\n"; $ok = false; continue; }
+        // Forced: the template is still cleared; the container waits under "Damaged apps".
+        echo "Docker would not remove the damaged app \"$name\". Its template is cleared. Turn Docker off and on again in Settings → Docker, then clear it here from \"Damaged apps\".\n";
+      }
     }
 
     @mkdir($set.'/templates', 0755, true);

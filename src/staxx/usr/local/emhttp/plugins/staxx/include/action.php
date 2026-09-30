@@ -67,6 +67,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Dashboard.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Feedback.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -267,6 +268,10 @@ $staxxSafeWithoutStore = [
   // store gets chosen in the first place, so they have to work before one
   // exists, same as 'settings-save' above.
   'store-check', 'store-inspect', 'store-create',
+  // The bug button is on every screen, so its actions answer in their own
+  // words ('Choose a data store first…') rather than the stacks refusal.
+  'feedback-status', 'feedback-connect', 'feedback-poll', 'feedback-disconnect',
+  'feedback-upload', 'feedback-send', 'feedback-details', 'feedback-attach',
 ];
 if (!staxx_store_ready() && !in_array($action, $staxxSafeWithoutStore, true)) {
   staxx_reply([
@@ -1266,6 +1271,26 @@ switch ($action) {
       (string)($_POST['image'] ?? ''));
     staxx_reply(['ok' => true]);
 
+  // ---- the bug button: connect to the feedback board, send a picture and a
+  // report (PLAN_213). The picture arrives as base64 in this urlencoded post,
+  // never multipart, which hangs on this box. ----
+  case 'feedback-status':
+    staxx_reply(staxx_feedback_status());
+  case 'feedback-connect':
+    staxx_reply(staxx_feedback_connect());
+  case 'feedback-poll':
+    staxx_reply(staxx_feedback_poll());
+  case 'feedback-disconnect':
+    staxx_reply(staxx_feedback_disconnect());
+  case 'feedback-upload':
+    staxx_reply(staxx_feedback_upload((string)($_POST['data'] ?? ''), (string)($_POST['type'] ?? '')));
+  case 'feedback-details':
+    staxx_reply(staxx_feedback_details((string)($_POST['stack'] ?? ''), (string)($_POST['errors'] ?? ''), (string)($_POST['browser'] ?? '')));
+  case 'feedback-attach':
+    staxx_reply(staxx_feedback_attach((string)($_POST['post'] ?? ''), (string)($_POST['file'] ?? ''), (string)($_POST['text'] ?? '')));
+  case 'feedback-send':
+    staxx_reply(staxx_feedback_send((string)($_POST['title'] ?? ''), (string)($_POST['content'] ?? ''), (string)($_POST['screen'] ?? ''), (string)($_POST['kind'] ?? 'bug')));
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *
@@ -1395,7 +1420,8 @@ switch ($action) {
   /* ---- PLAN_211 — clearing out what Unraid Docker and Compose Manager left behind ----
    *
    * `leftovers` is read-only. `leftovers-clear` starts a detached job (the page
-   * follows `job`) for the ticked template files (`templates[]`) and, with
+   * follows `job`) for the ticked template files (`templates[]`), damaged apps with no
+   * template (`damaged[]`, container ids) and, with
    * composeManager=1, the add-on's settings folder; the server re-derives the
    * list and drops anything not on it. Restore and forget act on a kept set
    * named by `stamp`.
@@ -1408,7 +1434,11 @@ switch ($action) {
     $files    = is_array($filesRaw)
       ? array_values(array_filter(array_map('strval', $filesRaw), fn($f) => $f !== ''))
       : [];
-    $job = staxx_leftovers_clear_job($files, ($_POST['composeManager'] ?? '') === '1', $error);
+    $damagedRaw = $_POST['damaged'] ?? [];
+    $damagedIds = is_array($damagedRaw)
+      ? array_values(array_filter(array_map('strval', $damagedRaw), fn($f) => $f !== ''))
+      : [];
+    $job = staxx_leftovers_clear_job($files, ($_POST['composeManager'] ?? '') === '1', $error, null, $damagedIds);
     if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 

@@ -93,7 +93,7 @@ $rows = [
   row('inA', 'A', '/mnt/elsewhere/stacks/A'),            // same project name, run from StaXX's folder
   row('inB', 'B', "$cm/projects/B"),                     // genuinely run from the add-on's folder
 ];
-$l = staxx_leftovers($rows);
+$l = staxx_leftovers($rows, []);
 $by = [];
 foreach ($l['templates'] as $t) $by[$t['name']] = $t;
 
@@ -116,18 +116,53 @@ ok('a project counts only containers whose working_dir is inside the folder',
 ok('blockedBy names the project that still has a container', ($c['blockedBy'] ?? null) === ['B'], json_encode($c['blockedBy'] ?? null));
 
 mkdir($plug, 0755, true);
-ok('the folder is not listed while the plugin folder exists', staxx_leftovers($rows)['composeManager'] === null);
+ok('the folder is not listed while the plugin folder exists', staxx_leftovers($rows, [])['composeManager'] === null);
 rmdir($plug);
 touch($cm.'.plg');
-ok('the folder is not listed while its .plg exists', staxx_leftovers($rows)['composeManager'] === null);
+ok('the folder is not listed while its .plg exists', staxx_leftovers($rows, [])['composeManager'] === null);
 unlink($cm.'.plg');
+
+/* ------------------------------------------------- damaged containers --- */
+
+$idA = hash('sha256', 'dmgA'); $idB = hash('sha256', 'dmgB'); $idC = hash('sha256', 'dmgC');
+ok('damaged parse: healthy ids echoed are not damaged',
+   staxx_leftovers_damaged_parse([$idA, $idB], "$idA
+$idB
+") === []);
+ok('damaged parse: an error line naming a full id marks that id',
+   staxx_leftovers_damaged_parse([$idA, $idB], "$idA
+Error response from daemon: readlink /x: $idB: no such
+") === [$idB]);
+ok('damaged parse: an id missing with no error is not damaged',
+   staxx_leftovers_damaged_parse([$idA, $idB], "$idA
+") === []);
+ok('damaged: empty input never asks Docker', staxx_leftovers_damaged([]) === []);
+
+$dRows = [
+  row('zzleftplain'),                       // has a template
+  row('zzdmgnotpl'),                        // damaged, no template
+  row('zzdmgcompose', 'someproject'),       // damaged but compose-labelled
+];
+$dIds = [hash('sha256', 'zzleftplain'), hash('sha256', 'zzdmgnotpl'), hash('sha256', 'zzdmgcompose')];
+$dl = staxx_leftovers($dRows, $dIds);
+$dby = [];
+foreach ($dl['templates'] as $t) $dby[$t['name']] = $t;
+ok('a template row whose container is damaged is flagged', ($dby['zzleftplain']['container']['damaged'] ?? false) === true);
+$hb = [];
+foreach (staxx_leftovers($dRows, [])['templates'] as $t) $hb[$t['name']] = $t;
+ok('a healthy template row is not flagged', ($hb['zzleftplain']['container']['damaged'] ?? true) === false);
+$dn = array_column($dl['damaged'], 'name');
+ok('a damaged container with no template is listed under damaged', in_array('zzdmgnotpl', $dn, true), json_encode($dl['damaged']));
+ok('a damaged container that a template names is not listed twice', !in_array('zzleftplain', $dn, true));
+ok('a damaged compose-labelled container is not listed', !in_array('zzdmgcompose', $dn, true));
+ok('the damaged key is always present', staxx_leftovers($dRows, [])['damaged'] === []);
 
 /* --------------------------------------------------- job start refusals --- */
 
 $err = '';
 ok('a file not on the list starts nothing', staxx_leftovers_clear_job(['../etc/passwd', 'nope.xml'], false, $err) === '' && $err !== '', $err);
 ok('the folder is refused while a project still has a container',
-   staxx_leftovers_clear_job([], true, $err, $rows) === '' && strpos($err, 'still has a container') !== false, $err);
+   staxx_leftovers_clear_job([], true, $err, $rows, [], []) === '' && strpos($err, 'still has a container') !== false, $err);
 ok('a bad stamp is refused by restore and forget',
    !staxx_leftovers_restore('../x', 'template', 'a', $err) && !staxx_leftovers_forget('../x', $err));
 

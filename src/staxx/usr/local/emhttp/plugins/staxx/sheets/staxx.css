@@ -910,7 +910,7 @@ div.title.staxx-has-titlebar {
   border-radius: var(--sm-radius);
   background: var(--sm-fill);
   color: inherit;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   line-height: 1.3;
   white-space: nowrap;
 }
@@ -982,7 +982,7 @@ div.title.staxx-has-titlebar {
    beside it. */
 .staxx-scaffold .staxx-btn--small {
   padding: 0.3rem 0.8rem;
-  font-size: 1.1rem;
+  font-size: 1.3rem;
 }
 
 .staxx-buttons {
@@ -14791,7 +14791,7 @@ dialog::backdrop {
 
 .staxx-scaffold .staxx-merge-changenav .staxx-btn {
   padding: 0.1rem 0.6rem;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
 }
 
 /* The reason card sits directly under the changed line it explains, so it
@@ -16114,6 +16114,21 @@ dialog::backdrop {
   opacity: .8;
 }
 
+/* Red = broken, same red and chip shape as .staxx-updatepill--failing. */
+.staxx-scaffold .staxx-leftovers .staxx-leftovers-damaged {
+  display: inline-block;
+  padding: 0.25rem 0.8rem;
+  border: 0.1rem solid transparent;
+  border-radius: 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  box-sizing: border-box;
+  white-space: nowrap;
+  background: #f85149;
+  color: #fff;
+}
+
 .staxx-scaffold .staxx-leftovers .staxx-leftovers-blocked {
   margin: 0.4rem 0 0;
   font-size: 1.2rem;
@@ -16159,7 +16174,7 @@ dialog::backdrop {
 
 .staxx-scaffold .staxx-leftovers .staxx-btn {
   font: inherit;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   color: #fff;
   background: var(--sm-fill);
   border: 0.1rem solid var(--sm-line);
@@ -16167,3 +16182,692 @@ dialog::backdrop {
 }
 
 .staxx-scaffold .staxx-leftovers .staxx-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---- Bug button and bug windows (PLAN_213) ------------------------------ */
+
+/* A popover host: the UA gives it a border, padding, inset and a background,
+   all undone here. It is moved into the newest open modal dialog so it stays
+   clickable (see feedback.js); a top-layer element is placed against the
+   viewport whatever its ancestors' overflow. The corner clears Unraid's
+   footer and its round scroll-to-top / scroll-to-bottom buttons. */
+.staxx-bug-host {
+  margin: 0;
+  inset: auto 1.2rem 6.8rem auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  color: inherit;
+}
+
+/* No popover support: fixed in the scaffold instead. */
+.staxx-bug-host--fixed {
+  position: fixed;
+  z-index: 9999;
+}
+
+.staxx-bug-host .staxx-bug-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.6rem;
+  height: 3.6rem;
+  padding: 0;
+  border: 0.1rem solid var(--sm-accent, #ff8c2f);
+  border-radius: 50%;
+  background: var(--background-color, #1c1c1c);
+  color: #fff;
+  font-size: 1.8rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--sm-pop-shadow, 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35));
+  /* A ring that spreads from the border and fades, then rests, to catch the
+     eye. While it runs it stands in for the drop shadow above. */
+  animation: staxx-bug-ring 3.6s ease-out infinite;
+}
+
+@keyframes staxx-bug-ring {
+  0% { box-shadow: 0 0 0 0 rgba(255, 140, 47, 0.5); }
+  50%, 100% { box-shadow: 0 0 0 1.2rem rgba(255, 140, 47, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staxx-bug-host .staxx-bug-btn { animation: none; }
+}
+
+.staxx-bug-host .staxx-bug-btn:hover {
+  background: var(--sm-accent, #ff8c2f);
+}
+
+.staxx-bug-host .staxx-bug-btn:focus-visible {
+  outline: 0.2rem solid var(--sm-accent, #ff8c2f);
+  outline-offset: 0.2rem;
+}
+
+/* The two windows are popovers carrying .staxx-confirm's frame. That class
+   hides itself unless it is an open <dialog> (display: none, opacity: 0), so
+   :popover-open has to say display and opacity outright. No dimming: the
+   page under them stays usable. */
+.staxx-scaffold .staxx-bugwin {
+  position: fixed;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  box-shadow: 0 1.2rem 3.2rem rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  display: none;
+  opacity: 0;
+  transition:
+    opacity var(--sm-motion-slow) var(--sm-ease),
+    display var(--sm-motion-slow) allow-discrete,
+    overlay var(--sm-motion-slow) allow-discrete;
+}
+
+.staxx-scaffold .staxx-bugwin:popover-open {
+  display: flex;
+  opacity: 1;
+}
+
+@starting-style {
+  .staxx-scaffold .staxx-bugwin:popover-open { opacity: 0; }
+}
+
+.staxx-scaffold .staxx-bugwin::backdrop {
+  background: transparent;
+}
+
+.staxx-scaffold .staxx-bugwin[hidden],
+.staxx-scaffold .staxx-bugwin [hidden] {
+  display: none !important;
+}
+
+.staxx-scaffold .staxx-bugwin-connectwin {
+  inset: 0;
+  width: min(56rem, 94vw);
+  margin: auto;
+}
+
+/* The report form: placed by left/top from feedback.js, which also moves it
+   into the newest open modal. Minimise and restore glide left, top and width
+   and fold the body and footer away. */
+.staxx-scaffold .staxx-bugwin-float {
+  inset: auto;
+  width: min(96rem, 94vw);
+  transition:
+    opacity var(--sm-motion-slow) var(--sm-ease),
+    left var(--sm-motion-slow) var(--sm-ease),
+    top var(--sm-motion-slow) var(--sm-ease),
+    width var(--sm-motion-slow) var(--sm-ease),
+    display var(--sm-motion-slow) allow-discrete,
+    overlay var(--sm-motion-slow) allow-discrete;
+}
+
+.staxx-scaffold .staxx-bugwin-float.staxx-bugwin--dragging,
+.staxx-scaffold .staxx-bugwin-float.staxx-bugwin--moving {
+  transition: none;
+}
+
+.staxx-scaffold .staxx-bugwin-float.staxx-bugwin--min {
+  width: 32rem;
+}
+
+/* Title bar. */
+.staxx-scaffold .staxx-bugwin .staxx-confirm-head {
+  gap: 0.8rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-confirm-title {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 1.6rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-logo {
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.4rem;
+}
+
+.staxx-scaffold .staxx-bugwin-float .staxx-confirm-head {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.staxx-scaffold .staxx-bugwin-float.staxx-bugwin--dragging .staxx-confirm-head {
+  cursor: grabbing;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-min {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--sm-radius);
+  background: transparent;
+  color: #fff;
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-min:hover {
+  background: var(--sm-fill-2);
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-min:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0;
+}
+
+/* Body and footer fold to nothing when minimised. */
+.staxx-scaffold .staxx-bugwin-float .staxx-confirm-body {
+  max-height: 80vh;
+  transition:
+    max-height var(--sm-motion-slow) var(--sm-ease),
+    opacity var(--sm-motion-slow) var(--sm-ease),
+    padding var(--sm-motion-slow) var(--sm-ease),
+    visibility 0s;
+}
+
+.staxx-scaffold .staxx-bugwin-float .staxx-confirm-foot {
+  max-height: 80vh;
+  transition:
+    max-height var(--sm-motion-slow) var(--sm-ease),
+    opacity var(--sm-motion-slow) var(--sm-ease),
+    padding var(--sm-motion-slow) var(--sm-ease),
+    border-color var(--sm-motion-slow) var(--sm-ease),
+    visibility 0s;
+}
+
+.staxx-scaffold .staxx-bugwin--min .staxx-confirm-body,
+.staxx-scaffold .staxx-bugwin--min .staxx-confirm-foot {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+  transition-property: max-height, opacity, padding, border-color, visibility;
+  transition-delay: 0s, 0s, 0s, 0s, var(--sm-motion-slow);
+}
+
+/* A step change fades the new step in. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-view {
+  animation: staxx-bugwin-in var(--sm-motion-slow) var(--sm-ease);
+}
+
+@keyframes staxx-bugwin-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* The footer buttons sit at the right even when the message line is empty
+   (the shared footer is space-between and leaves an empty line undrawn). */
+.staxx-scaffold .staxx-bugwin .staxx-confirm-foot .staxx-buttons {
+  margin-left: auto;
+  align-items: center;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-confirm-msg {
+  font-size: 1.3rem;
+  color: var(--text-color, #e0e0e0);
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-ask {
+  font-size: 1.3rem;
+  color: #fff;
+  animation: staxx-bugwin-in var(--sm-motion-slow) var(--sm-ease);
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-btn--danger:hover:not(:disabled) {
+  background: var(--sm-danger);
+  color: #fff;
+}
+
+/* Form. The kind-of-report switch reuses the editor's .staxx-views look, at
+   the window's 13px floor. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 1.2rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-viewbtn {
+  padding: 0.5rem 1.2rem;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-viewbtn .fa {
+  margin-right: 0.5rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-label {
+  display: block;
+  margin: 0;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-input,
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0.4rem 0 1rem;
+  padding: 0.6rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: var(--text-color, #e0e0e0);
+  font: inherit;
+  font-size: 1.4rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-editor {
+  min-height: 26rem;
+  max-height: 55vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-input:focus,
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-editor:focus {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-shot {
+  display: block;
+  max-width: 100%;
+  margin: 0.6rem 0;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-as {
+  margin: 0;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+/* Connect views. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-view--connect {
+  text-align: center;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-intro {
+  margin: 0.4rem 0 1.2rem;
+  font-size: 1.4rem;
+  line-height: 1.5;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-code {
+  margin: 0.8rem 0 1.2rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 3.2rem;
+  letter-spacing: 0.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-wait {
+  margin: 1.2rem 0 0;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-wait .fa {
+  margin-right: 0.6rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-gotit {
+  margin: 0.4rem 0 0.6rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-tick {
+  margin-right: 0.6rem;
+  color: var(--sm-good);
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-btn-icon {
+  margin-left: 0.6rem;
+}
+
+/* Sent view. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-view--done {
+  text-align: center;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-thanks {
+  margin: 0.4rem 0 0.8rem;
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentline {
+  margin: 0 0 0.6rem;
+  font-size: 1.5rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-seelink {
+  display: block;
+  margin: 0 0 1.8rem;
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: var(--sm-accent);
+  overflow-wrap: anywhere;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-seelink .fa {
+  margin-left: 0.4rem;
+  font-size: 1.4rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-wastitle {
+  text-align: left;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-copy {
+  box-sizing: border-box;
+  max-height: 40vh;
+  margin-top: 0.4rem;
+  padding: 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  overflow-y: auto;
+  text-align: left;
+  font-size: 1.4rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-copy-title {
+  margin: 0 0 0.6rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-copy-body {
+  white-space: pre-wrap;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-copy-foot {
+  margin: 1rem 0 0;
+  padding-top: 0.8rem;
+  border-top: 0.1rem solid var(--sm-line);
+  font-size: 1.3rem;
+}
+
+/* Sent view: the private files that went onto the card. White text, never grey. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfiles {
+  box-sizing: border-box;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  text-align: center;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfiles-head {
+  margin: 0 0 0.6rem;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfile {
+  margin: 0.2rem 0;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfile .fa {
+  margin-right: 0.6rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfile-name {
+  margin-right: 0.8rem;
+  font-family: monospace;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfile-size {
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-sentfiles-foot {
+  margin: 0.6rem 0 0;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+/* Diagnostic details on the form: a ticked list, each with a Preview link. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-details {
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0 0 1rem;
+  padding: 0.6rem 1rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: transparent;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-legend {
+  width: auto;
+  margin: 0;
+  padding: 0 0.4rem;
+  border: 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-detailrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.6rem 0 0;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-check {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0;
+  font-size: 1.3rem;
+  color: #fff;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-check input {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  accent-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sm-accent);
+  font: inherit;
+  font-size: 1.3rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-lock {
+  margin: 1rem 0 0;
+  font-size: 1.3rem;
+  line-height: 1.5;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-lock .fa {
+  margin-right: 0.6rem;
+  color: var(--sm-good);
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-attachnote {
+  margin: 0 0 1.4rem;
+  font-size: 1.3rem;
+  color: #fff;
+}
+
+/* Preview window: fixed height, the text block fills it and scrolls inside. */
+.staxx-scaffold .staxx-bugwin-preview {
+  inset: 0;
+  width: min(120rem, 94vw);
+  height: 85vh;
+  margin: auto;
+  flex-direction: column;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-confirm-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-pbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-pline {
+  margin: 0;
+  font-size: 1.3rem;
+  line-height: 1.6;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-hide {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.6rem 1.2rem;
+  border: 0.1rem solid #d29922;
+  border-radius: var(--sm-radius);
+  background: #d29922;
+  color: #111;
+  font: inherit;
+  font-size: 1.3rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-hide:hover {
+  background: #e0a93a;
+  border-color: #e0a93a;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-hide .fa {
+  margin-right: 0.6rem;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-ptext {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  min-height: 0;
+  margin: 0;
+  padding: 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: #fff;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.3rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-ptext::selection {
+  background: #f85149;
+  color: #fff;
+}
+
+/* The amber mark on every replacement, clickable to show the real text. */
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-tag {
+  padding: 0 0.2rem;
+  border-radius: 0.3rem;
+  background: #d29922;
+  color: #111;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-tag:hover {
+  outline: 0.1rem solid #fff;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-tag--key {
+  cursor: default;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-tag--key:hover {
+  outline: 0;
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-tag--new {
+  animation: staxx-bugwin-in var(--sm-motion-slow) var(--sm-ease);
+}
+
+.staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-pmsgicon {
+  margin-right: 0.6rem;
+  color: #d29922;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-btn--danger {
+  border-color: var(--sm-danger);
+}
+
+.staxx-scaffold .staxx-feedback-settings {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 1.3rem;
+}
+
+/* Only the fades stay: a fade moves nothing, so the glide, fold and drag
+   transitions stop. */
+@media (prefers-reduced-motion: reduce) {
+  .staxx-scaffold .staxx-bugwin-float {
+    transition:
+      opacity var(--sm-motion-slow) var(--sm-ease),
+      display var(--sm-motion-slow) allow-discrete,
+      overlay var(--sm-motion-slow) allow-discrete;
+  }
+
+  .staxx-scaffold .staxx-bugwin-float .staxx-confirm-body,
+  .staxx-scaffold .staxx-bugwin-float .staxx-confirm-foot,
+  .staxx-scaffold .staxx-bugwin--min .staxx-confirm-body,
+  .staxx-scaffold .staxx-bugwin--min .staxx-confirm-foot {
+    transition: none;
+  }
+}

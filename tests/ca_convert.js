@@ -779,6 +779,18 @@ var keywordR = CA.convert(YAML_KEYWORD_TARGET);
 ok('a Target literally "yes" is quoted as a key, not written bare',
    keywordR.yaml.indexOf('"yes": "on"') >= 0);
 
+var NUMBER_TARGET = {
+  Name: 'number-target-test',
+  Repository: 'example/number-target-test',
+  Config: [
+    { '@attributes': { Name: 'Streaming Port', Target: '8075', Default: '8075',
+        Description: 'A variable whose name is a number.', Type: 'Variable', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var numberR = CA.convert(NUMBER_TARGET);
+ok('a Target that is a number is quoted as a key, not written bare',
+   numberR.yaml.indexOf('"8075": "8075"') >= 0, numberR.yaml);
+
 /* =========================================================================
  * I. Bulk sanity — every app in the live feed, if it is on disk
  *

@@ -151,6 +151,9 @@ $unraidTemplatesTag = staxx_asset('javascript/unraid-templates.js');
 // PLAN_211 — the clear-out section, same standalone shape as the one above.
 $leftoversFile = STAXX_ROOT.'/javascript/leftovers.js';
 $leftoversTag = staxx_asset('javascript/leftovers.js');
+// PLAN_213 — the bug button, same standalone shape.
+$feedbackFile = STAXX_ROOT.'/javascript/feedback.js';
+$feedbackTag = staxx_asset('javascript/feedback.js');
 $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 $modelTag = staxx_asset('javascript/compose-model.js');
 // PLAN_148 — the merge wizard's own two halves: the reading pass (phase 2,
@@ -1852,4 +1855,7 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
 <? endif; ?>
 <? if (is_file($leftoversFile)): ?>
 <script src="<?= $leftoversTag ?>"></script>
+<? endif; ?>
+<? if (is_file($feedbackFile)): ?>
+<script src="<?= $feedbackTag ?>"></script>
 <? endif; ?>

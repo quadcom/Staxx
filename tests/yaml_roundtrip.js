@@ -710,6 +710,15 @@ FILES.forEach(function (file) {
   });
 })();
 
+// Renaming an environment variable to a number-shaped name writes it quoted,
+// because compose refuses a number as a key.
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    environment:\n      FOO: bar\n');
+  Y.setPart(doc, Y.buildForm(doc), 'a/env#0/FOO', 'name', '8075');
+  ok('a variable renamed to 8075 is written as a quoted key',
+     Y.serialise(doc).indexOf("      '8075': bar") >= 0, Y.serialise(doc));
+})();
+
 /* ---- the keys that start empty ------------------------------------------ */
 
 // cap_add, cap_drop and profiles render as a suggestion box, and a browser only

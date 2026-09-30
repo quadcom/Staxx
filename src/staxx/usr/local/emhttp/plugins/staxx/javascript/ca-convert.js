@@ -145,7 +145,11 @@
     // compose-model.js's own parser, which never folds it to a boolean, but
     // a real YAML 1.1 loader downstream would — so it is quoted the same as
     // any other keyword, matching scalarOut()'s own rule for values.
-    if (k !== '' && !YAML_KEYWORD.test(k) && !/[:#"'\s]/.test(k) && !UNSAFE_LEAD.test(k.charAt(0))) return k;
+    // Anything starting with a digit (after an optional sign or dot), or
+    // .inf/.nan, is read as a number and compose refuses a non-string key
+    // (found with an Unraid template naming a variable 8075).
+    if (k !== '' && !YAML_KEYWORD.test(k) && !/[:#"'\s]/.test(k) && !UNSAFE_LEAD.test(k.charAt(0)) &&
+        !/^[-+]?(\.?\d|\.(inf|nan)$)/i.test(k)) return k;
     return dq(k);
   }
 

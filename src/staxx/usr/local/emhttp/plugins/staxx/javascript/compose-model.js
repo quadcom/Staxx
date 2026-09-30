@@ -206,7 +206,9 @@
     if (style === 'double') return '"' + value + '"';
     // A key is read only as far as its first colon, so a colon inside one has
     // to be quoted even though the same text is perfectly safe as a value.
-    if (needsQuoting(value) || (asKey && value.indexOf(':') >= 0)) {
+    // A number-shaped key (8075) is read as a number, which compose refuses
+    // as a key; a value of the same shape is left plain on purpose.
+    if (needsQuoting(value) || (asKey && (value.indexOf(':') >= 0 || /^[-+]?(\.?\d|\.(inf|nan)$)/i.test(value)))) {
       return hasS ? '"' + value + '"' : "'" + value.replace(/'/g, "''") + "'";
     }
     return value;
@@ -4424,7 +4426,10 @@
       lines.push('');
     }
 
-    lines.push(pad(indent) + key + (raw === null ? ':' : ': ' + raw));
+    // A number-shaped name (a variable called 8075) is written quoted, since
+    // compose refuses a number as a key.
+    var keyRaw = /^[-+]?(\.?\d|\.(inf|nan)$)/i.test(key) ? emitScalar(key, 'plain', true) : key;
+    lines.push(pad(indent) + keyRaw + (raw === null ? ':' : ': ' + raw));
 
     splice(doc, to, 0, lines);
     return to + lines.length - 1;

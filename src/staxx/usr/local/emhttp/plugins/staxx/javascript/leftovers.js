@@ -1,8 +1,8 @@
 /* StaXX — clear out what Unraid Docker and Compose Manager left behind.
  * Copyright 2026, StaXX contributors.
  *
- * PLAN_211: a section injected into the Settings dialog's "Health check"
- * pane, directly under the "Move them into StaXX" section. It lists Unraid
+ * PLAN_211: a section injected into the Settings dialog's Storage pane,
+ * directly above the Archived stacks box. It lists Unraid
  * templates whose app is gone, templates whose plain container is still
  * there, and Compose Manager's settings folder once the add-on is gone. The
  * person ticks what should go, confirms in the page, and the server keeps a
@@ -36,7 +36,8 @@
     data.append('action', action);
     Object.keys(fields || {}).forEach(function (key) {
       var value = fields[key];
-      if (Array.isArray(value)) value.forEach(function (v) { data.append(key, v); });
+      // PHP only builds an array from repeated keys ending in [].
+      if (Array.isArray(value)) value.forEach(function (v) { data.append(key + '[]', v); });
       else data.append(key, value);
     });
 
@@ -64,6 +65,8 @@
 
   /* ------------------------------------------------------------ drawing - */
 
+  var DAMAGED_CHIP = '<span class="staxx-leftovers-damaged">Damaged</span>';
+
   function isRunning(t) { return t.container && t.container.state === 'running'; }
 
   function groupsHtml(d) {
@@ -71,9 +74,10 @@
     var plain = d.templates.filter(function (t) { return !t.container; });
     var live  = d.templates.filter(function (t) { return !!t.container; });
 
-    function row(t, note) {
+    function row(t, note, chip) {
       return '<label class="staxx-leftovers-row"><input type="checkbox" data-lo-file="'
         + esc(t.file) + '"> <span class="staxx-leftovers-name">' + esc(t.name) + '</span>'
+        + (chip ? ' ' + DAMAGED_CHIP : '')
         + (note ? ' <span class="staxx-leftovers-note">' + note + '</span>' : '') + '</label>';
     }
 
@@ -84,8 +88,21 @@
     if (live.length) {
       html += '<div class="staxx-leftovers-group"><h4>Apps still set up in Unraid\'s Docker tab</h4>'
         + live.map(function (t) {
+          if (t.container.damaged) {
+            return row(t, 'Docker can\'t read this app. Clearing removes what Docker will let go, '
+              + 'and the template.', true);
+          }
           return row(t, esc(t.container.state) + '. '
             + 'Removes the app and its template. Its data folders stay.');
+        }).join('') + '</div>';
+    }
+    if ((d.damaged || []).length) {
+      html += '<div class="staxx-leftovers-group"><h4>Damaged apps</h4>'
+        + d.damaged.map(function (c) {
+          return '<label class="staxx-leftovers-row"><input type="checkbox" data-lo-damaged="'
+            + esc(c.id) + '"> <span class="staxx-leftovers-name">' + esc(c.name) + '</span> '
+            + DAMAGED_CHIP + ' <span class="staxx-leftovers-note">Docker can\'t read this app, '
+            + 'and it has no template. Clearing removes it if Docker will let it go.</span></label>';
         }).join('') + '</div>';
     }
     if (d.composeManager) {
@@ -138,7 +155,7 @@
     var el = host();
     if (!el) return;
     var d = data;
-    if (!d || (!d.templates.length && !d.composeManager && !d.kept.length)) {
+    if (!d || (!d.templates.length && !d.damaged.length && !d.composeManager && !d.kept.length)) {
       // Keep the node (the loader's idempotence check looks for its id) but
       // show nothing, unless there is a line about what just happened.
       el.hidden = !notice;
@@ -152,7 +169,7 @@
       + (notice ? '<p class="staxx-settings-msg">' + esc(notice) + '</p>' : '')
       + '<div class="staxx-leftovers-body" id="staxx-leftovers-body">'
       + groupsHtml(d)
-      + ((d.templates.length || d.composeManager)
+      + ((d.templates.length || d.damaged.length || d.composeManager)
         ? '<div class="staxx-buttons staxx-buttons--inline">'
           + '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-leftovers-clear" disabled>'
           + 'Clear out 0 items</button></div>' : '')
@@ -165,7 +182,7 @@
   // Runs a redraw without losing the panel's scroll position.
   function keepScroll(fn) {
     var spots = [];
-    var pane = document.querySelector('[data-pane="selftest"]');
+    var pane = document.querySelector('[data-pane="storage"]');
     var body = document.getElementById('staxx-settings-body');
     [pane, body].forEach(function (n) { if (n) spots.push([n, n.scrollTop]); });
     fn();
@@ -174,20 +191,23 @@
 
   function ticked() {
     var el = host();
-    if (!el) return { files: [], cm: false };
-    var files = [];
+    if (!el) return { files: [], damaged: [], cm: false };
+    var files = [], damaged = [];
     el.querySelectorAll('input[data-lo-file]:checked').forEach(function (b) {
       files.push(b.getAttribute('data-lo-file'));
     });
+    el.querySelectorAll('input[data-lo-damaged]:checked').forEach(function (b) {
+      damaged.push(b.getAttribute('data-lo-damaged'));
+    });
     var cm = !!el.querySelector('input[data-lo-cm]:checked');
-    return { files: files, cm: cm };
+    return { files: files, damaged: damaged, cm: cm };
   }
 
   function syncButton() {
     var btn = document.getElementById('staxx-leftovers-clear');
     if (!btn) return;
     var t = ticked();
-    var n = t.files.length + (t.cm ? 1 : 0);
+    var n = t.files.length + t.damaged.length + (t.cm ? 1 : 0);
     btn.disabled = n === 0;
     btn.textContent = 'Clear out ' + n + (n === 1 ? ' item' : ' items');
   }
@@ -199,6 +219,7 @@
       data = res.ok && res.leftovers ? {
         templates: res.leftovers.templates || [],
         composeManager: res.leftovers.composeManager || null,
+        damaged: res.leftovers.damaged || [],
         kept: res.leftovers.kept || []
       } : null;
       if (!res.ok) notice = res.error || 'Could not read what was left behind.';
@@ -217,13 +238,18 @@
     var slot = document.getElementById('staxx-leftovers-confirm');
     if (!slot) return;
     var t = ticked();
-    if (!t.files.length && !t.cm) return;
+    if (!t.files.length && !t.damaged.length && !t.cm) return;
     var lines = t.files.map(function (f) {
       var tpl = findTemplate(f);
       if (!tpl) return '';
       return '<li>' + esc(tpl.name)
-        + (isRunning(tpl) ? ' — running now, will be stopped and removed'
+        + (tpl.container && tpl.container.damaged ? ' — the damaged app and its template'
+          : isRunning(tpl) ? ' — running now, will be stopped and removed'
           : (tpl.container ? ' — the app and its template' : ' — the template')) + '</li>';
+    });
+    t.damaged.forEach(function (id) {
+      var c = (data.damaged || []).filter(function (x) { return x.id === id; })[0];
+      if (c) lines.push('<li>' + esc(c.name) + ' — the damaged app</li>');
     });
     if (t.cm) lines.push('<li>Compose Manager\'s settings folder</li>');
     slot.innerHTML = '<div class="staxx-leftovers-confirm"><p>This removes:</p>'
@@ -239,8 +265,9 @@
   function runClear() {
     var t = ticked();
     var body = document.getElementById('staxx-leftovers-body');
-    if (!body || (!t.files.length && !t.cm)) return;
+    if (!body || (!t.files.length && !t.damaged.length && !t.cm)) return;
     var fields = { templates: t.files };
+    if (t.damaged.length) fields.damaged = t.damaged;
     if (t.cm) fields.composeManager = '1';
     body.innerHTML = '<p class="staxx-hint">Clearing…</p>'
       + '<pre class="staxx-leftovers-log" id="staxx-leftovers-log"></pre>';
@@ -341,15 +368,16 @@
 
   // Runs every time the settings dialog's body is rebuilt; idempotent by id.
   function loadSection() {
-    var pane = document.querySelector('[data-pane="selftest"]');
+    var pane = document.querySelector('[data-pane="storage"]');
     if (!pane || host()) return;
 
     var div = document.createElement('div');
     div.className = 'staxx-field staxx-leftovers';
     div.id = ID;
+    div.setAttribute('data-key', 'leftovers');
     div.hidden = true;
-    var above = document.getElementById('staxx-unraid-templates');
-    if (above && above.parentNode === pane) above.after(div);
+    var archive = document.getElementById('staxx-archive-list');
+    if (archive && archive.parentNode === pane) archive.before(div);
     else pane.appendChild(div);
 
     notice = '';
