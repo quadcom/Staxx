@@ -174,6 +174,8 @@ What happened appears as its own message above the file, as well as on the statu
 
 ## The icon
 
+![The stack editor open on a stack with one service, nginx, in the Form view. The service's icon at the right-hand end of its heading is ringed in red](../images/guide/editing-a-stack-icon-drop.png)
+
 The app or service icon is stored in the `.staxx` folder beside the compose file, one for each
 service the compose file declares. A stack's icon is a tiled composite of the icons of all its
 services; when the compose file declares only one service, the stack's icon is that service's icon.
@@ -183,9 +185,13 @@ its icon field.
 
 You do not have to open the field at all: drag a picture, or drag a picture's web address across
 from another browser tab, and drop it straight onto a service's own icon in the editor. The icon
-glows while you are holding something over it. A picture dropped in from your own computer must be
+glows while you are holding something over it. The new icon shows at once, in the editor and on
+the stack list, and you do not need to press **Save**. It replaces the icon the service had before.
+A picture dropped in from your own computer must be
 under 512 KB; if the drop cannot be used for any reason, the icon glows red for a moment with a
 short line underneath saying why, and nothing about the stack changes.
+
+![Close-up of the service's icon glowing orange while a picture is held over it, with the Sections button below](../images/guide/editing-a-stack-icon-drop-glow.png)
 
 The field's selfh.st link opens that collection in a new tab. The first time you open a third-party
 site from StaXX, Unraid asks whether you trust it; tick **Always allow** and it will not ask about

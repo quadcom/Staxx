@@ -4,7 +4,7 @@
 
 ## The update check
 
-![The Check for updates button while a check is running, greyed out and reading "Checking…"](../images/guide/updates-checking.png)
+![The Check for updates button while a check is running, greyed out and counting "Checking 32 of 88…"](../images/guide/updates-checking.png)
 ![The title bar's right end after a check: a chip saying when it was last checked, a chip counting updates waiting, and a chip counting author-example findings](../images/guide/the-stack-list-title-chips.png)
 
 A check asks each image's registry one question: is a newer build published under the same tag?

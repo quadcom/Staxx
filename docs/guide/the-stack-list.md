@@ -141,7 +141,7 @@ when you hover it. See [row marks and icons](marks.md) for the full key.
 
 | Example | Mark | Meaning |
 |---|---|---|
-| <img src="../images/guide/the-stack-list-mark-pin.png" alt="A small grey drawing pin under a stack name"> | Drawing pin, under the name | One or more services is held at one exact build. Hover it to see which. |
+| <img src="../images/guide/the-stack-list-mark-pin.png" alt="A white drawing pin under a stack name"> | Drawing pin, under the name | One or more services is held at one exact build. Hover it to see which. |
 | <img src="../images/guide/the-stack-list-mark-triangle.png" alt="A small orange warning triangle under a stack name"> | Orange triangle, under the name | Either the stack was imported and its original has changed since, or a service is on a network that gives it its own address, so the ports in its file do nothing. Hover it to see which. |
 | <img src="../images/guide/the-stack-list-mark-image-mismatch.png" alt="An orange warning triangle under the image name in the Services column"> | Orange triangle, under the image name | The file asks for a different image than the one running. Restart to apply it. |
 | <img src="../images/guide/the-stack-list-broken-stack.png" alt="A stack row with a red warning triangle where the app picture would be"> | Red triangle in place of the app picture | Compose cannot read this stack's file, or there is no file at all. |
