@@ -92,7 +92,6 @@ function staxx_update_state_defaults(): array {
     // works there at all, and whether a 304 has ever actually been seen —
     // see staxx_update_host_blocked()/staxx_update_host_note().
     'hosts'     => [],
-    'history'   => [],
     // When the one-off baseline of "what is every service running right now"
     // was recorded into each stack's own history — 0 until it has. See
     // staxx_update_seed_history() in UpdateRun.php for why it runs once.
@@ -2873,18 +2872,15 @@ function staxx_updates_apply_service_state(array &$pill, string $stack, string $
   $pill['due']  = $pill['due']  ?? 0;
   $pill['hold'] = $pill['hold'] ?? false;
   $pill['why']  = $pill['why']  ?? '';
-  // Whether roll back has anything to offer at all. Read through
-  // staxx_update_history(), which merges the stack's own record with the old
-  // central file: image history moved into each stack's record (ImageHistory.php),
-  // so a read of the central file alone missed every roll-back point recorded
-  // since and the menu never offered Roll back (found 2026-09-17). Cheap enough
-  // for every row, and without it the row menu would have to offer roll back on
-  // every service and let the refusal explain itself. The function lives in
-  // UpdateRun.php, which loads this file rather than the other way round, hence
-  // the guard; every caller that renders rows has already loaded it.
+  // Whether roll back has anything to offer at all, read from the stack's own
+  // image history. Cheap enough for every row, and without it the row menu
+  // would have to offer roll back on every service and let the refusal explain
+  // itself. staxx_update_history() lives in UpdateRun.php, which loads this
+  // file rather than the other way round, hence the guard; every caller that
+  // renders rows has already loaded it.
   $pill['back'] = function_exists('staxx_update_history')
     ? !empty(staxx_update_history($stack, $service))
-    : !empty(staxx_update_state()['history'][$stack.'::'.$service]);
+    : false;
 
   // PLAN_61 — carried on every pill regardless of headline state: a service
   // has exactly one advisory state, so 'update' (and everything else) wins

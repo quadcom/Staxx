@@ -17,7 +17,7 @@
  *     pscp tests/server/run-with-store.sh tests/server/rollback.php root@<box>:/tmp/
  *     plink … 'bash /tmp/run-with-store.sh /tmp/b4-store /tmp/rollback.php'
  *
- * The central update-state file lives on the flash drive too
+ * The update-state file lives on the flash drive too
  * (/boot/config/plugins/staxx/updates.json) and is NEVER touched — this
  * script points STAXX_UPDATE_STATE at a scratch file in /tmp via putenv(),
  * before the first require, and checks the override actually took before

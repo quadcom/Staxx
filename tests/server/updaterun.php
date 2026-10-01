@@ -435,9 +435,6 @@ ok('editing: a stale marker (over 15 minutes old) no longer counts as being edit
 
 $hStack = $fixtureName;
 $hSvc   = 'stack-only';
-$state = staxx_update_state();
-unset($state['history'][$hStack . '::' . $hSvc]);
-staxx_update_state_save($state);
 
 $retain = max(1, (int)$settings['retain']);
 for ($i = 0; $i < $retain + 3; $i++) {
@@ -472,9 +469,6 @@ ok('local repo: an already-untagged reference is left alone',
 
 /* ---------------------------------------------------------- 9. rollback -- */
 
-$state = staxx_update_state();
-unset($state['history'][$fixtureName . '::stack-only']);
-staxx_update_state_save($state);
 staxx_update_history_push($fixtureName, 'stack-only', 'sha256:' . str_repeat('0', 64)); // a digest guaranteed not to be on this box
 
 /* A rollback now pins the compose file, so it needs the pinned text supplied
@@ -489,9 +483,6 @@ ok('rollback: refuses when the previous image is no longer present locally, with
    $rbJob === '' && strpos($err, 'no longer present') !== false, $err);
 
 $err = '';
-$state = staxx_update_state();
-unset($state['history'][$fixtureName . '::built-ok']);
-staxx_update_state_save($state);
 // staxx_update_rollback() no longer has a "roll back to whatever came
 // before" shortcut for an omitted target — the Versions tab, its only real
 // caller, always supplies the exact digest it wants — so an empty history

@@ -498,9 +498,8 @@ function staxx_archive_removable_images(array $pairs, string $excludeStack): arr
 
 /**
  * Which stack and service each kept digest belongs to, so the "Kept so
- * ... can be rolled back" row can name it. Walks the same history sources
- * staxx_update_keep_digests() does (staxx_image_history_all() plus the
- * central file's own 'history' half) but keeps the attribution that
+ * ... can be rolled back" row can name it. Walks the same history source
+ * staxx_update_keep_digests() does (staxx_image_history_all()) but keeps the attribution that
  * function's flat return throws away — a second, small walk rather than a
  * change to that safety-critical function. Never touches the "local
  * pointer" half of the keep-set (the currently-pulled image for each known
@@ -510,12 +509,8 @@ function staxx_archive_removable_images(array $pairs, string $excludeStack): arr
  */
 function staxx_images_keep_owners(): array {
   $owners = [];
-  $state  = staxx_update_state();
 
-  $historyKeys = array_unique(array_merge(
-    array_keys(staxx_image_history_all()),
-    array_keys((array)($state['history'] ?? []))
-  ));
+  $historyKeys = array_keys(staxx_image_history_all());
 
   $known = staxx_stack_compose_map();
 

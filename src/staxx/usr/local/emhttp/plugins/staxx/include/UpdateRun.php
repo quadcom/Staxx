@@ -18,11 +18,7 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
-// The per-stack record that PLAN_82 Part 1 moves image history into. The
-// central file below (staxx_update_history_push()/staxx_update_history())
-// stays as a second, un-migrated source for as long as anything is still
-// only recorded there — see staxx_update_keep_digests() for why both are
-// read together rather than one replacing the other.
+// The per-stack record that holds each stack's image history.
 require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
 // staxx_update_record_before_pull() looks up a project link so the release
 // notes it fetches (PLAN_82 Part 2) come from the right place. action.php
@@ -653,15 +649,9 @@ function staxx_update_hold(string $image, bool $on, string &$error): bool {
  * Remember one service's fingerprint before an update runs, alongside the
  * version name and where it came from (PLAN_82 Part 1) — both commonly
  * absent, which is a normal answer, never a placeholder. Written straight
- * into the stack's own record rather than the old central file: retention
- * and the "never the same digest twice running" rule are staxx_image_
- * history_push()'s job now, so they are enforced exactly once rather than
- * risking two different answers from two places that both write.
- *
- * The old central file is left untouched here, on purpose. It still holds
- * whatever an un-migrated stack recorded before this change shipped, and
- * staxx_update_history() below reads both until a migration (or the lazy
- * adopt on the update path) has moved a given stack's entries across.
+ * into the stack's own record: retention and the "never the same digest
+ * twice running" rule are staxx_image_history_push()'s job, so they are
+ * enforced in exactly one place.
  */
 function staxx_update_history_push(string $stack, string $service, string $digest, array $meta = []): void {
   if ($digest === '') return;
@@ -687,17 +677,6 @@ function staxx_update_history_push(string $stack, string $service, string $diges
  * the next real update, which is soon enough.
  */
 function staxx_update_record_before_pull(string $stack, string $service = '', bool $lookups = true): void {
-  // Move anything this stack still has sitting in the old central file into
-  // its own record first — a side effect of the ordinary update path rather
-  // than a separate event, per PLAN_82 Part 1. Logged and carried on rather
-  // than blocking the record: a missed adopt just means the central file
-  // still has this stack's older entries, which staxx_update_history()
-  // already reads regardless.
-  $adoptError = '';
-  if (!staxx_image_history_adopt($stack, $adoptError) && $adoptError !== '') {
-    error_log('StaXX: image history adopt failed for '.$stack.': '.$adoptError);
-  }
-
   $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return;
 
@@ -876,22 +855,10 @@ function staxx_update_seed_history(): array {
 
 /**
  * The rollback's reader: every digest recorded for this service, newest
- * first, with no duplicates. Reads the new per-stack record AND whatever the
- * old central file still holds for this key — a union, never a replacement,
- * because a stack that has not been migrated (or adopted lazily on the
- * update path) has its history nowhere else. New entries always come from
- * the new store now, so putting its digests first is newest-first in
- * practice, not just in theory.
+ * first, from the stack's own record.
  */
 function staxx_update_history(string $stack, string $service): array {
-  $new = staxx_image_history_digests($stack, $service);
-  $old = (array)(staxx_update_state()['history'][$stack.'::'.$service] ?? []);
-
-  $merged = $new;
-  foreach ($old as $digest) {
-    if (!in_array($digest, $merged, true)) $merged[] = $digest;
-  }
-  return $merged;
+  return staxx_image_history_digests($stack, $service);
 }
 
 /* ------------------------------------------------------------------- roll back -- */
@@ -1315,12 +1282,8 @@ function staxx_update_current_refs(string $excludeStack = ''): array {
  * removal, so "the test builds the same union by hand and it matches"
  * proves the test, not the code.
  *
- * The history half is the UNION of the per-stack records and whatever the
- * old central file still holds. Reading only one of the two would mean a
- * digest a rollback still needs — whichever source went un-read — looks
- * unused and gets removed. That exact bug has been found in this codebase
- * once already; do not "tidy away" either half while anything is still
- * recorded only there.
+ * The history half is every digest the per-stack records hold; a digest a
+ * rollback still needs that went un-read would look unused and get removed.
  *
  * The "local" half (PLAN_181 item 8/A) only protects a ref some CURRENT
  * stack's compose still names — otherwise the current-pointer digest for a
@@ -1357,10 +1320,7 @@ function staxx_update_keep_digests(string $excludeStack = ''): array {
 
   if (!staxx_update_settings()['keepImages']) return $keep;
 
-  $historyKeys = array_unique(array_merge(
-    array_keys(staxx_image_history_all()),
-    array_keys((array)$state['history'])
-  ));
+  $historyKeys = array_keys(staxx_image_history_all());
   $files = staxx_stack_compose_map();
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');

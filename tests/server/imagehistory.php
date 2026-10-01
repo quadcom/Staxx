@@ -1,8 +1,7 @@
 <?php
-/* PLAN_82 Part 1 — per-stack image history (include/ImageHistory.php), the
- * migration out of the old server-wide history file, and the safety-critical
- * keep-list the Scan stored images window and the storage alert both build
- * from both sources. Also covers the Part 2
+/* PLAN_82 Part 1 — per-stack image history (include/ImageHistory.php), and
+ * the safety-critical keep-set the Scan stored images window and the
+ * storage alert build from it. Also covers the Part 2
  * step 3 round trip of the three optional release-notes keys through the
  * real push/read functions — the pure shape rules for those keys live in
  * tests/server/releasenotes.php instead, alongside everything else that
@@ -22,7 +21,7 @@
  *     pscp tests/server/run-with-store.sh tests/server/imagehistory.php root@<box>:/tmp/
  *     plink … 'bash /tmp/run-with-store.sh /tmp/b3-store /tmp/imagehistory.php'
  *
- * The central update-state file lives on the flash drive too
+ * The update-state file lives on the flash drive too
  * (/boot/config/plugins/staxx/updates.json) and is NEVER touched — this
  * script points STAXX_UPDATE_STATE at a scratch file in /tmp via putenv(),
  * before the first require, and checks the override actually took before
@@ -113,18 +112,6 @@ function b3_make_stack(string $rel, string $service = 'web', string $image = 'al
   // something has already looked is invisible for the whole run — which reads
   // as a bug in the code under test rather than in the fixture.
   staxx_scan_stacks_reset();
-}
-
-/* Directly replaces just the 'history' key of the central state file,
- * leaving everything else staxx_update_state_save() already merges over
- * (paused, images, and so on) alone — the same merge-not-replace contract
- * staxx_update_state_save() itself promises. */
-function b3_set_central_history(array $history): void {
-  staxx_update_state_save(['history' => $history]);
-}
-
-function b3_central_history(): array {
-  return (array)staxx_update_state()['history'];
 }
 
 /* ------------------------------------------------------- push and read -- */
@@ -245,104 +232,6 @@ ok('staxx_image_history_all() lists every stack::service with history',
 ok('...and one with no history at all is simply absent',
    !array_key_exists('zzb3blank::noservice', $all));
 
-/* ---------------------------------------------------------- the migration -- */
-
-b3_make_stack('zzb3live1', 'web');
-b3_make_stack('zzb3live2', 'db');
-
-b3_set_central_history([
-  'zzb3live1::web' => [dg('c1old'), dg('c1new')],
-  'zzb3live2::db'  => [dg('c2only')],
-  'other::marker'  => [dg('untouched')], // proves adopt() only ever touches the stack it was asked about
-]);
-
-$adoptErr = '';
-ok('adopting a stack whose central entries map to a stack that exists succeeds',
-   staxx_image_history_adopt('zzb3live1', $adoptErr), $adoptErr);
-
-$moved = staxx_image_history('zzb3live1', 'web');
-$movedDigests = array_column($moved, 'digest');
-ok('the moved entries are now in the stack\'s own record',
-   $movedDigests === [dg('c1old'), dg('c1new')] || $movedDigests === [dg('c1new'), dg('c1old')],
-   'got='.implode(',', $movedDigests));
-ok('...and both digests made it across, none dropped',
-   count($movedDigests) === 2 && in_array(dg('c1old'), $movedDigests, true)
-     && in_array(dg('c1new'), $movedDigests, true));
-
-$centralAfter = b3_central_history();
-ok('the central file\'s entry for the adopted stack is now emptied out',
-   empty($centralAfter['zzb3live1::web']));
-ok('the central file\'s OTHER contents are left alone',
-   ($centralAfter['zzb3live2::db'] ?? null) === [dg('c2only')]
-   && ($centralAfter['other::marker'] ?? null) === [dg('untouched')]);
-
-/* Re-running adopt on the same stack must not duplicate anything — this is
- * the whole point of "a migration runs once and must be able to run twice". */
-$adoptErr = '';
-ok('adopting the same stack a second time still succeeds',
-   staxx_image_history_adopt('zzb3live1', $adoptErr), $adoptErr);
-ok('...and did not duplicate a single entry',
-   count(staxx_image_history('zzb3live1', 'web')) === 2,
-   'count='.count(staxx_image_history('zzb3live1', 'web')));
-
-/* An entry already in the record must not be re-added by adopting an older
- * central copy of the very same digest. */
-b3_set_central_history(array_merge(b3_central_history(), [
-  'zzb3live1::web' => [dg('c1old')], // a stale central copy of one already-adopted digest
-]));
-$adoptErr = '';
-staxx_image_history_adopt('zzb3live1', $adoptErr);
-ok('re-adopting a digest already present in the record does not duplicate it',
-   count(staxx_image_history('zzb3live1', 'web')) === 2,
-   'count='.count(staxx_image_history('zzb3live1', 'web')));
-
-/* Adopting a stack that does not exist at all is a plain, quiet no-op — not
- * a crash, and not a way to create a stack folder out of thin air. */
-$adoptErr = '';
-$adoptResult = staxx_image_history_adopt('zzb3neverexisted', $adoptErr);
-ok('adopting a stack with no folder at all does not create one',
-   !is_dir($root.'/zzb3neverexisted'));
-
-/* ----------------------------------------------------------------- sweep -- */
-
-b3_make_stack('zzb3sweeplive1', 'app');
-b3_make_stack('zzb3sweeplive2', 'app');
-
-b3_set_central_history([
-  'zzb3sweeplive1::app' => [dg('sl1')],
-  'zzb3sweeplive2::app' => [dg('sl2')],
-  'zzb3orphanA::x'      => [dg('oa')],
-  'zzb3orphanB::y'      => [dg('ob')],
-  'zzb3orphanC::z'      => [dg('oc')],
-]);
-
-$sweepMoved = 0;
-$sweepDropped = 0;
-$sweepErr = '';
-ok('the sweep runs cleanly over a mix of live stacks and orphans',
-   staxx_image_history_sweep($sweepMoved, $sweepDropped, $sweepErr), $sweepErr);
-ok('exactly three orphan entries were dropped — the built-in fixture count',
-   $sweepDropped === 3, 'dropped='.$sweepDropped);
-ok('the two live stacks were moved (not dropped)',
-   $sweepMoved === 2, 'moved='.$sweepMoved);
-ok('the first live stack\'s digest actually landed in its own record',
-   in_array(dg('sl1'), staxx_image_history_digests('zzb3sweeplive1', 'app'), true));
-ok('the second live stack\'s digest actually landed in its own record',
-   in_array(dg('sl2'), staxx_image_history_digests('zzb3sweeplive2', 'app'), true));
-
-$centralAfterSweep = b3_central_history();
-ok('none of the three orphan keys survive the sweep',
-   !isset($centralAfterSweep['zzb3orphanA::x'])
-   && !isset($centralAfterSweep['zzb3orphanB::y'])
-   && !isset($centralAfterSweep['zzb3orphanC::z']));
-
-/* Running the sweep again over an already-clean file must do nothing and
- * still succeed. */
-$sweepMoved = 0; $sweepDropped = 0; $sweepErr = '';
-ok('sweeping an already-swept file succeeds and finds nothing left to do',
-   staxx_image_history_sweep($sweepMoved, $sweepDropped, $sweepErr) && $sweepMoved === 0 && $sweepDropped === 0,
-   'moved='.$sweepMoved.' dropped='.$sweepDropped.' err='.$sweepErr);
-
 /* ------------------------------------------------------------- renaming -- */
 
 b3_make_stack('zzb3renameA', 'web');
@@ -354,43 +243,6 @@ ok('the record followed the folder to its new name',
    staxx_image_history_digests('zzb3renameB', 'web') === [dg('rn1')]);
 ok('nothing is recorded under the old name any more — there is no folder there to hold it',
    staxx_image_history('zzb3renameA', 'web') === []);
-
-// The central file, meanwhile, still carries a stale key for the OLD name —
-// exactly the situation an update pass running before the rename recorded
-// would leave behind.
-b3_set_central_history(array_merge(b3_central_history(), [
-  'zzb3renameA::web' => [dg('stalecentral')],
-]));
-
-$sweepMoved = 0; $sweepDropped = 0; $sweepErr = '';
-staxx_image_history_sweep($sweepMoved, $sweepDropped, $sweepErr);
-ok('the sweep drops the stale key left behind by the rename, not the live one',
-   $sweepDropped === 1, 'dropped='.$sweepDropped);
-ok('...and the renamed stack\'s own history is untouched by that drop',
-   staxx_image_history_digests('zzb3renameB', 'web') === [dg('rn1')]);
-ok('...and nothing was ever created under the old, now-gone name',
-   !is_dir($root.'/zzb3renameA'));
-
-/* --------------------------------------------------- the cleanup keep-list -- */
-//
-// staxx_update_keep_digests() (UpdateRun.php) is the safety-critical
-// consumer: its keep-list is what decides which images the Scan stored
-// images window (and, since PLAN_181 Part D, the daily storage alert) is
-// allowed to treat as clutter, and a digest missing from it is an image
-// that could be offered for removal while a rollback still needs it.
-//
-// What is proven here: a digest that exists only in the old central file,
-// and a digest that exists only in a stack's own record, both surface —
-// with no duplicate — from the two primitives any correct merge has to be
-// built from.
-
-b3_make_stack('zzb3keepcentral', 'web');
-b3_make_stack('zzb3keeprecord', 'web');
-
-b3_set_central_history([
-  'zzb3keepcentral::web' => [dg('keepcentralonly')],
-]);
-staxx_image_history_push('zzb3keeprecord', 'web', dg('keeprecordonly'), []);
 
 /* -------------------------------------------------- the keep-set -- */
 
@@ -404,55 +256,19 @@ b3_wipe();
 b3_make_stack('zzb3keepa', 'web', 'ghcr.io/example/keepa:latest');
 b3_make_stack('zzb3keepb', 'web', 'ghcr.io/example/keepb:latest');
 
-// One digest recorded ONLY in the old central file, for a stack that exists.
-b3_set_central_history(['zzb3keepa::web' => [dg('keepcentralonly')]]);
-
-// One digest recorded ONLY in a stack's own record.
-staxx_image_history_push('zzb3keepb', 'web', dg('keeprecordonly'), []);
+// One digest per stack, each recorded in that stack's own record.
+staxx_image_history_push('zzb3keepa', 'web', dg('keepa'), []);
+staxx_image_history_push('zzb3keepb', 'web', dg('keepb'), []);
 
 $keep = staxx_update_keep_digests();
 $flat = [];
 foreach ($keep as $repo => $digests) foreach ($digests as $d) $flat[] = $d;
 
-ok('a digest held only in the old central file is kept',
-   in_array(dg('keepcentralonly'), $flat, true),
+ok('a digest held in each stack own record is kept',
+   in_array(dg('keepa'), $flat, true) && in_array(dg('keepb'), $flat, true),
    implode(' ', array_map(fn($d) => substr($d, 7, 8), $flat)));
-ok('a digest held only in a stack\'s own record is kept',
-   in_array(dg('keeprecordonly'), $flat, true),
-   implode(' ', array_map(fn($d) => substr($d, 7, 8), $flat)));
-ok('...and both are grouped under their own repository, not merged together',
+ok('...and each is grouped under its own repository, not merged together',
    count($keep) === 2, implode(',', array_keys($keep)));
-
-// Both sources naming the same stack and service: the digest must appear once,
-// not twice, or the keep-set grows without bound as migrations happen.
-b3_wipe();
-b3_make_stack('zzb3keepc', 'web', 'ghcr.io/example/keepc:latest');
-staxx_image_history_push('zzb3keepc', 'web', dg('c1new'), []);
-b3_set_central_history(['zzb3keepc::web' => [dg('c1new'), dg('c1old')]]);
-
-$keep = staxx_update_keep_digests();
-$flat = [];
-foreach ($keep as $digests) foreach ($digests as $d) $flat[] = $d;
-
-ok('a digest in BOTH sources is kept exactly once',
-   count(array_keys($flat, dg('c1new'), true)) === 1,
-   'occurrences='.count(array_keys($flat, dg('c1new'), true)));
-ok('...and the one only the central file knows about is kept too',
-   in_array(dg('c1old'), $flat, true));
-
-// A stack that no longer exists must not contribute — but must not throw
-// either, since a stale central entry is exactly what the sweep exists for.
-b3_set_central_history([
-  'zzb3keepc::web'  => [dg('c1old')],
-  'zzb3gone::web'   => [dg('stalecentral')],
-]);
-$keep = staxx_update_keep_digests();
-$flat = [];
-foreach ($keep as $digests) foreach ($digests as $d) $flat[] = $d;
-ok('a stale entry for a stack that no longer exists is skipped, not fatal',
-   !in_array(dg('stalecentral'), $flat, true));
-ok('...and the live stack alongside it is unaffected',
-   in_array(dg('c1old'), $flat, true));
 
 /* ---------------------------------------------------------------------- */
 

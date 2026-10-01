@@ -66,7 +66,6 @@ ok('missing file: error is a string',    is_string($state['error'] ?? null));
 ok('missing file: inspector is a string', is_string($state['inspector'] ?? null));
 ok('missing file: paused is false, not null', ($state['paused'] ?? null) === false);
 ok('missing file: images is an array',   is_array($state['images'] ?? null));
-ok('missing file: history is an array',  is_array($state['history'] ?? null));
 ok('missing file: bases is an array',    is_array($state['bases'] ?? null));
 
 /* ------------------------------------------------- 2. corrupt state file */
@@ -75,7 +74,7 @@ file_put_contents($scratch, 'not json at all');
 $state2 = staxx_update_state();
 ok('corrupt file: same default shape, not an error',
    is_int($state2['checked']) && is_bool($state2['ok']) && is_string($state2['error'])
-   && is_array($state2['images']) && is_array($state2['history']) && is_array($state2['bases']));
+   && is_array($state2['images']) && is_array($state2['bases']));
 ok('corrupt file: paused is false, not null', ($state2['paused'] ?? null) === false);
 @unlink($scratch);
 
