@@ -404,7 +404,7 @@ function staxx_feedback_find(string $re, string $text, int $g = 0): array {
  * order and a later rule never re-matches text an earlier one replaced.
  */
 function staxx_feedback_clean(array $items): array {
-  $words = ['secret' => 'secret', 'email' => 'email', 'home' => 'home address', 'address' => 'address', 'mac' => 'hardware address', 'host' => 'host name'];
+  $words = ['secret' => 'secret', 'email' => 'email', 'home' => 'home address', 'address' => 'address', 'mac' => 'hardware address', 'host' => 'host name', 'maybe' => 'possible address'];
   $table = []; // kind, NUL, value => tag
   $count = [];
   $out   = [];
@@ -482,7 +482,8 @@ function staxx_feedback_clean(array $items): array {
 
     // 4. Email addresses.
     $c = [];
-    foreach (staxx_feedback_find('/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/', $text) as [$v, $o]) {
+    // user@8.8.8.8 is a login to an address, left for rule 5 rather than called an email.
+    foreach (staxx_feedback_find('/[A-Za-z0-9._%+-]+@(?!\d{1,3}(?:\.\d{1,3}){3}(?![\d-]|\.[\w-]))[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/', $text) as [$v, $o]) {
       $c[] = [$o, $o + strlen($v), 'email', $v];
     }
     $add($c);
@@ -494,7 +495,25 @@ function staxx_feedback_clean(array $items): array {
       if (max($p) > 255 || $v === '0.0.0.0' || $v === '255.255.255.255' || $p[0] === 127) continue;
       $home = $p[0] === 10 || ($p[0] === 172 && $p[1] >= 16 && $p[1] <= 31) || ($p[0] === 192 && $p[1] === 168)
            || ($p[0] === 100 && $p[1] >= 64 && $p[1] <= 127) || ($p[0] === 169 && $p[1] === 254);
-      $c[] = [$o, $o + strlen($v), $home ? 'home' : 'address', $v];
+      if ($home) { $c[] = [$o, $o + strlen($v), 'home', $v]; continue; }
+      // A public-looking number is often a version (nextcloud 29.0.4.1), so the text
+      // around it decides: version cue keeps it, address cue hides it for sure, an image
+      // tag's colon keeps it, anything else is only a possible address.
+      $b = substr($text, max(0, $o - 40), min(40, $o));
+      $b = preg_replace('/^.*[\r\n]/s', '', $b); // this line only
+      // A product/version pair (Chrome/131.0.6778.85) is a version; a single slash only, so http:// stays an address cue.
+      if (preg_match('/[vV]$/', $b) || preg_match('/[A-Za-z][\w.-]*\/$/', $b) || preg_match('/(?<![A-Za-z0-9_])(?:version|ver)[ \t]*[:=]?[ \t]*$/i', $b)) continue;
+      $after = substr($text, $o + strlen($v), 8);
+      if (preg_match('/(?:@|\/\/|=[ \t]*)$/', $b)
+          || preg_match('/(?<![A-Za-z0-9_])(?:ip|addr|address|host|server|peer|client|gateway|dns|proxy|remote)[ \t]*[:=]?[ \t]*$/i', $b)
+          || preg_match('/^(?::\d|\/\d{1,2}(?!\d))/', $after)) {
+        $kind = 'address';
+      } elseif (preg_match('/[\w.-]:$/', $b)) {
+        continue;
+      } else {
+        $kind = 'maybe';
+      }
+      $c[] = [$o, $o + strlen($v), $kind, $v];
     }
     $add($c);
 
@@ -547,7 +566,17 @@ function staxx_feedback_clean(array $items): array {
   }
 
   // Pass 2: a value found anywhere is hidden everywhere it appears, bare or not.
+  // A value found as an address anywhere is an address everywhere, never also a maybe.
   // Longer values first, so one that contains another wins.
+  // Matches already accepted as a maybe are relabelled too, since they sit in $accs.
+  foreach ($found as $id => [$kind, $val]) {
+    if ($kind === 'address') unset($found['maybe'."\0".$val]);
+  }
+  foreach ($accs as $key => $acc) {
+    foreach ($acc as $i => [, , $kind, $val]) {
+      if ($kind === 'maybe' && isset($found['address'."\0".$val])) $accs[$key][$i][2] = 'address';
+    }
+  }
   uasort($found, fn($a, $b) => strlen($b[1]) <=> strlen($a[1]));
   foreach ($accs as $key => $acc) {
     $text = $texts[$key];

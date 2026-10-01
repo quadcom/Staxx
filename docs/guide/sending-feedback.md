@@ -6,7 +6,7 @@ A speech-bubble button sits in the bottom right corner of every StaXX screen, th
 **Settings** included. Press it to report a bug or suggest an idea. Your report goes to StaXX's
 feedback board, where the StaXX team reads it.
 
-![The bottom right corner of a StaXX screen: a round orange-ringed speech-bubble button sits over the stack list.](../images/guide/sending-feedback-corner-button.png)
+![The round orange-ringed speech-bubble button in the bottom right corner of a StaXX screen, with a band of the page around it.](../images/guide/sending-feedback-corner-button.png)
 
 ## The short version
 
@@ -54,7 +54,7 @@ The window floats above the page. Drag it by its top bar to move it. Press the u
 of the window to roll it up to the top of the screen while you take a screenshot of the page
 underneath. Press the down arrow to bring it back.
 
-![The report window rolled up into a small Report a problem bar at the top middle of the screen, with the whole stack list visible underneath.](../images/guide/sending-feedback-rolled-up.png)
+![The report window rolled up into a small Report a problem bar at the top middle of the screen, with a band of the Unraid header and the toolbar below it.](../images/guide/sending-feedback-rolled-up.png)
 
 **Cancel** asks before throwing the report away. **Keep writing** takes you back to it.
 
@@ -89,12 +89,23 @@ and when you show a part it hid on its own.
 
 ![The bottom of the preview window asking Hiding this makes the problem much harder to find. Hide it anyway? with Keep it and Hide anyway buttons.](../images/guide/sending-feedback-preview-hide-anyway.png)
 
+### Check this file
+
+A file marked **Check this file** holds a number that may be a network address or a version
+number. StaXX hides it until you decide. Press **Preview**, click any highlighted number you want
+sent as it is, then press **Approve**. Approve every marked file, or untick it, before you press
+**Send**.
+
+![The details box with the compose file marked Checked with a green tick, the container logs file marked Check this file in amber and the versions file with no mark, and under it the message Preview the files marked Check this file and approve them before sending, beside Cancel and a greyed-out Send.](../images/guide/sending-feedback-check-file.png)
+
+![The lower part of the preview window: a highlighted possible address 1 tag in the container log text, and the footer with Close and Approve buttons.](../images/guide/sending-feedback-approve.png)
+
 ## Send
 
 Give the report a title, then press **Send**. Every report carries the StaXX and Unraid versions
 and the screen you were on.
 
-![The report window after sending: the thanks line, the link to the report on the board, What was sent with a copy of the report and its versions line, and the Private files sent with it list.](../images/guide/sending-feedback-sent.png)
+![The Report sent window: the thanks line, the link to the report on the board, What was sent with a copy of the report and its versions line, and the Private files sent with it list.](../images/guide/sending-feedback-sent.png)
 
 The window then shows:
 

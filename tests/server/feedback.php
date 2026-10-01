@@ -220,7 +220,25 @@ $t = clean1('mail me: jo.bloggs+x@example.com or jo.bloggs+x@example.com, or a@b
 check('emails, same value same tag', flat($t) === 'mail me: <email 1> or <email 1>, or <email 2>', flat($t));
 
 $t = clean1('a 192.168.1.5 b 10.0.0.1 c 172.16.0.9 d 172.32.0.1 e 100.64.1.1 f 169.254.1.1 g 8.8.8.8 h 192.168.1.5');
-check('home ranges are home addresses, others addresses', flat($t) === 'a <home address 1> b <home address 2> c <home address 3> d <address 1> e <home address 4> f <home address 5> g <address 2> h <home address 1>', flat($t));
+check('home ranges are home addresses, bare others possible addresses', flat($t) === 'a <home address 1> b <home address 2> c <home address 3> d <possible address 1> e <home address 4> f <home address 5> g <possible address 2> h <home address 1>', flat($t));
+$t = clean1('Initializing nextcloud 29.0.4.1 ...');
+check('a bare public-looking number is a possible address', flat($t) === 'Initializing nextcloud <possible address 1> ...', flat($t));
+$t = clean1('Upgrading from 29.0.3.4');
+check('a number after a plain word is a possible address', flat($t) === 'Upgrading from <possible address 1>', flat($t));
+$keep = "v29.0.4.1 and version 29.0.4.1 and Version: 29.0.4.1 and VER=29.0.4.1\nimage: nextcloud:29.0.4.1";
+check('version cues and an image tag keep the number', flat(clean1($keep)) === $keep, flat(clean1($keep)));
+// A product/version pair keeps its number; only a single slash counts, so http://8.8.8.8/x below stays an address.
+$ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.85 Safari/537.36';
+foreach (['Chrome/131.0.6778.85', 'nginx/1.27.0.1', $ua] as $in) {
+  check('a product/version pair is kept as written: '.substr($in, 0, 24), flat(clean1($in)) === $in, flat(clean1($in)));
+}
+foreach (['server 8.8.8.8' => 'server <address 1>', '8.8.8.8:53' => '<address 1>:53', 'IP:8.8.8.8' => 'IP:<address 1>', 'DNS=8.8.4.4' => 'DNS=<address 1>',
+          'user@8.8.8.8' => 'user@<address 1>', '203.0.113.0/24' => '<address 1>/24', 'http://8.8.8.8/x' => 'http://<address 1>/x'] as $in => $want) {
+  check('address cue hides '.$in, flat(clean1($in)) === $want, flat(clean1($in)));
+}
+check('a home address stays a home address with or without a cue', flat(clean1('server 192.168.1.20 and 192.168.1.21 and v192.168.1.22')) === 'server <home address 1> and <home address 2> and v<home address 3>', flat(clean1('server 192.168.1.20 and 192.168.1.21 and v192.168.1.22')));
+$two = staxx_feedback_clean(['a' => 'server 8.8.8.8', 'b' => 'seen 8.8.8.8 again']);
+check('a value that is an address anywhere is an address everywhere', flat($two['a']) === 'server <address 1>' && flat($two['b']) === 'seen <address 1> again', flat($two['a']).' | '.flat($two['b']));
 $t = clean1('bind 0.0.0.0 and 127.0.0.1 and 127.5.5.5 and 255.255.255.255 and 999.1.1.1 and 1.2.3');
 check('0.0.0.0, 127.*, 255.255.255.255 and non-addresses stay', flat($t) === 'bind 0.0.0.0 and 127.0.0.1 and 127.5.5.5 and 255.255.255.255 and 999.1.1.1 and 1.2.3', flat($t));
 

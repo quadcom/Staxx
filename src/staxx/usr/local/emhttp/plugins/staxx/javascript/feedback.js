@@ -459,6 +459,7 @@
     bodyHeadEl.textContent = kind.heading;
     editor.setAttribute('aria-label', kind.heading);
     syncDetailsBox();
+    refreshReview();   // only a bug report carries files, so only it can be blocked
   }
 
   function setKind(id) {
@@ -786,21 +787,65 @@
     detailsToken++;
     if (detailsBox) { detailsBox.hidden = true; detailsList.textContent = ''; }
     if (previewWin) hidePop(previewWin);
+    refreshReview();
+  }
+
+  // A "maybe" value (a number that might be an address) still hidden in the file.
+  function hasMaybe(it) {
+    return it.segments.some(function (s) { return s.kind === 'maybe'; });
+  }
+
+  // Ticked, still holding a hidden maybe value, and not yet approved by the person.
+  // Approval lives on the item object, which a details reload replaces, so it
+  // lasts for one form only.
+  function needsReview(it) { return it.on && hasMaybe(it) && !it.approved; }
+
+  var REVIEW_MSG = 'Preview the files marked Check this file and approve them before sending.';
+
+  function reviewBlocked() {
+    return !!(details && kind.id === 'bug' && details.items.some(needsReview));
+  }
+
+  // Redraws every row's status and the Send block from the items as they stand.
+  function refreshReview() {
+    if (details) {
+      details.items.forEach(function (it) {
+        var st = it.statusEl;
+        if (!st) return;
+        st.textContent = '';
+        st.className = '';
+        if (it.approved && hasMaybe(it)) {
+          st.className = 'staxx-bugwin-checked';
+          st.innerHTML = '<i class="fa fa-check" aria-hidden="true"></i>';
+          st.appendChild(document.createTextNode('Checked'));
+        } else if (hasMaybe(it) && !it.approved) {
+          st.className = 'staxx-bugwin-review';
+          st.textContent = 'Check this file';
+        }
+      });
+    }
+    if (!sendBtn) return;
+    var blocked = reviewBlocked();
+    sendBtn.disabled = busy || blocked;
+    if (blocked) setMsg(REVIEW_MSG);
+    else if (formMsg.textContent === REVIEW_MSG) setMsg('');
   }
 
   function renderDetails() {
     detailsList.textContent = '';
     syncDetailsBox();
-    if (!details || !details.items.length) return;
+    if (!details || !details.items.length) { refreshReview(); return; }
     details.items.forEach(function (it) {
       var row = el('div', 'staxx-bugwin-detailrow');
       var lab = el('label', 'staxx-bugwin-check');
       var box = el('input');
       box.type = 'checkbox';
       box.checked = it.on;
-      box.addEventListener('change', function () { it.on = box.checked; });
+      box.addEventListener('change', function () { it.on = box.checked; refreshReview(); });
       lab.appendChild(box);
       lab.appendChild(el('span', '', it.label));
+      it.statusEl = el('span');
+      lab.appendChild(it.statusEl);
       var view = el('button', 'staxx-bugwin-link', 'Preview');
       view.type = 'button';
       view.addEventListener('click', function () { openPreview(it); });
@@ -808,12 +853,14 @@
       row.appendChild(view);
       detailsList.appendChild(row);
     });
+    refreshReview();
   }
 
   function loadDetails() {
     var token = ++detailsToken;
     details = null;
     detailsBox.hidden = true;
+    refreshReview();
     call('feedback-details', {
       stack: currentStack(),
       errors: pageErrors.join('\n'),
@@ -842,6 +889,7 @@
   var OWN_NAMES = ['services', 'networks', 'volumes', 'configs', 'secrets'];
   var HIDE_NEED = 'Select the text you want to hide first, then press Hide this.';
 
+  var pApproveBtn;
   var pWin, pTitle, pText, pHideBtn, pMsg, pRow, pAsk, pAskText, pAskA, pAskB;
   var pMsgTimer = 0;
   var pAskAction = null;
@@ -884,6 +932,10 @@
       pText.appendChild(m);
     });
     pText.scrollTop = keep;
+    // Hides and unhides both end here, so this keeps the Approve button and the
+    // form's rows and Send state in step with the text.
+    pApproveBtn.hidden = !hasMaybe(shownItem());
+    refreshReview();
   }
 
   // Every place the text sits as plain text, in every item.
@@ -1041,7 +1093,8 @@
     home: 'an address on your home network',
     address: 'an address',
     mac: 'a hardware address',
-    host: 'the name of a computer on your home network'
+    host: 'the name of a computer on your home network',
+    maybe: 'a number that may be a network address or a version number'
   };
 
   function onTagClick(event) {
@@ -1097,6 +1150,10 @@
     var close = el('button', 'staxx-btn', 'Close');
     close.type = 'button';
     pRow.appendChild(close);
+    pApproveBtn = el('button', 'staxx-btn staxx-btn--primary', 'Approve');
+    pApproveBtn.type = 'button';
+    pApproveBtn.hidden = true;
+    pRow.appendChild(pApproveBtn);
     pAsk = el('div', 'staxx-buttons staxx-buttons--inline');
     pAsk.hidden = true;
     pAskText = el('span', 'staxx-bugwin-ask');
@@ -1120,6 +1177,13 @@
     pHideBtn.addEventListener('click', onHide);
     pText.addEventListener('click', onTagClick);
     close.addEventListener('click', function () { hidePop(pWin); });
+    pApproveBtn.addEventListener('click', function () {
+      var it = shownItem();
+      if (it) it.approved = true;
+      previewOpen = false; // the toggle event is async; refreshReview's DOM change would re-show it first
+      hidePop(pWin);
+      refreshReview();
+    });
     pAskA.addEventListener('click', endAsk);
     pAskB.addEventListener('click', function () {
       var go = pAskAction;
@@ -1264,7 +1328,7 @@
 
   function setBusy(on) {
     busy = on;
-    sendBtn.disabled = on;
+    sendBtn.disabled = on || reviewBlocked();
     cancelBtn.disabled = on;
     titleIn.disabled = on;
     editor.contentEditable = on ? 'false' : 'true';
@@ -1337,6 +1401,7 @@
   }
 
   function send() {
+    if (reviewBlocked()) { setMsg(REVIEW_MSG); return; }   // the button is disabled too; this is the backstop
     var title = titleIn.value.trim();
     if (!title) { setMsg('Give the report a title first.'); titleIn.focus(); return; }
 

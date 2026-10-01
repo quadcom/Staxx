@@ -16716,6 +16716,26 @@ dialog::backdrop {
   cursor: pointer;
 }
 
+/* Status after a file's name. The label already owns .staxx-bugwin-check, so
+   these are -review (amber, needs a look) and -checked (green, approved). */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-review,
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-checked {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-review { color: #f0a020; }
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-checked { color: #3fb950; }
+
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-checked .fa { margin-right: 0.5rem; }
+
+/* A blocked Send reads as unavailable but its word stays legible. */
+.staxx-scaffold .staxx-bugwin .staxx-btn:disabled {
+  opacity: 0.6;
+  color: #fff;
+}
+
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-lock {
   margin: 1rem 0 0;
   font-size: 1.3rem;
