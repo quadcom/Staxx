@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20260930">
+<!ENTITY version              "00.05.00_dev20261001">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "dac7a7b871b0084702b7a93db02a8ea9">
-<!ENTITY packageSHA256        "eac8d8f68a3a1d7f92733982028c3aaf1270f11febc478b51a562380d82b5afc">
+<!ENTITY packageMD5           "d7690cdedfc575006677e24136d1d83b">
+<!ENTITY packageSHA256        "18c85c03e2758edf61914ea8d16435660f687f3b0037c6ac6fe73d8140c5b4de">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,8 +37,12 @@
 >
 
 <CHANGES>
-###00.05.00_dev20260930
-- Settings, Self-test now lists what Unraid Docker and Compose Manager left behind: templates for apps that no longer exist, apps still set up in Unraid's Docker tab that you no longer use, and Compose Manager's settings folder once the add-on is removed. Tick what should go and StaXX clears it, keeping a copy you can put back.
+###00.05.00_dev20261001
+- A small speech-bubble button now sits in the bottom right corner of every StaXX screen, the editor and Settings included. Press it to report a bug, request a feature or suggest an improvement; each goes to its own section of StaXX's feedback board. Give it a title, say what you want to tell us, and paste screenshots straight into the text with Ctrl+V. The report window floats over the page without blocking it, so you can drag it aside, or roll it up to the top of the screen while you take a screenshot. Reports go under your own feedback-board account, signed in with Google or GitHub; connect once and StaXX remembers it. Each report also carries your StaXX and Unraid versions and the screen you were on, and nothing else about your server. Once sent, the window shows what went out and a link to your report on the board. Disconnect it any time in Settings, Integrations.
+- A report can also carry details that help fix the problem: the compose file of the stack you were editing, what happened the last time it started or updated, its recent container logs, errors the page ran into, and the versions in use. Passwords, keys, email addresses, network addresses and the names of computers on your network are replaced before anything leaves your server. Preview each file first, hide anything else you want kept private, and click a hidden part to put it back. A file holding a number that may be an address or a version number is marked Check this file, and the report waits until you have previewed and approved it. These files are private: only you and the StaXX team can see them, and they are deleted after 90 days.
+- Button text across StaXX is a little larger, to match the size of the text around it.
+- Settings, Storage now lists what Unraid Docker and Compose Manager left behind, just above the archives: templates for apps that no longer exist, apps still set up in Unraid's Docker tab that you no longer use, and Compose Manager's settings folder once the add-on is removed. Tick what should go and StaXX clears it, keeping a copy you can put back. An app whose container Docker can no longer read is marked Damaged in red and can still be cleared.
+- Importing an Unraid template with a setting named only by a number, such as 8075, no longer produces a compose file that Docker Compose refuses. The name is kept exactly as the template had it.
 - A withdrawn tag or an image that moved to another registry now shows an amber chip, since it needs you to change the image line; an image not downloaded yet stays blue.
 - Importing an Unraid template that sets the same variable or label twice now works. StaXX keeps the last value, as Unraid does, and notes the one it left out at the top of the new file.
 - StaXX now has its own tile on Unraid's Dashboard. Open Settings, General, Edit dashboard tile… to arrange it: drag stacks onto a grid of up to 8 columns, group them into folders, and give each folder an icon from four online icon sets, a plain built-in symbol, your own picture, or one that cycles through the icons of the stacks inside. On the Dashboard, click a folder to open it, right-click a stack or folder to start, stop or restart it, and click a stack for a small window with its CPU, memory and network graphs. The icon sets are hernandito's animated folder icons (used with his permission), ground7's animated icons (MIT), Dashboard Icons by homarr-labs (Apache-2.0) and Tabler Icons (MIT).
@@ -524,7 +528,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20260930-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261001-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
