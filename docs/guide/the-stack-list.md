@@ -20,6 +20,8 @@ bottom, part by part.
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say **Resume updates**. |
 
+The speech-bubble button in the bottom right corner of the page sends a bug report or an idea to the StaXX team. See [sending feedback](sending-feedback.md).
+
 **Add** opens one menu for everything that ends in a new stack or folder:
 
 | Item | What it does |

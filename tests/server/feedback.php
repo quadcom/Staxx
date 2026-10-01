@@ -227,6 +227,27 @@ check('0.0.0.0, 127.*, 255.255.255.255 and non-addresses stay', flat($t) === 'bi
 $t = clean1('mac 02:42:ac:11:00:02 and 02-42-ac-11-00-02 here');
 check('MAC addresses', flat($t) === 'mac <hardware address 1> and <hardware address 2> here', flat($t));
 
+$t = clean1("  NC_ADMIN_PW: hunter22\n  DB_PWD=hunter33\n  PW_HASH: hunter44\n  UPWARD: yes\n");
+check('PW and PWD name a secret only as a whole part; UPWARD does not', flat($t) === "  NC_ADMIN_PW: <secret 1>\n  DB_PWD=<secret 2>\n  PW_HASH: <secret 3>\n  UPWARD: yes\n", flat($t));
+
+$t = clean1("TRUSTED_PROXIES: fd12:3456:789a::10\nfe80::1ff:fe23:4567:890a and 2001:db8::5");
+check('IPv6: private ranges are home addresses, others addresses', flat($t) === "TRUSTED_PROXIES: <home address 1>\n<home address 2> and <address 1>", flat($t));
+$t = clean1('listen [2001:db8::5]:8080 and 2001:db8::5 again');
+check('IPv6 inside brackets, same value same tag', flat($t) === 'listen [<address 1>]:8080 and <address 1> again', flat($t));
+$t = clean1('Proxy is fd12:3456:789a::10.');
+check('an IPv6 address at the end of a sentence is still hidden', flat($t) === 'Proxy is <home address 1>.', flat($t));
+$two = staxx_feedback_clean(['a' => 'proxy fd12:3456:789a::10', 'b' => 'seen fd12:3456:789a::10']);
+check('the same IPv6 value in two items gets the same tag', flat($two['a']) === 'proxy <home address 1>' && flat($two['b']) === 'seen <home address 1>', flat($two['a']).' | '.flat($two['b']));
+$keep = 'bind :: and ::1 at 21:14:02 on 8443:443 with redis:7-alpine';
+check('::, ::1, times, port pairs and image tags are kept', flat(clean1($keep)) === $keep, flat(clean1($keep)));
+$t = clean1('nic aa:bb:cc:dd:ee:ff up');
+check('a MAC is a hardware address, not IPv6', flat($t) === 'nic <hardware address 1> up', flat($t));
+
+$t = clean1('nas cloud.nas.lan and printer.local, see github.com');
+check('names under a private suffix are host names; public names stay', flat($t) === 'nas <host name 1> and <host name 2>, see github.com', flat($t));
+$t = clean1('cloud.nas.lan and cloud.nas.lan');
+check('the same host name gets the same tag', flat($t) === '<host name 1> and <host name 1>', flat($t));
+
 $t = clean1('key Zm9vYmFyMTIzNDU2Nzg5MDEyMzQ1Ng== and word abcdefghijklmnopqrstuvwxyzabcdef and 123456789012345678901234567890 end');
 check('a long mixed letters-and-digits string is a secret; all letters or all digits is not', flat($t) === 'key <secret 1> and word abcdefghijklmnopqrstuvwxyzabcdef and 123456789012345678901234567890 end', flat($t));
 $dig = 'sha256:'.str_repeat('ab12', 16);

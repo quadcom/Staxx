@@ -1040,7 +1040,8 @@
     email: 'an email address',
     home: 'an address on your home network',
     address: 'an address',
-    mac: 'a hardware address'
+    mac: 'a hardware address',
+    host: 'the name of a computer on your home network'
   };
 
   function onTagClick(event) {

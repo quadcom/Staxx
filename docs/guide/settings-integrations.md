@@ -6,7 +6,7 @@ This tab, in **Settings**, holds sign-in details for Docker Hub, your own image 
 StaXXCrypt hashing container, and Nginx Proxy Manager and Pi-hole.
 
 ![The Integrations tab in full: the Docker Hub access box with its Username and Access token fields, the Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box with its dropdown, its state line, the four password formats each marked passes, the What is inside it list and the Show the recipe link](../images/guide/settings-registries-tab.png)
-![The lower part of the Integrations tab: the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch and Test connection with its result](../images/guide/settings-integrations-proxy.png)
+![The lower part of the Integrations tab: the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch, Test connection with its result, and the Feedback board line reading connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
 
 ## Docker Hub access
 
@@ -49,6 +49,12 @@ is rebuilt from it, and the old one is removed. See [making a password hash](pas
 |---|---|
 | Pi-hole address | The address of your Pi-hole. With it filled in, StaXX can add a local DNS name for an app, pointing at Nginx Proxy Manager. |
 | Pi-hole app password | An app password made in Pi-hole's own Settings → Web interface / API, under Enable new app password. Leave this blank if your Pi-hole has no admin password. |
+
+## Feedback board
+
+| Setting | What it does |
+|---|---|
+| Feedback board | Shows the account you are connected as. **Disconnect** ends the connection. When you are not connected it shows **Connect** instead. See [sending feedback](sending-feedback.md). |
 
 ## Allow insecure connections
 

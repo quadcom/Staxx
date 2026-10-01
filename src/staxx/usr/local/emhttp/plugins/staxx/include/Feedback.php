@@ -404,12 +404,13 @@ function staxx_feedback_find(string $re, string $text, int $g = 0): array {
  * order and a later rule never re-matches text an earlier one replaced.
  */
 function staxx_feedback_clean(array $items): array {
-  $words = ['secret' => 'secret', 'email' => 'email', 'home' => 'home address', 'address' => 'address', 'mac' => 'hardware address'];
+  $words = ['secret' => 'secret', 'email' => 'email', 'home' => 'home address', 'address' => 'address', 'mac' => 'hardware address', 'host' => 'host name'];
   $table = []; // kind, NUL, value => tag
   $count = [];
   $out   = [];
   $ref   = '/^["\']?\$\{[^}]*\}["\']?$/'; // a ${…} reference names a variable and holds nothing
-  $sens  = '/PASS|SECRET|TOKEN|KEY|AUTH|CREDENTIAL|PRIVATE|SALT|COOKIE|SESSION/i';
+  // PW and PWD count only as a whole part of the name, so UPWARD is left alone.
+  $sens  = '/PASS|SECRET|TOKEN|KEY|AUTH|CREDENTIAL|PRIVATE|SALT|COOKIE|SESSION|(?<![A-Za-z0-9])PWD?(?![A-Za-z0-9])/i';
   $skip  = fn(string $v): bool => $v === '' || preg_match($ref, $v) === 1 || preg_match('/^([|>][-+]?|\[\]|\{\})$/', $v) === 1;
 
   // Returns $acc with the candidates that overlap nothing already in it added.
@@ -497,10 +498,35 @@ function staxx_feedback_clean(array $items): array {
     }
     $add($c);
 
+    // 5b. IPv6 addresses. A run of hex digits and colons is only a candidate; filter_var
+    // decides, which keeps times, MACs, port pairs and image tags out.
+    $c = [];
+    foreach (staxx_feedback_find('/(?<![\w:.])[0-9A-Fa-f:]{2,}(?![\w:]|\.\w)/', $text) as [$v, $o]) {
+      if (substr_count($v, ':') < 2 || $v === '::' || $v === '::1') continue;
+      if (filter_var($v, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) continue;
+      $home = preg_match('/^(?:f[cd]|fe[89ab])/i', $v) === 1; // fc00::/7 and fe80::/10
+      $c[] = [$o, $o + strlen($v), $home ? 'home' : 'address', $v];
+    }
+    $add($c);
+
     // 6. MAC addresses.
     $c = [];
     foreach (staxx_feedback_find('/(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])/', $text) as [$v, $o]) {
       $c[] = [$o, $o + strlen($v), 'mac', $v];
+    }
+    $add($c);
+
+    // 6b. Computer names on the home network: names under a private suffix, and the
+    // server's own name. Public domain names are left alone.
+    $c = [];
+    foreach (staxx_feedback_find('/(?<![\w.@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+(?:home\.arpa|lan|local|home|internal|localdomain|intranet|private)(?![\w-]|\.[A-Za-z0-9])/i', $text) as [$v, $o]) {
+      $c[] = [$o, $o + strlen($v), 'host', $v];
+    }
+    $me = (string)gethostname();
+    if (strlen($me) >= 3) {
+      foreach (staxx_feedback_find('/(?<![\w-])'.preg_quote($me, '/').'(?![\w-])/i', $text) as [$v, $o]) {
+        $c[] = [$o, $o + strlen($v), 'host', $v];
+      }
     }
     $add($c);
 

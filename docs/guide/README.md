@@ -92,6 +92,8 @@ This guide is written in English only.
   backup line does and does not tell you
 - **[About tab](settings-about.md)** — the version of StaXX and Docker Compose you are running, the
   work by others StaXX uses, and the services it contacts
+- **[Sending feedback](sending-feedback.md)** — How to report a bug, suggest a feature or suggest an
+  improvement from inside StaXX, and what is sent with it.
 
 <!-- pages:end -->
 
