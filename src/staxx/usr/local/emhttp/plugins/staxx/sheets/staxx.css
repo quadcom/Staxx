@@ -3758,6 +3758,24 @@ div.title.staxx-has-titlebar {
   color: #fff;
 }
 
+/* PLAN_212 — the wrench pill is a button; the whole row is tinted too. Red
+   when compose refuses the file, amber for a fresh import waiting on review
+   (the chip rule: red broken, amber wants you). */
+/* Restated at scaffold specificity: Unraid's button reset otherwise wins
+   and the pill draws as a bare white wrench. */
+.staxx-scaffold button.staxx-pill--bad[data-fix-stack] {
+  background: var(--chip);
+  border-color: var(--chip);
+  color: #fff;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-row--fix {
+  background: color-mix(in srgb, #f85149 13%, transparent);
+}
+.staxx-scaffold .staxx-row--fresh {
+  background: color-mix(in srgb, #f0883e 12%, transparent);
+}
+
 /* While a command is running. The spinning icon says something is happening;
    this says what. Only the style and colour change here — the width stays
    the same 0.1rem every pill already carries, so this is the one pill that
@@ -4006,6 +4024,7 @@ div.title.staxx-has-titlebar {
 .staxx-chipmark[data-mark="clock"]::before { content: "\f017"; }
 .staxx-chipmark[data-mark="warn"]::before { content: "\f071"; }
 .staxx-chipmark[data-mark="question"]::before { content: "\f059"; }
+.staxx-chipmark[data-mark="wrench"]::before { content: "\f0ad"; }
 .staxx-chipmark[data-mark="refresh"]::before { content: "\f021"; }
 .staxx-chipmark[data-mark="page"]::before { content: "\f0f6"; }
 .staxx-chipmark[data-mark="diamond"]::before {
@@ -10479,6 +10498,35 @@ div.title.staxx-has-titlebar {
 
 .staxx-import-summarymsg {
   margin: 0;
+  font-size: 1.3rem;
+}
+
+/* PLAN_212 — one row per imported file compose refuses. */
+.staxx-import-fixrow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border: 0.1rem solid color-mix(in srgb, var(--sm-danger) 35%, transparent);
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--sm-danger) 10%, transparent);
+  font-size: 1.3rem;
+}
+
+.staxx-import-fixmark {
+  color: var(--sm-danger);
+}
+
+.staxx-import-fixtext {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.staxx-scaffold .staxx-import-fixbtn {
+  flex: none;
 }
 
 .staxx-import-summaryfails {
@@ -16891,4 +16939,215 @@ dialog::backdrop {
   .staxx-scaffold .staxx-bugwin--min .staxx-confirm-foot {
     transition: none;
   }
+}
+
+/* ==== PLAN_212: the problem window, the red line mark, the fixes-needed button ====
+   The window is the report window's frame (.staxx-bugwin-float, a popover that
+   dims nothing) with its own width, title-bar controls and body. 13px floor. */
+
+.staxx-scaffold .staxx-probwin {
+  width: min(44rem, 94vw);
+}
+
+.staxx-scaffold .staxx-bugwin-float.staxx-probwin.staxx-bugwin--min {
+  width: 36rem;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-confirm-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-icon {
+  color: #f85149;
+  font-size: 1.4rem;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-icon--info {
+  color: var(--sm-accent);
+}
+
+/* Counter, collapse and close sit together at the right of the title bar. */
+.staxx-scaffold .staxx-probwin .staxx-probwin-ctl {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-btn {
+  margin-left: 0;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-right: 0.6rem;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-count {
+  font-size: 1.3rem;
+  color: var(--text-color, #e0e0e0);
+  white-space: nowrap;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: transparent;
+  color: #fff;
+  font-size: 1.3rem;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-step:hover:not(:disabled) {
+  background: var(--sm-fill-2);
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-heading {
+  margin: 1.2rem 0 0.4rem;
+  padding: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-heading:first-child {
+  margin-top: 0.4rem;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-text {
+  margin: 0;
+  font-size: 1.3rem;
+  line-height: 1.5;
+  color: var(--text-color, #e0e0e0);
+}
+
+/* Compose's own words: monospace in a red-tinted box. */
+.staxx-scaffold .staxx-probwin .staxx-probwin-raw {
+  margin: 0;
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid rgba(248, 81, 73, 0.55);
+  border-radius: var(--sm-radius);
+  background: rgba(248, 81, 73, 0.12);
+  color: #fff;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.3rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-report {
+  margin: 1.2rem 0 0;
+  font-size: 1.3rem;
+  line-height: 1.5;
+  color: var(--sm-muted);
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-docs {
+  font-size: 1.3rem;
+  color: var(--text-color, #e0e0e0);
+  text-decoration: underline;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-docs:hover {
+  color: var(--sm-accent);
+}
+
+/* Fix it for me: the preview. */
+.staxx-scaffold .staxx-probwin .staxx-probwin-label {
+  margin: 0.4rem 0 0.8rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-diff {
+  margin-bottom: 1.2rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.3rem;
+  line-height: 1.5;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-diff-row {
+  padding: 0.2rem 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-diff-row--old {
+  background: rgba(248, 81, 73, 0.2);
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-diff-row--new {
+  background: rgba(63, 185, 80, 0.2);
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-done {
+  margin: 0.4rem 0 1.2rem;
+  font-size: 1.3rem;
+  line-height: 1.5;
+  color: #3fb950;
+}
+
+.staxx-scaffold .staxx-probwin .staxx-probwin-done .fa {
+  margin-right: 0.4rem;
+}
+
+/* The refused line: its number white on solid red in the gutter, the whole
+   line banded red at 22% like the active-field band is banded orange. */
+.staxx-scaffold .staxx-mark.staxx-mark--problem {
+  border-left-color: #f85149;
+  background: rgba(248, 81, 73, 0.22);
+}
+
+.staxx-scaffold .staxx-yamlerrnum {
+  position: absolute;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 0.9rem;
+  background: #f85149;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* The editor's top-bar button that brings the window back. */
+.staxx-scaffold .staxx-btn.staxx-btn--fixneeded {
+  border-color: #f85149;
+  background: #f85149;
+  color: #fff;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.staxx-scaffold .staxx-btn.staxx-btn--fixneeded:hover:not(:disabled) {
+  border-color: #f85149;
+  background: #ff6a62;
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-btn.staxx-btn--fixneeded[hidden] {
+  display: none;
 }

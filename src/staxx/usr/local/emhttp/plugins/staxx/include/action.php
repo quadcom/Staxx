@@ -68,6 +68,8 @@ require_once '/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Dashboard.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Feedback.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/ComposeErrors.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/ErrorReports.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -373,15 +375,28 @@ switch ($action) {
     // guaranteed the ground was empty.
     if ($isNew && $bodyAsIs !== '' && $bodyAsIs !== $body) {
       $asIsError = '';
-      if (!staxx_save_stack($name, $bodyAsIs, $asIsError)) {
+      $asIsNote  = null;
+      if (!staxx_save_stack($name, $bodyAsIs, $asIsError, $asIsNote, true)) {
         staxx_reply(['ok' => false, 'error' => $asIsError]);
       }
     }
 
     $historyNote = '';
-    if (!staxx_save_stack($name, $body, $error, $historyNote)) {
+    $composeRefused = false;
+    // A new stack compose refuses is saved and flagged instead (PLAN_212); an
+    // edit still answers with the explanation below.
+    $newNeedsFix = '';
+    if (!staxx_save_stack($name, $body, $error, $historyNote, $isNew, $newNeedsFix, $composeRefused)) {
+      // Compose refusing the file gets the same plain-English explanation the
+      // editor's check shows; any other refusal (a bad name, a full disk) is
+      // not compose's and gets none.
+      if ($composeRefused) {
+        if (is_dir(staxx_stack_dir($name))) staxx_record_set_needs_fix(staxx_stack_dir($name), staxx_compose_shape($error));
+        staxx_reply(['ok' => false, 'error' => $error, 'problem' => staxx_compose_explain($error, true)]);
+      }
       staxx_fail($error);
     }
+    if ($newNeedsFix === '') staxx_record_set_needs_fix(staxx_stack_dir($name), '');
 
     // Phase D — the exit route. Only a brand-new stack can be a caught
     // install, so an edit of an existing one never stamps a template even if
@@ -415,6 +430,7 @@ switch ($action) {
       // has no undo, which the person is entitled to know at the time.
       'historyNote'  => $historyNote,
     ];
+    if ($newNeedsFix !== '') $saveReply['needsFix'] = $newNeedsFix;
     // PLAN_85 — one icon per service, so a saved icon shows without reopening
     // the editor. Same omit-when-empty wire contract as 'read' above; read
     // after the write is confirmed, so this always matches what is now on disk.
@@ -514,7 +530,15 @@ switch ($action) {
     }
 
     $ok = staxx_validate_compose($body, $error, $dir, $warnings, $before, $after);
-    staxx_reply(['ok' => true, 'valid' => $ok, 'error' => $error, 'warnings' => $warnings]);
+    $checkReply = ['ok' => true, 'valid' => $ok, 'error' => $error, 'warnings' => $warnings];
+    if (!$ok && $error !== '') $checkReply['problems'] = [staxx_compose_explain($error)];
+    // This runs on unsaved text as the person types, so a check never sets
+    // needsFix. It may clear it, but only when compose accepts exactly what is
+    // on disk (a file fixed outside StaXX), never for text still being typed.
+    if ($ok && $target === '' && $main !== '' && @file_get_contents($main) === $body) {
+      staxx_record_set_needs_fix($dir, '');
+    }
+    staxx_reply($checkReply);
 
   /* ---- remove a stack: zip its folder, then take it out of the tree ----
    *
@@ -3164,10 +3188,12 @@ switch ($action) {
     $about   = json_decode((string)($_POST['about'] ?? ''), true);
     if (!is_array($about)) $about = [];
 
-    if (!staxx_import_write($name, $body, $about, $error, $bodyAsIs)) {
+    $needsFix = '';
+    if (!staxx_import_write($name, $body, $about, $error, $bodyAsIs, $needsFix)) {
       staxx_fail($error);
     }
-    staxx_reply(['ok' => true, 'name' => $name]);
+    staxx_reply($needsFix === '' ? ['ok' => true, 'name' => $name]
+                                 : ['ok' => true, 'name' => $name, 'needsFix' => $needsFix]);
 
   /* ---- write one Compose Manager project in as a stack ----
    *
@@ -3182,10 +3208,12 @@ switch ($action) {
     $about = json_decode((string)($_POST['about'] ?? ''), true);
     if (!is_array($about)) $about = [];
 
-    if (!staxx_import_write_project($name, $id, $about, $error)) {
+    $needsFix = '';
+    if (!staxx_import_write_project($name, $id, $about, $error, $needsFix)) {
       staxx_fail($error);
     }
-    staxx_reply(['ok' => true, 'name' => $name]);
+    staxx_reply($needsFix === '' ? ['ok' => true, 'name' => $name]
+                                 : ['ok' => true, 'name' => $name, 'needsFix' => $needsFix]);
 
   /* ---- read back one Add Container handoff ----
    *

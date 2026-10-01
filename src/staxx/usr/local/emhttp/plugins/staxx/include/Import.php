@@ -1332,7 +1332,9 @@ function staxx_import_prepare_dir(string $rel, string &$error): string {
  * the as-is text sitting in history for anyone who wants to see what the
  * template originally said.
  */
-function staxx_import_write(string $rel, string $yaml, array $about, string &$error, string $asIs = ''): bool {
+function staxx_import_write(string $rel, string $yaml, array $about, string &$error, string $asIs = '',
+                            string &$needsFix = ''): bool {
+  $needsFix = '';
   $dir = staxx_import_prepare_dir($rel, $error);
   if ($dir === '') return false;
 
@@ -1352,16 +1354,21 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
   @chmod($notePath, 0644);
 
   if ($asIs !== '' && $asIs !== $yaml) {
-    if (!staxx_save_stack($rel, $asIs, $error)) {
+    $asIsNote = null;
+    if (!staxx_save_stack($rel, $asIs, $error, $asIsNote, true)) {
       staxx_rmtree($real, $real);
       return false;
     }
   }
 
-  if (!staxx_save_stack($rel, $yaml, $error)) {
+  // PLAN_212 — a template compose refuses is kept and flagged, not turned away.
+  $note = null;
+  if (!staxx_save_stack($rel, $yaml, $error, $note, true, $needsFix)) {
     staxx_rmtree($real, $real);
     return false;
   }
+  // The as-is copy saved first may have flagged a file the escaped one fixes.
+  if ($needsFix === '') staxx_record_set_needs_fix($dir, '');
 
   return true;
 }
@@ -1385,8 +1392,10 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
  * where compose would look for it. Any failure rolls the half-written folder
  * back, same as staxx_import_write().
  */
-function staxx_import_write_project(string $rel, string $id, array $about, string &$error): bool {
+function staxx_import_write_project(string $rel, string $id, array $about, string &$error,
+                                    string &$needsFix = ''): bool {
   $error = '';
+  $needsFix = '';
 
   $project = null;
   foreach (staxx_import_projects() as $row) {
@@ -1488,11 +1497,17 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
   $overridePath = $overrideDest !== '' ? $dir.'/'.$overrideDest : '';
   $warnings = null;
   if (!staxx_validate_compose($yaml, $error, $dir, $warnings, '', $overridePath)) {
-    if ($overridePath !== '') {
-      $error .= "\n\nThis project has an override file, and the two are checked together.";
+    // PLAN_212 — kept and flagged when compose itself refuses it; a timeout
+    // or scratch-folder failure is still a refusal to import.
+    if (preg_match('/^(The compose file is empty|Compose took too long|Could not create)/', $error)) {
+      if ($overridePath !== '') {
+        $error .= "\n\nThis project has an override file, and the two are checked together.";
+      }
+      staxx_rmtree($real, $real);
+      return false;
     }
-    staxx_rmtree($real, $real);
-    return false;
+    $needsFix = staxx_compose_explain($error, true)['shape'];
+    $error = '';
   }
 
   if (@file_put_contents($dir.'/'.$mainName, $yaml) === false) {
@@ -1501,6 +1516,7 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
     return false;
   }
   @chmod($dir.'/'.$mainName, 0644);
+  if ($needsFix !== '') staxx_record_set_needs_fix($dir, $needsFix);
 
   return true;
 }

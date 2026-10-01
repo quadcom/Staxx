@@ -1845,6 +1845,9 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
 <? if (is_file($dashEditorFile)): ?>
 <script src="<?= $dashEditorTag ?>"></script>
 <? endif; ?>
+<!-- PLAN_212 — the problem window stacks.js opens for a file Compose refuses
+     and for the form's help marks; it only draws, so it loads ahead of it. -->
+<script src="<?= staxx_asset('javascript/problem-window.js') ?>"></script>
 <script src="<?= $jsTag ?>"></script>
 <!-- PLAN_165 §5/§6 — see the comment on $unraidTemplatesFile above. Loaded
      after stacks.js only by convention (nothing here reads a stacks.js

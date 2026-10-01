@@ -41,9 +41,9 @@ fi
 # words, so this is hygiene rather than a live vulnerability — but the order
 # still matters.
 case "${1:-}" in
-  check|full|apply|storage) ;;
+  check|full|apply|storage|explain) ;;
   *)
-    echo "Usage: update-check {check|full|apply|storage}" >&2
+    echo "Usage: update-check {check|full|apply|storage|explain}" >&2
     exit 1
     ;;
 esac
@@ -185,7 +185,23 @@ run_storage() {
   log "storage-alert pass finished."
 }
 
+run_explain() {
+  # PLAN_212 — fetch the newest Docker error explanations and send any
+  # unexplained message still waiting. Needs the network, not Docker.
+  log "starting error-explanations pass."
+  "${php_bin}" -r "
+    require '${PLUGIN_DIR}/include/ErrorReports.php';
+    \$why = staxx_error_reports_daily();
+    echo \$why === '' ? 'explanations current.' : 'explanations not updated: '.\$why;
+    echo PHP_EOL;
+  " >> "${LOG}" 2>&1
+  log "error-explanations pass finished."
+}
+
 case "${1:-}" in
+  explain)
+    run_explain
+    ;;
   check|full)
     run_check "${1}"
     ;;

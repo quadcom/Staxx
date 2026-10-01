@@ -93,6 +93,8 @@ function staxx_settings_keys(): array {
      */
     'PLACEMENT_RULES'     => ['type' => 'choice', 'default' => 'guided', 'choices' => ['guided', 'open']],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // PLAN_212 — send Docker Compose messages StaXX has no explanation for (ErrorReports.php).
+    'ERROR_REPORTS'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // PLAN_86 — record a matched icon into the compose file and copy its
     // picture into the stack's own folder, instead of guessing again on
     // every render. Not in $reload below: nothing that reads this needs the

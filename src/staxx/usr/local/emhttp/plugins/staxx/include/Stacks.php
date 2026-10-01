@@ -3783,8 +3783,11 @@ function staxx_run_probe(string $key): array {
  * the whole promise of the project and it is enforced here by simply not
  * touching the string.
  */
-function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$note = null): bool {
+function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$note = null,
+                          bool $keepRefused = false, string &$needsFix = '', bool &$composeRefused = false): bool {
   $error = '';
+  $composeRefused = false; // true only when compose itself refused the file (PLAN_212)
+  $needsFix = '';
 
   if (!staxx_valid_path($name)) {
     $error = STAXX_NAME_RULE;
@@ -3821,10 +3824,22 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   // omitted for it.
   $warnings = null;
   if (!staxx_validate_compose($yaml, $error, $dir, $warnings, '', $after)) {
-    if ($after !== '') {
-      $error .= "\n\nThis stack has an override file, and the two are checked together.";
+    // PLAN_212 — an arriving file compose refuses is kept and flagged, not
+    // turned away (the author's work is never lost). Only compose's own
+    // verdict counts: an empty file, a timeout or a scratch-folder failure
+    // is still a refusal to save. Explaining it also queues an unknown shape
+    // for the automatic report.
+    $own = (bool)preg_match('/^(The compose file is empty|Compose took too long|Could not create)/', $error);
+    if ($keepRefused && !$own) {
+      $needsFix = staxx_compose_explain($error, true)['shape'];
+      $error = '';
+    } else {
+      $composeRefused = !$own;
+      if ($after !== '') {
+        $error .= "\n\nThis stack has an override file, and the two are checked together.";
+      }
+      return false;
     }
-    return false;
   }
 
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
@@ -3879,6 +3894,9 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
     if ($note !== null && $note === '') $note = $recordNote2;
     error_log('StaXX: history not kept for '.$name.': '.$recordNote2);
   }
+
+  // The flag goes in only now the record folder exists and the file is down.
+  if ($needsFix !== '') staxx_record_set_needs_fix($dir, $needsFix);
 
   // The boot-drive shelf copy (PLAN_103). Same reasoning as the history
   // capture above: the save has already succeeded by this point, and a

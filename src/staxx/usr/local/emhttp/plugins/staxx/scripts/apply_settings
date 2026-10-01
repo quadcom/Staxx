@@ -313,6 +313,11 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
   # time — not user-configurable the way the check time is.
   cron_lines+=("45 3 * * * ${PLUGIN_DIR}/scripts/update-check storage &> /dev/null")
 
+  # PLAN_212 — the daily fetch of Docker error explanations (and the send of
+  # any unexplained message waiting). Unconditional like the storage pass:
+  # whether anything is sent is the Integrations switch's business.
+  cron_lines+=("50 3 * * * ${PLUGIN_DIR}/scripts/update-check explain &> /dev/null")
+
   # PLAN_103 addendum: BOOT_COPY_MODE's own line. "scheduled" gets a
   # dedicated hourly sweep — offset from the top of the hour, and
   # independent of the image-update jitter above, since comparing a stack

@@ -263,6 +263,17 @@ function staxx_state_pill(array $s, bool $canRun, string $service = ''): string 
     $title = $status."\n".$title;
     return '<span class="staxx-pill staxx-pill--up" title="'.$title.'">'.$chip.'</span>';
   }
+  // PLAN_212 — compose refuses this stack's file, so it cannot start: a red
+  // wrench in place of the stop mark, and a click opens the file on the
+  // problem. Drawn here, the one place both the full render and the cheap
+  // state refresh get their pill from, so a refresh cannot wipe it.
+  if (!empty($s['name']) && staxx_record_needs_fix(staxx_stack_dir($s['name'])) !== '') {
+    $title = _('Docker Compose could not read this file, so it cannot start. Click to open it and fix it.');
+    return '<button type="button" class="staxx-pill staxx-pill--bad" title="'.$title.'"'
+         . ' data-fix-stack="'.htmlspecialchars($s['name']).'">'
+         . '<span class="staxx-chipmark" data-mark="wrench" aria-hidden="true"></span>'
+         . '<span class="staxx-chiptext"></span></button>';
+  }
   // Stopped, or a Docker status word this file has no chip logic for: same
   // quiet grey chip either way, the word moved from the chip's face into its
   // title (PLAN_161 — colour and a mark carry the meaning, not the text).
@@ -2143,6 +2154,7 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
       $expandable = count($kids) > 1;
 
       $sBoot   = $autostart['available'] ? ($autostart['stacks'][$s['name']] ?? ['mode' => 'none', 'wait' => 0, 'interleaved' => false]) : ['mode' => 'none', 'wait' => 0, 'interleaved' => false];
+      $sNeedsFix = staxx_record_needs_fix(staxx_stack_dir($s['name'])) !== '';   // PLAN_212
       $sMode   = $autostart['available'] ? ($sBoot['mode'] === 'all' ? 'on' : ($sBoot['mode'] === 'some' ? 'some' : 'off')) : 'off';
       $sWait   = (int)($sBoot['wait'] ?? 0);
       $sInterleaved = $autostart['available'] && !empty($sBoot['interleaved']);
@@ -2209,7 +2221,7 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
 <?
       endif;
 ?>
-        <div class="staxx-row staxx-stack-row<?= $row['folder'] !== '' ? ' staxx-nested' : '' ?>"
+        <div class="staxx-row staxx-stack-row<?= $row['folder'] !== '' ? ' staxx-nested' : '' ?><?= $sNeedsFix ? ' staxx-row--fix' : ($s['review'] && !($s['mergedInto'] ?? null) ? ' staxx-row--fresh' : '') ?>"
              role="row" aria-level="<?= $stackLevel ?>"
              <? if ($expandable): ?>aria-expanded="<?= $expanded ? 'true' : 'false' ?>"<? endif; ?>
              data-stack-row="<?= htmlspecialchars($s['name']) ?>"
@@ -2846,6 +2858,8 @@ function staxx_state_snapshot(): array {
       // PLAN_107 — what the browser toggles staxx-dot--sick from on the
       // stack row itself.
       'sick'       => $mineHealth === 'unhealthy',
+      // PLAN_212 — the row's red tint follows this on every refresh.
+      'needsFix'   => staxx_record_needs_fix(staxx_stack_dir($name)) !== '',
       'containers' => $containers,
       // The row's own sub-line only ever prints an image for a stack with
       // exactly one container — anything else and the containers array above

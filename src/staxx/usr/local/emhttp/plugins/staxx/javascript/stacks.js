@@ -88,6 +88,11 @@
   // gutter div. May be null while the markup has not landed yet — guarded
   // wherever it is used, the same way paintInk() guards for YAML.highlight.
   var yamlDots    = yamlNums.querySelector('.staxx-yamldots');
+  // PLAN_212 — Compose's refusals for the open file, [{ raw, shape, entry, report,
+  // line (0-based, -1 unknown), key }]; declared up here because the gutter and
+  // band painters read them from the first paint.
+  var problemList = [];
+  var problemAt = 0;
   var yamlStatus  = document.getElementById('staxx-yaml-status');
   var yamlNotice  = document.getElementById('staxx-yaml-notice');
   // The autocomplete list and the hover-help panel, both siblings of the
@@ -2062,6 +2067,21 @@
       dot.style.top = (PAD_T + (item.line + 0.5) * LINE_H) + 'px';
       dot.title = item.message || '';   // a missing message must never print the word "undefined"
       yamlDots.appendChild(dot);
+    }
+
+    // PLAN_212 — the refused line's own number, white on red, drawn over the
+    // gutter's plain one; pressing it reopens the problem window.
+    var badP = problemList[problemAt];
+    if (badP && badP.line >= 0) {
+      var num = document.createElement('div');
+      num.className = 'staxx-yamlerrnum';
+      num.textContent = String(badP.line + 1);
+      num.style.top = (PAD_T + badP.line * LINE_H) + 'px';
+      num.style.width = yamlNums.clientWidth + 'px';
+      num.style.height = LINE_H + 'px';
+      num.title = 'Show what Docker Compose said about this line';
+      num.addEventListener('click', function () { openProblemWindow(problemAt); });
+      yamlDots.appendChild(num);
     }
   }
 
@@ -10354,6 +10374,18 @@
     var helpBtn = event.target.closest('[data-help]');
     if (helpBtn) {
       var helpBody = document.getElementById(helpBtn.getAttribute('aria-controls'));
+      // PLAN_212 — the same floating window as a refused file's; the hidden
+      // sentence stays in the markup as the text it shows.
+      if (helpBody && window.StaxxProblems) {
+        windowShows = 'help';
+        window.StaxxProblems.show([{
+          kind: 'help',
+          title: (helpBtn.title || '').replace(/^More about /, ''),
+          description: helpBody.textContent,
+          docs: ''
+        }], {});
+        return;
+      }
       if (helpBody) {
         helpBody.hidden = !helpBody.hidden;
         helpBtn.setAttribute('aria-expanded', helpBody.hidden ? 'false' : 'true');
@@ -12455,6 +12487,17 @@
       }
     }
 
+    // PLAN_212 — the line Compose refused, banded red like the active-field
+    // band is banded orange. Only the current problem; a step moves it.
+    var badP = problemList[problemAt];
+    if (badP && badP.line >= 0) {
+      var badBand = document.createElement('div');
+      badBand.className = 'staxx-mark staxx-mark--problem';
+      badBand.style.top    = (PAD_T + badP.line * LINE_H - yamlPane.scrollTop) + 'px';
+      badBand.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(badBand);
+    }
+
     // Search hits share this layer rather than a second one of their own, and
     // are drawn here — not in a parallel function with its own call sites —
     // so every place that already repaints this layer (scroll, view switch,
@@ -12830,6 +12873,201 @@
     }, 800);
   }
 
+  /* ---- PLAN_212: problems Compose refused ----
+     The server's check reply lists each problem with its plain-English
+     entry (or null for a message nobody has explained yet). They are kept
+     here, one is "current", and the current one is what the red number, the
+     red line band, the top-bar button and the problem window all show. */
+  var autoOpenProblems = ''; // stack whose first check reply with problems opens the window by itself
+  var windowShows = '';      // 'problems' | 'help': what the shared window holds, so a check reply never overwrites help text
+
+  var fixBtn = document.createElement('button');
+  fixBtn.type = 'button';
+  fixBtn.className = 'staxx-btn staxx-btn--fixneeded';
+  fixBtn.hidden = true;
+  fixBtn.innerHTML = '<i class="fa fa-wrench" aria-hidden="true"></i> <span></span>';
+  (function () {
+    var closeEl = document.getElementById('staxx-modal-close');
+    if (closeEl && closeEl.parentNode) closeEl.parentNode.insertBefore(fixBtn, closeEl);
+  })();
+  fixBtn.addEventListener('click', function () { openProblemWindow(problemAt); });
+
+  // The fixes this code has; an explanations file may name one it lacks.
+  var KNOWN_FIXES = { 'quote-env-key': true };
+
+  function reEsc(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  // The line a "non-string key in services.S.environment: K" message means:
+  // the first line of S's environment block that starts with K.
+  function envKeyLine(raw) {
+    var m = /services\.([^.\s]+)\.environment: (\S+)/.exec(raw || '');
+    if (!m || !YAML || typeof YAML.lineOfPath !== 'function' || !MODEL || !MODEL.doc) return null;
+    var start = YAML.lineOfPath(MODEL.doc, 'services.' + m[1] + '.environment');
+    if (start < 0) return null;
+    var lines = currentText().split('\n');
+    var base = /^\s*/.exec(lines[start])[0].length;
+    var re = new RegExp('^\\s*' + reEsc(m[2]) + '\\s*:');
+    for (var i = start + 1; i < lines.length; i++) {
+      if (lines[i].trim() === '') continue;
+      if (/^\s*/.exec(lines[i])[0].length <= base) break;   // left the block
+      if (re.test(lines[i])) return { line: i, key: m[2] };
+    }
+    return null;
+  }
+
+  // Where a problem is: a key it names, a line it names, or a path it names.
+  function locateProblem(p) {
+    var hit = p.entry && p.entry.autofix === 'quote-env-key' ? envKeyLine(p.raw) : null;
+    if (hit) { p.line = hit.line; p.key = hit.key; return; }
+    var line = lineFromMessage(p.raw);
+    if (line === null) line = lineFromPath(p.raw);
+    if (line === null) {
+      var m = /\b((?:services|networks|volumes|configs|secrets)\.[A-Za-z0-9_.\-]*[A-Za-z0-9_])/.exec(p.raw || '');
+      if (m && YAML && typeof YAML.lineOfPath === 'function' && MODEL && MODEL.doc) {
+        var at = YAML.lineOfPath(MODEL.doc, m[1]);
+        if (at >= 0) line = at;
+      }
+    }
+    p.line = line === null ? -1 : line;
+  }
+
+  function syncFixBtn() {
+    var n = problemList.length;
+    fixBtn.hidden = !n;
+    if (n) fixBtn.lastElementChild.textContent = n + (n === 1 ? ' fix needed' : ' fixes needed');
+  }
+
+  function resetProblems() {
+    problemList = [];
+    problemAt = 0;
+    syncFixBtn();
+    if (window.StaxxProblems) window.StaxxProblems.hide();
+    windowShows = '';
+  }
+
+  // Compose's verdict for the text on screen.
+  function applyProblems(res) {
+    if (!res.valid && res.problems && res.problems.length) {
+      problemList = res.problems.map(function (p) {
+        var q = { raw: p.raw, shape: p.shape, entry: p.entry, report: p.report, line: -1, key: '' };
+        locateProblem(q);
+        return q;
+      });
+      if (problemAt >= problemList.length) problemAt = 0;
+    } else {
+      problemList = [];
+      problemAt = 0;
+    }
+    syncFixBtn();
+    redrawDots();
+    repaintMark();
+    var win = window.StaxxProblems;
+    if (win && win.isOpen() && windowShows === 'problems') win.refresh(problemList);
+    if (autoOpenProblems && autoOpenProblems === openedName) {
+      autoOpenProblems = '';
+      if (problemList.length) {
+        setView(NARROW.matches ? 'yaml' : 'split');
+        openProblemWindow(0);
+      }
+    }
+  }
+
+  // Show me: scroll to the line and put the caret at its start.
+  function showProblemLine(p) {
+    if (!p || p.line < 0) return;
+    if (modalBody.dataset.view === 'form') setView(NARROW.matches ? 'yaml' : 'split');
+    revealLine(p.line);
+    var text = yamlPane.value, off = 0;
+    for (var i = 0; i < p.line; i++) {
+      var nl = text.indexOf('\n', off);
+      if (nl < 0) break;
+      off = nl + 1;
+    }
+    yamlPane.focus();
+    yamlPane.setSelectionRange(off, off);
+  }
+
+  function stepProblem(i) {
+    problemAt = i;
+    redrawDots();
+    repaintMark();
+    if (problemList[i] && problemList[i].line >= 0) revealLine(problemList[i].line);
+  }
+
+  // The one fix there is: quote a number-like name in an environment block.
+  function quoteKeyEdit(p) {
+    if (!p || p.line < 0 || !p.key) return null;
+    var lines = currentText().split('\n');
+    var old = lines[p.line];
+    var re = new RegExp('^(\\s*)(' + reEsc(p.key) + ')(\\s*:)');
+    var m = old === undefined ? null : re.exec(old);
+    if (!m) return null;
+    var next = m[1] + '"' + m[2] + '"' + old.slice(m[1].length + m[2].length);
+    var value = old.slice(m[0].length).replace(/\s+#.*$/, '').trim();
+    return { lines: lines, line: p.line, oldLine: old, newLine: next, value: value };
+  }
+
+  function fixPreview(p) {
+    var e = quoteKeyEdit(p);
+    if (!e) {
+      setYamlStatus('That line has changed since Docker Compose last looked. Give it a moment to check again.');
+      return null;
+    }
+    return {
+      label: 'Fix it for me will change line ' + (e.line + 1),
+      oldLine: e.oldLine,
+      newLine: e.newLine,
+      note: 'Only the name gets quotes. ' + (e.value ? 'Its value, ' + e.value + ', stays the same, and ' : 'Its value stays the same, and ') +
+        'nothing else in the file changes. You can take it back with Undo at the bottom of the editor.'
+    };
+  }
+
+  // One undoable step; the problem leaves the list at once, the next check
+  // reply puts back anything that is still wrong.
+  function applyFix(p) {
+    var e = quoteKeyEdit(p);
+    if (!e) {
+      setYamlStatus('That line has changed since Docker Compose last looked. Give it a moment to check again.');
+      return null;
+    }
+    flushPending();
+    pushUndo('putting quotes around ' + p.key);
+    e.lines[e.line] = e.newLine;
+    reloadPane(e.lines.join('\n'));
+    problemList.splice(problemList.indexOf(p), 1);
+    if (problemAt >= problemList.length) problemAt = Math.max(0, problemList.length - 1);
+    syncFixBtn();
+    redrawDots();
+    repaintMark();
+    return { message: 'Changed line ' + (e.line + 1) + ': put quotes around the name ' + p.key +
+      '. Undo at the bottom of the editor takes it back.' };
+  }
+
+  function openProblemWindow(i) {
+    if (!problemList.length || !window.StaxxProblems) return;
+    problemAt = i;
+    windowShows = 'problems';
+    window.StaxxProblems.show(problemList, {
+      index: i,
+      onStep: stepProblem,
+      onShowMe: showProblemLine,
+      canFix: function (p) { return !!KNOWN_FIXES[p.entry && p.entry.autofix]; },
+      fixPreview: fixPreview,
+      applyFix: applyFix,
+      nextProblem: function () { stepProblem(problemAt); }
+    });
+    stepProblem(i);
+  }
+
+  // From an import summary or a row: open the stack in the editor, and the
+  // window opens by itself (on Split) when the first check reply brings the
+  // problems.
+  function openStackForFix(name) {
+    autoOpenProblems = name;
+    editStack(name, name);
+  }
+  window.staxxOpenStackForFix = openStackForFix;
+
   function runCheck(text, file) {
     checkedText  = text;
     checkVerdict = null;
@@ -12843,6 +13081,8 @@
         // res.ok === false and is handled the same way as a superseded
         // sequence number: simply nothing painted.
         if (mySeq !== checkSeq || !res || !res.ok) return;
+
+        applyProblems(res);
 
         if (!res.valid) {
           // Reuses markSaveError()'s own line extraction so the compose
@@ -15915,6 +16155,7 @@
     var total = idxs.length;
     var written = 0;
     var failures = [];
+    var flagged = [];          // PLAN_212 — written, but compose refuses the file: {name, rel}
     var folderFailures = {};   // folderName -> error, filled in only in Match mode
     var dollarTouches = [];    // PLAN_106 phase 2 — {name, key, count}, one per value doubled
 
@@ -16006,6 +16247,7 @@
         call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
           if (res.ok) {
             written++;
+            if (res.needsFix) flagged.push({ name: entry.name, rel: stackName });
             importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
             importMarkWritten(idx);
           } else {
@@ -16075,6 +16317,7 @@
       call('import-write', { name: stackName, body: writeBody, bodyAsIs: writeBodyAsIs, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
+          if (res.needsFix) flagged.push({ name: entry.name, rel: stackName });
           importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
           importMarkWritten(idx);
         } else {
@@ -16089,7 +16332,21 @@
       importSetBusyUI(false);
       importMsg.textContent = '';
 
-      var bits = ['<p class="staxx-import-summarymsg">Wrote ' + written + ' of ' + total + '.</p>'];
+      // PLAN_212 — a file compose refuses is saved and counts as imported;
+      // each such stack gets a row with a button that opens it on the problem.
+      var numWords = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+      var bits = ['<p class="staxx-import-summarymsg">Imported ' + written + ' of ' + total + '.' +
+        (flagged.length
+          ? ' ' + (numWords[flagged.length] || flagged.length) + (flagged.length === 1 ? ' needs' : ' need') +
+            ' a fix before ' + (flagged.length === 1 ? 'it' : 'they') + ' can start:'
+          : '') + '</p>'];
+      flagged.forEach(function (f, n) {
+        bits.push('<div class="staxx-import-fixrow">' +
+          '<i class="fa fa-exclamation-circle staxx-import-fixmark" aria-hidden="true"></i>' +
+          '<div class="staxx-import-fixtext"><strong>' + esc(f.name) + '</strong>' +
+          '<span>Docker Compose could not read one of its settings. It is saved and waiting for you.</span></div>' +
+          '<button type="button" class="staxx-btn staxx-import-fixbtn" data-fix="' + n + '">Open and fix</button></div>');
+      });
 
       var badFolders = Object.keys(folderFailures);
       if (badFolders.length) {
@@ -16115,6 +16372,14 @@
 
       importSummary.innerHTML = bits.join('');
       importSummary.hidden = false;
+      importSummary.querySelectorAll('.staxx-import-fixbtn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var f = flagged[+btn.getAttribute('data-fix')];
+          if (!f || !window.staxxOpenStackForFix) return;
+          importModal.close();   // the editor opens on the page itself
+          window.staxxOpenStackForFix(f.rel);
+        });
+      });
 
       if (written > 0) refreshRows();  // the new stacks belong on the page behind this dialog
     }
@@ -17117,6 +17382,7 @@
     // and everything else in this view says so — the name is filled in and
     // locked to that folder — so the heading says it too.
     modalTitle.textContent = adopt ? 'New compose file' : (isNew ? 'New stack' : 'Edit stack');
+    resetProblems();   // PLAN_212 — yesterday's refusals mean nothing for this file
     openedName = name || '';
     fingerprintAtOpen = fingerprint || '';   // '' for a new stack — nothing to conflict with yet
     serviceRenamed = false;
@@ -17480,6 +17746,7 @@
 
   function closeEditor() {
     stopManage();
+    resetProblems();
     if (modal.open) modal.close();
     // The adoption sweep skips the open stack, and until now ran only at
     // page load — so an icon address pasted in the editor stayed a URL until
@@ -19950,6 +20217,11 @@
 
         if (res.templateNote) showPageNotice(res.templateNote);
         if (res.historyNote) showPageNotice(res.historyNote);
+        // PLAN_212 — a new stack compose refuses is saved, not turned away.
+        if (res.needsFix) {
+          showPageNotice('Saved, but Docker Compose could not read this file, so it cannot start yet. ' +
+                         'Its row is marked red; click the red wrench there to fix it.');
+        }
 
         // Trust nothing: the server reports the path and size it actually
         // wrote. res.bytes == null is what "did nothing" looks like — a
@@ -21298,6 +21570,7 @@
       // that appears without a page load is identical to one that came with
       // it — including its translated wording.
       paintState(row, s.html, s.running, s.address, s.sick);
+      setClass(row, 'staxx-row--fix', !!s.needsFix);   // PLAN_212 — red tint while compose refuses the file
 
       // The menu is rebuilt from these attributes every time it opens, so
       // updating them is what turns Start into Restart and enables Stop.
@@ -21501,7 +21774,12 @@
     { tag: 'button', cls: 'staxx-pill staxx-pill--fail', mark: 'warn', text: '',
       title: 'That command failed. Click to see what happened.',
       key: 'fail',
-      desc: 'That command failed — press to read what happened.' }
+      desc: 'That command failed — press to read what happened.' },
+    // PLAN_212 — compose cannot read the file; the real pill opens the editor on the problem.
+    { tag: 'button', cls: 'staxx-pill staxx-pill--bad', mark: 'wrench', text: '',
+      title: 'Docker Compose could not read this file, so it cannot start. Click to open it and fix it.',
+      key: 'fix',
+      desc: 'Docker Compose cannot read the file, so it cannot start — press to open it on the problem.' }
   ];
 
   // Every update-column row also carries an `upd` object: its keys become
@@ -21693,6 +21971,10 @@
           'Container example-app-db-1  Starting\n' +
           'Container example-app-web-1  Starting\n' +
           'Container example-app-web-1  Started');
+        return;
+      case 'fix':
+        showInfo('A file Docker Compose cannot read (example)',
+          '<p>On a real row, this opens the file with the problem marked and explained.</p>');
         return;
       case 'fail':
         openLogDialog(FAIL_LABEL.up + ' (example)',
@@ -28087,6 +28369,12 @@
       block: 'pihole-access', sublabel: 'App password'
     },
     {
+      // PLAN_212 — one switch in a box of its own. Unsaved reads as on, the
+      // server's default (default.cfg).
+      key: 'ERROR_REPORTS', control: 'toggle', label: 'Send Docker errors StaXX cannot explain',
+      tab: 'registries', block: 'error-explanations', noSubheading: true, on: 'true', off: 'false'
+    },
+    {
       key: 'EXPOSE_ALLOW_INSECURE', control: 'toggle', label: 'Allow insecure connections', tab: 'registries',
       on: 'yes', off: 'no',
       help: 'Allow insecure connections to Nginx Proxy Manager and Pi-hole: plain http, and https ' +
@@ -28153,6 +28441,12 @@
             'with the read-only, public repositories permission — that is all checking needs, so ' +
             'a leaked token could look but never change anything. It is kept in StaXX’s own ' +
             'settings file, readable only by the administrator. Leave both blank to stay signed out.'
+    },
+    'error-explanations': {
+      tab: 'registries', label: 'Error explanations',
+      help: 'With this on, StaXX sends Docker Compose’s message, with names, paths and addresses ' +
+            'taken out, the first time it meets one it cannot explain, so an explanation can be ' +
+            'written. With it off, nothing is sent.'
     },
     // PLAN_176 — the four Integrations-tab blocks settled 2026-09-24.
     'npm-access': {
@@ -34127,6 +34421,12 @@
     // row's pill has no other reachable name for either).
     if (el.classList.contains('staxx-pill--offer')) {
       if (el.dataset.stack && el.dataset.service) offerHealthCheck(el.dataset.stack, el.dataset.service);
+      return;
+    }
+
+    // PLAN_212 — the red wrench: compose refuses this stack's file.
+    if (el.dataset.fixStack) {
+      if (window.staxxOpenStackForFix) window.staxxOpenStackForFix(el.dataset.fixStack);
       return;
     }
 

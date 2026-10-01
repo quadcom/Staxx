@@ -6,6 +6,12 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- A file Docker Compose refuses is no longer turned away when it arrives, whether from an Unraid template, a Compose Manager project, Apps, a paste, an upload or the image importer. It is saved, its row turns a soft red with a red wrench in the State column, and Open and fix (in the import window) or the wrench takes you straight to the problem.
+- When Docker Compose finds a problem in the editor, a floating window explains it: Docker's own message, what it means in plain English, how to fix it, and a link to Docker's page. Drag it anywhere, roll it up, or close it; the red "fix needed" button at the top of the editor brings it back. The faulty line is marked red, and Show me jumps to it.
+- For a setting whose name is only a number, Fix it for me shows the change first, makes it when you agree, and Undo takes it back.
+- A freshly imported stack still waiting for your review has a soft orange row.
+- The small "i" marks beside the editor's settings now open their help in the same floating window.
+- Settings, Integrations has a new switch, Send Docker errors StaXX cannot explain, on by default. With it on, StaXX sends Docker's message, with names, paths and addresses taken out, the first time it meets one it has no explanation for, so one can be written. New explanations reach StaXX once a day.
 - Dropping a picture or its address onto a container's icon in the editor now changes the icon straight away, on the stack list too, without pressing Save. A dropped picture is kept under the container's own name and replaces the one dropped before.
 - The thumbtack beside a stack with a pinned service is bigger and white, so it is easy to see.
 - Check for updates now counts through the images as it checks them, instead of only spinning.

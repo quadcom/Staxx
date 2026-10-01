@@ -25,6 +25,7 @@ shows the pass/fail count the suite itself printed; a failing one shows its whol
 |---|---|
 | `ca_convert` | Community Applications template -> compose conversion |
 | `chip_vocabulary` | the PHP and JS chip lookups agree, the palette stays five colours, every mark used has a glyph |
+| `compose_errors` | PLAN_212: the compose-errors look-up list (include/compose-errors.json): every pattern compiles as a JavaScript RegExp, every placeholder in the text has a group, each entry sample matches its own entry and none above it |
 | `crosslinks` | the browser half of the same: wording, and the confirmed-link write |
 | `db_images` | the table of well-known database images |
 | `export_redact` | what export blanks out before a stack leaves the machine |
@@ -122,6 +123,8 @@ Four rules run through the whole set:
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `dashboard` | PLAN_183 — dashboard.json's own normalising rules (grid limits, cell collisions, a project kept once and dropped once gone, an icon field coerced back to `auto`), the icon picker's address allowlist refusing a bad prefix or a `..` path with no fetch ever attempted, an "SVG" that is really HTML refused, and the save/prune round trip (needs docker compose reachable; skips that part otherwise) | `STORE_ROOT` at `/tmp` |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`; `IMAGE_LOOKUP=false` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
+| `composeerrors` | PLAN_212: include/ComposeErrors.php, the message shape rules, every look-up entry explaining its own sample, a newer store copy winning, a broken one ignored, and the needs-a-fix mark set, carried through a history save and cleared in a stack record | `STORE_ROOT` at `/tmp/p212-store` (via run-with-store.sh) |
+| `errorreports` | PLAN_212: include/ErrorReports.php, the report queue (matched, StaXX's own refusals and the switched-off setting queue nothing; a new shape waits, a sent one is sent), an unreachable intake leaving shapes waiting, and the daily fetch keeping a good copy against an older, unparseable or failed one | `STORE_ROOT` at `/tmp/p212r-store` (via run-with-store.sh); the intake address is a dead local port |
 | `devices` | The two compose readers behind the device badge and the GPU column: device paths, reservations, runtime and gpus keys | — |
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
 | `expose` | Nginx Proxy Manager and Pi-hole (PLAN_176): certificate resolution, the proxy host payload's owned fields, the create/adopt/refusal plan built against in-memory hosts and records, and the plain-http refusal | store's own `config/staxx.cfg` (not the flash file) forced to `EXPOSE_ALLOW_INSECURE="no"`; live half **opt-in** `STAXX_EXPOSE_LIVE=1`, against whichever NPM/Pi-hole are already configured |

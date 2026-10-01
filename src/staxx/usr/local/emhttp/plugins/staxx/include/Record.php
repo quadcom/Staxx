@@ -146,7 +146,10 @@ function staxx_record_read(string $rel): array {
   $mergedInto = staxx_record_valid_merged_into($data['mergedInto'] ?? null)
     ? $data['mergedInto'] : null;
 
-  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images, 'mergedInto' => $mergedInto];
+  // PLAN_212 — added only; a record without the key reads as fine.
+  $needsFix = is_string($data['needsFix'] ?? null) ? $data['needsFix'] : '';
+
+  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images, 'mergedInto' => $mergedInto, 'needsFix' => $needsFix];
 }
 
 /**
@@ -170,9 +173,14 @@ function staxx_record_write_index(string $rel, array $record): bool {
   if (!array_key_exists('mergedInto', $record)) {
     $record['mergedInto'] = staxx_record_read($rel)['mergedInto'] ?? null;
   }
+  // Same again for PLAN_212's "needsFix": only its own setter changes it.
+  if (!array_key_exists('needsFix', $record)) {
+    $record['needsFix'] = staxx_record_read($rel)['needsFix'] ?? '';
+  }
   $out = ['v' => 1, 'next' => $record['next'], 'versions' => $record['versions']];
   if ($record['images']) $out['images'] = $record['images'];
   if ($record['mergedInto'] !== null) $out['mergedInto'] = $record['mergedInto'];
+  if ($record['needsFix'] !== '') $out['needsFix'] = $record['needsFix'];
 
   $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
@@ -457,6 +465,44 @@ function staxx_record_mark_merged_into(string $rel, string $newRel): bool {
     'images'     => $record['images'] ?? [],
     'mergedInto' => ['host' => $newRel, 'at' => time()],
   ]);
+}
+
+/**
+ * PLAN_212 — is compose refusing this stack's file? '' when fine, otherwise
+ * the shape of the first problem. Stored so the stack list can tint a row
+ * without running compose on every stack at every listing.
+ */
+function staxx_record_needs_fix(string $stackDir): string {
+  $rel = staxx_record_rel($stackDir);
+  return $rel === '' ? '' : (string)(staxx_record_read($rel)['needsFix'] ?? '');
+}
+
+/**
+ * Set ($shape non-empty) or clear ($shape '') the mark. Clearing never makes
+ * a record that does not exist. Best-effort like the rest of this file.
+ */
+function staxx_record_set_needs_fix(string $stackDir, string $shape): bool {
+  $rel = staxx_record_rel($stackDir);
+  if ($rel === '') return false;
+  $record = staxx_record_read($rel);
+  if ((string)($record['needsFix'] ?? '') === $shape) return true;
+  $dir = staxx_record_dir($rel);
+  if (!@is_dir($dir) && $shape === '') return true;
+  if (!@is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+  return staxx_record_write_index($rel, [
+    'v'        => 1,
+    'next'     => $record['next'] ?? 1,
+    'versions' => $record['versions'] ?? [],
+    'needsFix' => $shape,
+  ]);
+}
+
+/** A stack's path under the stacks root, from its folder or its path. */
+function staxx_record_rel(string $stackDir): string {
+  $root = rtrim(staxx_stack_root(), '/').'/';
+  $rel  = strpos($stackDir, $root) === 0 ? substr($stackDir, strlen($root)) : $stackDir;
+  $rel  = trim($rel, '/');
+  return staxx_valid_path($rel) ? $rel : '';
 }
 
 /* -------------------------------------------------------------------------
