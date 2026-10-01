@@ -4798,7 +4798,8 @@
    * the background icon sweep that calls it has no form to hand.
    *
    * Refuses (false) on an absent leaf, one that is not a plain scalar, or a
-   * line that has moved since it was read (spotStale()).
+   * line that has moved since it was read (spotStale()). A comment that
+   * already holds exactly this note is left as it is.
    */
   function appendComment(doc, getPair, path, note) {
     var pair = getPair();
@@ -4817,6 +4818,10 @@
     // new note untouched; only a genuinely empty tail falls back to the
     // spot's own default pad.
     var existing = at.text.replace(/[ \t]+$/, '');
+    // Already carrying exactly this note (a re-adopted line that still has
+    // its "was <address>" from last time): nothing to add, and not a refusal.
+    var have = existing.indexOf('# ' + note);
+    if (have !== -1 && /^(\s|$)/.test(existing.slice(have + note.length + 2))) return true;
     var suffix = (existing ? '  ' : (at.pad || '  ')) + '# ' + note;
 
     var line = doc.lines[at.line];

@@ -10700,6 +10700,15 @@ console.log('\nAR9-AR12. PLAN_106 — a broader check on a file that was already
   ok('every other line is byte-identical to before',
      beforeLines.filter(function (_, i) { return i !== 4; }).join('\n') ===
      afterLines.filter(function (_, i) { return i !== 4; }).join('\n'));
+
+  // A re-adopted line already carrying the note must not get it twice.
+  var again = Y.parse(after);
+  Y.replaceNested(again, null, 'a', ['x-unraid', 'icon'], './.staxx/unifi-voucher-site.png');
+  var noteOk = Y.appendNestedComment(again, null, 'a', ['x-unraid', 'icon'],
+                                      'was https://example.com/png/unifi-voucher-site.png');
+  var twice = Y.serialise(again).split('\n')[4];
+  ok('a note already on the line is not appended a second time',
+     noteOk && twice === afterLines[4], twice);
 })();
 
 /* =========================================================================

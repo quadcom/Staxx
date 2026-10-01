@@ -120,27 +120,47 @@ check('a stated .staxx file that is not actually there resolves to nothing, not 
   $resolvedMissing['url'] === '' && $resolvedMissing['fa'] === '', $resolvedMissing);
 
 /* ---- PLAN_149 phase 3 — a picture dropped straight in from the desktop ---- */
-// Unchanged by this plan: staxx_icon_adopt_drop() never touched a shared
-// cache and never fetches anything — the bytes are already in hand.
+// staxx_icon_adopt_drop() never touches a shared cache and never fetches
+// anything — the bytes are already in hand. PLAN_215: named for the service,
+// always overwrites.
 
 $dropDir = staxx_stack_dir('zzicon-drop');
 @mkdir($dropDir, 0755, true);
-$dropAbs = $dropDir.'/'.STAXX_RECORD_DIR.'/mylogo.png';
 
 $error = '';
-$file = staxx_icon_adopt_drop($dropDir, 'My Logo!!.PNG', $pngBytes, $error);
-check('a genuine picture dropped in is accepted, and named from its own filename, cleaned up',
-  $file === './'.STAXX_RECORD_DIR.'/mylogo.png' && is_file($dropAbs) && $error === '');
+$file = staxx_icon_adopt_drop($dropDir, 'Web_App', 'My Logo!!.PNG', $pngBytes, $error);
+check('a genuine picture dropped in is accepted, and named for the service it was dropped on, cleaned up',
+  $file === './'.STAXX_RECORD_DIR.'/web-app.png' && is_file($dropDir.'/'.STAXX_RECORD_DIR.'/web-app.png') && $error === '');
+$dropAbs = $dropDir.'/'.STAXX_RECORD_DIR.'/web-app.png';
 
-$mtimeDropFirst = @filemtime($dropAbs);
 $error = '';
-$again = staxx_icon_adopt_drop($dropDir, 'My Logo!!.PNG', $pngBytes, $error);
+$again = staxx_icon_adopt_drop($dropDir, 'Web_App', 'My Logo!!.PNG', $pngBytes, $error);
 check('dropping the same picture a second time lands one file, not two',
-  $again === $file && $error === '' && @filemtime($dropAbs) === $mtimeDropFirst);
+  $again === $file && $error === '' && count(glob($dropDir.'/'.STAXX_RECORD_DIR.'/web-app.*')) === 1);
+
+$error = '';
+$otherBytes = $pngBytes."\0different";
+$over = staxx_icon_adopt_drop($dropDir, 'Web_App', 'other.png', $otherBytes, $error);
+check('a different picture dropped on the same service overwrites the earlier one',
+  $over === $file && $error === '' && md5_file($dropAbs) === md5($otherBytes));
+
+file_put_contents($dropDir.'/'.STAXX_RECORD_DIR.'/other-service.png', $pngBytes);
+$error = '';
+$jpgBytes = "\xFF\xD8\xFF\xE0jpegbody";
+$swap = staxx_icon_adopt_drop($dropDir, 'Web_App', 'x.jpg', $jpgBytes, $error);
+check("a drop in another format removes the service's earlier picture of that name, and nothing else",
+  $swap === './'.STAXX_RECORD_DIR.'/web-app.jpg' && !is_file($dropAbs)
+  && is_file($dropDir.'/'.STAXX_RECORD_DIR.'/web-app.jpg')
+  && is_file($dropDir.'/'.STAXX_RECORD_DIR.'/other-service.png'));
+
+$error = '';
+$fallback = staxx_icon_adopt_drop($dropDir, '!!!', 'My Logo!!.PNG', $pngBytes, $error);
+check("a service name with nothing usable in it falls back to the file's own stem",
+  $fallback === './'.STAXX_RECORD_DIR.'/my-logo.png');
 
 $error = '';
 check('a file whose contents are not a picture is refused, whatever its name claims',
-  staxx_icon_adopt_drop($dropDir, 'fake.png', 'not actually a picture at all', $error) === ''
+  staxx_icon_adopt_drop($dropDir, 'web', 'fake.png', 'not actually a picture at all', $error) === ''
   && $error === 'Not a picture');
 
 /* ---- staxx_icons_into_stacks() — putting an existing stack right ---- */

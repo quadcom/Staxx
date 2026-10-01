@@ -4290,16 +4290,17 @@ div.title.staxx-has-titlebar {
 }
 
 /* The marker for a stack with at least one service pinned to an exact build
-   (see staxx_pin_mark_html()) — information, not a warning, so it takes
-   .staxx-sub's quiet grey rather than .staxx-driftmark/.staxx-imgmismatch's
-   accent colour just above. Same icon-only shape otherwise: the tooltip and
-   the .staxx-sr span inside it already carry the whole sentence. */
+   (see staxx_pin_mark_html()) — information, not a warning, so it is the
+   page's own white text colour at body size (so it is seen) rather than
+   .staxx-driftmark/.staxx-imgmismatch's accent colour just above. Same
+   icon-only shape otherwise: the tooltip and the .staxx-sr span inside it
+   already carry the whole sentence. */
 .staxx-pinmark {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  color: var(--sm-muted);
-  font-size: 1.1rem;
+  color: var(--sm-fg);
+  font-size: 1.3rem;
 }
 
 /* PLAN_150 phase 6 — the mark for a container (or, on a stack row, at least
@@ -4308,7 +4309,7 @@ div.title.staxx-has-titlebar {
    Same icon-only shape as the marks above; --sm-update is its own colour
    because this is a fact worth noticing, not a warning like
    .staxx-driftmark/.staxx-imgmismatch/.staxx-portmark and not a quiet aside
-   like .staxx-pinmark. */
+   like .staxx-pinmark's plain white. */
 .staxx-updatemark {
   align-self: flex-start;
   display: inline-flex;
@@ -4320,7 +4321,7 @@ div.title.staxx-has-titlebar {
 /* PLAN_104 — the mark for a stack with a service on a macvlan/ipvlan network
    that still carries a live ports: key, which will not start. A fault, not a
    fact, so it takes .staxx-driftmark/.staxx-imgmismatch's accent colour
-   rather than .staxx-pinmark's quiet grey just above — same icon-only shape,
+   rather than .staxx-pinmark's plain white just above — same icon-only shape,
    the tooltip and .staxx-sr span already carry the whole sentence. */
 .staxx-portmark {
   align-self: flex-start;

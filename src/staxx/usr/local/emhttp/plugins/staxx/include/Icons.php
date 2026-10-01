@@ -566,6 +566,9 @@ function staxx_icon_cdn_url(string $ref): string {
  * Exactly one of the two is ever set — the caller decides which kind of
  * find this is.
  *
+ * A different picture already under the service's name is replaced, and the
+ * service's other extensions are removed, as a drop does.
+ *
  * Returns the relative path to record as the compose file's icon: value
  * (e.g. './.staxx/sonarr.svg'), or '' with $error set to a sentence.
  * $failRef, always set on the way in by the caller, is what
@@ -619,13 +622,13 @@ function staxx_icon_fetch_and_write(string $dir, string $baseName, string $remot
     $target   = $dir.'/'.STAXX_RECORD_DIR.'/'.$file;
     $relative = './'.STAXX_RECORD_DIR.'/'.$file;
 
-    if (is_file($target)) {
-      // Already there under this name. Identical bytes is a no-op success —
-      // this must be safe to run twice — a different picture is left alone
-      // rather than overwritten, since it is not this plugin's to replace.
-      if (md5_file($target) === md5($body)) return $relative;
-      $error = 'A different picture is already saved under that name for this stack.';
-      return '';
+    // Identical bytes already there is a no-op success, so this is safe to
+    // run twice. A different picture is replaced: these are app icons that
+    // can be fetched again. The service's other extensions go, so it keeps
+    // one stored picture.
+    if (is_file($target) && md5_file($target) === md5($body)) return $relative;
+    foreach (STAXX_ICON_EXTS as $other) {
+      if ($other !== $ext) @unlink($dir.'/'.STAXX_RECORD_DIR.'/'.$stem.'.'.$other);
     }
 
     if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
@@ -657,20 +660,18 @@ function staxx_icon_fetch_and_write(string $dir, string $baseName, string $remot
  *     and one is never created behind the person's back to make room for
  *     this.
  *
- * Named from $filename's own stem, cleaned to safe characters and
- * lower-cased, falling back to a hash of the body when nothing survives the
- * clean, rather than a bare extension nobody could tell apart from another
- * dropped picture. There is no address to record beside it, so nothing is
- * ever appended as a comment; the plan is explicit that only a note of the
- * drop itself belongs there, and that note is the caller's to write, once,
- * into the compose file's own icon line (see action.php's 'icon-drop' case).
- *
- * Safe to call twice with the same picture: identical bytes already under
- * that name is a no-op success — needed for the same reason
- * staxx_icon_fetch_and_write() is, a repeated drop landing one file rather
- * than two.
+ * Named for the service it was dropped on (`<service>.<ext>`, the service
+ * run through staxx_icon_norm(), as the sweep does), so a stack of several
+ * containers never has two pictures competing for one name. A drop always
+ * replaces: these are app icons that can be fetched again, so a different
+ * picture already under the name is overwritten rather than refused, and any
+ * other `<service>.<ext>` is removed so the service keeps one dropped
+ * picture. When nothing survives the cleaning of the service name, the
+ * file's own stem is used, then a hash of the body. There is no address to
+ * record beside it, so nothing is appended as a comment; the compose file's
+ * icon line is the caller's to write (see action.php's 'icon-drop' case).
  */
-function staxx_icon_adopt_drop(string $dir, string $filename, string $body, string &$error): string {
+function staxx_icon_adopt_drop(string $dir, string $service, string $filename, string $body, string &$error): string {
   $error = '';
 
   if (strlen($body) > STAXX_ICON_DROP_MAX_BYTES) {
@@ -689,9 +690,10 @@ function staxx_icon_adopt_drop(string $dir, string $filename, string $body, stri
     return '';
   }
 
-  $stem = strtolower(pathinfo($filename, PATHINFO_FILENAME));
-  $stem = (string)preg_replace('/[^a-z0-9._-]+/', '', $stem);
-  $stem = trim($stem, '.-');
+  // The same rule the background sweep names its files by, so a service's
+  // picture has one name whichever route stored it.
+  $stem = staxx_icon_norm($service);
+  if ($stem === '') $stem = staxx_icon_norm(pathinfo($filename, PATHINFO_FILENAME));
   if ($stem === '') $stem = 'icon-'.substr(md5($body), 0, 8);
   $file = $stem.'.'.$ext;
 
@@ -699,13 +701,9 @@ function staxx_icon_adopt_drop(string $dir, string $filename, string $body, stri
   $target    = $recordDir.'/'.$file;
   $relative  = './'.STAXX_RECORD_DIR.'/'.$file;
 
-  if (is_file($target)) {
-    // Already there. Identical contents is a no-op success — a repeated
-    // drop must land one file, not two.
-    if (md5_file($target) === md5($body)) return $relative;
-    $error = 'A different picture is already saved under that name for this stack. '
-           . 'Rename the icon, or remove the one already there, and try again.';
-    return '';
+  // Only this service's own other-extension names; nothing else is touched.
+  foreach (STAXX_ICON_EXTS as $other) {
+    if ($other !== $ext) @unlink($recordDir.'/'.$stem.'.'.$other);
   }
 
   if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }

@@ -4760,7 +4760,7 @@
   // result against the fingerprint the read carried, so a change made in the
   // meantime is refused rather than overwritten. edit(body) returns the new
   // text, null to leave the file alone, or { error } to refuse. Resolves to
-  // { ok: true }, { ok: true, skipped: true }, or { ok: false, error }.
+  // { ok: true, fingerprint }, { ok: true, skipped: true }, or { ok: false, error }.
   function rewriteStack(name, edit) {
     return call('read', { name: name }).then(function (res) {
       if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'Could not read the stack.' };
@@ -4768,7 +4768,7 @@
       if (text === null) return { ok: true, skipped: true };
       if (typeof text !== 'string') return { ok: false, error: text.error };
       return call('save', { name: res.name, body: text, 'new': '0', fingerprint: res.fingerprint })
-        .then(function (r) { return r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'Save failed.' }; });
+        .then(function (r) { return r && r.ok ? { ok: true, fingerprint: r.fingerprint } : { ok: false, error: (r && r.error) || 'Save failed.' }; });
     });
   }
 
@@ -18975,7 +18975,10 @@
   // file in the tab instead of handing it to this listener, and a drop
   // inside the textarea itself would insert the file's path as text.
   if (modalBody) {
+    // A file over a container's icon belongs to the icon-drop handler, so
+    // dragenter and drop here leave it alone rather than also uploading it.
     modalBody.addEventListener('dragenter', function (event) {
+      if (event.target.closest && event.target.closest(ICON_DROP_SEL)) return;
       event.preventDefault();
       modalBody.classList.add('staxx-dragover');
     });
@@ -18984,6 +18987,7 @@
       modalBody.classList.remove('staxx-dragover');
     });
     modalBody.addEventListener('drop', function (event) {
+      if (event.target.closest && event.target.closest(ICON_DROP_SEL)) return;
       event.preventDefault();
       modalBody.classList.remove('staxx-dragover');
       if (event.dataTransfer && event.dataTransfer.files.length) uploadFiles(event.dataTransfer.files);
@@ -23159,7 +23163,9 @@
   // `scope` is 'all' or one stack path, exactly what update-check's own
   // `scope` field takes — the header button and a row's own "check again"
   // share this, differing only in what they pass.
-  function runUpdateCheck(scope, label, onDone) {
+  // The optional onProgress(n, total) is fed from the job's "image N of TOTAL"
+  // lines, taking the last one in each new chunk of log text.
+  function runUpdateCheck(scope, label, onDone, onProgress) {
     call('update-check', { scope: scope }).then(function (res) {
       if (!res.ok) {
         failed('Could not check ' + (label || 'for updates'), res.error);
@@ -23167,6 +23173,12 @@
         return;
       }
       track(res.job, {
+        onText: onProgress ? function (text) {
+          var all = text.match(/image (\d+) of (\d+)/g);
+          if (!all) return;
+          var m = /image (\d+) of (\d+)/.exec(all[all.length - 1]);
+          onProgress(+m[1], +m[2]);
+        } : undefined,
         done: function () {
           refreshUpdates();
           if (onDone) onDone();
@@ -23749,6 +23761,8 @@
         updatesChecking = false;
         checkUpdatesBtn.disabled = false;
         checkUpdatesBtn.innerHTML = '<i class="fa fa-refresh"></i> Check for updates';
+      }, function (n, total) {
+        checkUpdatesBtn.innerHTML = '<i class="fa fa-refresh fa-spin"></i> Checking ' + n + ' of ' + total + '…';
       });
     });
   }
@@ -23977,9 +23991,11 @@
    * A container's icon IS the whole of the feedback (see the stylesheet's
    * .staxx-icondrop--over/--bad): an orange halo while something hangs over
    * it, red for five seconds with a short line of text underneath on a
-   * refusal, and the icon itself never changes until a fetch has actually
-   * succeeded — which for the address route happens later, through
-   * PLAN_146's own background sweep, not here.
+   * refusal. On success the line is saved to the file at once and the icon
+   * changes straight away, on the stack list too: an address is shown from
+   * the address, a stored file from the tile the server returns.
+   * PLAN_146's background sweep still fetches and keeps a picture for an
+   * address.
    */
   var ICON_DROP_SEL = '[data-svc-icon]';
   // Mirrors Icons.php's STAXX_ICON_EXTS. Duplicated rather than shared
@@ -24023,39 +24039,116 @@
     node._iconDropTimer = setTimeout(function () { iconDropClear(node); }, 5000);
   }
 
-  // Writes the address into the service's icon field exactly as typing it
-  // would — a direct edit of the live document, the same shape a rename or
-  // an added port already takes (see structuralEdit() and its other
-  // callers), never a round trip through the server. From here PLAN_146's
-  // own background sweep takes over completely once the stack is saved: it
-  // fetches the picture, keeps it beside the compose file, and rewrites this
-  // same line to point at the copy with the address recorded beside it. So
-  // this function adds no server code at all, exactly as phase 2 requires.
+  // A drop reaches disk at once, the way a pin or update choice does (see
+  // writeUpdatePolicyForServices(), which this mirrors): read the stack as it
+  // is on disk, change only this service's icon line in that copy, save it
+  // with the read's fingerprint. The open editor then follows in memory
+  // without being marked changed, so any other unsaved typing stays unsaved.
   //
-  // Icon/description/category and the like are x-unraid's own presentational
-  // fields, which the form does not model as MODEL.fields rows at all (see
-  // insertChild()'s own comment in compose-model.js) — so this reads and
-  // writes MODEL.services[].icon and the raw YAML directly, the same pattern
-  // iconAdoptWrite() already uses for a stack that is not even open.
-  function writeIconDrop(service, address) {
-    if (!MODEL || !MODEL.ok || sanitised || fileOpen !== null) return false;
-    var svc = null;
-    for (var i = 0; i < MODEL.services.length; i++) {
-      if (MODEL.services[i].name === service) { svc = MODEL.services[i]; break; }
+  // An editor line of its own for the same icon is overwritten by the disk
+  // write; the drop wins, and the person's other edits are untouched.
+  //
+  // There is no undo entry: the previous picture is replaced for good, and a
+  // picture can always be dropped again. `html` is the server's tile for a
+  // stored file; an address is shown straight from the address until the
+  // background sweep keeps a copy (the page's broken-image listener restores
+  // the initials if it will not load).
+  //
+  // Resolves to '' when it landed, or the sentence to show on the icon.
+  function writeIconDrop(service, value, html) {
+    if (!MODEL || !MODEL.ok || sanitised || fileOpen !== null) return Promise.resolve('Save the stack first');
+    var ini  = importInitials(service);
+    var tile = html || '<img src="' + esc(value) + '" alt="" data-fallback="' + esc(ini.text) +
+      '" data-fallback-colour="' + ini.colour + '">';
+
+    function show() {
+      var prev = serviceIcons[service];
+      serviceIcons[service] = { html: tile, q: prev ? prev.q : '' };
     }
-    if (!svc) return false;
-    var was = svc.icon || '';
-    if (was === address) return true;   // already exactly this — nothing to change, not a refusal
 
-    pushUndo('setting the icon for "' + service + '"');
-    var ok = was
-      ? YAML.replaceNested(MODEL.doc, null, service, ['x-unraid', 'icon'], address)
-      : YAML.addNested(MODEL.doc, null, service, ['x-unraid', 'icon'], address) >= 0;
-    if (!ok) { dropUndo(); return false; }
+    // A stack never saved has no file to write to: an address edits the
+    // editor's text only, as typing it would, and is written on first Save.
+    if (!openedName) {
+      if (html) return Promise.resolve('Save the stack first');
+      var mem = null;
+      for (var m = 0; m < MODEL.services.length; m++) {
+        if (MODEL.services[m].name === service) { mem = MODEL.services[m]; break; }
+      }
+      if (!mem) return Promise.resolve('Save the stack first');
+      if ((mem.icon || '') !== value) {
+        pushUndo('setting the icon for "' + service + '"');
+        var memOk = mem.icon
+          ? YAML.replaceNested(MODEL.doc, null, service, ['x-unraid', 'icon'], value)
+          : YAML.addNested(MODEL.doc, null, service, ['x-unraid', 'icon'], value) >= 0;
+        if (!memOk) { dropUndo(); return Promise.resolve('Not a picture'); }
+        show();
+        structuralEdit(-1, 'Set the icon for "' + service + '" from what was dropped onto it.');
+      } else {
+        show();
+      }
+      paintServiceIcons();
+      return Promise.resolve('');
+    }
+    var name = openedName;
 
-    structuralEdit(-1, 'Set the icon for "' + service + '" from what was dropped onto it. ' +
-      'Undo is at the bottom if that was wrong.');
-    return true;
+    function setIcon(doc, was) {
+      return was
+        ? YAML.replaceNested(doc, null, service, ['x-unraid', 'icon'], value)
+        : YAML.addNested(doc, null, service, ['x-unraid', 'icon'], value) >= 0;
+    }
+    return call('read', { name: name, lite: '1' }).then(function (readRes) {
+      if (!readRes || !readRes.ok) return (readRes && readRes.error) || 'Could not read the stack.';
+
+      var diskDoc  = YAML.parse(readRes.body);
+      var diskForm = YAML.buildForm(diskDoc, netDrivers(), envNameList());
+      if (!diskForm.ok) return "Could not read the stack's file.";
+      var diskSvc  = null;
+      for (var i = 0; i < diskForm.services.length; i++) {
+        if (diskForm.services[i].name === service) { diskSvc = diskForm.services[i]; break; }
+      }
+      if (!diskSvc) return 'Save the stack first';
+
+      // The file already names this picture (the same service dropped on
+      // again): only the tile needs refreshing, there is nothing to save.
+      if ((diskSvc.icon || '') === value) {
+        show();
+        paintServiceIcons();
+        refreshRows();
+        return '';
+      }
+
+      if (!setIcon(diskDoc, diskSvc.icon || '')) return 'Not a picture';
+      var diskText = YAML.serialise(diskDoc);
+      return call('save', { name: name, body: withEol(diskText, composeEol), 'new': '0',
+                             fingerprint: readRes.fingerprint }).then(function (saveRes) {
+        if (!saveRes || !saveRes.ok) return (saveRes && saveRes.error) || 'Could not save the icon';
+        serviceIcons = saveRes.icons || serviceIcons;
+        show();
+
+        if (editorShowing(name)) {
+          var local = null;
+          for (var j = 0; j < MODEL.services.length; j++) {
+            if (MODEL.services[j].name === service) { local = MODEL.services[j]; break; }
+          }
+          if (local && setIcon(MODEL.doc, local.icon || '')) {
+            reloadPane(YAML.serialise(MODEL.doc));
+            fingerprintAtOpen = saveRes.fingerprint || readRes.fingerprint;
+            textAtOpen = diskText;
+          } else {
+            // Same stance as applyUpdatePolicyLocally(): fingerprintAtOpen
+            // stays, so the next Save is refused rather than overwriting this.
+            showError('The icon was saved to the file, but the open copy could not be updated to match. ' +
+                      'Reopen the stack to see it.');
+          }
+        }
+        paintServiceIcons();
+        refreshRows();
+        // An address has no stored copy yet: the page's own sweep fetches
+        // it now, covering this open stack too, rather than at the next load.
+        if (!html) { iconAdoptIncludeOpen = true; iconAdoptSweep(); }
+        return '';
+      });
+    });
   }
 
   // Both checks the existing icon handling already insists on: an address
@@ -24111,7 +24204,7 @@
         var comma = encoded.indexOf(',');
         if (comma === -1) { iconDropRefuse(node, 'Not a picture'); return; }
 
-        call('icon-drop', { name: openedName, filename: file.name, data: encoded.slice(comma + 1) })
+        call('icon-drop', { name: openedName, service: service, filename: file.name, data: encoded.slice(comma + 1) })
           .then(function (res) {
             // The reply hands back the path the picture now lives at, which
             // goes into the icon field exactly as though it had been typed.
@@ -24119,7 +24212,9 @@
               iconDropRefuse(node, (res && res.error) ? res.error : 'Could not reach that address');
               return;
             }
-            if (!writeIconDrop(service, res.file)) iconDropRefuse(node, 'Not a picture');
+            writeIconDrop(service, res.file, res.html).then(function (why) {
+              if (why) iconDropRefuse(node, why);
+            });
           }, function () {
             iconDropRefuse(node, 'Could not reach that address');
           });
@@ -24136,7 +24231,9 @@
       return;
     }
 
-    if (!writeIconDrop(service, address)) iconDropRefuse(node, 'Not a picture');
+    writeIconDrop(service, address).then(function (why) {
+      if (why) iconDropRefuse(node, why);
+    });
   }
 
   // Delegated at the document rather than bound per-node, so a service tab
@@ -24208,6 +24305,9 @@
    * a save under an editor that opens mid-sweep is exactly what this avoids.
    */
   var iconAdoptBusy = false;
+  // Set by an address drop: the next sweep also covers the stack open in the
+  // editor, and clears this once it has finished.
+  var iconAdoptIncludeOpen = false;
   var iconAdoptRounds = 0;
   // Recorded across every round of one run so the summary line, shown once
   // at the end, counts the whole run rather than just its last round.
@@ -24222,32 +24322,52 @@
   // --hash='*'` over two files differing only by this key: identical
   // hashes) — which is why this sweep never marks a running stack "restart
   // to apply".
+  // The sweep also writes to a stack open in the editor when a drop asked for
+  // it (iconAdoptIncludeOpen); the editor then follows the saved line in
+  // memory, as writeIconDrop() does, so its other unsaved edits survive.
+  function iconAdoptSetLine(doc, item) {
+    var ok;
+    if (item.was) {
+      ok = YAML.replaceNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) &&
+           YAML.appendNestedComment(doc, null, item.service, ['x-unraid', 'icon'], 'was ' + item.was);
+    } else {
+      ok = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) >= 0;
+    }
+    return ok;
+  }
+
   function iconAdoptWrite(item) {
+    var savedText = '';
     return rewriteStack(item.stack, function (body) {
       var doc = YAML.parse(body);
       // form: null, the same as writeProjectLink() above — this write never
       // has a live editor form to hand, since it may not even be the stack
       // the editor has open right now.
-      var ok;
-      if (item.was) {
-        // PLAN_146: the field already holds the pasted address, so this is a
-        // rewrite in place — replaceNested keeps the line's own comment and
-        // quoting — followed by appending the address to that comment rather
-        // than dropping it. Either step failing (a stale spot, a shape it
-        // will not touch) skips the whole item; a value changed with its
-        // address lost would be worse than leaving it for next round.
-        ok = YAML.replaceNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) &&
-             YAML.appendNestedComment(doc, null, item.service, ['x-unraid', 'icon'], 'was ' + item.was);
-      } else {
-        ok = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) >= 0;
-      }
+      // PLAN_146: for a pasted address the field is rewritten in place
+      // (replaceNested keeps the line's own comment and quoting) and the
+      // address appended to that comment rather than dropped. Either step
+      // failing skips the whole item; a value changed with its address lost
+      // would be worse than leaving it for next round.
+      var ok = iconAdoptSetLine(doc, item);
       if (!ok) return null;   // could not write safely — skip, never force it
-      return YAML.serialise(doc);
+      savedText = YAML.serialise(doc);
+      return savedText;
     }).then(function (r) {
       // A read failure, a refused write or a moved fingerprint — someone
       // else changed the file meanwhile, or it could not be read at all —
       // drop it silently, per PLAN_86; it is offered again next round.
       if (!r.ok || r.skipped) return;
+      if (editorShowing(item.stack) && !sanitised && fileOpen === null) {
+        if (iconAdoptSetLine(MODEL.doc, item)) {
+          reloadPane(YAML.serialise(MODEL.doc));
+          fingerprintAtOpen = r.fingerprint || fingerprintAtOpen;
+          textAtOpen = savedText;
+        } else {
+          // fingerprintAtOpen stays, so the next Save is refused, not lost.
+          showError('The icon was saved to the file, but the open copy could not be updated to match. ' +
+                    'Reopen the stack to see it.');
+        }
+      }
       iconAdoptStacks[item.stack] = true;
       iconAdoptCount++;
       if (item.was) iconAdoptHadUrl = true;
@@ -24273,7 +24393,7 @@
     // openedName is never cleared on close (save() still needs it), so
     // passing it unconditionally kept skipping the stack somebody had JUST
     // closed — the one whose pasted icon they were waiting on (2026-09-11).
-    call('icon-todo', { skip: modal.open ? openedName : '' }, 30000).then(function (res) {
+    call('icon-todo', { skip: modal.open && !iconAdoptIncludeOpen ? openedName : '' }, 30000).then(function (res) {
       // Held until the writes finish, not released here: this flag is what
       // stops a second sweep starting while files are mid-save.
       if (!res || !res.ok) { iconAdoptBusy = false; return; }
@@ -24292,6 +24412,7 @@
           return;
         }
         iconAdoptRounds = 0;
+        iconAdoptIncludeOpen = false;
         if (iconAdoptCount > 0) {
           showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks), iconAdoptHadUrl);
           iconAdoptCount = 0;

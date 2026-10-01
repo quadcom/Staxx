@@ -1699,7 +1699,7 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
  *
  * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, unchecked:int, pinned:int, unchanged:int, ok:bool, error:string, limited:bool}
  */
-function staxx_update_check(string $scope, bool $force): array {
+function staxx_update_check(string $scope, bool $force, bool $progress = false): array {
   $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'unchecked' => 0, 'pinned' => 0, 'unchanged' => 0, 'ok' => true, 'error' => '', 'limited' => false];
 
   $lockError = '';
@@ -1784,7 +1784,11 @@ function staxx_update_check(string $scope, bool $force): array {
   // PLAN_90 Stage 1 — the HTTP route now asks each image's own registry
   // directly (no more funnelling everything through Hub), so the host that
   // actually answers is always the one the reference names.
+  $position = 0;
   foreach ($refs as $image => $rows) {
+    // One line per image, before it is looked at or skipped, for the button's
+    // "Checking N of TOTAL". Off by default so the nightly log gets none.
+    if ($progress) echo 'image '.(++$position).' of '.count($refs)."\n";
     $existing = $images[$image] ?? [];
 
     // PLAN_90 Stage 3 — the flat six-hour TTL is now a computed interval:
@@ -2417,7 +2421,7 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
     .'$s = staxx_update_seed_history(); '
     .'if ($s["stacks"] > 0) echo "recorded the build now running in ".$s["stacks"]." stack".($s["stacks"] === 1 ? "" : "s")."\n"; '
     .'elseif (!$s["ok"]) echo "the stack folder could not be read, so nothing was recorded this time\n"; '
-    .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').'); '
+    .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').', true); '
     .'echo "\nchecked ".$r["asked"]." asked, ".$r["skipped"]." skipped, "'
     .'.$r["updates"]." updates, ".$r["failed"]." failed\n";'
   );

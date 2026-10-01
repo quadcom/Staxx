@@ -1639,7 +1639,7 @@ function staxx_dnsmark_placeholder_html(string $stack, string $service, array $m
  * newer one refuses the file, and the second is what makes it worth tidying.
  * Either way it is the one case on the row that is a fault, not a fact, hence
  * sharing .staxx-driftmark/.staxx-imgmismatch's accent colour rather than
- * .staxx-pinmark's quiet grey.
+ * .staxx-pinmark's plain white.
  *
  * $macvlanNames is gathered once per render, never here: unknown means
  * unknown (PLAN_104) — a network this machine has never heard of gets no

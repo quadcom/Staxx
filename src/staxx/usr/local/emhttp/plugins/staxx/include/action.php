@@ -2094,9 +2094,14 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'Not a picture']);
     }
 
-    $file = staxx_icon_adopt_drop(staxx_stack_dir($name), $filename, $body, $error);
+    $dropService = (string)($_POST['service'] ?? '');
+    $file = staxx_icon_adopt_drop(staxx_stack_dir($name), $dropService, $filename, $body, $error);
     if ($file === '') staxx_fail($error);
-    staxx_reply(['ok' => true, 'file' => $file]);
+    // The tile for the stored file comes back too: the browser has no address
+    // for it, and the editor's heading shows it at once.
+    staxx_reply(['ok' => true, 'file' => $file,
+      'html' => staxx_icon_tile(staxx_icon_resolve($file, staxx_stack_dir($name)),
+                                $dropService !== '' ? $dropService : $file)]);
 
   /* ---- PLAN_183: the Dashboard tile ----
    *
