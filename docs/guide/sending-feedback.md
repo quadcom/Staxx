@@ -35,9 +35,9 @@ StaXX then tells you that you are connected. Press **Write your report** to carr
 
 ## Write your report
 
-![The Report a problem window open over the stack list with Bug Report chosen, a title filled in, a pasted screenshot and a sentence in the box, the Include details that help fix this list, and Cancel and Send buttons.](../images/guide/sending-feedback-form.png)
+![The StaXX feedback window open over the stack list with Bug Report chosen, a title filled in, a pasted screenshot and a sentence in the box, the Include details that help fix this list, and Cancel and Send buttons.](../images/guide/sending-feedback-form.png)
 
-Choose what you are sending at the top of the window. Each kind goes to its own section of the board.
+Choose what you are sending at the top of the window first. Each kind goes to its own section of the board.
 
 | Kind | Use it for |
 |---|---|
@@ -45,7 +45,7 @@ Choose what you are sending at the top of the window. Each kind goes to its own 
 | **Feature Requests** | Something StaXX does not do yet that you would like it to. |
 | **Improvements** | Something that works but could work better. |
 
-![The top of the report window with Feature Requests chosen, so the window title reads Suggest a feature and the box heading reads What would you like StaXX to do?](../images/guide/sending-feedback-kinds.png)
+![The top of the report window with Feature Requests chosen, with the window title StaXX feedback and the box heading What would you like StaXX to do?](../images/guide/sending-feedback-kinds.png)
 
 Give the report a title
 and write what you want to say in the box. Press Ctrl+V to paste a screenshot into it.
@@ -54,7 +54,7 @@ The window floats above the page. Drag it by its top bar to move it. Press the u
 of the window to roll it up to the top of the screen while you take a screenshot of the page
 underneath. Press the down arrow to bring it back.
 
-![The report window rolled up into a small Report a problem bar at the top middle of the screen, with a band of the Unraid header and the toolbar below it.](../images/guide/sending-feedback-rolled-up.png)
+![The report window rolled up into a small StaXX feedback bar at the top middle of the screen, with a band of the Unraid header and the toolbar below it.](../images/guide/sending-feedback-rolled-up.png)
 
 **Cancel** asks before throwing the report away. **Keep writing** takes you back to it.
 
@@ -62,7 +62,7 @@ underneath. Press the down arrow to bring it back.
 
 ## Details that help fix a bug
 
-![The report window open over a stack editor, with the Include details that help fix this box showing two ticked files, each with a Preview link, and the note that they are kept private.](../images/guide/sending-feedback-details.png)
+![The report window open over a stack editor, with the Include details that help fix this box showing four ticked files (the stack's compose file, the Import record, the versions and the StaXX self-test), each with a Preview link, and the note that they are kept private.](../images/guide/sending-feedback-details.png)
 
 A **Bug Report** has an **Include details that help fix this** box under the text. Tick the files
 you want to send. Which files are offered depends on where you are. On a stack's editor, for
