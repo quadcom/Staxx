@@ -112,7 +112,7 @@ build it is running now, and it is never checked for an update again. See
 | Part | What it is |
 |---|---|
 | Note under a box | A sentence explaining what the file already says, or a warning about it. |
-| Help mark | A small circled "i" beside a label. Click it for a sentence about that setting. |
+| Help mark | A small circled "i" beside a label. Click it to open a floating window about that setting. |
 | Remove | A cross at the end of a row. Removes that one entry. |
 | Reorder grip | On a port row only. Drag it, or focus it and use the up and down arrow keys, to change the order ports are tried in. |
 | "more settings" fold | A row's own extra, less common settings, folded away until opened. |

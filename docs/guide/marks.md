@@ -82,10 +82,22 @@ The first chip on a stack or container row.
 | <img src="../images/guide/marks-state-stopped.png" alt="Grey, stop mark" width="200"> | Stopped, or never started from the file yet | Start it when you want it |
 | <img src="../images/guide/marks-state-inflight.gif" alt="Amber, dashed outline, circular arrow turning, a word such as Starting" width="200"> | A command you asked for is running right now | Wait, or press it to watch the log |
 | <img src="../images/guide/marks-state-failed.png" alt="Red, warning triangle" width="200"> | That command failed | Press it to read what happened |
+| <img src="../images/guide/marks-state-needs-fix.png" alt="Red, wrench mark" width="200"> | Docker Compose cannot read this stack's file, so it cannot start | Press it to open the file at the problem |
 
 If a command's outcome is never seen by this page (most often because the browser tab was closed
 or reloaded while it was running), the row shows no chip for it at all. It settles back to showing
 whatever state the container is actually in.
+
+## Row colours
+
+![Two stack rows in one folder: demo-db tinted soft orange with a grey stop mark, and demo-web tinted soft red with a red wrench in its State column](../images/guide/marks-row-colours.png)
+
+| Row tint | Means | What to do |
+|---|---|---|
+| Soft orange | A fresh import still waiting for you to review it | Open it, then take it over. See [import an existing container](bringing-in-a-container.md#take-it-over). |
+| Soft red | Docker Compose cannot read the stack's file | Press the red wrench, or open the stack. See [problems Docker Compose finds](editing-a-stack.md#problems-docker-compose-finds). |
+
+The tint goes once the reason has gone.
 
 ## The update column
 

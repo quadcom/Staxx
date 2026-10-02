@@ -69,7 +69,15 @@ anything from it at the top level instead.
 
 ## Import and open
 
-Press **Import**. Each ticked row becomes a new stack, marked **needs review**. Nothing starts.
+Press **Import**. Each ticked row becomes a new stack, marked **needs review**, and its row is
+tinted orange until you take it over. Nothing starts.
+
+![The foot of the Import window after a run: "Imported 3 of 3. One needs a fix before it can start:", then a red-edged row for mattermost saying Docker Compose could not read one of its settings and it is saved and waiting, with an Open and fix button, above the Import and Close buttons](../images/guide/bringing-in-a-container-needs-fix.png)
+
+A file Docker Compose cannot read is still imported. The window lists it under **needs a fix
+before it can start**. Press **Open and fix** to open it in the editor at the problem; see
+[problems Docker Compose finds](editing-a-stack.md#problems-docker-compose-finds). Until it is
+fixed, its row is tinted red.
 
 ![A stack row carrying the orange needs review tag under its name, outlined](../images/guide/bringing-in-a-container-needs-review.png)
 

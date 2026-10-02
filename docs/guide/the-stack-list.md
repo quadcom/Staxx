@@ -152,7 +152,7 @@ when you hover it. See [row marks and icons](marks.md) for the full key.
 
 The State column shows whether the stack is running, with an update chip beside it when there is
 something to report. Every chip, its colour and what to do about it is listed in
-[row marks and icons](marks.md).
+[row marks and icons](marks.md), along with what a soft orange or soft red row means.
 
 Hover an update pill, or tab onto it with the keyboard, for a small card with more detail: the
 version running now, the version on offer, when it was last checked, when it is next due, and why

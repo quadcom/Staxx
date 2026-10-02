@@ -53,9 +53,37 @@ To generate a value rather than just add a mark, press **Password** — see
 | A required box is empty | Fill it in. |
 | Sanitise is on | Turn it off before you save. |
 | A second file for this stack is open | Switch back to the main file. |
+| Docker Compose cannot read the file | Fix the problem it found. See [Problems Docker Compose finds](#problems-docker-compose-finds). |
 
 Whatever the form flags — a gap, a mismatch, a suggestion — is a judgement call left to you. It
 points things out; it never decides for you.
+
+## Problems Docker Compose finds
+
+![The stack editor in Split view: line 13 of the compose file, a setting named 8075, has its line number white on red and the whole line banded red; the red "1 fix needed" button sits left of Close, and the floating window "This file needs one fix" shows what Docker Compose said, what it means, how to fix it, Show me and Fix it for me](../images/guide/editing-a-stack-problem-window.png)
+
+1. Press the red **1 fix needed** button at the top of the editor, or the red line number.
+2. Read the window. **Docker Compose said** is Docker's own message. **What this means** and
+   **How to fix it** explain it in plain words.
+3. Press **Show me** to jump to the line, then fix it, or press **Fix it for me** where it is offered.
+4. Save once the button has gone.
+
+The window stays on top while you work in the file. Drag it by its title bar, roll it up with the
+arrow beside the cross, and close it with the cross. The red button brings it back. When the file
+has more than one problem, the arrows in the title bar step through them, and the red line moves
+with you.
+
+A message StaXX has no explanation for yet shows Docker's words and a link to Docker's page for
+that setting. StaXX can send these messages to its developers; see
+[Integrations](settings-integrations.md#error-explanations).
+
+### Fix it for me
+
+![The floating window after Fix it for me: "Fix it for me will change line 13", the old line 8075: "on" in red and the new line "8075": "on" in green, a sentence saying only the name gets quotes, and the Cancel and Make this change buttons](../images/guide/editing-a-stack-fix-preview.png)
+
+**Fix it for me** shows the line as it is and as it will be before anything changes. Press **Make
+this change** to make it, or **Cancel** to leave the file alone. **Undo** at the bottom of the editor
+takes the change back.
 
 ## Restart to apply
 

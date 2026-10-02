@@ -50,6 +50,16 @@ is rebuilt from it, and the old one is removed. See [making a password hash](pas
 | Pi-hole address | The address of your Pi-hole. With it filled in, StaXX can add a local DNS name for an app, pointing at Nginx Proxy Manager. |
 | Pi-hole app password | An app password made in Pi-hole's own Settings → Web interface / API, under Enable new app password. Leave this blank if your Pi-hole has no admin password. |
 
+## Error explanations
+
+![The Error explanations box on the Integrations tab: the Send Docker errors StaXX cannot explain switch turned on, with its two-sentence explanation under it](../images/guide/settings-integrations-error-explanations.png)
+
+| Setting | What it does |
+|---|---|
+| Send Docker errors StaXX cannot explain | With this on, StaXX sends Docker Compose's message, with names, paths and addresses taken out, the first time it meets one it cannot explain, so an explanation can be written. With it off, nothing is sent. |
+
+New explanations reach StaXX once a day, whichever way this is set.
+
 ## Feedback board
 
 | Setting | What it does |
