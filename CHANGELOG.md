@@ -6,6 +6,12 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- Update messages now say much more. Each app shows its old and new version, its size on disk after the update, a mark when the first number of the version changes, and the first lines of its release notes with a link to the rest. A failed update says why in plain words, such as a download limit reached or a tag that no longer exists. Every message links to StaXX's Updates view.
+- Settings, Updates, Notifications now lets you choose, for each kind of message, Straight away, In the summary, or Off. The summary is daily or weekly at a time you pick, and nothing is sent on a day with nothing to report. It also carries the weekly list of pinned apps, anything the self-test found wrong, and how much space old images take when that is 1 GB or more.
+- Quiet hours hold messages until the next one or the summary. Failures are always sent straight away.
+- StaXX advanced email notifications, off unless you turn it on, sends StaXX's own dark email with app icons and colours to the address set in Unraid's notification settings. The notification bell and any other services set up in Unraid still get every message.
+- Use icons turns the emoji in messages on or off, and Send a test message shows you the result right away.
+- What changes on a server that already runs StaXX: installed-update messages now wait for the daily summary, unless you had them switched on, in which case they still come straight away. The weekly reminder about pinned apps now arrives inside the summary instead of as a message of its own.
 - A bug report can now also carry StaXX's self-test, the same checks as Settings, Self-test, offered and ticked on every bug report like the other files.
 - When Docker will not remove a damaged app in Settings, Storage, StaXX now offers to restart Docker and try again, right there in the window. It warns you first that every container stops for about a minute, and names any running container that will not come back on its own.
 - Adding a setting from the editor's form now always keeps the file valid: a name holding a colon and a space is written in quotes, and a setting written on one line in curly brackets is left alone instead of being broken.

@@ -62,6 +62,39 @@ $scratch = '/tmp/staxx-updaterun-test.json';
 @unlink($scratch);
 putenv('STAXX_UPDATE_STATE=' . $scratch);
 
+// Nothing here may reach this box's real notifier, summary file or GitHub:
+// STAXX_NOTIFY_BIN is a stub that counts its calls and keeps the last
+// arguments (NUL-separated), the summary's file and the agents folder sit
+// under /tmp, STAXX_NOTES_STUB answers the release-notes fetcher from a file
+// and logs each call, and STAXX_DOCKER_BIN stands in for docker's image size.
+$ntStub   = '/tmp/staxx-updaterun-notify-stub.sh';
+$ntCalls  = '/tmp/staxx-updaterun-notify-calls';
+$ntLast   = '/tmp/staxx-updaterun-notify-last';
+$ntDigest = '/tmp/staxx-updaterun-notify-digest.json';
+$ntAgents = '/tmp/staxx-updaterun-notify-agents';
+$notesStub = '/tmp/staxx-updaterun-notes-stub.json';
+$dockStub  = '/tmp/staxx-updaterun-docker-stub.sh';
+foreach ([$ntCalls, $ntLast, $ntDigest, $notesStub, $notesStub . '.calls'] as $f) @unlink($f);
+@mkdir($ntAgents, 0755, true);
+@mkdir('/tmp/staxx', 0755, true);
+file_put_contents($ntStub, "#!/bin/sh\nprintf x >> " . escapeshellarg($ntCalls)
+  . "\nprintf '%s\\0' \"\$@\" > " . escapeshellarg($ntLast) . "\n");
+// docker image inspect --format {{.Size}} <image>: the image is the fifth word.
+file_put_contents($dockStub, "#!/bin/sh\ncase \"\$5\" in *evtwo*) exit 1;; esac\necho 1288490189\n");
+chmod($ntStub, 0755);
+chmod($dockStub, 0755);
+putenv('STAXX_NOTIFY_BIN=' . $ntStub);
+putenv('STAXX_NOTIFY_DIGEST=' . $ntDigest);
+putenv('STAXX_NOTIFY_AGENTS=' . $ntAgents);
+putenv('STAXX_NOTES_STUB=' . $notesStub);
+putenv('STAXX_DOCKER_BIN=' . $dockStub);
+putenv('STAXX_NOTIFY_OPTS=' . json_encode(['UPDATE_NOTIFY_INSTALLED_WHEN' => 'now', 'UPDATE_NOTIFY_FAILED_WHEN' => 'now',
+                                           'UPDATE_NOTIFY_FOUND_WHEN' => 'now', 'UPDATE_QUIET' => 'false']));
+register_shutdown_function(function () use ($ntStub, $ntCalls, $ntLast, $ntDigest, $ntAgents, $notesStub, $dockStub) {
+  foreach ([$ntStub, $ntCalls, $ntLast, $ntDigest, $notesStub, $notesStub . '.calls', $dockStub] as $f) @unlink($f);
+  @rmdir($ntAgents);
+});
+
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
@@ -883,6 +916,160 @@ ok('rollback source: a DNS failure cannot tell, so it goes ahead',
    staxx_update_rollback_source_error(1, 'Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io: no such host', 'web') === null);
 ok('rollback source: a timeout (exit 124, no output) cannot tell either',
    staxx_update_rollback_source_error(124, '', 'web') === null);
+
+/* ------------------------- 20. PLAN_214 events, reasons, sizes, notes -- */
+
+// What the queue tick and the check hand to staxx_notify_events(): proved with
+// stub binaries only (see the top of this file), so nothing is ever sent for
+// real, fetched from GitHub or read from docker.
+$evStack = 'zzb1updrun-ev';
+$evDir   = $root . '/' . $evStack;
+@exec('rm -rf ' . escapeshellarg($evDir));
+mkdir($evDir, 0755, true);
+file_put_contents($evDir . '/compose.yaml', <<<YAML
+services:
+  one:
+    image: ghcr.io/example/evone:1
+    x-unraid:
+      project: https://github.com/example/evone
+  two:
+    image: ghcr.io/example/evtwo:1
+    x-unraid:
+      project: https://example.com/evtwo
+x-unraid:
+  update:
+    notify: true
+YAML
+);
+register_shutdown_function(function () use ($evDir) { @exec('rm -rf ' . escapeshellarg($evDir)); });
+staxx_scan_stacks_reset();
+
+$evOne = 'ghcr.io/example/evone:1';
+$evTwo = 'ghcr.io/example/evtwo:1';
+$evNotesUrl = 'https://github.com/example/evone/releases/tag/2.0.0';
+staxx_update_state_save(['images' => [
+  $evOne => ['local' => 'sha256:' . str_repeat('1', 64), 'remote' => 'sha256:' . str_repeat('2', 64),
+             'was' => '1.0.0', 'version' => '2.0.0', 'notes' => "Adds a thing\nFixes a bug",
+             'notesUrl' => $evNotesUrl, 'notesCut' => false, 'notesFor' => '2.0.0'],
+  $evTwo => ['local' => 'sha256:' . str_repeat('3', 64), 'remote' => 'sha256:' . str_repeat('4', 64),
+             'version' => '1.1'],
+]]);
+
+$failReason = "Docker Hub's download limit was reached. It resets within six hours.";
+$evItems = [
+  ['stack' => $evStack, 'state' => 'done'],
+  ['stack' => $fixtureName, 'state' => 'failed', 'reason' => $failReason],
+];
+$evNames  = staxx_update_queue_notify_names($evItems, $settings);
+$events   = staxx_update_queue_events($evItems, $evNames, $settings);
+$byKind   = ['installed' => [], 'failed' => []];
+foreach ($events as $e) $byKind[$e['kind']][$e['service'] !== '' ? $e['service'] : $e['stack']] = $e;
+
+ok('tick events: an installed event per updated service and a failed event per failed stack',
+   count($byKind['installed']) === 2 && isset($byKind['installed']['one'], $byKind['installed']['two'])
+   && array_keys($byKind['failed']) === [$fixtureName], json_encode($events));
+$one = $byKind['installed']['one'] ?? [];
+ok('tick events: versions, digests and notes come from the check\'s stored entry',
+   ($one['was'] ?? '') === '1.0.0' && ($one['version'] ?? '') === '2.0.0'
+   && ($one['digest'] ?? '') === 'sha256:' . str_repeat('1', 64)
+   && ($one['notesFor'] ?? '') === '2.0.0' && ($one['notesUrl'] ?? '') === $evNotesUrl
+   && ($one['image'] ?? '') === $evOne, json_encode($one));
+ok('tick events: the failed event carries the stored reason',
+   ($byKind['failed'][$fixtureName]['reason'] ?? '') === $failReason);
+ok('tick events: the size comes from the local image inspect',
+   ($one['size'] ?? 0) === 1288490189, json_encode($one));
+ok('tick events: a failed inspect leaves the size out, the event stays',
+   isset($byKind['installed']['two']) && !array_key_exists('size', $byKind['installed']['two']));
+ok('image size: a name docker cannot inspect is 0, not a guess', staxx_update_image_size($evTwo) === 0);
+
+// An opted-out stack gives no event at all.
+$optedOut = [['stack' => $fixtureName2, 'state' => 'failed']];
+ok('tick events: a stack whose every service opted out gives no event',
+   staxx_update_queue_events($optedOut, staxx_update_queue_notify_names($optedOut, $settings), $settings) === []);
+
+// One call carries installed and failed together: a single notifier run.
+@unlink($ntCalls);
+@unlink($ntLast);
+staxx_notify_events($events);
+$callCount = is_file($ntCalls) ? strlen((string)file_get_contents($ntCalls)) : 0;
+ok('tick events: installed and failed leave in ONE message', $callCount === 1, 'calls=' . $callCount);
+$lastArgs  = explode("\0", (string)@file_get_contents($ntLast));
+$subjectAt = array_search('-s', $lastArgs, true);
+$subject   = $subjectAt === false ? '' : (string)$lastArgs[$subjectAt + 1];
+$impAt     = array_search('-i', $lastArgs, true);
+ok('tick events: that message counts both outcomes and is marked warning',
+   strpos($subject, 'updated') !== false && strpos($subject, 'failed') !== false
+   && $impAt !== false && strpos((string)$lastArgs[$impAt + 1], 'warning') === 0, $subject);
+
+// The real tick: a running item whose job log ends in a Docker error gets the
+// plain-words reason stored on the queue item while the log still exists.
+if ($liveBusy) {
+  skip('tick reason: stored on the queue item beside the error',
+       'a real queue is currently active on this box — not touched');
+} else {
+  $jobId  = 'feedfacefeedface';
+  $jobLog = STAXX_JOB_DIR . '/' . $jobId . '.log';
+  @mkdir(STAXX_JOB_DIR, 0755, true);
+  file_put_contents($jobLog, "Error response from daemon: toomanyrequests: You have reached your pull rate limit\n"
+    . STAXX_JOB_END . " 1\n");
+  $queueBackup2 = is_file($queueFile) ? file_get_contents($queueFile) : null;
+  register_shutdown_function(function () use ($queueFile, $queueBackup2, $jobLog) {
+    if ($queueBackup2 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup2);
+    @unlink($jobLog);
+  });
+  staxx_update_queue_write(['id' => 'test' . time(), 'scope' => 'all', 'stopped' => false,
+    'includeStopped' => false,
+    'items' => [['stack' => $fixtureName, 'state' => 'running', 'job' => $jobId, 'error' => '']]]);
+  @unlink($ntCalls);
+  staxx_update_queue_tick();
+  $after = staxx_update_queue_read();
+  $item0 = $after['items'][0] ?? [];
+  ok('tick reason: a failed item keeps the reason beside its error',
+     ($item0['state'] ?? '') === 'failed' && ($item0['reason'] ?? '') === $failReason
+     && ($item0['error'] ?? '') !== '', json_encode($item0));
+  ok('tick reason: the failed run was handed to the notifier once',
+     is_file($ntCalls) && strlen((string)file_get_contents($ntCalls)) === 1);
+  if ($queueBackup2 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup2);
+  @unlink($jobLog);
+}
+
+// The check's notes fetch: only a GitHub project, once per version, capped.
+file_put_contents($notesStub, json_encode(['2.0.0' => ['notes' => 'Fetched notes', 'url' => 'https://example.test/n', 'cut' => false]]));
+$evFiles = [$evStack => $evDir . '/compose.yaml'];
+$budget  = 10;
+$got = staxx_update_incoming_notes($evOne, ['version' => '2.0.0'], [$evStack . '::one'], $evFiles, $budget);
+ok('check notes: a GitHub project\'s notes are stored with the version they belong to',
+   ($got['notes'] ?? '') === 'Fetched notes' && ($got['notesUrl'] ?? '') === 'https://example.test/n'
+   && ($got['notesFor'] ?? '') === '2.0.0' && $budget === 9, json_encode($got));
+$budget = 10;
+$again = staxx_update_incoming_notes($evOne, $got, [$evStack . '::one'], $evFiles, $budget);
+ok('check notes: notes already held for this version are not fetched again', $again === $got && $budget === 10);
+$budget = 10;
+$none = staxx_update_incoming_notes($evTwo, ['version' => '1.1'], [$evStack . '::two'], $evFiles, $budget);
+ok('check notes: a project that is not on GitHub makes no request and spends no budget',
+   !isset($none['notesFor']) && $budget === 10);
+$budget = 10;
+$noVersion = staxx_update_incoming_notes($evOne, [], [$evStack . '::one'], $evFiles, $budget);
+ok('check notes: an entry with no version name is left alone', $noVersion === [] && $budget === 10);
+
+@unlink($notesStub . '.calls');
+$budget = 10;
+$noted  = 0;
+for ($i = 1; $i <= 12; $i++) {
+  $entry = staxx_update_incoming_notes($evOne, ['version' => '9.' . $i], [$evStack . '::one'], $evFiles, $budget);
+  if (isset($entry['notesFor'])) $noted++;
+}
+$callLines = is_file($notesStub . '.calls') ? count(file($notesStub . '.calls')) : 0;
+ok('check notes: at most 10 fetches per run, the rest wait for the next check',
+   $callLines === 10 && $noted === 10 && $budget === 0, 'fetches=' . $callLines . ' noted=' . $noted);
+
+// The found message: the same filter as the label list, as events with the notes.
+$foundEv = staxx_update_found_events(
+  [$evOne => staxx_update_state()['images'][$evOne]],
+  [$evOne => [$evStack . '::one']], $evFiles, $settings);
+ok('found events: one per waiting container, with versions and the stored notes',
+   count($foundEv) === 1 && $foundEv[0]['kind'] === 'found' && $foundEv[0]['version'] === '2.0.0'
+   && $foundEv[0]['was'] === '1.0.0' && $foundEv[0]['notesFor'] === '2.0.0', json_encode($foundEv));
 
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);

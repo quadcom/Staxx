@@ -348,6 +348,17 @@ function staxx_release_notes_trim(string $body): array {
 function staxx_release_notes_fetch(string $project, string $version): array {
   $empty = ['notes' => '', 'url' => '', 'cut' => false];
 
+  // A suite sets STAXX_NOTES_STUB to a JSON file mapping version => result;
+  // each call is logged to "<file>.calls" so a count can be asserted, and no
+  // request is ever made.
+  $stub = getenv('STAXX_NOTES_STUB');
+  if ($stub !== false && $stub !== '') {
+    @file_put_contents($stub.'.calls', $project.' '.$version."\n", FILE_APPEND);
+    $map = json_decode((string)@file_get_contents($stub), true);
+    $hit = is_array($map) ? ($map[$version] ?? null) : null;
+    return is_array($hit) ? array_merge($empty, $hit) : $empty;
+  }
+
   foreach (staxx_release_notes_urls($project, $version) as $url) {
     $data = staxx_hub_json($url, ['User-Agent: StaXX'], 6, 8);
     if (!is_array($data)) continue;
@@ -363,6 +374,46 @@ function staxx_release_notes_fetch(string $project, string $version): array {
   }
 
   return $empty;
+}
+
+/**
+ * Keep the release notes of the version an update is waiting at on its
+ * updates.json entry (`notes`, `notesUrl`, `notesCut`, and `notesFor`, the
+ * version they belong to), so the "updates found" message and the install's
+ * message can show them without a request of their own. Only a GitHub project
+ * link qualifies, and an entry already holding notes for this version is left
+ * alone. Each fetch spends one from $budget (the check's cap per run); at 0
+ * nothing is fetched and the next check tries again. A fetch that finds
+ * nothing is recorded too (blank notes), so a project with no release for the
+ * version is not asked again every check.
+ *
+ * $rows is the image's "<stack>::<service>" holders; the first with a project
+ * link supplies it.
+ */
+function staxx_update_incoming_notes(string $image, array $entry, array $rows, array $stackFiles, int &$budget): array {
+  $version = trim((string)($entry['version'] ?? ''));
+  if ($version === '' || $budget <= 0 || ($entry['notesFor'] ?? '') === $version) return $entry;
+  if (!function_exists('staxx_project_links') || !function_exists('staxx_compose_meta')) return $entry;
+
+  $project = '';
+  foreach ($rows as $holder) {
+    [$stack, $svc] = array_pad(explode('::', (string)$holder, 2), 2, '');
+    $file = $stackFiles[$stack] ?? '';
+    if ($file === '' || $svc === '') continue;
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) continue;
+    $project = (string)(staxx_project_links($image, $meta['x'] ?? [], $meta['services'][$svc]['x'] ?? [])['project'] ?? '');
+    if ($project !== '') break;
+  }
+  if (staxx_github_project($project) === []) return $entry;
+
+  $budget--;
+  $notes = staxx_release_notes_fetch($project, $version);
+  $entry['notes']    = (string)$notes['notes'];
+  $entry['notesUrl'] = (string)$notes['url'];
+  $entry['notesCut'] = (bool)$notes['cut'];
+  $entry['notesFor'] = $version;
+  return $entry;
 }
 
 /**
@@ -1739,6 +1790,8 @@ function staxx_update_check(string $scope, bool $force, bool $progress = false):
   $now    = time();
   $failedNames = [];
   $newlyFound = 0; // images whose 'seen' clock started fresh THIS pass, for the "found" notification
+  // Release-notes fetches this pass may spend (GitHub allows 60 an hour unsigned).
+  $notesBudget = 10;
 
   $refs = staxx_update_images($scope);
   // PLAN_62 Stage 2 — a real file on disk to compare the author's example
@@ -2261,6 +2314,10 @@ function staxx_update_check(string $scope, bool $force, bool $progress = false):
         $result['updates']++;
         echo $image." — update still pending\n";
       }
+      // The notes for the version on offer, for the messages. After the
+      // entry is otherwise complete and capped per run, so it can never hold
+      // a message back; past the cap the next check tries again.
+      $existing = staxx_update_incoming_notes($image, $existing, $rows, $stackFiles, $notesBudget);
     } else {
       unset($existing['seen'], $existing['was'], $existing['wasCreated'], $existing['seenDigest']);
       echo $image.($skipped ? ' — update skipped, staying quiet' : ' — up to date')."\n";
@@ -2354,28 +2411,23 @@ function staxx_update_check(string $scope, bool $force, bool $progress = false):
        . ($row['paidHour'] === 0 ? 'all free' : $row['paidHour'].' paid').', '.$bit."\n";
   }
 
-  // One notification for the whole pass, never one per image — see the
-  // matching reasoning on staxx_update_notify() itself. staxx_update_settings(),
-  // staxx_update_notify() and staxx_update_found_containers() all live in
-  // UpdateRun.php, which this file must never require (that would be
-  // circular), so every one of them is guarded.
+  // One call for the whole pass, never one per image: the newly found
+  // containers go to staxx_notify_events() together. staxx_update_settings(),
+  // staxx_notify_events() and staxx_update_found_events() all live in
+  // UpdateRun.php or Notify.php, which this file must never require (that
+  // would be circular), so every one of them is guarded.
   // PLAN_154 — no longer gated on the server's own 'found' switch here: a
   // container may override that switch upward, so staxx_update_found_containers()
   // is asked regardless, and it is the one that resolves each container's own
   // say (falling to the server's switch only where a container has none).
-  if ($newlyFound > 0 && function_exists('staxx_update_notify') && function_exists('staxx_update_settings')
-      && function_exists('staxx_update_found_containers') && function_exists('staxx_update_name_or_count')) {
+  if ($newlyFound > 0 && function_exists('staxx_notify_events') && function_exists('staxx_update_settings')
+      && function_exists('staxx_update_found_events')) {
     $settings = staxx_update_settings();
-    $wanted = staxx_update_found_containers($images, $refs, $stackFiles, $settings);
+    $events = staxx_update_found_events($images, $refs, $stackFiles, $settings);
 
     // An empty list here means every container that has an update waiting
     // has opted itself out — nobody asked to hear about nothing.
-    if ($wanted !== []) {
-      staxx_update_notify(
-        'StaXX image updates found',
-        staxx_update_name_or_count($wanted, 'container has an update waiting', 'containers have an update waiting').'.'
-      );
-    }
+    if ($events !== []) staxx_notify_events($events);
   }
 
   return $result;

@@ -17193,3 +17193,101 @@ html.staxx-noscroll body {
 .staxx-scaffold .staxx-btn.staxx-btn--fixneeded[hidden] {
   display: none;
 }
+
+/* ---- Settings, Updates: the Notifications field (PLAN_214) ----
+   Readable text is white and nothing is under 1.3rem (1rem is 10px in the
+   webGUI). order: 2 puts the field below the block's own explanation, which
+   carries order: 1. Controls restate font, colour, background and radius
+   because Unraid resets them at a specificity one class cannot beat. */
+.staxx-scaffold .staxx-nf {
+  order: 2;
+  margin-top: 1rem;
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-nf [hidden] {
+  display: none;
+}
+
+.staxx-scaffold .staxx-nf .staxx-hint {
+  margin: 0.4rem 0 1rem;
+  color: #ddd;
+  font-size: 1.3rem;
+  line-height: 1.5;
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.6rem;
+  padding: 0.6rem 0;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-name {
+  flex: 0 0 24rem;
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-sub {
+  display: block;
+  margin: 1.6rem 0 0.6rem;
+  color: #fff;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem 1.6rem;
+  margin: 0 0 1rem;
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-line label,
+.staxx-scaffold .staxx-nf .staxx-nf-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-nf > .staxx-nf-check {
+  margin: 0.4rem 0 0;
+}
+
+.staxx-scaffold .staxx-nf input[type="checkbox"] {
+  width: 1.6rem;
+  height: 1.6rem;
+  margin: 0;
+  accent-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-nf .staxx-viewbtn {
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-input {
+  box-sizing: border-box;
+  padding: 0.4rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.4rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: #fff;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-nf .staxx-nf-input:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}

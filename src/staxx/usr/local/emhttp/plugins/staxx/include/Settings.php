@@ -166,6 +166,27 @@ function staxx_settings_keys(): array {
     // above — that choice predates the idea of a pin. Default true: see
     // staxx_update_notify_map() (Defines.php) for why.
     'UPDATE_NOTIFY_PINNED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // PLAN_214 — richer messages and the summary. Add-only: the four switches
+    // above keep their true/false values, and these sit beside them. A kind's
+    // _WHEN only matters while its switch is on. Pinned has no _WHEN: its
+    // reminder always rides in the summary. The INSTALLED default is 'summary'
+    // here, but staxx_cfg() (Defines.php) reads 'now' for a store that already
+    // had that switch on and has never saved a _WHEN.
+    'UPDATE_NOTIFY_FOUND_WHEN'     => ['type' => 'choice', 'default' => 'now',     'choices' => ['now', 'summary']],
+    'UPDATE_NOTIFY_INSTALLED_WHEN' => ['type' => 'choice', 'default' => 'summary', 'choices' => ['now', 'summary']],
+    'UPDATE_NOTIFY_FAILED_WHEN'    => ['type' => 'choice', 'default' => 'now',     'choices' => ['now', 'summary']],
+    'UPDATE_DIGEST_EVERY' => ['type' => 'choice', 'default' => 'day', 'choices' => ['day', 'week']],
+    // Day of a weekly summary, Sunday 0.
+    'UPDATE_DIGEST_DAY'   => ['type' => 'choice', 'default' => '1', 'choices' => ['0', '1', '2', '3', '4', '5', '6']],
+    'UPDATE_DIGEST_TIME'  => ['type' => 'time',   'default' => '08:00'],
+    'UPDATE_NOTIFY_NOTES' => ['type' => 'choice', 'default' => 'lines', 'choices' => ['lines', 'link', 'none']],
+    'UPDATE_NOTIFY_ICONS' => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // Quiet hours hold straight-away messages (never a failure); the window may cross midnight.
+    'UPDATE_QUIET'        => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    'UPDATE_QUIET_START'  => ['type' => 'time',   'default' => '22:00'],
+    'UPDATE_QUIET_END'    => ['type' => 'time',   'default' => '07:00'],
+    // StaXX sends its own HTML email instead of Unraid's plain one.
+    'UPDATE_NOTIFY_HTML'  => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
     'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
     // PLAN_181 Part C — whether an earlier release UPDATE_RETAIN remembers
     // also stays on disk (today's behaviour, and the default) or only its

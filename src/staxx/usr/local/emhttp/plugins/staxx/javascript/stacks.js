@@ -28399,27 +28399,8 @@
       block: 'install-timing', sublabel: 'Quiet time ends', halfGroup: 'quiet-times',
       help: 'A 24-hour time, such as 05:00.'
     },
-    {
-      // PLAN_150 Phase 2: replaces the single UPDATE_NOTIFY three-way choice
-      // with three independent switches, one row each, sharing the
-      // 'notify-me' block so they draw on one line — see SETTINGS_BLOCKS.
-      key: 'UPDATE_NOTIFY_FOUND', control: 'flags', label: 'New image', tab: 'updates',
-      block: 'notify-me'
-    },
-    {
-      key: 'UPDATE_NOTIFY_INSTALLED', control: 'flags', label: 'Image installed', tab: 'updates',
-      block: 'notify-me'
-    },
-    {
-      key: 'UPDATE_NOTIFY_FAILED', control: 'flags', label: 'Installation failed', tab: 'updates',
-      block: 'notify-me'
-    },
-    {
-      // PLAN_205 item 4: a fourth switch for the weekly "still pinned" reminder,
-      // sharing the same 'notify-me' block as the other three.
-      key: 'UPDATE_NOTIFY_PINNED', control: 'flags', label: 'Still pinned (weekly)', tab: 'updates',
-      block: 'notify-me'
-    },
+    // The Notifications rows (PLAN_150, PLAN_205, PLAN_214) are added just after this
+    // list, once, from NOTIFY_KEYS below.
     {
       key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous image releases to keep', tab: 'updates',
       help: 'How many older releases of each image this server keeps on disk, so an update can ' +
@@ -28522,6 +28503,24 @@
             'reports what each one says.'
     }
   ];
+  // PLAN_214: the Notifications field is drawn by settingsNotifyHtml() from
+  // the keys below, which are the only settings behind it. Each is a hidden
+  // input, so saving, dirty tracking and the server's validation see the same
+  // plain key/value pairs as any other row; the visible buttons only write
+  // into them (see notifyApply()). Placed ahead of UPDATE_RETAIN, where the
+  // four old ticks sat.
+  var NOTIFY_KEYS = ['UPDATE_NOTIFY_FOUND', 'UPDATE_NOTIFY_INSTALLED', 'UPDATE_NOTIFY_FAILED',
+    'UPDATE_NOTIFY_PINNED', 'UPDATE_NOTIFY_FOUND_WHEN', 'UPDATE_NOTIFY_INSTALLED_WHEN',
+    'UPDATE_NOTIFY_FAILED_WHEN', 'UPDATE_DIGEST_EVERY', 'UPDATE_DIGEST_DAY', 'UPDATE_DIGEST_TIME',
+    'UPDATE_NOTIFY_NOTES', 'UPDATE_NOTIFY_ICONS', 'UPDATE_QUIET', 'UPDATE_QUIET_START',
+    'UPDATE_QUIET_END', 'UPDATE_NOTIFY_HTML'];
+  (function () {
+    var at = SETTINGS_ROWS.map(function (r) { return r.key; }).indexOf('UPDATE_RETAIN');
+    var rows = NOTIFY_KEYS.map(function (k) {
+      return { key: k, control: 'notifyvalue', label: 'Notifications', tab: 'updates', block: 'notify-me' };
+    });
+    Array.prototype.splice.apply(SETTINGS_ROWS, [at, 0].concat(rows));
+  })();
   SETTINGS_ROWS.forEach(function (row) {
     row.id = 'staxx-setting-' + row.key.toLowerCase().replace(/_/g, '-');
   });
@@ -28560,9 +28559,8 @@
     },
     'notify-me': {
       tab: 'updates', label: 'Notifications',
-      help: 'Sent through Unraid\'s own notification system — one message per check or per ' +
-            'queue finishing, never one per container. A container can take itself out in its ' +
-            'compose file.'
+      help: "Sent through Unraid's own notification system, to email and any other way you have " +
+            'set up there. Choose when each kind of message is sent.'
     },
     'hub-access': {
       tab: 'registries', label: 'Docker Hub access',
@@ -28640,7 +28638,11 @@
   }
 
   function settingsControlHtml(row, value) {
-    if (row.control === 'readout') {
+    if (row.control === 'notifyvalue') {
+      // One stored value of the Notifications field; the buttons that change
+      // it are drawn by settingsNotifyHtml().
+      return '<input type="hidden" id="' + row.id + '" value="' + esc(value) + '">';
+    } else if (row.control === 'readout') {
       // Nothing to save here — a static report filled in by loadSpendReadout()
       // once the panel is open, not a value settingsControlValue() can read
       // off an input. Skipped by settingsDirty() and saveSettings() below.
@@ -28927,6 +28929,7 @@
   function settingsBlockHtml(blockId, values) {
     var def = SETTINGS_BLOCKS[blockId];
     if (!def) return '';
+    if (blockId === 'notify-me') return settingsNotifyHtml(def, values);
     var rows = SETTINGS_ROWS.filter(function (row) { return row.block === blockId; });
     // A block that is nothing but independent on/off switches (Notify me)
     // draws as one tick row rather than the usual two-column grid of small
@@ -28979,6 +28982,164 @@
              blockHintHtml +
              '<div class="' + (allFlags ? 'staxx-tickrow' : 'staxx-subgrid') + '">' + subfields + '</div>' +
            '</div>';
+  }
+
+  // ---- The Notifications field (PLAN_214) ----
+  // What the server said about the HTML email when Settings was opened: false
+  // when this Unraid's notify script cannot leave the email out of one message.
+  var settingsNotifyOverrule = true;
+  var NOTIFY_WHEN = [['now', 'Straight away'], ['summary', 'In the summary'], ['off', 'Off']];
+  var NOTIFY_DAYS = [['1', 'Monday'], ['2', 'Tuesday'], ['3', 'Wednesday'], ['4', 'Thursday'],
+                     ['5', 'Friday'], ['6', 'Saturday'], ['0', 'Sunday']];
+
+  function notifyEl(key) {
+    return document.getElementById('staxx-setting-' + key.toLowerCase().replace(/_/g, '-'));
+  }
+  function notifyGet(key) {
+    var el = notifyEl(key);
+    return el ? el.value : '';
+  }
+  function notifyPut(key, value) {
+    var el = notifyEl(key);
+    if (el) el.value = value;
+  }
+
+  // The visible answer for one kind of message, worked out from the two keys
+  // behind it: Off when its switch is off, otherwise its _WHEN.
+  function notifyKindState(kind) {
+    if (notifyGet('UPDATE_NOTIFY_' + kind) !== 'true') return 'off';
+    return notifyGet('UPDATE_NOTIFY_' + kind + '_WHEN') === 'summary' ? 'summary' : 'now';
+  }
+
+  function notifySeg(name, opts) {
+    return '<div class="staxx-views" role="group">' + opts.map(function (o) {
+      return '<button type="button" class="staxx-viewbtn" data-nf="' + name + '" data-v="' + o[0] +
+             '" aria-pressed="false">' + esc(o[1]) + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function notifyLabel(emoji, text) {
+    return '<span class="staxx-nf-ic" data-ic="' + emoji + '"></span>' + esc(text);
+  }
+
+  function settingsNotifyHtml(def, values) {
+    var hidden = SETTINGS_ROWS.filter(function (r) { return r.block === 'notify-me'; })
+      .map(function (r) { return settingsControlHtml(r, values[r.key] || ''); }).join('');
+    function kindRow(kind, emoji, text, opts) {
+      return '<div class="staxx-nf-row"><span class="staxx-nf-name">' + notifyLabel(emoji, text) +
+             '</span>' + notifySeg(kind, opts) + '</div>';
+    }
+    var dayOpts = NOTIFY_DAYS.map(function (d) {
+      return '<option value="' + d[0] + '">' + d[1] + '</option>';
+    }).join('');
+    return '<div class="staxx-field" data-key="notify-me">' +
+      '<span>' + esc(def.label) + '</span>' +
+      '<span class="staxx-hint">' + def.help + '</span>' +
+      '<div class="staxx-nf" id="staxx-notify">' + hidden +
+        '<label class="staxx-nf-check"><input type="checkbox" data-nf-check="UPDATE_NOTIFY_HTML">' +
+          '<b>StaXX advanced email notifications</b></label>' +
+        '<p class="staxx-hint" data-nf-show="html-on">StaXX sends its own emails, with app icons ' +
+          'and colours, to the address set in Unraid\'s notification settings. The notification bell ' +
+          'and any other services set up in Unraid still get every message.</p>' +
+        '<p class="staxx-hint" data-nf-show="html-off">Off: messages go through Unraid\'s own ' +
+          'notification system as plain text, to email, the notification bell and every service ' +
+          'set up there.</p>' +
+        '<p class="staxx-hint" data-nf-show="html-missing">The HTML email is not available on ' +
+          'this version of Unraid, so plain text is sent instead.</p>' +
+        '<div class="staxx-nf-rows">' +
+          kindRow('FOUND', '🔔', 'New image found', NOTIFY_WHEN) +
+          kindRow('INSTALLED', '✅', 'Image installed', NOTIFY_WHEN) +
+          kindRow('FAILED', '❌', 'Installation failed', NOTIFY_WHEN) +
+          kindRow('PINNED', '📌', 'Still pinned', [NOTIFY_WHEN[1], NOTIFY_WHEN[2]]) +
+        '</div>' +
+        '<span class="staxx-nf-sub">' + notifyLabel('📋', 'Summary') + '</span>' +
+        '<div class="staxx-nf-line">' + notifySeg('DIGEST_EVERY', [['day', 'Daily'], ['week', 'Weekly']]) +
+          '<label data-nf-show="weekly">on <select class="staxx-nf-input" data-nf-in="UPDATE_DIGEST_DAY" ' +
+            'aria-label="Day of the summary">' + dayOpts + '</select></label>' +
+          '<label>at <input type="time" class="staxx-nf-input" data-nf-in="UPDATE_DIGEST_TIME" ' +
+            'aria-label="Time of the summary"></label></div>' +
+        '<p class="staxx-hint">Nothing is sent when there is nothing to report.</p>' +
+        '<span class="staxx-nf-sub">Message content</span>' +
+        '<div class="staxx-nf-line"><span>Release notes</span>' +
+          notifySeg('NOTES', [['lines', 'First lines and a link'], ['link', 'Link only'], ['none', 'Leave out']]) +
+        '</div>' +
+        '<div class="staxx-nf-line">' +
+          '<label class="staxx-nf-check"><input type="checkbox" data-nf-check="UPDATE_NOTIFY_ICONS">Use icons</label>' +
+          '<label class="staxx-nf-check"><input type="checkbox" data-nf-check="UPDATE_QUIET">Quiet hours</label>' +
+          '<label data-nf-show="quiet">from <input type="time" class="staxx-nf-input" data-nf-in="UPDATE_QUIET_START" ' +
+            'aria-label="Quiet hours start"></label>' +
+          '<label data-nf-show="quiet">to <input type="time" class="staxx-nf-input" data-nf-in="UPDATE_QUIET_END" ' +
+            'aria-label="Quiet hours end"></label></div>' +
+        '<p class="staxx-hint" data-nf-show="quiet">During quiet hours, messages wait for the next one ' +
+          'or the summary. Failures are always sent straight away.</p>' +
+        '<div class="staxx-nf-line"><button type="button" class="staxx-btn" data-nf-test>Send a test message</button>' +
+          '<span class="staxx-hint" id="staxx-nf-test-msg" role="status"></span></div>' +
+      '</div></div>';
+  }
+
+  // Brings every visible part of the field in step with the hidden values:
+  // pressed buttons, filled boxes, which lines show, and the emoji.
+  function notifyRefresh() {
+    var box = document.getElementById('staxx-notify');
+    if (!box) return;
+    var state = {
+      FOUND: notifyKindState('FOUND'), INSTALLED: notifyKindState('INSTALLED'),
+      FAILED: notifyKindState('FAILED'),
+      PINNED: notifyGet('UPDATE_NOTIFY_PINNED') === 'true' ? 'summary' : 'off',
+      DIGEST_EVERY: notifyGet('UPDATE_DIGEST_EVERY'), NOTES: notifyGet('UPDATE_NOTIFY_NOTES')
+    };
+    Array.prototype.forEach.call(box.querySelectorAll('[data-nf]'), function (b) {
+      b.setAttribute('aria-pressed', state[b.dataset.nf] === b.dataset.v ? 'true' : 'false');
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('[data-nf-in]'), function (el) {
+      if (document.activeElement !== el) el.value = notifyGet(el.dataset.nfIn);
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('[data-nf-check]'), function (el) {
+      el.checked = notifyGet(el.dataset.nfCheck) === 'true';
+    });
+    var html = notifyGet('UPDATE_NOTIFY_HTML') === 'true';
+    var show = {
+      'html-on': html && settingsNotifyOverrule, 'html-off': !html,
+      'html-missing': html && !settingsNotifyOverrule,
+      weekly: state.DIGEST_EVERY === 'week', quiet: notifyGet('UPDATE_QUIET') === 'true'
+    };
+    Array.prototype.forEach.call(box.querySelectorAll('[data-nf-show]'), function (el) {
+      el.hidden = !show[el.dataset.nfShow];
+    });
+    var icons = notifyGet('UPDATE_NOTIFY_ICONS') === 'true';
+    Array.prototype.forEach.call(box.querySelectorAll('.staxx-nf-ic'), function (el) {
+      el.textContent = icons ? el.dataset.ic + ' ' : '';
+    });
+  }
+
+  // A press on one of the field's buttons: each kind of message writes its
+  // switch and, unless Off, its _WHEN; pinned has no _WHEN, only its switch.
+  function notifyPress(name, v) {
+    if (name === 'FOUND' || name === 'INSTALLED' || name === 'FAILED') {
+      notifyPut('UPDATE_NOTIFY_' + name, v === 'off' ? 'false' : 'true');
+      if (v !== 'off') notifyPut('UPDATE_NOTIFY_' + name + '_WHEN', v);
+    } else if (name === 'PINNED') {
+      notifyPut('UPDATE_NOTIFY_PINNED', v === 'summary' ? 'true' : 'false');
+    } else if (name === 'DIGEST_EVERY') {
+      notifyPut('UPDATE_DIGEST_EVERY', v);
+    } else if (name === 'NOTES') {
+      notifyPut('UPDATE_NOTIFY_NOTES', v);
+    }
+    notifyRefresh();
+    settingsUpdateDirty();
+  }
+
+  function notifyTest(btn) {
+    var out = document.getElementById('staxx-nf-test-msg');
+    btn.disabled = true;
+    if (out) out.textContent = 'Sending…';
+    // The test uses what is saved, not what is on screen.
+    var unsaved = settingsDirty();
+    call('notify-test', {}, 60000).then(function (res) {
+      btn.disabled = false;
+      var text = res.message || res.error || (res.ok ? 'A test message was sent.' : 'The test message could not be sent.');
+      if (out) out.textContent = text + (unsaved ? ' It used the saved settings, not the unsaved changes.' : '');
+    });
   }
 
   function settingsControlValue(row) {
@@ -29822,6 +29983,7 @@
         return;
       }
       settingsOpenValues = res.settings;
+      settingsNotifyOverrule = res.notifyOverrule !== false;
       settingsMsg.textContent = '';
       settingsMsg.classList.remove('staxx-settings-msg--bad');
       // PLAN_113: one pane per tab rather than one long scroll. Each row
@@ -29930,6 +30092,7 @@
       settingsLockTakeover();
       settingsLockTiming();
       settingsLockQuietTimes();
+      notifyRefresh();
       SETTINGS_ROWS.forEach(function (row) {
         if (row.control === 'list') settingsListDraw(document.getElementById(row.id));
       });
@@ -30081,6 +30244,21 @@
       });
     });
 
+    // The Notifications field's own boxes and ticks write into the hidden
+    // values behind them (settingsUpdateDirty has already run by now, so it is
+    // called again once they are written).
+    settingsBody.addEventListener('change', function (event) {
+      var el = event.target;
+      if (!el || !el.dataset) return;
+      if (el.dataset.nfCheck) notifyPut(el.dataset.nfCheck, el.checked ? 'true' : 'false');
+      else if (el.dataset.nfIn) {
+        // A cleared time box keeps the last good time rather than posting nothing.
+        if (el.value !== '' || el.tagName === 'SELECT') notifyPut(el.dataset.nfIn, el.value);
+      } else return;
+      notifyRefresh();
+      settingsUpdateDirty();
+    });
+
     settingsBody.addEventListener('change', function (event) {
       if (event.target && event.target.id === 'staxx-setting-header-menu') settingsLockTakeover();
       if (event.target && event.target.name === 'staxx-setting-update-mode') settingsLockTiming();
@@ -30100,6 +30278,10 @@
     });
 
     settingsBody.addEventListener('click', function (event) {
+      var nfBtn = event.target.closest('[data-nf]');
+      if (nfBtn) { notifyPress(nfBtn.dataset.nf, nfBtn.dataset.v); return; }
+      var nfTest = event.target.closest('[data-nf-test]');
+      if (nfTest) { notifyTest(nfTest); return; }
       var listAdd = event.target.closest('[data-list-add]');
       if (listAdd) { settingsListAdd(listAdd); return; }
       var listRemove = event.target.closest('[data-list-remove]');

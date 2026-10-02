@@ -31,6 +31,8 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 // includes only this file directly for the cron passes, so it has to be
 // named here too or staxx_folder_layout() is simply undefined there.
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
+// staxx_update_notify() below is the low-level call; Notify.php decides what is said and when.
+require_once '/usr/local/emhttp/plugins/staxx/include/Notify.php';
 
 if (defined('STAXX_UPDATERUN_LOADED')) return;
 define('STAXX_UPDATERUN_LOADED', true);
@@ -470,12 +472,12 @@ define('STAXX_PINNED_WALK_INTERVAL', 86400);
  *  - 'pinnedNoticeAt' gates SENDING (STAXX_PINNED_NOTICE_INTERVAL, a week),
  *    exactly as before; it only moves when a send decision is actually made.
  *
- * One message for every pinned, opted-in service at once, never one each —
- * see staxx_update_notify()'s own docblock for why a flood of per-container
- * notices is worse than no notice. Nothing is sent, but 'pinnedNoticeAt'
- * still moves on, when there is nothing to report on a week that is due; an
- * empty week must cost one walk, not repeat the walk every 15 minutes until
- * something changes.
+ * When the week is due, every pinned, opted-in service goes to
+ * staxx_notify_pinned_due() as one list of 'pinned' events; the summary
+ * (Notify.php) carries it, so this pass sends no message of its own.
+ * Nothing is handed over, but 'pinnedNoticeAt' still moves on, when there is
+ * nothing to report on a week that is due; an empty week must cost one walk,
+ * not repeat the walk every 15 minutes until something changes.
  *
  * The very first walk this ever runs — 'pinnedNoticeAt' still unset, a fresh
  * install or the first pass after this feature shipped — records every
@@ -520,7 +522,7 @@ function staxx_update_pinned_reminder_pass(): void {
   $global = staxx_update_settings();
   $images = (array)($state['images'] ?? []);
   $stillPinned = [];
-  $lines = [];
+  $pinnedEvents = [];
 
   foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
@@ -544,18 +546,8 @@ function staxx_update_pinned_reminder_pass(): void {
       if ($since === 0) { $since = $now; $entry['pinnedSince'] = $since; }
       $images[$image] = $entry;
 
-      // The tag before the '@' is the name a person recognises; a digest is
-      // only ever shown short, the first twelve hex characters, the same
-      // slice staxx_pin_version() shows in the row itself.
-      $repoTag = substr($image, 0, $at);
-      $slash = strrpos($repoTag, '/');
-      $colon = strrpos($repoTag, ':');
-      $tag = ($colon !== false && ($slash === false || $colon > $slash))
-        ? substr($repoTag, $colon + 1) : substr($image, $at + 8, 12);
-      $short = substr($image, $at + 8, 12);
-
-      $lines[] = $stack['name'].' / '.$svc.' is pinned to '.$tag.' ('.$short.') since '
-               . date('Y-m-d', $since).'.';
+      $pinnedEvents[] = ['kind' => 'pinned', 'stack' => $stack['name'], 'service' => (string)$svc,
+                         'image' => $image, 'at' => $since];
     }
   }
 
@@ -598,12 +590,9 @@ function staxx_update_pinned_reminder_pass(): void {
   }
   $images = $freshImages;
 
-  if ($sendDue && $lines) {
-    $n = count($lines);
-    $subject = $n === 1 ? 'StaXX: 1 container still pinned' : 'StaXX: containers still pinned';
-    $body = implode("\n", $lines)."\nPick a tag from its update choices to release it.";
-    staxx_update_notify($subject, $body);
-  }
+  // The weekly reminder rides in the summary (Notify.php) rather than being a
+  // message of its own; the clocks below are unchanged.
+  if ($sendDue && $pinnedEvents) staxx_notify_pinned_due($pinnedEvents);
 
   $toSave = ['images' => $images, 'pinnedWalkAt' => $now];
   if ($sendDue || $firstRun) $toSave['pinnedNoticeAt'] = $now;
@@ -1526,6 +1515,9 @@ function staxx_update_queue_tick(): array {
         $item['state'] = 'failed';
         $item['error'] = 'The update job\'s log is gone, so its outcome could not be recorded. '
                        . 'Check the stack directly.';
+        if (empty($item['reason'])) {
+          $item['reason'] = staxx_update_failure_reason('', staxx_update_stack_image((string)($item['stack'] ?? '')));
+        }
       } elseif ($log['exit'] === 0) {
         $item['state'] = 'done';
         // The queue has no browser to prompt a refresh, so without this the
@@ -1538,6 +1530,11 @@ function staxx_update_queue_tick(): array {
       } else {
         $item['state'] = 'failed';
         $item['error'] = 'The update failed. Open the log for details.';
+        // The log is pruned within the hour, so the plain-words reason is read
+        // now and kept on the item for the message and the summary.
+        if (empty($item['reason'])) {
+          $item['reason'] = staxx_update_failure_reason((string)$log['text'], staxx_update_stack_image((string)($item['stack'] ?? '')));
+        }
       }
       $changed = true;
     }
@@ -1573,6 +1570,7 @@ function staxx_update_queue_tick(): array {
       if ($job === '') {
         $item['state'] = 'failed';
         $item['error'] = $jobError !== '' ? $jobError : 'Could not start the update.';
+        $item['reason'] = $item['error'];
       } else {
         $item['state'] = 'running';
         $item['job']   = $job;
@@ -1583,15 +1581,15 @@ function staxx_update_queue_tick(): array {
     unset($item);
   }
 
-  // Every item finished, one way or another — up to two messages for the
-  // whole pass, never one per stack, and only once per queue. Two separate
-  // messages rather than one combining both, because 'installed' and
-  // 'failed' are independent events: someone who wants to hear about a
-  // failure but not a success must still hear the one that broke, and the
-  // other way round. Each message only ever describes its own subject.
+  // Every item finished, one way or another — the whole pass hands its
+  // finished items to staxx_notify_events() in ONE call, never one per stack,
+  // and only once per queue. Notify.php decides what is said and whether it
+  // goes now or waits for the summary; 'installed' and 'failed' stay
+  // independent switches, so someone who wants the failure but not the
+  // success still hears the one that broke.
   //
-  // PLAN_154 — there is no longer a global gate here before even asking:
-  // staxx_update_queue_notify_names() already resolves each stack's own
+  // PLAN_154 — there is no global gate here before even asking:
+  // staxx_update_queue_notify_names() resolves each stack's own
   // 'installed'/'failed' want per container, following the server's switch
   // for whichever event a container leaves unset, so a container that
   // overrides the server's switch upward is not silenced by it.
@@ -1602,25 +1600,11 @@ function staxx_update_queue_tick(): array {
   if ($terminal && $changed && empty($queue['notified'])) {
     $settings    = staxx_update_settings();
     $names       = staxx_update_queue_notify_names($items, $settings);
-    $doneNames   = $names['done'];
-    $failedNames = $names['failed'];
-
-    if ($doneNames !== []) {
-      staxx_update_notify(
-        'StaXX image updates applied',
-        staxx_update_name_or_count($doneNames, 'stack updated', 'stacks updated').'.'
-      );
-    }
     // A failed pull and a container that will not come back up both land
     // here as 'failed' — the job's own exit code does not say which, so
-    // neither does this message; see the 'failed' state set above.
-    if ($failedNames !== []) {
-      staxx_update_notify(
-        'StaXX update failed',
-        staxx_update_name_or_count($failedNames, 'stack failed to update', 'stacks failed to update')
-          . '. Open the job log to see why.'
-      );
-    }
+    // neither does the message; see the 'failed' state set above.
+    $events = staxx_update_queue_events($items, $names, $settings);
+    if ($events !== []) staxx_notify_events($events);
     // Set once the terminal state has been looked at, whether or not
     // anything wanted a message — otherwise a queue left idle would
     // re-evaluate this block on every tick for no reason, and a setting
@@ -1660,10 +1644,14 @@ function staxx_update_queue_stop(): bool {
  *
  * The pinned-service reminder (PLAN_205) rides along on this same pass,
  * first — it is its own weekly interval and never touches the queue, so it
- * runs whether or not anything else here is due.
+ * runs whether or not anything else here is due. The summary is sent
+ * straight after it, when due (staxx_notify_digest_pass()).
  */
 function staxx_update_apply_pass(): array {
   staxx_update_pinned_reminder_pass();
+  // The daily or weekly summary, when it is due: it carries the pinned list the
+  // pass above just marked, so it runs second.
+  staxx_notify_digest_pass();
 
   // Held only across the read-check-write below, never across a call to
   // staxx_update_queue_tick() — that function takes this same lock itself,
@@ -1729,15 +1717,21 @@ function staxx_update_apply_pass(): array {
  * sent by pointing this at a throwaway stub instead of Unraid's real
  * notifier, never by sending a real notification from this box.
  */
-function staxx_update_notify(string $subject, string $body): void {
+function staxx_update_notify(string $subject, string $body, string $message = '', string $link = '',
+                             string $importance = 'normal'): void {
   $bin = getenv('STAXX_NOTIFY_BIN');
   $bin = ($bin !== false && $bin !== '') ? $bin : '/usr/local/emhttp/webGui/scripts/notify';
+  // $importance may carry Unraid's delivery bits after a space ("warning 5"),
+  // which override the user's own for this one message; anything else is normal.
+  if (!preg_match('/^(normal|warning|alert)( [0-7])?$/', $importance)) $importance = 'normal';
   staxx_sh(
     $bin
       .' -e '.escapeshellarg('StaXX')
       .' -s '.escapeshellarg($subject)
       .' -d '.escapeshellarg($body)
-      .' -i '.escapeshellarg('normal'),
+      .($message !== '' ? ' -m '.escapeshellarg($message) : '')
+      .($link !== '' ? ' -l '.escapeshellarg($link) : '')
+      .' -i '.escapeshellarg($importance),
     10
   );
 }
@@ -1806,7 +1800,25 @@ function staxx_update_stack_wants_notify(string $event, array $meta, array $glob
  * @return string[] container labels, de-duplicated
  */
 function staxx_update_found_containers(array $images, array $refs, array $stackFiles, array $global): array {
-  $wanted    = [];
+  $wanted = [];
+  foreach (staxx_update_found_events($images, $refs, $stackFiles, $global) as $e) {
+    $wanted[] = staxx_update_container_label($e['stack'], $e['service']);
+  }
+  return array_values(array_unique($wanted));
+}
+
+/**
+ * One 'found' event per container that has an update waiting and whose own
+ * resolved say is yes — the filter staxx_update_found_containers() names its
+ * labels from, with what the message needs: the running and waiting
+ * versions, both digests and the waiting version's release notes (only the
+ * keys the check stored; Notify.php ignores notes whose notesFor is another
+ * version).
+ *
+ * @return array[] events for staxx_notify_events()
+ */
+function staxx_update_found_events(array $images, array $refs, array $stackFiles, array $global): array {
+  $events    = [];
   $metaCache = [];
 
   foreach (array_keys($images) as $img) {
@@ -1827,11 +1839,18 @@ function staxx_update_found_containers(array $images, array $refs, array $stackF
       $meta  = $metaCache[$refStack];
       $wants = $meta['ok'] ? (staxx_update_policy_from_meta($meta, $refSvc, $global)['notifyFound'] ?? $global['notifyFound'])
                            : $global['notifyFound'];
-      if ($wants) $wanted[] = staxx_update_container_label($refStack, $refSvc);
+      if (!$wants) continue;
+
+      $e = (array)$images[$img];
+      $event = ['kind' => 'found', 'stack' => $refStack, 'service' => $refSvc, 'image' => (string)$img,
+                'was' => (string)($e['was'] ?? ''), 'version' => (string)($e['version'] ?? ''),
+                'digest' => (string)($e['remote'] ?? ''), 'wasDigest' => (string)($e['local'] ?? '')];
+      foreach (['notes', 'notesUrl', 'notesCut', 'notesFor'] as $k) if (isset($e[$k])) $event[$k] = $e[$k];
+      $events[] = $event;
     }
   }
 
-  return array_values(array_unique($wanted));
+  return $events;
 }
 
 /**
@@ -1875,6 +1894,104 @@ function staxx_update_queue_notify_names(array $items, array $global): array {
   }
 
   return ['done' => $doneNames, 'failed' => $failedNames];
+}
+
+/** The first service's image in a stack, or '' — what a failure message names the registry from. */
+function staxx_update_stack_image(string $stack): string {
+  $file = staxx_update_stack_files()[$stack] ?? '';
+  $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+  if (!$meta['ok']) return '';
+  foreach ((array)$meta['services'] as $svcMeta) {
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image !== '') return $image;
+  }
+  return '';
+}
+
+/**
+ * An image's size on disk in bytes, from one local `docker image inspect`
+ * (8 s at most, no registry request); 0 when it cannot be read, which the
+ * message treats as "leave the size out". STAXX_DOCKER_BIN lets a suite
+ * stand in for docker.
+ */
+function staxx_update_image_size(string $image): int {
+  if ($image === '') return 0;
+  $bin = getenv('STAXX_DOCKER_BIN');
+  $bin = ($bin !== false && $bin !== '') ? $bin : staxx_docker_bin();
+  $code = 1;
+  $out = trim(staxx_sh($bin.' image inspect --format '.escapeshellarg('{{.Size}}').' '.escapeshellarg($image), 8, $code));
+  return ($code === 0 && ctype_digit($out)) ? (int)$out : 0;
+}
+
+/**
+ * The events for a finished queue, as staxx_notify_events() takes them: one
+ * 'installed' event per updated service and one 'failed' event per failed
+ * stack, only for the stacks staxx_update_queue_notify_names() ($names) let
+ * through. Versions, digests and notes come from what the check already
+ * stored (updates.json) and from the stack's image history, whose newest
+ * entry is the build that was replaced; nothing is fetched here beyond the
+ * one local size read per installed service.
+ *
+ * @param array $items the queue's items
+ * @param array $names staxx_update_queue_notify_names()'s return
+ * @param array $global staxx_update_settings()'s return
+ * @return array[]
+ */
+function staxx_update_queue_events(array $items, array $names, array $global): array {
+  $stackFiles = staxx_update_stack_files();
+  $images     = (array)(staxx_update_state()['images'] ?? []);
+  $events     = [];
+
+  foreach ($items as $item) {
+    $state = $item['state'] ?? '';
+    $stack = (string)($item['stack'] ?? '');
+    if ($state !== 'done' && $state !== 'failed') continue;
+    if (!in_array($stack, $state === 'done' ? $names['done'] : $names['failed'], true)) continue;
+
+    $file = $stackFiles[$stack] ?? '';
+    $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+    $services = $meta['ok'] ? (array)$meta['services'] : [];
+
+    if ($state === 'failed') {
+      $first = '';
+      foreach ($services as $svcMeta) {
+        $first = trim((string)($svcMeta['image'] ?? ''));
+        if ($first !== '') break;
+      }
+      $events[] = ['kind' => 'failed', 'stack' => $stack, 'service' => '', 'image' => $first,
+                   'reason' => (string)($item['reason'] ?? '')];
+      continue;
+    }
+
+    $before = count($events);
+    foreach ($services as $svc => $svcMeta) {
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      if ($image === '') continue;
+      if (!(staxx_update_policy_from_meta($meta, $svc, $global)['notifyInstalled'] ?? $global['notifyInstalled'])) continue;
+
+      $entry = (array)($images[$image] ?? []);
+      $prev  = (array)(staxx_image_history($stack, (string)$svc)[0] ?? []);
+      if ($entry === [] && $prev === []) continue;
+
+      $wasDigest = (string)($prev['digest'] ?? '');
+      $digest    = (string)(($entry['local'] ?? '') !== '' ? $entry['local'] : ($entry['remote'] ?? ''));
+      if ($wasDigest !== '' && $wasDigest === $digest) continue; // this service did not change
+
+      $event = ['kind' => 'installed', 'stack' => $stack, 'service' => (string)$svc, 'image' => $image,
+                'was' => (string)(($prev['version'] ?? '') !== '' ? $prev['version'] : ($entry['was'] ?? '')),
+                'version' => (string)($entry['version'] ?? ''), 'digest' => $digest, 'wasDigest' => $wasDigest];
+      foreach (['notes', 'notesUrl', 'notesCut', 'notesFor'] as $k) if (isset($entry[$k])) $event[$k] = $entry[$k];
+      $size = staxx_update_image_size($image);
+      if ($size > 0) $event['size'] = $size;
+      $events[] = $event;
+    }
+    // Nothing singled out (no versions or history known): still say the stack updated.
+    if (count($events) === $before) {
+      $events[] = ['kind' => 'installed', 'stack' => $stack, 'service' => '', 'image' => ''];
+    }
+  }
+
+  return $events;
 }
 
 /* ------------------------------------------------------------ locally built -- */

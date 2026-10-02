@@ -45,6 +45,10 @@ foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT',
           'UPDATE_WINDOW', 'UPDATE_WINDOW_START', 'UPDATE_WINDOW_END',
           'UPDATE_NOTIFY_FOUND', 'UPDATE_NOTIFY_INSTALLED', 'UPDATE_NOTIFY_FAILED',
           'UPDATE_RETAIN', 'UPDATE_KEEP_IMAGES',
+          'UPDATE_NOTIFY_PINNED', 'UPDATE_NOTIFY_FOUND_WHEN', 'UPDATE_NOTIFY_INSTALLED_WHEN',
+          'UPDATE_NOTIFY_FAILED_WHEN', 'UPDATE_DIGEST_EVERY', 'UPDATE_DIGEST_DAY',
+          'UPDATE_DIGEST_TIME', 'UPDATE_NOTIFY_NOTES', 'UPDATE_NOTIFY_ICONS', 'UPDATE_QUIET',
+          'UPDATE_QUIET_START', 'UPDATE_QUIET_END', 'UPDATE_NOTIFY_HTML',
           'STORAGE_ALERT_PERCENT', 'STORAGE_ALERT_DAYS'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
@@ -118,6 +122,56 @@ foreach (['UPDATE_NOTIFY_FOUND', 'UPDATE_NOTIFY_INSTALLED', 'UPDATE_NOTIFY_FAILE
   $v = staxx_settings_validate($k, $keys[$k], 'maybe', $err);
   ok('rejects '.$k.' "maybe"', $v === '' && $err !== '', $err);
 }
+
+// PLAN_214 — the summary and message-content keys. Every choice validates,
+// anything else is refused, and the two clock keys use the time type.
+$notifyChoices = [
+  'UPDATE_NOTIFY_FOUND_WHEN'     => ['now', 'summary'],
+  'UPDATE_NOTIFY_INSTALLED_WHEN' => ['now', 'summary'],
+  'UPDATE_NOTIFY_FAILED_WHEN'    => ['now', 'summary'],
+  'UPDATE_DIGEST_EVERY'          => ['day', 'week'],
+  'UPDATE_DIGEST_DAY'            => ['0', '1', '2', '3', '4', '5', '6'],
+  'UPDATE_NOTIFY_NOTES'          => ['lines', 'link', 'none'],
+  'UPDATE_NOTIFY_ICONS'          => ['true', 'false'],
+  'UPDATE_QUIET'                 => ['true', 'false'],
+  'UPDATE_NOTIFY_HTML'           => ['true', 'false'],
+  'UPDATE_NOTIFY_PINNED'         => ['true', 'false'],
+];
+foreach ($notifyChoices as $k => $goods) {
+  foreach ($goods as $good) {
+    $err = '';
+    $v = staxx_settings_validate($k, $keys[$k], $good, $err);
+    ok('accepts '.$k.' '.var_export($good, true), $v === $good, $err);
+  }
+  $err = '';
+  $v = staxx_settings_validate($k, $keys[$k], 'sometimes', $err);
+  ok('rejects '.$k.' "sometimes"', $v === '' && $err !== '', $err);
+}
+$err = '';
+$v = staxx_settings_validate('UPDATE_DIGEST_DAY', $keys['UPDATE_DIGEST_DAY'], '7', $err);
+ok('rejects UPDATE_DIGEST_DAY "7"', $v === '' && $err !== '', $err);
+
+foreach (['UPDATE_DIGEST_TIME', 'UPDATE_QUIET_START', 'UPDATE_QUIET_END'] as $k) {
+  ok($k.' uses the time type', ($keys[$k]['type'] ?? '') === 'time');
+  foreach (['00:00', '08:00', '23:59'] as $good) {
+    $err = '';
+    $v = staxx_settings_validate($k, $keys[$k], $good, $err);
+    ok('accepts '.$k.' '.$good, $v === $good, $err);
+  }
+  foreach (['24:00', '7:00', '07:60', '0700', '07:00 ', ''] as $bad) {
+    $err = '';
+    $v = staxx_settings_validate($k, $keys[$k], $bad, $err);
+    ok('rejects '.$k.' '.var_export($bad, true), $v === '' && $err !== '', $err);
+  }
+}
+
+// The shipped defaults the plan fixes: installed messages wait for the
+// summary, failures go at once, quiet hours start off.
+ok('UPDATE_NOTIFY_INSTALLED_WHEN defaults to summary', $keys['UPDATE_NOTIFY_INSTALLED_WHEN']['default'] === 'summary');
+ok('UPDATE_NOTIFY_FAILED_WHEN defaults to now', $keys['UPDATE_NOTIFY_FAILED_WHEN']['default'] === 'now');
+ok('UPDATE_QUIET defaults to false', $keys['UPDATE_QUIET']['default'] === 'false');
+ok('UPDATE_QUIET window defaults to 22:00-07:00',
+   $keys['UPDATE_QUIET_START']['default'] === '22:00' && $keys['UPDATE_QUIET_END']['default'] === '07:00');
 
 // A good root under a real share whose parent exists. Deliberately NOT
 // directly under /mnt any more, which this case used to use: /mnt is a tmpfs
@@ -528,6 +582,44 @@ EOT;
 [$out1, $code1] = staxx_test_child($flashIni1, $child1);
 if (trim($out1) !== '') echo $out1;
 ok('Phase 4 child 1 (reachable store: layering, filtering, save split, store-move refusal)', $code1 === 0);
+
+// Child 2b — PLAN_214 Ruling 16: a store that already had installed messages
+// on and never saved a _WHEN reads 'now'; a store with neither, or with its
+// own _WHEN, keeps what the shipped default or the store says.
+$storeDir3 = '/tmp/zzb1-settings-child3-'.getmypid();
+@exec('rm -rf '.escapeshellarg($storeDir3));
+mkdir($storeDir3.'/config', 0755, true);
+file_put_contents($storeDir3.'/config/staxx.cfg', 'UPDATE_NOTIFY_INSTALLED="true"'."\n");
+register_shutdown_function(function () use ($storeDir3) {
+  @exec('rm -rf '.escapeshellarg($storeDir3));
+});
+$child3 = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+$c = staxx_cfg();
+if (($c['UPDATE_NOTIFY_INSTALLED_WHEN'] ?? '') !== 'now') { echo "FAIL child: installed=true with no _WHEN should read now\n"; exit(1); }
+if (($c['UPDATE_NOTIFY_FAILED_WHEN'] ?? '') !== 'now') { echo "FAIL child: the other defaults are untouched\n"; exit(1); }
+exit(0);
+EOT;
+[$out3, $code3] = staxx_test_child('STORE_ROOT="'.$storeDir3.'"'."\n", $child3);
+if (trim($out3) !== '') echo $out3;
+ok('Ruling 16: UPDATE_NOTIFY_INSTALLED="true" with no _WHEN reads now', $code3 === 0);
+
+file_put_contents($storeDir3.'/config/staxx.cfg',
+  'UPDATE_NOTIFY_INSTALLED="true"'."\n".'UPDATE_NOTIFY_INSTALLED_WHEN="summary"'."\n");
+$child3b = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+exit((staxx_cfg()['UPDATE_NOTIFY_INSTALLED_WHEN'] ?? '') === 'summary' ? 0 : 1);
+EOT;
+[$out3b, $code3b] = staxx_test_child('STORE_ROOT="'.$storeDir3.'"'."\n", $child3b);
+ok('Ruling 16: a saved _WHEN is left as the store wrote it', $code3b === 0, trim($out3b));
+
+file_put_contents($storeDir3.'/config/staxx.cfg', 'UPDATE_NOTIFY_INSTALLED="false"'."\n");
+$child3c = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+exit((staxx_cfg()['UPDATE_NOTIFY_INSTALLED_WHEN'] ?? '') === 'summary' ? 0 : 1);
+EOT;
+[$out3c, $code3c] = staxx_test_child('STORE_ROOT="'.$storeDir3.'"'."\n", $child3c);
+ok('Ruling 16: installed switched off keeps the shipped summary default', $code3c === 0, trim($out3c));
 
 // Child 2 — a store that is chosen but NOT reachable (the folder was never
 // created): the degraded state, the refusal with nothing written, the

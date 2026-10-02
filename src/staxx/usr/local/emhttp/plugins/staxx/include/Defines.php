@@ -268,7 +268,17 @@ function staxx_cfg(): array {
     $store = @parse_ini_file($storeRoot.'/config/'.STAXX_PLUGIN.'.cfg', false, INI_SCANNER_RAW) ?: [];
   }
 
-  return $cfg = array_merge($defaults, $store, $flash);
+  $cfg = array_merge($defaults, $store, $flash);
+
+  // PLAN_214 Ruling 16: a store that already chose installed messages and has
+  // never saved a _WHEN keeps them straight away; only new installs get the
+  // summary. Read from the store's own file, since the merge above has
+  // already filled the key from default.cfg.
+  if (trim((string)($store['UPDATE_NOTIFY_INSTALLED'] ?? '')) === 'true'
+      && !array_key_exists('UPDATE_NOTIFY_INSTALLED_WHEN', $store)) {
+    $cfg['UPDATE_NOTIFY_INSTALLED_WHEN'] = 'now';
+  }
+  return $cfg;
 }
 
 function staxx_cfg_bool(string $key): bool {

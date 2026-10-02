@@ -2923,7 +2923,21 @@ switch ($action) {
 
   // ---- the panel's current values ----
   case 'settings':
-    staxx_reply(['ok' => true, 'settings' => staxx_settings_read()]);
+    // notifyOverrule: whether this Unraid's notify script can leave the email
+    // out of one message, which the HTML email depends on (PLAN_214). The page
+    // only needs it to say plain text will be sent when it cannot.
+    $notifyFile = '/usr/local/emhttp/plugins/staxx/include/Notify.php';
+    if (is_file($notifyFile)) require_once $notifyFile;
+    staxx_reply(['ok' => true, 'settings' => staxx_settings_read(),
+                 'notifyOverrule' => function_exists('staxx_notify_overrule_ok') ? staxx_notify_overrule_ok() : true]);
+
+  // PLAN_214 — the Updates tab's "Send a test message" button. Sends through
+  // the normal route with the saved settings; staxx_notify_test() answers
+  // ['ok' => bool, 'message' => string].
+  case 'notify-test':
+    require_once '/usr/local/emhttp/plugins/staxx/include/Notify.php';
+    $r = staxx_notify_test();
+    staxx_reply(['ok' => !empty($r['ok']), 'message' => (string)($r['message'] ?? '')]);
 
   // PLAN_112 Phase B — the spend ledger's own readout, drawn as a static
   // block in the settings panel and readable by anything else that wants

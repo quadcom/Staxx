@@ -11,9 +11,10 @@
  * but sends nothing; a second call inside a day does nothing at all, not
  * even touch pinnedSince; a walk after a day keeps or drops pinnedSince as
  * the pin is kept or released, but still sends nothing before a week has
- * passed; a send once the week is up, naming every opted-in pinned service
- * and leaving out an unpinned one and one whose own
- * x-unraid.update.notify.pinned is false; and an 'images' entry written by
+ * passed; once the week is up, the reminder handed to the summary (the digest
+ * file) as one 'pinned' event per opted-in pinned service, leaving out an
+ * unpinned one and one whose own x-unraid.update.notify.pinned is false, and
+ * no message of its own; and an 'images' entry written by
  * something else in the gap between this pass's slow walk and its own save
  * survives.
  *
@@ -34,8 +35,9 @@
  * Never sends a real notification: STAXX_NOTIFY_BIN — the override
  * staxx_update_notify() gained for exactly this — is pointed at a throwaway
  * stub script that logs its own arguments to a scratch file instead of
- * calling Unraid's real notifier, so staxx_update_notify() runs for real and
- * nothing ever reaches this box's notification centre.
+ * calling Unraid's real notifier, and STAXX_NOTIFY_DIGEST points the summary's
+ * file under /tmp, so nothing ever reaches this box's notification centre or
+ * its store.
  *
  * The concurrent-write test needs no seam in the plugin itself: it primes
  * this process's own state cache with an aged snapshot via
@@ -60,6 +62,9 @@
 $scratch    = '/tmp/staxx-pinned-reminder-test.json';
 $notifyLog  = '/tmp/staxx-pinned-reminder-notify.log';
 $stubPath   = '/tmp/staxx-pinned-reminder-notify-stub.sh';
+$digestPath = '/tmp/staxx-pinned-reminder-digest.json';
+@unlink($digestPath);
+putenv('STAXX_NOTIFY_DIGEST='.$digestPath);
 @unlink($scratch);
 @unlink($notifyLog);
 @unlink($stubPath);
@@ -72,7 +77,8 @@ putenv('STAXX_NOTIFY_BIN='.$stubPath);
 file_put_contents($stubPath, "#!/bin/sh\nprintf '%s\\0' \"\$@\" > ".escapeshellarg($notifyLog)."\n");
 chmod($stubPath, 0755);
 
-register_shutdown_function(function () use ($scratch, $notifyLog, $stubPath) {
+register_shutdown_function(function () use ($scratch, $notifyLog, $stubPath, $digestPath) {
+  @unlink($digestPath);
   @unlink($scratch);
   @unlink($notifyLog);
   @unlink($stubPath);
@@ -109,7 +115,8 @@ $day  = 86400;               // STAXX_PINNED_WALK_INTERVAL
 $week = 7 * 86400;           // STAXX_PINNED_NOTICE_INTERVAL
 
 function pr_wipe(): void {
-  global $root, $scratch, $notifyLog;
+  global $root, $scratch, $notifyLog, $digestPath;
+  @unlink($digestPath);
   @exec('rm -rf '.escapeshellarg($root));
   mkdir($root, 0755, true);
   @unlink($scratch);
@@ -147,6 +154,13 @@ function pr_read_notify(): ?array {
     if ($p === '-d') $body = $parts[$i + 1] ?? '';
   }
   return ['subject' => $subject, 'body' => $body];
+}
+
+/** The summary's file as the reminder left it, or [] when nothing was written. */
+function pr_read_digest(): array {
+  global $digestPath;
+  $d = json_decode((string)@file_get_contents($digestPath), true);
+  return is_array($d) ? $d : [];
 }
 
 pr_wipe();
@@ -244,10 +258,10 @@ ok('pinnedSince is dropped once the pin is released',
 ok('releasing a pin sends nothing on its own', !is_file($notifyLog));
 
 /* ======================================================================= *
- * 5. Once the week is up (and a day has passed for the walk too), one
- *    message goes out naming every opted-in pinned service still in place
- *    and leaving out the released one, the opted-out one, and the never-
- *    pinned one.
+ * 5. Once the week is up (and a day has passed for the walk too), the list of
+ *    opted-in pinned services still in place goes to the summary's file,
+ *    leaving out the released one, the opted-out one, and the never-pinned
+ *    one. No message is sent by the pass itself.
  * ======================================================================= */
 staxx_update_state_save([
   'pinnedWalkAt'   => time() - ($day + 5),
@@ -256,25 +270,21 @@ staxx_update_state_save([
 @unlink($notifyLog);
 staxx_update_pinned_reminder_pass();
 
-$sent = pr_read_notify();
-ok('a send happens once the week has passed', $sent !== null);
-if ($sent !== null) {
-  ok('subject names the pinned container',
-     $sent['subject'] === 'StaXX: 1 container still pinned', $sent['subject']);
-  ok('body lists the cache service pinned line',
-     strpos($sent['body'], 'zzprpinned2 / cache is pinned to 7.7.7 ('.substr(dg('pr-cache'), 0, 12).') since') !== false,
-     $sent['body']);
-  ok('body leaves out the released web service',
-     strpos($sent['body'], 'web is pinned') === false, $sent['body']);
-  ok('body leaves out the service whose own notify.pinned is false',
-     strpos($sent['body'], 'db is pinned') === false, $sent['body']);
-  ok('body leaves out the unpinned service entirely',
-     strpos($sent['body'], 'app') === false, $sent['body']);
-  $hint = 'Pick a tag from its update choices to release it.';
-  ok('body ends with the release hint',
-     substr(rtrim($sent['body']), -strlen($hint)) === $hint,
-     $sent['body']);
-}
+ok('the reminder sends no message of its own', !is_file($notifyLog));
+$digest = pr_read_digest();
+$pinned = (array)($digest['pinned'] ?? []);
+ok('the reminder is handed to the summary, marked due',
+   !empty($digest['pinnedDue']) && count($pinned) === 1, json_encode($digest));
+$only = $pinned[0] ?? [];
+ok('the handed-over event is a pinned one for the cache service',
+   ($only['kind'] ?? '') === 'pinned' && ($only['stack'] ?? '') === 'zzprpinned2'
+   && ($only['service'] ?? '') === 'cache' && ($only['image'] ?? '') === $cacheImage, json_encode($only));
+ok('the event carries when the pin began',
+   (int)($only['at'] ?? 0) === (int)(staxx_update_state()['images'][$cacheImage]['pinnedSince'] ?? -1));
+$handed = json_encode($pinned);
+ok('the released, opted-out and never-pinned services are left out',
+   strpos($handed, 'zzprunpinned') === false && strpos($handed, '"db"') === false
+   && strpos($handed, '"web"') === false, $handed);
 $state = staxx_update_state();
 // Same second-granularity caveat as the walk clock above: this whole suite
 // can run inside one wall-clock second, so equal to the aged value this
