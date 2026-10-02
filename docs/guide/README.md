@@ -81,7 +81,8 @@ This guide is written in English only.
 - **[General tab](settings-general.md)** — where StaXX appears, installing apps, and switching
   container shells and file browsing on or off.
 - **[Storage tab](settings-storage.md)** — the Storage tab: the data store, moving it, checking your
-  backup, flash-drive copies, image clean-up and archived stacks.
+  backup, flash-drive copies, image clean-up, what Unraid Docker and Compose Manager left behind,
+  and archived stacks.
 - **[Icons and images tab](settings-icons-and-images.md)** — the Icons and images tab: container
   icons, reading an image's documentation and StaXX fields.
 - **[Updates tab](settings-updates.md)** — the Updates tab: the check schedule, the default action,

@@ -1,6 +1,6 @@
 # Storage tab
 
-<!-- index: 82 | the Storage tab: the data store, moving it, checking your backup, flash-drive copies, image clean-up and archived stacks. -->
+<!-- index: 82 | the Storage tab: the data store, moving it, checking your backup, flash-drive copies, image clean-up, what Unraid Docker and Compose Manager left behind, and archived stacks. -->
 
 The **Storage** tab, in [the settings panel](settings.md), holds where your stacks are kept, the
 copies StaXX keeps for safety, and the tools for clearing out old images.
@@ -70,6 +70,44 @@ up, whether it ever ran, its image, its data folder, its network address and its
 Confirm to remove it. Its data folder and its Unraid template stay where they are.
 
 ![The confirmation: Remove the broken container "old-database"?, saying its data folder and its Unraid template are kept, with Cancel and a red Remove container button](../images/guide/settings-scan-images-confirm.png)
+
+## Left behind by Unraid Docker and Compose Manager
+
+![The Left behind by Unraid Docker and Compose Manager box: plex-old and sonarr-test under Templates for apps that no longer exist, nextcloud under Apps still set up in Unraid's Docker tab, old-database with a red Damaged chip under Damaged apps, Compose Manager's settings folder with its size and two projects, plex-old and old-database ticked, and the Clear out 2 items button](../images/guide/settings-storage-leftovers.png)
+
+This box appears when apps you no longer run through Unraid have left settings files behind.
+
+1. Tick what you want gone.
+2. Press **Clear out**, which counts the items you ticked.
+3. Read the list of what will be removed, then press **Clear out** again.
+
+| Group | What is in it | Clearing it |
+|---|---|---|
+| Templates for apps that no longer exist | Unraid templates with no app behind them | Removes the template. |
+| Apps still set up in Unraid's Docker tab | Apps made the Unraid way that you no longer use | Stops the app if it is running, then removes it and its template. Its data folders stay. |
+| Damaged apps | Apps Docker can no longer read, marked **Damaged** in red | Tries to remove the app, and removes its template if it has one. |
+| Compose Manager's settings folder | Shown once the Compose Manager add-on is removed | Removes the folder. Bring any project that still has a container into StaXX first. |
+
+![The confirmation under the box: This removes:, then plex-old, the template, and old-database, the damaged app, a line saying a running app is stopped first and that templates and folders can be put back from Kept copies, and the Clear out and Cancel buttons](../images/guide/settings-storage-leftovers-confirm.png)
+
+If Docker will not remove a damaged app, StaXX offers to restart Docker and try again. Every container
+on the server stops for about a minute while it does. The ones set to start automatically come back on
+their own; any that will not are named first. Press **Restart Docker and try again**, or **Not now** to
+leave it.
+
+![Under the clear-out log, which says Docker would not remove the damaged app old-database: the offer saying restarting Docker usually lets old-database go, that every container stops for about a minute and the ones set to start automatically come back, that test-nginx will stay stopped until you start it, and the Restart Docker and try again and Not now buttons](../images/guide/settings-storage-leftovers-restart.png)
+
+Clearing an app can leave its image behind. **Scan stored images** clears it.
+
+### Kept copies
+
+StaXX keeps a copy of everything it clears, listed under **Kept copies**.
+
+- Press **Put back** to return a template or the settings folder. To use a returned template again,
+  make the app from Unraid's Docker tab with **Add Container**.
+- Press **Delete for good** to remove a copy. It cannot be put back afterwards.
+
+![Kept copies with one set dated 2026-10-02 10:15: the plex-old template and the compose.manager folder, each with a Put back button, and Delete for good under them](../images/guide/settings-storage-leftovers-kept.png)
 
 ## Archived stacks
 
