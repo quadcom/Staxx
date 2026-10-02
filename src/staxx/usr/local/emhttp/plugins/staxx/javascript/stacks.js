@@ -16478,7 +16478,7 @@
       importSummary.querySelectorAll('.staxx-import-reportbtn').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var f = failures[+btn.getAttribute('data-report')];
-          if (f && window.staxxFeedback) window.staxxFeedback.open({ title: 'Import failed: ' + f.tool, importLog: true });
+          if (f && window.staxxFeedback) window.staxxFeedback.open({ title: 'Import failed: ' + f.tool, kind: 'bug', importLog: true });
         });
       });
       importSummary.querySelectorAll('.staxx-import-fixbtn').forEach(function (btn) {

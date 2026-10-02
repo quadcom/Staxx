@@ -745,6 +745,7 @@
     if (formOpen) {
       if (minimised) setMinimised(false);
       if (opts && opts.title) titleIn.value = opts.title;
+      if (opts && opts.kind) setKind(opts.kind);
       return;
     }
     screenAtPress = screenName();
@@ -758,12 +759,14 @@
     if (formWin.parentNode !== target) { hidePop(formWin); target.appendChild(formWin); }
     showPop(formWin);
     if (opts && opts.title) titleIn.value = opts.title;
+    // A caller that knows what it is reporting picks the kind (a failed Import is a bug).
+    if (opts && opts.kind) setKind(opts.kind);
     titleIn.focus();
     loadDetails();
   }
 
   // The corner button: connect first if need be, then the form.
-  // opts ({title, importLog}) is optional; the corner button's click passes an
+  // opts ({title, kind, importLog}) is optional; the corner button's click passes an
   // event, which carries neither. The import item is offered and ticked on
   // every report anyway, so importLog needs nothing further.
   function onBugClick(opts) {
