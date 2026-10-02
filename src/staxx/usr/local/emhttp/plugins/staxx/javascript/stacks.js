@@ -21763,7 +21763,14 @@
     reapplyPendingChips();
   }
 
+  // PLAN_220: Settings → Storage can restart Docker with this page open. The
+  // list, state and stats questions cannot be answered meanwhile, and a failed
+  // one would raise an alert, so the flag leftovers.js sets silences them; the
+  // one refresh owed is paid on 'staxx:docker-quiet-end' (see refreshRows()).
+  function dockerQuiet() { return Date.now() < (window.staxxDockerQuietUntil || 0); }
+
   function refreshState() {
+    if (dockerQuiet()) return;
     // Two of these in flight at once would race, and the slower reply would
     // paint over the newer one. Run one at a time and remember if another was
     // asked for while it was out.
@@ -24200,7 +24207,20 @@
   var rowsBusy = false;
   var rowsAgainDones = null;   // null when nothing is queued, an array once something is
 
+  // Callers that wanted a refresh while Docker was restarting (PLAN_220) get
+  // their callback after the one refresh that follows the restart.
+  var quietDones = [];
+  window.addEventListener('staxx:docker-quiet-end', function () {
+    var waiting = quietDones;
+    quietDones = [];
+    refreshRows(function () { waiting.forEach(function (d) { d(); }); });
+  });
+
   function refreshRows(done) {
+    if (dockerQuiet()) {
+      if (done) quietDones.push(done);
+      return;
+    }
     if (rowsBusy) {
       if (!rowsAgainDones) rowsAgainDones = [];
       if (done) rowsAgainDones.push(done);
@@ -35700,6 +35720,7 @@
     // handler below, which is what keeps a long-hidden tab from looking
     // stale the moment it is shown again).
     if (document.hidden) return;
+    if (dockerQuiet()) return;
     // Nothing can be running, so there are no figures to collect — and the
     // two paths that ask without going through the 3s timer (returning from
     // idle, and returning to the tab) both reach here, so the guard belongs

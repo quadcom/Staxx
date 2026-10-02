@@ -5801,7 +5801,16 @@ function staxx_unraid_templates_mark_asked(): bool {
  * be put back (a removed container cannot; its template comes back and
  * Unraid's Docker tab makes it again). Templates for a container a StaXX
  * stack declares are not listed here — "Move them into StaXX" owns those.
+ *
+ * PLAN_220 — when Docker refuses to remove a damaged app, the page offers to
+ * restart Docker and try again (staxx_leftovers_restart_job()). The paths and
+ * the wait are constants a suite can define first, so tests/server/leftovers.php
+ * drives a stub instead of the real /etc/rc.d/rc.docker.
  */
+if (!defined('STAXX_RC_DOCKER'))   define('STAXX_RC_DOCKER', '/etc/rc.d/rc.docker');
+if (!defined('STAXX_DOCKERD_PID')) define('STAXX_DOCKERD_PID', '/var/run/dockerd.pid');
+if (!defined('STAXX_DOCKER_WAIT')) define('STAXX_DOCKER_WAIT', 120); // seconds to wait for `docker info` after the start
+if (!defined('STAXX_RESTART_LOCK')) define('STAXX_RESTART_LOCK', STAXX_JOB_DIR.'/docker-restart.lock');
 
 /** Sets in <archives>/leftovers are named by this shape and no other. */
 function staxx_leftovers_stamp_ok(string $stamp): bool {
@@ -5954,6 +5963,28 @@ function staxx_leftovers_damaged_parse(array $ids, string $out): array {
 }
 
 /**
+ * Names of the containers that are running now and will stay stopped after a
+ * Docker restart: rc.docker only starts what Unraid's start-up list names, so
+ * anything else that is running is not coming back by itself. A damaged app is
+ * left out: the restart is meant to remove it.
+ *
+ * @param array<int,array> $rows       a Docker read, as staxx_leftovers_containers() returns
+ * @param string[]         $listed     container names on the start-up list
+ * @param string[]         $damagedIds ids Docker cannot describe
+ * @return string[] sorted names
+ */
+function staxx_leftovers_stay_stopped(array $rows, array $listed, array $damagedIds): array {
+  $listed = array_flip($listed);
+  $bad    = array_flip($damagedIds);
+  $names  = [];
+  foreach ($rows as $r) {
+    if ($r['state'] === 'running' && !isset($listed[$r['name']]) && !isset($bad[$r['id']])) $names[] = $r['name'];
+  }
+  sort($names, SORT_NATURAL | SORT_FLAG_CASE);
+  return $names;
+}
+
+/**
  * What can be cleared right now, built fresh from the template folder and one
  * read of Docker ($rows is that read, $damaged the ids Docker cannot describe;
  * both injectable for the suite). A template's container carries `damaged`;
@@ -5961,13 +5992,20 @@ function staxx_leftovers_damaged_parse(array $ids, string $out): array {
  * `damaged` key. The reply shape is the contract with leftovers.js.
  */
 function staxx_leftovers(?array $rows = null, ?array $damaged = null): array {
-  $out = ['templates' => [], 'composeManager' => null, 'damaged' => [], 'kept' => staxx_leftovers_kept()];
+  $out = ['templates' => [], 'composeManager' => null, 'damaged' => [], 'kept' => staxx_leftovers_kept(),
+          'stayStopped' => []];
   if ($rows === null) $rows = staxx_leftovers_containers();
   if ($rows === null) return $out;
   if ($damaged === null) {
     $damaged = staxx_leftovers_damaged(array_column(array_filter($rows, fn($r) => $r['project'] === ''), 'id'));
   }
   $bad = array_flip($damaged);
+  if ($damaged) {
+    // The "will stay stopped" names for the restart offer; only worth reading
+    // the start-up list when there is a damaged app to offer it for.
+    require_once __DIR__.'/Autostart.php';
+    $out['stayStopped'] = staxx_leftovers_stay_stopped($rows, array_column(staxx_autostart_read()['lines'], 'name'), $damaged);
+  }
   $named = []; // containers some template names: not "Damaged apps" rows
 
   $byName = [];
@@ -6114,9 +6152,10 @@ function staxx_leftovers_unlabelled_row(string $id, string $name): ?array {
  * A damaged container (inspect fails) keeps its listing row instead of the
  * inspect output; if Docker refuses to remove it the template is still
  * cleared. A 'damaged' item is such a container with no template at all.
- * The manifest is rewritten after every item.
+ * The manifest is rewritten after every item. $retry is the pass that follows a
+ * Docker restart: it words the damaged-app lines for that and points nowhere else.
  */
-function staxx_leftovers_do_clear(array $items, string $stamp): bool {
+function staxx_leftovers_do_clear(array $items, string $stamp, bool $retry = false): bool {
   if (!staxx_leftovers_stamp_ok($stamp) || staxx_leftovers_root() === '') return false;
   $set = staxx_leftovers_root().'/'.$stamp;
   if (!is_dir($set) && !@mkdir($set, 0755, true) && !is_dir($set)) { echo "Could not create $set.\n"; return false; }
@@ -6151,7 +6190,7 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
     if ($kind === 'damaged') {
       $id = (string)($it['id'] ?? '');
       if (!preg_match('/^[0-9a-f]{64}$/', $id)) { echo "Skipped $name: not a container id.\n"; $ok = false; continue; }
-      echo "Removing the damaged app \"$name\"...\n";
+      echo $retry ? "Trying $name again…\n" : "Removing the damaged app \"$name\"...\n";
       if (staxx_leftovers_unlabelled_row($id, $name) === null) {
         echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
         $ok = false; continue;
@@ -6159,12 +6198,15 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
       $code = 1;
       staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
       if ($code !== 0) {
-        echo "Docker would not remove the damaged app \"$name\". Go to Settings → Docker, set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, clear it here from \"Damaged apps\".\n";
+        // After a Docker restart there is no third thing to try from the page.
+        echo $retry
+          ? "Docker still would not remove $name. Restart the server, then clear it here from Damaged apps.\n"
+          : "Docker would not remove the damaged app \"$name\". Go to Settings → Docker, set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, clear it here from \"Damaged apps\".\n";
         $ok = false; continue;
       }
       $m['items'][] = ['kind' => 'damaged', 'name' => $name, 'id' => $id];
       staxx_leftovers_manifest_save($stamp, $m);
-      echo "Removed the damaged app \"$name\".\n";
+      echo $retry ? "Removed the damaged app $name.\n" : "Removed the damaged app \"$name\".\n";
       continue;
     }
 
@@ -6219,6 +6261,100 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
     echo "Cleared $name; a copy is kept.\n";
   }
   return $ok;
+}
+
+/**
+ * PLAN_220 — restarts Docker as a detached job, then tries the damaged-app
+ * removal again. The page's window stays usable while the daemon is down (the
+ * webGUI does not run in Docker). Returns the job id, or '' with $error set.
+ *
+ * The ids are only names for the server to look up: each must be on a fresh
+ * staxx_leftovers() `damaged` list or it is dropped, and nothing is stopped if
+ * none survive. One restart at a time, by a lock folder the job removes when it
+ * ends (taken over when older than 15 minutes, which outlasts the longest
+ * possible run). The job never reaches rc.docker through anything the caller
+ * typed.
+ *
+ * @param string[] $damagedIds container ids from the page's Damaged apps rows
+ * @param ?array   $rows       a Docker read, injectable for the suite
+ * @param ?array   $damaged    the damaged ids for that read, injectable for the suite
+ */
+function staxx_leftovers_restart_job(array $damagedIds, string &$error, ?array $rows = null, ?array $damaged = null): string {
+  $error = '';
+  if (staxx_leftovers_root() === '') {
+    $error = 'No data store has been chosen yet, so there is nowhere to keep a copy.';
+    return '';
+  }
+  $byId = [];
+  foreach (staxx_leftovers($rows, $damaged)['damaged'] as $d) $byId[$d['id']] = $d;
+  $items = [];
+  foreach ($damagedIds as $id) {
+    $id = (string)$id;
+    if (!isset($byId[$id]) || isset($items[$id])) continue;
+    $items[$id] = ['kind' => 'damaged', 'name' => $byId[$id]['name'], 'id' => $id];
+  }
+  if (!$items) {
+    $error = 'None of the selected apps could be found in the damaged list — it may be out of date. Reload the list and try again.';
+    return '';
+  }
+
+  if (!staxx_private_dir(dirname(STAXX_RESTART_LOCK))) { $error = 'Could not create '.dirname(STAXX_RESTART_LOCK); return ''; }
+  if (!staxx_mkdir_lock_stale(STAXX_RESTART_LOCK, 900)) {
+    $error = 'Docker is already being restarted from another window.';
+    return '';
+  }
+
+  $stamp = date('Ymd-His');
+  for ($i = 1; is_dir(staxx_leftovers_root().'/'.$stamp); $i++) $stamp = date('Ymd-His', time() + $i);
+
+  $php = staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; '
+    .'exit(staxx_leftovers_do_restart('.var_export(array_values($items), true).', '.var_export($stamp, true).') ? 0 : 1);'
+  );
+  $job = staxx_spawn_job('restarting Docker', $php.' 2>&1; rc=$?; rmdir '.escapeshellarg(STAXX_RESTART_LOCK)
+                        .' 2>/dev/null; echo "'.STAXX_JOB_END.' $rc"', $error);
+  if ($job === '') @rmdir(STAXX_RESTART_LOCK);
+  return $job;
+}
+
+/**
+ * Whether Docker answers: the daemon's pid file is there and `docker info`
+ * succeeds (the pid file alone shows up a moment before the socket does).
+ */
+function staxx_leftovers_docker_answers(): bool {
+  if (!is_file(STAXX_DOCKERD_PID)) return false;
+  $code = 1;
+  staxx_sh(escapeshellarg(staxx_docker_bin()).' info 2>&1', 10, $code);
+  return $code === 0;
+}
+
+/**
+ * The job body for staxx_leftovers_restart_job(): stop Docker, start it, wait
+ * for it to answer, then try the removal again. Nothing is left half-done: if
+ * Docker does not stop the start is not attempted, and if it does not come
+ * back the removal is not attempted. Everything it says goes to the job log.
+ */
+function staxx_leftovers_do_restart(array $items, string $stamp): bool {
+  echo "Stopping Docker…\n";
+  staxx_sh(escapeshellarg(STAXX_RC_DOCKER).' stop 2>&1', 300);
+  for ($i = 0; $i < 10 && is_file(STAXX_DOCKERD_PID); $i++) sleep(1);
+  if (is_file(STAXX_DOCKERD_PID)) {
+    echo "Docker did not stop, so it was left as it was. Open Settings → Docker and check that Enable Docker is set to Yes.\n";
+    return false;
+  }
+
+  echo "Starting Docker…\n";
+  staxx_sh(escapeshellarg(STAXX_RC_DOCKER).' start 2>&1', 300);
+  $deadline = time() + (int)STAXX_DOCKER_WAIT;
+  while (!staxx_leftovers_docker_answers()) {
+    if (time() >= $deadline) {
+      echo "Docker did not start again. Open Settings → Docker and set Enable Docker to Yes.\n";
+      return false;
+    }
+    sleep(1);
+  }
+
+  return staxx_leftovers_do_clear($items, $stamp, true);
 }
 
 /**

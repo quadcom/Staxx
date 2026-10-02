@@ -1466,6 +1466,17 @@ switch ($action) {
     if ($job === '') staxx_fail($error);
     staxx_reply(['ok' => true, 'job' => $job]);
 
+  // PLAN_220 — after Docker refused a damaged app: restart Docker, then try again.
+  // `damaged[]` is container ids, looked up afresh on the server like the clear.
+  case 'leftovers-restart':
+    $damagedRaw = $_POST['damaged'] ?? [];
+    $damagedIds = is_array($damagedRaw)
+      ? array_values(array_filter(array_map('strval', $damagedRaw), fn($f) => $f !== ''))
+      : [];
+    $job = staxx_leftovers_restart_job($damagedIds, $error);
+    if ($job === '') staxx_fail($error);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
   case 'leftovers-restore':
     if (!staxx_leftovers_restore((string)($_POST['stamp'] ?? ''), (string)($_POST['kind'] ?? ''), $name, $error)) {
       staxx_fail($error);

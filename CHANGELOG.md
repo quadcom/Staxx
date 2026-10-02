@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- When Docker will not remove a damaged app in Settings, Storage, StaXX now offers to restart Docker and try again, right there in the window. It warns you first that every container stops for about a minute, and names any running container that will not come back on its own.
 - Adding a setting from the editor's form now always keeps the file valid: a name holding a colon and a space is written in quotes, and a setting written on one line in curly brackets is left alone instead of being broken.
 - Import now finds compose stacks run by other tools, such as Dockge, Portainer, Arcane, Dockhand and Komodo, and lists them under Compose projects from other tools. StaXX reads where each one's files are from its containers, including files a tool keeps inside its own container, and copies them into a new stack the same way it copies a Compose Manager project.
 - A stack with no containers can be found too: type the folder that holds your stacks into Look in a folder, at the foot of that group, and press Look, or press the folder button beside it to pick the folder instead. StaXX reads that folder and the folders directly inside it.

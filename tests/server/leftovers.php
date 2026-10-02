@@ -12,6 +12,13 @@
  *     pscp tests/server/run-with-store.sh tests/server/leftovers.php root@<box>:/tmp/
  *     plink … 'bash /tmp/run-with-store.sh /tmp/leftovers-store /tmp/leftovers.php'
  *
+ * PLAN_220 (restart Docker and try again) runs against a stub rc.docker in
+ * /tmp/staxx-left-rc; the real /etc/rc.d/rc.docker is never reached, and the
+ * suite refuses to run if the stub's paths are not the ones in force. The
+ * restart job itself is never spawned (a child php would use the real paths);
+ * only its refusals and its body run, in this process. The "comes back" case
+ * needs the real `docker info` to answer (read-only).
+ *
  * Docker is only ever READ (docker ps) unless the opt-in below is set. The one
  * case that removes a container needs Adrian's OK on the production box, so it
  * is off by default:
@@ -28,6 +35,17 @@ putenv('STAXX_UNRAID_TEMPLATES_DIR=/tmp/staxx-left-tpl');
 putenv('STAXX_AUTOUPDATE_FILE=/tmp/staxx-left-cau.json');
 putenv('STAXX_COMPOSE_MANAGER_DIR=/tmp/staxx-left-cm/compose.manager');
 putenv('STAXX_COMPOSE_MANAGER_PLUGIN_DIR=/tmp/staxx-left-cm/plugin-dir');
+putenv('STAXX_AUTOSTART_FILE=/tmp/staxx-left-autostart');
+
+// PLAN_220 — the Docker restart is driven by a stub in place of rc.docker. These
+// are defined before Stacks.php so its own defaults never apply; the check below
+// refuses to run if anything else got there first. The suite never starts the
+// restart JOB (that would be a new php process using the real constants), only
+// its refusals and its body in this process.
+define('STAXX_RC_DOCKER', '/tmp/staxx-left-rc/rc.docker');
+define('STAXX_DOCKERD_PID', '/tmp/staxx-left-rc/dockerd.pid');
+define('STAXX_DOCKER_WAIT', 3);
+define('STAXX_RESTART_LOCK', '/tmp/staxx-left-rc/restart.lock');
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -41,6 +59,12 @@ function ok(string $what, bool $pass, string $note = ''): void {
 // Refuse to run against anything but the scratch store: this suite moves files.
 if (strpos(staxx_store_root(), '/tmp/') !== 0) {
   echo "FAIL   STORE_ROOT is not under /tmp (got ".staxx_store_root()."); use run-with-store.sh\n";
+  exit(1);
+}
+
+if (STAXX_RC_DOCKER !== '/tmp/staxx-left-rc/rc.docker' || STAXX_DOCKERD_PID !== '/tmp/staxx-left-rc/dockerd.pid'
+    || STAXX_RESTART_LOCK !== '/tmp/staxx-left-rc/restart.lock') {
+  echo "FAIL   the Docker restart constants are not the stub's; refusing to run (the real rc.docker must never be reached)\n";
   exit(1);
 }
 
@@ -63,8 +87,9 @@ $createdId = '';
 function cleanup(): void {
   global $tpl, $cau, $cm, $sets, $riskStack, $createdId;
   @exec('rm -rf '.escapeshellarg($tpl).' '.escapeshellarg('/tmp/staxx-left-cm').' '.escapeshellarg($riskStack));
-  @exec('rm -rf '.escapeshellarg($sets));
+  @exec('rm -rf '.escapeshellarg($sets).' /tmp/staxx-left-rc');
   @unlink($cau);
+  @unlink('/tmp/staxx-left-autostart');
   if ($createdId !== '' && preg_match('/^[0-9a-f]{64}$/', $createdId)) {
     // Label guard: only ever remove the container this run created.
     $lab = trim((string)shell_exec('docker inspect -f \'{{index .Config.Labels "staxx.test"}}\' '.escapeshellarg($createdId).' 2>/dev/null'));
@@ -205,6 +230,75 @@ ok('a second put back is refused', !staxx_leftovers_restore($stamp2, 'compose-ma
 
 ok('forget deletes a set for good', staxx_leftovers_forget($stamp, $err) && !is_dir("$sets/$stamp"), $err);
 ok('forget on a missing set is an error', !staxx_leftovers_forget($stamp, $err) && $err !== '');
+
+/* --------------------- PLAN_220: restart Docker, stub rc.docker only ------ */
+
+$rcDir = '/tmp/staxx-left-rc';
+mkdir($rcDir, 0755, true);
+file_put_contents(STAXX_RC_DOCKER, <<<'SH'
+#!/bin/sh
+# Records each call; stop and start toggle a fake pid file. A file named
+# "noreturn" beside it makes start leave the daemon down.
+D=/tmp/staxx-left-rc
+echo "$1" >> $D/calls
+case "$1" in
+  stop)  rm -f $D/dockerd.pid ;;
+  start) [ -f $D/noreturn ] || echo 1 > $D/dockerd.pid ;;
+esac
+exit 0
+SH
+);
+chmod(STAXX_RC_DOCKER, 0755);
+$calls = fn() => is_file("$rcDir/calls") ? trim((string)file_get_contents("$rcDir/calls")) : '';
+
+$ids = [hash('sha256', 'zzdmgnotpl')];
+$ritem = [['kind' => 'damaged', 'name' => 'zzdmgnotpl', 'id' => $ids[0]]];
+
+// Daemon comes back: stop, then start, then the removal pass, in that order.
+file_put_contents(STAXX_DOCKERD_PID, '1');
+ob_start();
+staxx_leftovers_do_restart($ritem, '20260101-000010');
+$log = ob_get_clean();
+ok('the restart calls rc.docker stop then start, nothing else', $calls() === "stop\nstart", $calls());
+$pStop = strpos($log, 'Stopping Docker…'); $pStart = strpos($log, 'Starting Docker…'); $pTry = strpos($log, 'Trying zzdmgnotpl again…');
+ok('the log says stopping, starting, then trying the app again, in order',
+   $pStop !== false && $pStart !== false && $pTry !== false && $pStop < $pStart && $pStart < $pTry, $log);
+
+// Daemon never comes back: the 120 s path (3 s here), and the removal is not attempted.
+@unlink("$rcDir/calls");
+touch("$rcDir/noreturn");
+file_put_contents(STAXX_DOCKERD_PID, '1');
+$t0 = time();
+ob_start();
+$back = staxx_leftovers_do_restart($ritem, '20260101-000011');
+$log = ob_get_clean();
+ok('when Docker does not come back the job says so and fails',
+   $back === false && strpos($log, 'Docker did not start again. Open Settings → Docker and set Enable Docker to Yes.') !== false, $log);
+ok('it waited the (injected) limit and did not try the removal',
+   time() - $t0 >= STAXX_DOCKER_WAIT && strpos($log, 'Trying') === false);
+ok('the stub saw stop and start only', $calls() === "stop\nstart", $calls());
+unlink("$rcDir/noreturn");
+
+// The lock: a second restart is refused, and a refusal before the lock leaves none behind.
+mkdir(STAXX_RESTART_LOCK, 0755, true);
+ok('a second restart is refused while the lock is held',
+   staxx_leftovers_restart_job($ids, $err, $dRows, $dIds) === ''
+   && $err === 'Docker is already being restarted from another window.', $err);
+rmdir(STAXX_RESTART_LOCK);
+ok('an id not on the damaged list starts nothing and takes no lock',
+   staxx_leftovers_restart_job([str_repeat('a', 64)], $err, $dRows, $dIds) === '' && $err !== '' && !is_dir(STAXX_RESTART_LOCK), $err);
+ok('the restart never touched the real rc.docker', STAXX_RC_DOCKER === "$rcDir/rc.docker");
+
+// "Will stay stopped": running, not on Unraid's start-up list, not the damaged app.
+file_put_contents('/tmp/staxx-left-autostart', "web\ndb 30\n");
+$sRows = [row('web', '', '', 'running'), row('db', '', '', 'running'), row('Zeta', '', '', 'running'),
+          row('cache', '', '', 'running'), row('old', '', '', 'exited'), row('zzdmgnotpl', '', '', 'running')];
+$sl = staxx_leftovers($sRows, [hash('sha256', 'zzdmgnotpl')]);
+ok('stayStopped names running containers missing from the start-up list, sorted, damaged app left out',
+   $sl['stayStopped'] === ['cache', 'Zeta'], json_encode($sl['stayStopped']));
+ok('stayStopped is empty when nothing is damaged', staxx_leftovers($sRows, [])['stayStopped'] === []);
+ok('stay-stopped, pure: everything listed means nothing stays stopped',
+   staxx_leftovers_stay_stopped([row('a', '', '', 'running')], ['a'], []) === []);
 
 /* ---------------------------------------- opt-in: a real container ------- */
 

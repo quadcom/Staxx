@@ -60,6 +60,9 @@
 
   var data = null;      // last leftovers object the server sent
   var notice = '';      // one line shown under the heading after an action
+  var logText = '';     // the last job's log, kept on screen after the redraw
+  var keepLog = false;  // draw the log under the heading
+  var offer = null;     // PLAN_220: the restart-Docker offer after a refused removal
 
   function host() { return document.getElementById(ID); }
 
@@ -151,15 +154,44 @@
     return html + '</div>';
   }
 
+  // The finished job's log, and under it the offer to restart Docker when it
+  // refused a damaged app. "Not now" drops the offer and leaves the log, whose
+  // last line already says how to do it by hand.
+  function afterHtml() {
+    if (!keepLog && !offer) return '';
+    var html = (logText || (offer && offer.running))
+      ? '<pre class="staxx-leftovers-log" id="staxx-leftovers-log">' + esc(logText) + '</pre>' : '';
+    if (!offer) return html;
+    if (offer.running) return html + '<p class="staxx-hint">Restarting Docker…</p>';
+    return html + '<div class="staxx-leftovers-confirm">'
+      + (offer.error ? '<p class="staxx-settings-msg">' + esc(offer.error) + '</p>' : '')
+      + '<p>Docker would not remove ' + esc(offer.names.join(', ')) + '. Restarting Docker usually lets it go.</p>'
+      + '<p>Restarting Docker stops every container on this server for about a minute. '
+      + 'The ones set to start automatically come back on their own.'
+      + (offer.stay.length
+        ? ' These are running now and will stay stopped until you start them: ' + esc(offer.stay.join(', ')) + '.'
+        : '')
+      + '</p><div class="staxx-buttons staxx-buttons--inline">'
+      + '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-leftovers-restart">'
+      + 'Restart Docker and try again</button> <button type="button" class="staxx-btn" '
+      + 'id="staxx-leftovers-notnow">Not now</button></div></div>';
+  }
+
+  function paintAfter() {
+    var slot = document.getElementById('staxx-leftovers-after');
+    if (slot) keepScroll(function () { slot.innerHTML = afterHtml(); });
+  }
+
   function draw() {
     var el = host();
     if (!el) return;
     var d = data;
+    var after = '<div id="staxx-leftovers-after">' + afterHtml() + '</div>';
     if (!d || (!d.templates.length && !d.damaged.length && !d.composeManager && !d.kept.length)) {
       // Keep the node (the loader's idempotence check looks for its id) but
       // show nothing, unless there is a line about what just happened.
-      el.hidden = !notice;
-      el.innerHTML = notice ? '<p class="staxx-settings-msg">' + esc(notice) + '</p>' : '';
+      el.hidden = !notice && !keepLog && !offer;
+      el.innerHTML = (notice ? '<p class="staxx-settings-msg">' + esc(notice) + '</p>' : '') + after;
       return;
     }
     el.hidden = false;
@@ -167,6 +199,7 @@
       + '<span class="staxx-hint">These are settings files from apps you no longer run through '
       + 'Unraid. Tick what you want gone. StaXX keeps a copy, so you can put any of it back.</span>'
       + (notice ? '<p class="staxx-settings-msg">' + esc(notice) + '</p>' : '')
+      + after
       + '<div class="staxx-leftovers-body" id="staxx-leftovers-body">'
       + groupsHtml(d)
       + ((d.templates.length || d.damaged.length || d.composeManager)
@@ -220,6 +253,7 @@
         templates: res.leftovers.templates || [],
         composeManager: res.leftovers.composeManager || null,
         damaged: res.leftovers.damaged || [],
+        stayStopped: res.leftovers.stayStopped || [],
         kept: res.leftovers.kept || []
       } : null;
       if (!res.ok) notice = res.error || 'Could not read what was left behind.';
@@ -271,6 +305,16 @@
     if (t.cm) fields.composeManager = '1';
     body.innerHTML = '<p class="staxx-hint">Clearing…</p>'
       + '<pre class="staxx-leftovers-log" id="staxx-leftovers-log"></pre>';
+    logText = ''; keepLog = false; offer = null;
+    paintAfter();
+
+    // A damaged app Docker refuses to remove is spotted afterwards by its id
+    // still being on the fresh list; no marker needs to be read from the log.
+    var tried = t.damaged.slice();
+    t.files.forEach(function (f) {
+      var tpl = findTemplate(f);
+      if (tpl && tpl.container && tpl.container.damaged) tried.push(tpl.container.id);
+    });
 
     // Same key the image-removal endpoint hands back: 'job'.
     call('leftovers-clear', fields).then(function (res) {
@@ -279,28 +323,85 @@
         refresh();
         return;
       }
-      follow(res.job, 0, 0);
+      follow(res.job, 0, 0, function (end) {
+        notice = end.lost ? (end.error || 'Lost track of the job.')
+          : (end.exit === 0 || end.exit == null)
+            ? 'Done. Anything you removed may leave an image behind; the image cleanup can clear those.'
+            : 'The job stopped with an error. See the log above.';
+        keepLog = true;
+        refresh(function () { offerRestart(tried); });
+      });
     });
   }
 
-  // Polls the shared 'job' action until it says done, then redraws.
-  function follow(job, offset, failures) {
+  // After a clear: any app it tried that is still listed as damaged was refused.
+  function offerRestart(tried) {
+    var left = ((data && data.damaged) || []).filter(function (c) { return tried.indexOf(c.id) >= 0; });
+    if (!left.length) return;
+    offer = {
+      ids: left.map(function (c) { return c.id; }),
+      names: left.map(function (c) { return c.name; }),
+      stay: (data && data.stayStopped) || [],
+      running: false, error: ''
+    };
+    keepScroll(draw);
+  }
+
+  // While Docker restarts the page's own refreshes and stats cannot be
+  // answered. stacks.js stays quiet until this time passes (window flag), then
+  // refreshes once on 'staxx:docker-quiet-end'.
+  function quietFor(ms) { window.staxxDockerQuietUntil = Date.now() + ms; }
+  function endQuiet(settleMs) {
+    quietFor(settleMs);
+    setTimeout(function () {
+      window.staxxDockerQuietUntil = 0;
+      window.dispatchEvent(new Event('staxx:docker-quiet-end'));
+    }, settleMs);
+  }
+
+  function runRestart() {
+    if (!offer || offer.running) return;
+    var ids = offer.ids;
+    quietFor(10 * 60 * 1000);   // longer than the job can run; endQuiet() shortens it
+    offer.running = true; offer.error = '';
+    paintAfter();
+    call('leftovers-restart', { damaged: ids }).then(function (res) {
+      if (!res.ok || !res.job) {
+        endQuiet(0);
+        offer.running = false;
+        offer.error = res.error || 'Could not start.';
+        paintAfter();
+        return;
+      }
+      logText += '\n';
+      follow(res.job, 0, 0, function (end) {
+        // Docker is still settling for a moment after the job reports done.
+        endQuiet(10000);
+        offer = null; keepLog = true;
+        notice = end.lost ? (end.error || 'Lost track of the job.')
+          : (end.exit === 0 || end.exit == null)
+            ? 'Docker is back and the damaged app is gone.'
+            : 'The restart did not finish. See the log above.';
+        refresh();
+      });
+    });
+  }
+
+  // Polls the shared 'job' action until it says done, then hands the final
+  // reply (or { lost: true }) to onDone. Every line goes to the log on screen
+  // and into logText, which a later redraw puts back.
+  function follow(job, offset, failures, onDone) {
     call('job', { job: job, offset: offset }).then(function (res) {
       if (!res.ok) {
-        if (failures >= 5) { notice = res.error || 'Lost track of the job.'; refresh(); return; }
-        setTimeout(function () { follow(job, offset, failures + 1); }, 1500);
+        if (failures >= 5) { onDone({ lost: true, error: res.error }); return; }
+        setTimeout(function () { follow(job, offset, failures + 1, onDone); }, 1500);
         return;
       }
       var pre = document.getElementById('staxx-leftovers-log');
       if (pre && res.text) pre.textContent += res.text;
-      if (res.done) {
-        notice = (res.exit === 0 || res.exit == null)
-          ? 'Done. Anything you removed may leave an image behind; the image cleanup can clear those.'
-          : 'The job stopped with an error. See the log above.';
-        refresh();
-        return;
-      }
-      setTimeout(function () { follow(job, res.offset || offset, 0); }, 1000);
+      if (res.text) logText += res.text;
+      if (res.done) { onDone(res); return; }
+      setTimeout(function () { follow(job, res.offset || offset, 0, onDone); }, 1000);
     });
   }
 
@@ -334,6 +435,8 @@
     var t = e.target;
     if (t.closest('#staxx-leftovers-clear')) return askConfirm();
     if (t.closest('#staxx-leftovers-go')) return runClear();
+    if (t.closest('#staxx-leftovers-restart')) return runRestart();
+    if (t.closest('#staxx-leftovers-notnow')) { offer = null; paintAfter(); return; }
     if (t.closest('#staxx-leftovers-nope')) {
       var slot = document.getElementById('staxx-leftovers-confirm');
       if (slot) slot.innerHTML = '';
@@ -380,7 +483,7 @@
     if (archive && archive.parentNode === pane) archive.before(div);
     else pane.appendChild(div);
 
-    notice = '';
+    notice = ''; logText = ''; keepLog = false; offer = null;
     refresh();
   }
 
