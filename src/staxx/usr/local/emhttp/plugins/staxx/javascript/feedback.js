@@ -729,6 +729,10 @@
     editor.addEventListener('paste', onPaste);
     editor.addEventListener('drop', onDrop);
     editor.addEventListener('dragover', function (event) { event.preventDefault(); });
+
+    // Bug Report is chosen from the start; without this its button only showed as
+    // chosen after the form had been closed once.
+    applyKind();
   }
 
   // opts.title pre-fills the title (from a failed Import's button).
