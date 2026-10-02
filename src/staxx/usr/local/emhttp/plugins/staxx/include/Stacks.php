@@ -6159,7 +6159,7 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
       $code = 1;
       staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
       if ($code !== 0) {
-        echo "Docker would not remove the damaged app \"$name\". Turn Docker off and on again in Settings → Docker, then clear it here from \"Damaged apps\".\n";
+        echo "Docker would not remove the damaged app \"$name\". Go to Settings → Docker, set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, clear it here from \"Damaged apps\".\n";
         $ok = false; continue;
       }
       $m['items'][] = ['kind' => 'damaged', 'name' => $name, 'id' => $id];
@@ -6206,7 +6206,7 @@ function staxx_leftovers_do_clear(array $items, string $stamp): bool {
       if ($code !== 0) {
         if (!$damaged) { echo "Docker would not remove \"$name\".\n"; $ok = false; continue; }
         // Forced: the template is still cleared; the container waits under "Damaged apps".
-        echo "Docker would not remove the damaged app \"$name\". Its template is cleared. Turn Docker off and on again in Settings → Docker, then clear it here from \"Damaged apps\".\n";
+        echo "Docker would not remove the damaged app \"$name\". Its template is cleared. Go to Settings → Docker, set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, clear it here from \"Damaged apps\".\n";
       }
     }
 

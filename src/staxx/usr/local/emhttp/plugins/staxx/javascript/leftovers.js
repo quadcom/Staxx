@@ -89,8 +89,8 @@
       html += '<div class="staxx-leftovers-group"><h4>Apps still set up in Unraid\'s Docker tab</h4>'
         + live.map(function (t) {
           if (t.container.damaged) {
-            return row(t, 'Docker can\'t read this app. Clearing removes what Docker will let go, '
-              + 'and the template.', true);
+            return row(t, 'Docker can\'t read this app. Clearing removes its template and tries to '
+              + 'remove the app. If Docker refuses, the log says what to do.', true);
           }
           return row(t, esc(t.container.state) + '. '
             + 'Removes the app and its template. Its data folders stay.');
@@ -102,7 +102,7 @@
           return '<label class="staxx-leftovers-row"><input type="checkbox" data-lo-damaged="'
             + esc(c.id) + '"> <span class="staxx-leftovers-name">' + esc(c.name) + '</span> '
             + DAMAGED_CHIP + ' <span class="staxx-leftovers-note">Docker can\'t read this app, '
-            + 'and it has no template. Clearing removes it if Docker will let it go.</span></label>';
+            + 'and it has no template. Clearing tries to remove it. If Docker refuses, the log says what to do.</span></label>';
         }).join('') + '</div>';
     }
     if (d.composeManager) {
