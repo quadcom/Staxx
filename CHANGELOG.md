@@ -7,7 +7,7 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - Import now finds compose stacks run by other tools, such as Dockge, Portainer, Arcane, Dockhand and Komodo, and lists them under Compose projects from other tools. StaXX reads where each one's files are from its containers, including files a tool keeps inside its own container, and copies them into a new stack the same way it copies a Compose Manager project.
-- A stack with no containers can be found too: type the folder that holds your stacks into Look in a folder, at the foot of that group, and press Look. StaXX reads that folder and the folders directly inside it.
+- A stack with no containers can be found too: type the folder that holds your stacks into Look in a folder, at the foot of that group, and press Look, or press the folder button beside it to pick the folder instead. StaXX reads that folder and the folders directly inside it.
 - A Compose Manager project whose file Docker Compose refuses can now be ticked and imported. It is saved and marked as needing a fix, like any other file Docker Compose refuses.
 - StaXX keeps a short record of what Import found and did the last five times you used it. When an import fails, Report this problem opens a bug report with the record attached, so the problem can be found and fixed. As with the other files, private details are replaced and you can preview it before it is sent.
 - A file Docker Compose refuses is no longer turned away when it arrives, whether from an Unraid template, a Compose Manager project, Apps, a paste, an upload or the image importer. It is saved, its row turns a soft red with a red wrench in the State column, and Open and fix (in the import window) or the wrench takes you straight to the problem.

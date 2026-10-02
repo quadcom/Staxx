@@ -13377,6 +13377,7 @@
    * where an array disk or an unassigned drive is an ordinary choice — so the
    * restrictions have to belong to the field, not to the picker. */
   var pickerPurpose = '';
+  var pickerChosen  = null;   // callback for the open picker, if its caller gave one
 
   function pickerStart(value) {
     var v = String(value || '').trim();
@@ -13466,10 +13467,15 @@
     });
   }
 
-  function pickerOpen(input, purpose) {
+  // onChosen (optional) runs once "Choose this folder" has set the value, so a
+  // caller can act on the pick straight away.
+  function pickerOpen(input, purpose, onChosen) {
     flushPending();              // whatever was typed in the box goes in first
     pickerPurpose = purpose || '';
     pickerFor = input;
+    pickerChosen = onChosen || null;
+    // Import only reads a folder, so there is nothing to create in it.
+    picker.querySelector('.staxx-picker-new').hidden = pickerPurpose === 'import';
     pickerAt  = PICKER_ROOT;
     pickerHere.textContent = PICKER_ROOT;
     pickerList.innerHTML = '';
@@ -13507,7 +13513,10 @@
       else pickerFor.dispatchEvent(new Event('input', { bubbles: true }));
       pickerFor.focus();
     }
+    // The close event clears pickerFor later, so read the callback first.
+    var chosen = pickerFor ? pickerChosen : null;
     picker.close();
+    if (chosen) chosen();
   });
 
   document.getElementById('staxx-picker-cancel').addEventListener('click', function () {
@@ -15889,6 +15898,10 @@
       '<div class="staxx-import-scanline">' +
         '<input type="text" class="staxx-input" id="staxx-import-scanpath" data-import-scanpath ' +
           'placeholder="/mnt/user/appdata/dockge/stacks" value="' + esc(importScanPath) + '">' +
+        '<button type="button" class="staxx-browse" data-import-browse title="Choose a folder on this server">' +
+          '<i class="fa fa-folder-open-o" aria-hidden="true"></i>' +
+          '<span class="staxx-sr">Choose a folder</span>' +
+        '</button>' +
         '<button type="button" class="staxx-btn" data-import-look>Look</button>' +
       '</div>' +
       (importScanMsg ? '<p class="staxx-import-scanmsg">' + esc(importScanMsg) + '</p>' : '') +
@@ -16114,6 +16127,11 @@
       return;
     }
 
+    if (event.target.closest('[data-import-browse]')) {
+      var scanInput = importList.querySelector('[data-import-scanpath]');
+      if (scanInput) pickerOpen(scanInput, 'import', function () { importLook(); });
+      return;
+    }
     if (event.target.closest('[data-import-look]')) { importLook(); return; }
 
     var btn = event.target.closest('[data-import-toggle]');

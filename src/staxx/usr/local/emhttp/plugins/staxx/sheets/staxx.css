@@ -9099,6 +9099,8 @@ div.title.staxx-has-titlebar {
   font-size: 1.2rem;
 }
 
+.staxx-picker-new[hidden] { display: none; }
+
 .staxx-picker-new {
   display: flex;
   align-items: stretch;

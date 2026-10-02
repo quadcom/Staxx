@@ -459,6 +459,17 @@ function staxx_browse_dirs(string $path, string $purpose = ''): array {
     }
   }
 
+  /* The import window only reads a folder, so the placement rules do not apply;
+   * what cannot work is a share that lives on another computer, which the
+   * server will not read for stacks. Marked whatever the placement setting says. */
+  if ($purpose === 'import' && $real === $root) {
+    foreach ($dirs as $entry) {
+      if ($entry === 'remotes' || $entry === 'rootshare') {
+        $blocked[$entry] = 'on another computer on your network';
+      }
+    }
+  }
+
   return [
     'path'    => $real,
     'up'      => $real === $root ? '' : dirname($real),
