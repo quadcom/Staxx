@@ -15354,11 +15354,12 @@
   // every time the panel opens (decision 5 in the plan — browser memory,
   // never sent to the server) and never offer a "Select all" (bulk-ticking
   // a list that is folded away is exactly the mistake worth designing out).
-  var IMPORT_G_TEMPLATES = 0, IMPORT_G_PROJECTS = 1, IMPORT_G_LOOSE = 2,
-      IMPORT_G_DONE = 3, IMPORT_G_STALE = 4;
+  var IMPORT_G_TEMPLATES = 0, IMPORT_G_PROJECTS = 1, IMPORT_G_OTHER = 2, IMPORT_G_LOOSE = 3,
+      IMPORT_G_DONE = 4, IMPORT_G_STALE = 5;
   var IMPORT_GROUPS = [
     { label: 'Unraid templates',                   selectAll: true,  note: '' },
     { label: 'Compose Manager projects',           selectAll: true,  note: '' },
+    { label: 'Compose projects from other tools',  selectAll: true,  note: '' },
     { label: 'Containers with nothing behind them', selectAll: false, note: 'Importing these is not built yet.' },
     { label: 'Already imported',                   selectAll: false, note: '' },
     // Named for what it almost always turns out to be: Unraid keeps a
@@ -15369,6 +15370,14 @@
     { label: 'Left over from a removed container',  selectAll: false, note: '' }
   ];
   var importGroupCollapsed = {};  // groupIdx -> bool, this open only
+
+  // PLAN_219 — "Look in a folder": rows the last scan found, the text in the
+  // box, and the line under it. Browser memory only; the last folder typed is
+  // also kept in localStorage as a convenience.
+  var importScanRows = [];
+  var importScanPath = '';
+  var importScanMsg  = '';
+  var IMPORT_SCAN_KEY = 'staxx-import-scan-path';
 
   /* ---- Writing templates and projects in (PLAN_41 phase 2, PLAN_46 phase 3) ----
    *
@@ -15390,7 +15399,24 @@
   var importBusy      = false;
   var importStopFlag  = false; // Stop was pressed — finish the row in flight, then quit
 
+  // The three project-shaped sources are written by the same server path.
+  function importIsProject(entry) {
+    return !!entry && (entry.source === 'project' || entry.source === 'compose' || entry.source === 'folder');
+  }
+
+  // Who ran the stack, for the failure report's title.
+  function importToolName(entry) {
+    if (entry.source === 'project') return 'Compose Manager';
+    if (entry.source === 'template') return 'Unraid template';
+    if (entry.source === 'folder') return 'a folder';
+    return entry.tool || 'another compose tool';
+  }
+
   function importSourceLabel(entry) {
+    if (entry.source === 'compose') {
+      return 'Compose project' + (entry.tool && entry.tool !== 'another compose tool' ? ' (' + entry.tool + ')' : '');
+    }
+    if (entry.source === 'folder') return 'Compose project in a folder';
     if (entry.source === 'project') return 'Compose Manager project';
     if (entry.source === 'loose') return 'Not managed by StaXX';
     return 'Unraid template';
@@ -15418,7 +15444,7 @@
   // makes Docker see the same project rather than a second one (PLAN_46
   // Part C). Every place that used to read entry.folder reads this instead.
   function importLeafName(entry) {
-    return entry.source === 'project' ? String(entry.dest || '') : String(entry.folder || '');
+    return importIsProject(entry) ? String(entry.dest || '') : String(entry.folder || '');
   }
 
   // PLAN_141 point 4: a row is taken when its own leaf name matches ANY
@@ -15452,7 +15478,7 @@
   function importEntrySelectable(entry) {
     if (!entry) return false;
     if (entry.source === 'template') return !!entry.app;
-    if (entry.source === 'project') return importProjectSelectable(entry);
+    if (importIsProject(entry)) return importProjectSelectable(entry);
     return false;
   }
 
@@ -15553,6 +15579,8 @@
       indirect: "a note in the project's own folder pointing at where it really lives",
       label: "the label on its own containers, because the copy on the flash drive "
            + 'was not the one being used',
+      compose: 'the labels on its running containers',
+      folder: 'the folder you chose',
       flash: 'the project folder on the flash drive'
     }[entry.via];
 
@@ -15562,6 +15590,7 @@
 
     var copied = [importBasename(entry.file)];
     if (entry.override) copied.push(importBasename(entry.override) + ' (its override file)');
+    (entry.moreFiles || []).forEach(function (f) { copied.push(importBasename(f) + ' (kept, not used)'); });
     if (entry.env) copied.push(importBasename(entry.env) + ' (its settings file)');
 
     var bits = ['<p class="staxx-import-via">' +
@@ -15649,7 +15678,7 @@
   }
 
   function importPreviewHtml(entry) {
-    if (entry.source === 'project') return importProjectPreviewHtml(entry);
+    if (importIsProject(entry)) return importProjectPreviewHtml(entry);
     if (entry.source === 'loose') {
       return '<p class="staxx-form-empty">This container belongs to neither a template nor a ' +
              'compose project, so there is nothing to preview.</p>';
@@ -15666,7 +15695,7 @@
       : '';
 
     var isTemplate  = entry.source === 'template';
-    var isProject   = entry.source === 'project';
+    var isProject   = importIsProject(entry);
     // A row that fails its own group's rule (a template whose XML could not
     // be read; a project with no file or no services) is never selectable —
     // the notes above already say why, so no separate flag is needed for it.
@@ -15762,9 +15791,9 @@
     // disagree. Decision 2: only a template can be "stale" — a Compose
     // Manager project or a bare container has no container record to be
     // missing in the first place.
-    var buckets = [[], [], [], [], []];
+    var buckets = [[], [], [], [], [], []];
     var anyTickable = false;
-    (data.templates || []).concat(data.projects || [], data.loose || []).forEach(function (entry) {
+    (data.templates || []).concat(data.projects || [], data.composeProjects || [], importScanRows, data.loose || []).forEach(function (entry) {
       var selectable = importEntrySelectable(entry);
       var done = selectable
         ? (prevWrittenEntries.indexOf(entry) >= 0 || importIsTaken(entry))
@@ -15774,13 +15803,16 @@
       if (entry.source === 'template' && !entry.exists) { buckets[IMPORT_G_STALE].push(entry); return; }
       if (entry.source === 'template') buckets[IMPORT_G_TEMPLATES].push(entry);
       else if (entry.source === 'project') buckets[IMPORT_G_PROJECTS].push(entry);
+      else if (entry.source === 'compose' || entry.source === 'folder') buckets[IMPORT_G_OTHER].push(entry);
       else buckets[IMPORT_G_LOOSE].push(entry);
     });
 
     importEntries = [];
     var blocks = [];
     buckets.forEach(function (list, groupIdx) {
-      if (!list.length) return;
+      // The other-tools group always shows: its "Look in a folder" box is the
+      // only way to reach a stack with no containers.
+      if (!list.length && groupIdx !== IMPORT_G_OTHER) return;
       var g = IMPORT_GROUPS[groupIdx];
       var tickedInGroup = 0;
       var rowsHtml = list.map(function (entry) {
@@ -15833,7 +15865,8 @@
           '</div>' +
           extra +
         '</div>' +
-        '<div class="staxx-import-rows" id="' + rowsId + '"' + (collapsed ? ' hidden' : '') + '>' + rowsHtml + '</div>');
+        '<div class="staxx-import-rows" id="' + rowsId + '"' + (collapsed ? ' hidden' : '') + '>' + rowsHtml +
+          (groupIdx === IMPORT_G_OTHER ? importScanBoxHtml() : '') + '</div>');
     });
 
     importList.innerHTML = blocks.length
@@ -15846,6 +15879,40 @@
     // lists' lengths any more; an already-imported row never counts, since
     // it never gets a tick box.
     importDest.hidden = !anyTickable;
+  }
+
+  // PLAN_219 — the foot of the other-tools group: a folder to read for
+  // stacks with no containers (the server refuses the folders it must not read).
+  function importScanBoxHtml() {
+    return '<div class="staxx-import-scan">' +
+      '<label for="staxx-import-scanpath">Look in a folder</label>' +
+      '<div class="staxx-import-scanline">' +
+        '<input type="text" class="staxx-input" id="staxx-import-scanpath" data-import-scanpath ' +
+          'placeholder="/mnt/user/appdata/dockge/stacks" value="' + esc(importScanPath) + '">' +
+        '<button type="button" class="staxx-btn" data-import-look>Look</button>' +
+      '</div>' +
+      (importScanMsg ? '<p class="staxx-import-scanmsg">' + esc(importScanMsg) + '</p>' : '') +
+    '</div>';
+  }
+
+  function importLook() {
+    var path = importScanPath.trim();
+    if (!path) { importScanMsg = 'Type the folder to look in.'; importPaint(); return; }
+    try { window.localStorage.setItem(IMPORT_SCAN_KEY, path); } catch (e) { /* a convenience only */ }
+    importScanMsg = 'Looking…';
+    importPaint();
+    call('import-scan-folder', { path: path }, 30000).then(function (res) {
+      if (!importModal.open) return;
+      if (!res.ok) {
+        importScanRows = [];
+        importScanMsg = res.error;
+      } else {
+        importScanRows = res.rows || [];
+        importScanRows.forEach(function (r) { r.scanFolder = path; });
+        importScanMsg = importScanRows.length === 1 ? 'Found 1 project.' : 'Found ' + importScanRows.length + ' projects.';
+      }
+      importPaint();
+    });
   }
 
   // A fresh listing can turn an available row into a taken one. Anything
@@ -15966,6 +16033,9 @@
     importGroupCollapsed[IMPORT_G_STALE] = true;
     importRoot = '';
     importFolder = '';
+    importScanRows = [];
+    importScanMsg = '';
+    try { importScanPath = window.localStorage.getItem(IMPORT_SCAN_KEY) || ''; } catch (e) { importScanPath = ''; }
     importList.innerHTML = '';
     importSummary.hidden = true;
     importSummary.innerHTML = '';
@@ -16044,6 +16114,8 @@
       return;
     }
 
+    if (event.target.closest('[data-import-look]')) { importLook(); return; }
+
     var btn = event.target.closest('[data-import-toggle]');
     if (!btn) return;
 
@@ -16061,6 +16133,16 @@
     if (open && !body.dataset.filled) {
       body.innerHTML = importPreviewHtml(entry);
       body.dataset.filled = '1';
+    }
+  });
+
+  importList.addEventListener('input', function (event) {
+    if (event.target.matches('[data-import-scanpath]')) importScanPath = event.target.value;
+  });
+  importList.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && event.target.matches('[data-import-scanpath]')) {
+      event.preventDefault();
+      importLook();
     }
   });
 
@@ -16170,7 +16252,7 @@
         var entry = importEntries[idx];
         var key = importRowFolder(entry) + '/' + importLeafName(entry);
         if (seen[key]) {
-          failures.push({ name: entry.name, error: 'Another ticked row already writes to the same place.' });
+          failures.push({ name: entry.name, error: 'Another ticked row already writes to the same place.', tool: importToolName(entry) });
           return false;
         }
         seen[key] = true;
@@ -16243,15 +16325,16 @@
       // first thing ever captured, losing the byte-for-byte original the
       // whole point of this route is to keep. See editStack()'s own tidy
       // call for where this is put right instead.
-      if (entry.source === 'project') {
-        call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
+      if (importIsProject(entry)) {
+        call('import-project', { name: stackName, id: entry.id, about: '{}', source: entry.source,
+                                 folder: entry.scanFolder || '' }, 20000).then(function (res) {
           if (res.ok) {
             written++;
             if (res.needsFix) flagged.push({ name: entry.name, rel: stackName });
             importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
             importMarkWritten(idx);
           } else {
-            failures.push({ name: entry.name, error: res.error });
+            failures.push({ name: entry.name, error: res.error, tool: importToolName(entry) });
           }
           step(i + 1);
         });
@@ -16265,7 +16348,7 @@
         // The converter runs against whatever template is actually on this
         // server, which answers to no schema this plugin controls — one bad
         // one must not take the rest of the run down with it.
-        failures.push({ name: entry.name, error: e && e.message ? e.message : String(e) });
+        failures.push({ name: entry.name, error: e && e.message ? e.message : String(e), tool: importToolName(entry) });
         step(i + 1);
         return;
       }
@@ -16321,7 +16404,7 @@
           importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
           importMarkWritten(idx);
         } else {
-          failures.push({ name: entry.name, error: res.error });
+          failures.push({ name: entry.name, error: res.error, tool: importToolName(entry) });
         }
         step(i + 1);
       });
@@ -16363,7 +16446,9 @@
       if (failures.length) {
         bits.push('<ul class="staxx-import-summaryfails">' +
           failures.map(function (f) {
-            return '<li><strong>' + esc(f.name) + '</strong> — ' + esc(f.error || '(no detail given)') + '</li>';
+            return '<li><strong>' + esc(f.name) + '</strong> — ' + esc(f.error || '(no detail given)') +
+              (window.staxxFeedback ? ' <button type="button" class="staxx-btn staxx-import-reportbtn" data-report="' +
+                failures.indexOf(f) + '">Report this problem</button>' : '') + '</li>';
           }).join('') +
         '</ul>');
       }
@@ -16372,6 +16457,12 @@
 
       importSummary.innerHTML = bits.join('');
       importSummary.hidden = false;
+      importSummary.querySelectorAll('.staxx-import-reportbtn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var f = failures[+btn.getAttribute('data-report')];
+          if (f && window.staxxFeedback) window.staxxFeedback.open({ title: 'Import failed: ' + f.tool, importLog: true });
+        });
+      });
       importSummary.querySelectorAll('.staxx-import-fixbtn').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var f = flagged[+btn.getAttribute('data-fix')];
@@ -16422,6 +16513,8 @@
     importWrittenIdx = {};
     importGroupCollapsed = {};
     importExisting = [];
+    importScanRows = [];
+    importScanMsg = '';
     importRoot = '';
     importFolder = '';
     importBusy = false;

@@ -1902,7 +1902,8 @@ function staxx_docker_ps_raw(): array {
        . '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t'
        . '{{.Label "com.docker.compose.project.config_files"}}\t'
        . '{{.Label "com.docker.compose.config-hash"}}\t'
-       . '{{.Label "com.docker.compose.project.environment_file"}}\tend';
+       . '{{.Label "com.docker.compose.project.environment_file"}}\t'
+       . '{{.Label "com.docker.compose.project.working_dir"}}\tend';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
   );
@@ -1933,6 +1934,7 @@ function staxx_docker_ps_raw(): array {
       'configFiles' => $c[7],
       'configHash'  => $c[8] ?? '',
       'envFile'     => $c[9] ?? '',
+      'workingDir'  => $c[10] ?? '',
       'health'      => staxx_health_from_status($c[3]),
     ];
   }

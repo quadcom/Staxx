@@ -38,15 +38,18 @@
  */
 ?>
 <?
-if (defined('STAXX_IMPORT_TEMPLATES_DIR')) return;
+if (defined('STAXX_IMPORT_OVERRIDE_NAMES')) return;   // not a suite-overridable constant, so it is the one-time marker
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/ImportLog.php';
+// staxx_import_write_project() explains a refused file; not every caller loads this first.
+require_once '/usr/local/emhttp/plugins/staxx/include/ComposeErrors.php';
 
 /** Where Unraid keeps the templates behind every Docker container it made. */
-const STAXX_IMPORT_TEMPLATES_DIR = '/boot/config/plugins/dockerMan/templates-user';
+if (!defined('STAXX_IMPORT_TEMPLATES_DIR')) define('STAXX_IMPORT_TEMPLATES_DIR', '/boot/config/plugins/dockerMan/templates-user');   // a suite defines its own first
 
 /** Where Compose Manager keeps one folder per project it runs. */
-const STAXX_IMPORT_PROJECTS_DIR = '/boot/config/plugins/compose.manager/projects';
+if (!defined('STAXX_IMPORT_PROJECTS_DIR')) define('STAXX_IMPORT_PROJECTS_DIR', '/boot/config/plugins/compose.manager/projects');
 
 /** Every override filename Compose Manager is known to write, base and
  *  extension both — StaXX passes compose exactly one file and never merges
@@ -170,7 +173,7 @@ function staxx_import_taken_sources(bool $reset = false): array {
 
 /** Where the FolderView3 plugin keeps its own folder-to-container mapping,
  *  if that plugin is installed at all. */
-const STAXX_IMPORT_FOLDERVIEW3_FILE = '/boot/config/plugins/folder.view3/docker.json';
+if (!defined('STAXX_IMPORT_FOLDERVIEW3_FILE')) define('STAXX_IMPORT_FOLDERVIEW3_FILE', '/boot/config/plugins/folder.view3/docker.json');
 
 /**
  * FolderView3's own folders, reduced to what an import needs: which
@@ -595,6 +598,9 @@ function staxx_import_templates(bool $reset = false): array {
     $folderName    = $dockerFolder !== '' ? staxx_import_safe_name($dockerFolder) : '';
     $folderRenamed = $folderName !== '' && $folderName !== $dockerFolder;
 
+    staxx_import_log('template '.$file.': name='.$name.' exists='.($exists ? 'yes' : 'no')
+                   .' notes='.implode(' | ', $notes));
+
     $out[] = [
       'source'         => 'template',
       'id'             => $file,
@@ -745,9 +751,10 @@ function staxx_import_projects(): array {
       // ten-byte file — which the softer wording described as merely empty.
       $meta = staxx_compose_meta($file);
       if (!empty($meta['error'])) {
-        $notes[] = 'Compose cannot read this project\'s file, so it cannot be imported. '
-                 . 'Compose says: '.$meta['error'];
-        $ready = false;
+        // PLAN_219 — stays ready: the write keeps a file compose refuses and
+        // flags it as needing a fix (PLAN_212), so the row can be ticked.
+        $notes[] = 'Docker Compose cannot read this file yet. It will be imported and marked as needing a fix.';
+        staxx_import_log('  compose refused '.$file.': '.$meta['error']);
       } elseif (count($meta['services']) === 0) {
         $notes[] = 'This project\'s compose file holds no services — importing it '
                  . 'would create an empty stack.';
@@ -846,6 +853,10 @@ function staxx_import_projects(): array {
     }
     $icon = staxx_import_icon($svcIcon, $file !== '' ? dirname($file) : '', $image);
 
+    staxx_import_log('project '.$entry.': file='.$file.' via='.$via.' override='.($override !== '' ? 'yes' : 'no')
+                   .' env='.($env !== '' ? 'yes' : 'no').' ready='.($ready ? 'yes' : 'no')
+                   .' notes='.implode(' | ', $notes));
+
     $out[] = [
       'source'   => 'project',
       'id'       => $entry,
@@ -870,6 +881,374 @@ function staxx_import_projects(): array {
     ];
   }
 
+  return $out;
+}
+
+/* ------------------------------------------------ projects from other tools -- */
+
+/**
+ * PLAN_219 — every container's bind mounts and image, read with ONE
+ * `docker inspect` over all ids. A compose tool that runs in a container
+ * (Dockge, Portainer, Arcane...) tells compose a path as the tool sees it;
+ * these mounts are how that path is turned back into one on the server.
+ *
+ * @return array<int,array{id:string,container:string,image:string,dest:string,src:string}>
+ */
+function staxx_import_mounts(): array {
+  static $mounts = null;
+  if ($mounts !== null) return $mounts;
+  $mounts = [];
+
+  $ids = array_column(staxx_docker_ps_raw(), 'id');
+  if (!$ids) return $mounts;
+
+  $fmt = "{{.Id}}\t{{.Name}}\t{{.Config.Image}}\t{{json .Mounts}}";   // real tabs: docker inspect does not turn a backslash-t into one
+  $out = staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' inspect --format '.escapeshellarg($fmt).' '
+    .implode(' ', array_map('escapeshellarg', $ids)).' 2>/dev/null', 20
+  );
+  foreach (explode("\n", $out) as $line) {
+    $c = explode("\t", $line, 4);
+    if (count($c) < 4) continue;
+    foreach ((array)json_decode($c[3], true) as $m) {
+      if (empty($m['Source']) || empty($m['Destination'])) continue;
+      $mounts[] = ['id' => $c[0], 'container' => ltrim($c[1], '/'), 'image' => $c[2],
+                   'dest' => (string)$m['Destination'], 'src' => (string)$m['Source']];
+    }
+  }
+  return $mounts;
+}
+
+/**
+ * Where a path as a container sees it sits on the server: each container's
+ * longest mount whose destination is a prefix of the path (on a `/`
+ * boundary), the prefix swapped for the mount's source. Pure, so a test can
+ * feed it canned mounts.
+ *
+ * @return array<int,array{host:string,container:string,image:string,dest:string,src:string}>
+ */
+function staxx_import_map_path(string $path, array $mounts, array $skipIds = []): array {
+  $best = [];
+  foreach ($mounts as $m) {
+    if (in_array($m['id'], $skipIds, true)) continue;
+    $d = rtrim($m['dest'], '/');
+    if ($d === '') continue;   // a mount at "/" would claim every path
+    if ($path !== $d && strpos($path, $d.'/') !== 0) continue;
+    if (!isset($best[$m['id']]) || strlen($d) > strlen($best[$m['id']]['d'])) {
+      $best[$m['id']] = $m + ['d' => $d];
+    }
+  }
+  $out = [];
+  foreach ($best as $b) {
+    $out[] = ['host' => rtrim($b['src'], '/').substr($path, strlen($b['d'])),
+              'container' => $b['container'], 'image' => $b['image'], 'dest' => $b['dest'], 'src' => $b['src']];
+  }
+  return $out;
+}
+
+/** The tool a manager container's image name points at. Labels the row and
+ *  the log only; nothing else depends on it. */
+function staxx_import_tool(string $image): string {
+  $names = ['dockge' => 'Dockge', 'portainer' => 'Portainer', 'arcane' => 'Arcane',
+            'dockhand' => 'Dockhand', 'komodo' => 'Komodo'];
+  foreach ($names as $needle => $label) {
+    if (stripos($image, $needle) !== false) return $label;
+  }
+  return 'another compose tool';
+}
+
+/**
+ * Find a path a compose label named on the server itself.
+ *
+ * @return array{host:string, manager:?array, note:string} host is '' when it
+ *         cannot be found, with the sentence to show in note.
+ */
+function staxx_import_locate(string $path, array $mounts, array $skipIds): array {
+  $r = ['host' => '', 'manager' => null, 'note' => ''];
+
+  if (is_file($path)) {
+    staxx_import_log('  checked '.$path.': exists on the server');
+    $r['host'] = $path;
+    // Whichever container mounts the folder holding it is the tool running it.
+    $longest = 0;
+    foreach ($mounts as $m) {
+      $s = rtrim($m['src'], '/');
+      if ($s === '' || in_array($m['id'], $skipIds, true) || strpos($path, $s.'/') !== 0) continue;
+      if (strlen($s) > $longest) { $longest = strlen($s); $r['manager'] = $m; }
+    }
+    return $r;
+  }
+
+  staxx_import_log('  checked '.$path.': not on the server at that path');
+  $found = [];
+  foreach (staxx_import_map_path($path, $mounts, $skipIds) as $c) {
+    $ok = is_file($c['host']);
+    staxx_import_log('  mount of '.$c['container'].': '.$c['dest'].' -> '.$c['src'].'; '.$c['host'].($ok ? ' exists' : ' missing'));
+    if ($ok && !isset($found[$c['host']])) $found[$c['host']] = $c;
+  }
+  if (count($found) === 1) {
+    $c = reset($found);
+    $r['host'] = $c['host'];
+    $r['manager'] = $c;
+  } elseif (count($found) > 1) {
+    $r['note'] = 'Two containers map this project\'s files to different places on the server: '
+               . implode(' and ', array_keys($found)).'.';
+  } else {
+    $r['note'] = 'StaXX could not find this project\'s files on the server. The tool that runs it '
+               . 'keeps them at '.$path.', inside its own container.';
+  }
+  return $r;
+}
+
+/**
+ * The row both "other tool" readers build, so a label row and a folder row
+ * cannot drift apart. $in: source, id, project, files (host paths, compose
+ * file first), env, tool, via, notes, ready, exists, running.
+ */
+function staxx_import_other_row(array $in): array {
+  $files   = array_values($in['files']);
+  $file    = $files[0] ?? '';
+  $project = (string)$in['project'];
+  $dest    = staxx_import_safe_name($project);
+  $notes   = $in['notes'];
+  $ready   = $in['ready'] ?? true;
+
+  $svcIcon = '';
+  $image   = '';
+  if ($file === '') {
+    $notes[] = 'No compose file could be found for this project.';
+    $ready = false;
+  } else {
+    $meta = staxx_compose_meta($file);
+    if (!empty($meta['error'])) {
+      $notes[] = 'Docker Compose cannot read this file yet. It will be imported and marked as needing a fix.';
+      staxx_import_log('  compose refused '.$file.': '.$meta['error']);
+    } elseif (count($meta['services']) === 0) {
+      $notes[] = 'This project\'s compose file holds no services — importing it would create an empty stack.';
+      $ready = false;
+    }
+    foreach ($meta['services'] as $svc) {
+      if (($svc['image'] ?? '') !== '') { $image = $svc['image']; $svcIcon = (string)($svc['x']['icon'] ?? ''); break; }
+    }
+  }
+  if ($project === '') {
+    $notes[] = 'This project\'s name cannot be turned into a stack folder name, so it cannot be imported.';
+    $ready = false;
+  }
+
+  $takenRel = staxx_import_taken_by($dest, $project, $project, $project);
+  if ($takenRel !== '') $notes[] = 'Already in StaXX as "'.$takenRel.'".';
+
+  // What sits beside the compose file and is not copied, so the review note
+  // can say what was left behind.
+  $extras = [];
+  if ($file !== '') {
+    $copied = array_merge(['.env'], array_map('basename', $files));
+    foreach ((array)@scandir(dirname($file)) as $e) {
+      if ($e === '.' || $e === '..' || in_array($e, $copied, true)) continue;
+      $extras[] = $e;
+    }
+    sort($extras);
+    $extras = array_slice($extras, 0, 20);
+  }
+  if ($extras) {
+    $notes[] = 'This project\'s folder also holds: '.implode(', ', $extras).' — these will not be copied across.';
+  }
+
+  $row = [
+    'source'    => $in['source'],
+    'id'        => $in['id'],
+    'name'      => $project,
+    'folder'    => $dest,
+    'dest'      => $dest,
+    'ready'     => $ready,
+    'project'   => $project,
+    'label'     => '',
+    'matches'   => true,
+    'extras'    => $extras,
+    'exists'    => !empty($in['exists']),
+    'running'   => !empty($in['running']),
+    'taken'     => $takenRel !== '',
+    'takenBy'   => $takenRel,
+    'notes'     => $notes,
+    'file'      => $file,
+    'files'     => $files,
+    'override'  => $files[1] ?? '',
+    'moreFiles' => array_slice($files, 2),
+    'via'       => $in['via'],
+    'tool'      => $in['tool'],
+    'env'       => $in['env'],
+    'icon'      => staxx_import_icon($svcIcon, $file !== '' ? dirname($file) : '', $image),
+  ];
+  staxx_import_log($in['source'].' '.$project.': tool='.$in['tool'].' files='.implode(', ', array_map('basename', $files))
+                 .' env='.($in['env'] !== '' ? 'yes' : 'no').' ready='.($ready ? 'yes' : 'no')
+                 .' notes='.implode(' | ', $notes));
+  return $row;
+}
+
+/**
+ * PLAN_219 — compose projects some other tool started, found from the
+ * labels compose stamps on every container it creates. $psRows and $mounts
+ * default to Docker's own answers; a test passes canned ones.
+ */
+function staxx_import_compose_projects(?array $psRows = null, ?array $mounts = null): array {
+  $psRows = $psRows ?? staxx_docker_ps_raw();
+
+  $groups = [];
+  foreach ($psRows as $r) {
+    if ($r['project'] !== '') $groups[$r['project']][] = $r;
+  }
+  if (!$groups) return [];
+  $mounts = $mounts ?? staxx_import_mounts();
+
+  // Projects another reader already owns: a StaXX stack, or a Compose
+  // Manager project (which also finds stopped ones).
+  $mine = [];
+  foreach (staxx_scan_stacks()['stacks'] as $s) $mine[staxx_stack_project_guess($s['file'], $s['leaf'])] = true;
+  $cm = [];
+  foreach ((array)@scandir(STAXX_IMPORT_PROJECTS_DIR) as $e) {
+    if ($e !== '.' && $e !== '..') $cm[staxx_project_name(staxx_import_safe_name(str_replace('-', '_', $e)))] = true;
+  }
+  $root = rtrim(staxx_stack_root(), '/');
+  $under = fn(string $p, string $dir) => $dir !== '' && ($p === $dir || strpos($p, $dir.'/') === 0);
+
+  $out = [];
+  foreach ($groups as $project => $rows) {
+    $labels = ['config_files' => '', 'environment_file' => '', 'working_dir' => ''];
+    foreach ($rows as $r) {
+      if ($labels['config_files'] === '' && $r['configFiles'] !== '') {
+        $labels = ['config_files' => $r['configFiles'], 'environment_file' => $r['envFile'] ?? '',
+                   'working_dir' => $r['workingDir'] ?? ''];
+      }
+    }
+    staxx_import_log('compose project '.$project.': config_files='.$labels['config_files']
+                   .' environment_file='.$labels['environment_file'].' working_dir='.$labels['working_dir']);
+
+    $paths = array_values(array_filter(array_map('trim', explode(',', $labels['config_files'])), 'strlen'));
+    $why = '';
+    if (isset($mine[$project]) || ($root !== '' && $under($labels['working_dir'], $root))) $why = 'already a StaXX stack';
+    elseif (isset($cm[$project]) || $under($labels['working_dir'], STAXX_IMPORT_PROJECTS_DIR)) $why = 'a Compose Manager project';
+    else foreach ($paths as $p) if ($under($p, STAXX_IMPORT_PROJECTS_DIR)) $why = 'a Compose Manager project';
+    if ($why !== '') { staxx_import_log('  skipped: '.$why); continue; }
+
+    $ownIds = array_column($rows, 'id');
+    $notes = [];
+    $ready = true;
+    $host  = [];
+    $manager = null;
+    foreach ($paths as $p) {
+      $f = staxx_import_locate($p, $mounts, $ownIds);
+      if ($f['host'] === '') { $notes[] = $f['note']; $ready = false; break; }
+      $host[] = $f['host'];
+      $manager = $manager ?? $f['manager'];
+    }
+    if (!$paths) { $notes[] = 'No compose file could be found for this project.'; $ready = false; }
+
+    $env = '';
+    if ($labels['environment_file'] !== '') {
+      $e = staxx_import_locate($labels['environment_file'], $mounts, $ownIds);
+      $env = $e['host'];
+    }
+    if ($env === '' && $host && is_file(dirname($host[0]).'/.env')) $env = dirname($host[0]).'/.env';
+    if ($manager) staxx_import_log('  manager: '.$manager['container'].' ('.$manager['image'].')');
+
+    $running = false;
+    foreach ($rows as $r) if (strtolower($r['state']) === 'running') $running = true;
+
+    $out[] = staxx_import_other_row([
+      'source' => 'compose', 'id' => $project, 'project' => $project, 'files' => $host, 'env' => $env,
+      'tool' => $manager ? staxx_import_tool($manager['image']) : 'another compose tool',
+      'via' => 'compose', 'notes' => $notes, 'ready' => $ready, 'exists' => true, 'running' => $running,
+    ]);
+  }
+  return $out;
+}
+
+/* ------------------------------------------------------ look in a folder -- */
+
+/**
+ * PLAN_219 phase 1b — compose projects found by reading a folder the person
+ * chose: the folder itself and the folders directly inside it, so stacks
+ * with no containers are found too. Returns [] with $error set when the
+ * folder is refused or holds nothing.
+ */
+function staxx_import_scan_folder(string $path, string &$error): array {
+  $error = '';
+  $path = trim($path);
+  if ($path === '/') {
+    $error = 'Choose the folder that holds your stacks, not the top of the server.';
+    return [];
+  }
+  $path = rtrim($path, '/');
+  $remote = fn(string $p) => (bool)preg_match('#^/mnt/(remotes|rootshare)(/|$)#', $p);
+  $top = ['', '/mnt', '/mnt/user', '/boot', '/proc', '/sys', '/dev', '/run'];
+
+  // The text checks come first: a dead network share hangs anything that
+  // reads it, including realpath().
+  if ($remote($path)) {
+    $error = 'That folder is on another computer on your network. Copy the stacks onto this server first.';
+    return [];
+  }
+  $real = $path !== '' ? (string)@realpath($path) : '';
+  if ($real === '' || !is_dir($real)) {
+    $error = 'That folder does not exist on the server.';
+    return [];
+  }
+  if ($remote($real)) {
+    $error = 'That folder is on another computer on your network. Copy the stacks onto this server first.';
+    return [];
+  }
+  $real = rtrim($real, '/');
+  if (in_array($real, $top, true) || preg_match('#^/(proc|sys|dev|run)(/|$)#', $real)) {
+    $error = 'Choose the folder that holds your stacks, not the top of the server.';
+    return [];
+  }
+
+  // Not listed twice: folders a label row already points at, the store, and
+  // the Compose Manager folder.
+  $skip = [];
+  foreach (staxx_import_compose_projects() as $r) {
+    if ($r['file'] !== '') $skip[(string)@realpath(dirname($r['file']))] = true;
+  }
+  $store = (string)@realpath(staxx_stack_root());
+  $cmDir = (string)@realpath(STAXX_IMPORT_PROJECTS_DIR);
+  $inside = fn(string $p, string $dir) => $dir !== '' && ($p === $dir || strpos($p, $dir.'/') === 0);
+
+  $dirs = [$real];
+  $capped = false;
+  $n = 0;
+  foreach ((array)@scandir($real) as $e) {
+    if ($e === '.' || $e === '..' || $e[0] === '.' || !is_dir($real.'/'.$e)) continue;
+    if (++$n > 200) { $capped = true; break; }
+    $dirs[] = $real.'/'.$e;
+  }
+  staxx_import_log('scan folder '.$real.': '.count($dirs).' folders read'.($capped ? ' (stopped at 200)' : ''));
+
+  $out = [];
+  foreach ($dirs as $dir) {
+    $dir = (string)@realpath($dir);
+    if ($dir === '' || isset($skip[$dir]) || $inside($dir, $store) || $inside($dir, $cmDir)) continue;
+    $file = staxx_find_compose_file($dir);
+    if ($file === '') continue;
+
+    $files = [$file];
+    $override = staxx_import_find_override($file, $dir);
+    if ($override !== '') $files[] = $override;
+    $name = staxx_compose_own_name($file);
+    if ($name === '') $name = ltrim(preg_replace('/[^a-z0-9_-]/', '', strtolower(basename($dir))), '_-');
+    staxx_import_log('  folder '.$dir.': found '.basename($file).($override !== '' ? ' + '.basename($override) : '')
+                   .(is_file($dir.'/.env') ? ' + .env' : ''));
+
+    $out[] = staxx_import_other_row([
+      'source' => 'folder', 'id' => $dir, 'project' => staxx_import_safe_name($name), 'files' => $files,
+      'env' => is_file($dir.'/.env') ? $dir.'/.env' : '', 'tool' => '', 'via' => 'folder',
+      'notes' => $capped ? ['Only the first 200 folders were read.'] : [], 'exists' => false, 'running' => false,
+    ]);
+  }
+  if (!$out) {
+    $error = 'No compose projects were found in that folder or the folders directly inside it.'
+           . ($capped ? ' Only the first 200 folders were read.' : '');
+  }
   return $out;
 }
 
@@ -946,6 +1325,7 @@ function staxx_import_list(): array {
   return [
     'templates'   => $strip(staxx_import_templates()),
     'projects'    => $strip(staxx_import_projects()),
+    'composeProjects' => $strip(staxx_import_compose_projects()),
     'loose'       => $strip(staxx_import_loose()),
     // Folders FolderView3 could not be trusted to file by, named so the
     // panel can say so rather than staying quiet about it.
@@ -1108,6 +1488,8 @@ function staxx_import_note(array $about): string {
   $kind = [
     'template' => 'an Unraid template',
     'project'  => 'a Compose Manager project',
+    'compose'  => 'a compose project run by '.((string)($about['tool'] ?? '') ?: 'another compose tool'),
+    'folder'   => 'a compose project found in a folder',
     'loose'    => 'an existing container',
   ][(string)($about['source'] ?? '')] ?? 'an import';
 
@@ -1131,7 +1513,8 @@ function staxx_import_note(array $about): string {
   // rest of that story (rename the old container aside, start in its
   // place) does not apply, and describing the menu action itself is left
   // to whoever built it.
-  if ((string)($about['source'] ?? '') === 'project') {
+  $source = (string)($about['source'] ?? '');
+  if (in_array($source, ['project', 'compose', 'folder'], true)) {
     $via     = (string)($about['via'] ?? '');
     $file    = (string)($about['file'] ?? '');
     $foundBy = [
@@ -1139,6 +1522,8 @@ function staxx_import_note(array $about): string {
       'label'    => 'the label on its own running containers, because the copy on the flash drive '
                   . 'was not the one actually in use',
       'flash'    => 'the project\'s own folder on the flash drive',
+      'compose'  => 'the labels on its running containers, which name where the tool that runs it keeps the file',
+      'folder'   => 'looking in the folder you chose',
     ][$via] ?? 'the project\'s own folder on the flash drive';
 
     $lines[] = 'Its compose file was found by '.$foundBy.($file !== '' ? ', at "'.$file.'"' : '').'.';
@@ -1155,8 +1540,14 @@ function staxx_import_note(array $about): string {
         : '';
       $copied[] = 'its override file'.$renamed;
     }
+    if (!empty($about['moreFiles'])) $copied[] = 'its other compose files, kept under their own names (Docker Compose only pairs one override with the main file, so these are not used)';
     $lines[] = 'Copied across: '.implode(', ', $copied).'.';
     $lines[] = '';
+    if ($source !== 'project') {
+      $lines[] = 'Paths written as ./something in the file now point inside this stack\'s folder, '
+               . 'not inside the folder the file came from.';
+      $lines[] = '';
+    }
 
     $extras = array_values(array_filter((array)($about['extras'] ?? []), fn($e) => trim((string)$e) !== ''));
     // Honest about what was looked at: for a project that runs from a folder
@@ -1165,10 +1556,12 @@ function staxx_import_note(array $about): string {
     // nothing useful about the project.
     $lines[] = $extras
       ? 'Left behind in the project\'s own folder: '.implode(', ', $extras).'.'
-      : ($via === 'flash'
+      : ($source !== 'project'
+          ? 'Nothing else was left behind in the folder the file came from.'
+          : ($via === 'flash'
           ? 'Nothing else was left behind — the project\'s folder held only its own bookkeeping.'
           : 'Nothing else was copied from the project\'s own folder. The folder its compose '
-          . 'file actually lives in was not listed, because that is where its data lives.');
+          . 'file actually lives in was not listed, because that is where its data lives.'));
     $lines[] = '';
 
     if (empty($about['matches'])) {
@@ -1178,16 +1571,24 @@ function staxx_import_note(array $about): string {
       $lines[] = '';
     }
 
-    $lines[] = 'This project is still listed in Compose Manager, and nothing about it has been '
-             . 'touched or removed. Starting it from there while this stack also exists means '
-             . 'two places can act on the same containers, so pick one.';
+    $tool = (string)($about['tool'] ?? '');
+    if ($tool === '' || $tool === 'another compose tool') $tool = 'the tool that used to run it';
+    if ($source === 'project') {
+      $lines[] = 'This project is still listed in Compose Manager, and nothing about it has been '
+               . 'touched or removed. Starting it from there while this stack also exists means '
+               . 'two places can act on the same containers, so pick one.';
+    } else {
+      $lines[] = 'Nothing about the original has been touched or removed. After you take this stack '
+               . 'over, remove it from '.$tool.', so the two do not both run it.';
+    }
     $lines[] = '';
     $lines[] = 'This stack was given the exact same project name Docker already knows these '
              . 'containers by, so taking it over rebuilds the containers already running in '
              . 'place, rather than starting a second set alongside them.';
     $lines[] = '';
-    $lines[] = 'Deleting this file by hand only removes the lock — it does not touch Compose '
-             . 'Manager, the running containers, or anything else here.';
+    $lines[] = 'Deleting this file by hand only removes the lock — it does not touch '
+             . ($source === 'project' ? 'Compose Manager' : 'the tool that ran it')
+             . ', the running containers, or anything else here.';
     $lines[] = '';
     return implode("\n", $lines);
   }
@@ -1393,16 +1794,24 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
  * back, same as staxx_import_write().
  */
 function staxx_import_write_project(string $rel, string $id, array $about, string &$error,
-                                    string &$needsFix = ''): bool {
+                                    string &$needsFix = '', string $source = 'project',
+                                    string $scanPath = ''): bool {
   $error = '';
   $needsFix = '';
 
+  // PLAN_219 — the same write serves the three project-shaped readers; the
+  // row is always looked up again server-side, never taken from the browser.
   $project = null;
-  foreach (staxx_import_projects() as $row) {
+  $scanErr = '';
+  $rows = $source === 'compose' ? staxx_import_compose_projects()
+        : ($source === 'folder' ? staxx_import_scan_folder($scanPath, $scanErr) : staxx_import_projects());
+  foreach ($rows as $row) {
     if ($row['id'] === $id) { $project = $row; break; }
   }
   if ($project === null) {
-    $error = 'That Compose Manager project could not be found. Reopen the import panel and try again.';
+    $error = $scanErr !== '' ? $scanErr
+           : 'That '.($source === 'project' ? 'Compose Manager project' : 'project').' could not be found. Reopen the import panel and try again.';
+    staxx_import_log('write '.$source.' '.$id.' as '.$rel.': '.$error);
     return false;
   }
   if ($project['file'] === '') {
@@ -1417,7 +1826,10 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
   // note there on why this must be resolved before any rollback below.
   $real = (string)@realpath($dir);
 
-  $mainName = basename($project['file']);
+  // StaXX only finds a compose file under one of compose's own names, so a
+  // file a tool called something else is written as compose.yaml.
+  $mainName = in_array(basename($project['file']), STAXX_COMPOSE_FILENAMES, true)
+            ? basename($project['file']) : 'compose.yaml';
 
   // The override may not be named to pair with the main file the way
   // Compose Manager left it — so it is written under the name that DOES
@@ -1432,7 +1844,9 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
   }
 
   $about = array_merge($about, [
-    'source'       => 'project',
+    'source'       => $source,
+    'tool'         => $project['tool'] ?? '',
+    'moreFiles'    => $project['moreFiles'] ?? [],
     'id'           => $id,
     'name'         => $project['name'],
     'via'          => $project['via'],
@@ -1483,6 +1897,20 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
     }
   }
 
+  // Any further compose files are kept beside the rest under their own
+  // names (Docker Compose pairs only one override), never overwriting.
+  foreach ((array)($project['moreFiles'] ?? []) as $more) {
+    $to = $dir.'/'.basename($more);
+    if (file_exists($to)) $to = $dir.'/other-'.basename($more);
+    $moreText = @file_get_contents($more);
+    if ($moreText === false || @file_put_contents($to, $moreText) === false) {
+      $error = 'Could not copy '.basename($more).' into '.$dir;
+      staxx_rmtree($real, $real);
+      return false;
+    }
+    @chmod($to, 0644);
+  }
+
   // The compose file itself, last: validated as the pair Docker will
   // actually run — the real folder as the project directory, the override
   // (now correctly named) laid over it — but written byte for byte
@@ -1518,6 +1946,7 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
   @chmod($dir.'/'.$mainName, 0644);
   if ($needsFix !== '') staxx_record_set_needs_fix($dir, $needsFix);
 
+  staxx_import_log('write '.$source.' '.$id.' as '.$rel.': written'.($needsFix !== '' ? ', kept and marked as needing a fix' : ''));
   return true;
 }
 

@@ -10535,6 +10535,33 @@ div.title.staxx-has-titlebar {
   color: var(--sm-danger);
 }
 
+/* PLAN_219 — "Look in a folder" at the foot of the other-tools group. */
+.staxx-import-scan {
+  margin-top: 0.8rem;
+  font-size: 1.3rem;
+}
+
+.staxx-import-scanline {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.staxx-scaffold .staxx-import-scanline .staxx-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.staxx-import-scanmsg {
+  margin: 0.4rem 0 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.staxx-scaffold .staxx-import-reportbtn {
+  margin-left: 0.6rem;
+}
+
 .staxx-import-footrow {
   display: flex;
   align-items: center;

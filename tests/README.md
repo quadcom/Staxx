@@ -105,8 +105,8 @@ Four rules run through the whole set:
 - **Some suites deliberately do not redirect it**, and hand explicit `/tmp` paths to the function
   under test instead. Moving the store even for one command makes every real stack vanish from the
   webGUI for as long as it is moved, which is not acceptable on Adrian's box.
-- **Eight are wholly or partly opt-in behind an environment flag**, marked below (`compose_ensure` and
-  `expose` run their offline cases always and only their live half behind the flag). An opt-in suite nobody runs is a
+- **Nine are wholly or partly opt-in behind an environment flag**, marked below (`compose_ensure`, `expose` and
+  `import` run their offline cases always and only their live half behind the flag). An opt-in suite nobody runs is a
   suite that can rot unnoticed — run them when the code they cover is touched, and before a release.
 
 | Suite | What it covers | Needs |
@@ -137,7 +137,7 @@ Four rules run through the whole set:
 | `icons` | Service icons and their refusals, `staxx_icon_fetch_and_write()`'s own refusals with no network ever reached, and `staxx_icons_into_stacks()`'s dry run and real run putting an old-shape stack right | `STORE_ROOT` at `/tmp`; `ICON_FETCH` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
 | `imagehistory` | Per-stack image history, and the keep-list the Scan stored images window and the storage alert build from it | `STORE_ROOT`; `UPDATE_RETAIN="3"` seeded by the script itself into the scratch store's own `config/staxx.cfg` (not the flash file) |
 | `images_unused` | The "Scan stored images" window's grouping (include/Images.php): dangling vs. built-here vs. rollback-protected, the crypt-image label exclusion, and rule 2's refusal of an id not on the server's own current list. Builds and removes only its own labelled throwaway images | — |
-| `import` | The importer's three readers, the write path, and per-row icons | — |
+| `import` | Brings its own data, so it passes on any box: fake Unraid templates, Compose Manager projects and FolderView3 file under `/tmp/staxx-imp-<pid>` (Import.php lets a suite define those constants first). Covers the three readers, PLAN_219's reader of projects other tools started (map-path, compose-projects from canned rows and mounts, look-in-a-folder refusals and limits), the write path into the scratch store, and the import log's 5-run and 256 KB limits. **Opt-in** `STAXX_IMPORT_CONTAINERS=1` also `docker create`s six never-started dummy containers (from `nginx:alpine`, needs it already present; removed by exact id with a label check) to prove the reader through real Docker | `STORE_ROOT` at `/tmp` (via run-with-store.sh) |
 | `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
 | `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
 | `merge` | The write half of merging several stacks into one (PLAN_148 phase 4): the companion-file copy and its refusal, the one named history entry, image history carried across under the arriving service's own name, the leftover's own record mark, and every refusal before anything is written | `STORE_ROOT` at `/tmp` |

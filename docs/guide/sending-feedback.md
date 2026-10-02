@@ -66,7 +66,8 @@ underneath. Press the down arrow to bring it back.
 
 A **Bug Report** has an **Include details that help fix this** box under the text. Tick the files
 you want to send. Which files are offered depends on where you are. On a stack's editor, for
-example, the stack's own files are offered.
+example, the stack's own files are offered. If you have used **Import** in the last week,
+**What happened the last few times you used Import** is offered too, on any screen.
 
 Passwords, keys, email addresses and network addresses on your home network are replaced before
 anything is sent. These files are private. Only you and the StaXX team can see them, and they

@@ -731,11 +731,13 @@
     editor.addEventListener('dragover', function (event) { event.preventDefault(); });
   }
 
-  function openForm() {
+  // opts.title pre-fills the title (from a failed Import's button).
+  function openForm(opts) {
     if (!formWin) buildForm();
     asEl.textContent = connectedName ? 'Sending as ' + connectedName : '';
     if (formOpen) {
       if (minimised) setMinimised(false);
+      if (opts && opts.title) titleIn.value = opts.title;
       return;
     }
     screenAtPress = screenName();
@@ -748,17 +750,22 @@
     var target = newestModal() || scaffold() || document.body;
     if (formWin.parentNode !== target) { hidePop(formWin); target.appendChild(formWin); }
     showPop(formWin);
+    if (opts && opts.title) titleIn.value = opts.title;
     titleIn.focus();
     loadDetails();
   }
 
   // The corner button: connect first if need be, then the form.
-  function onBugClick() {
-    if (formOpen) { openForm(); return; }
+  // opts ({title, importLog}) is optional; the corner button's click passes an
+  // event, which carries neither. The import item is offered and ticked on
+  // every report anyway, so importLog needs nothing further.
+  function onBugClick(opts) {
+    if (!opts || opts.type !== undefined || opts.target !== undefined) opts = null;
+    if (formOpen) { openForm(opts); return; }
     call('feedback-status').then(function (r) {
       if (r.ok && r.connected) {
         connectedName = r.name || '';
-        openForm();
+        openForm(opts);
         refreshSettings();
       } else {
         openConnect(INTRO, r);

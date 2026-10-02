@@ -3148,6 +3148,7 @@ switch ($action) {
    * what is on disk NOW rather than what it was at the top of this request.
    */
   case 'import-list':
+    staxx_import_log_begin('Import window opened');
     $templates  = staxx_import_templates();
     $backfilled = staxx_import_backfill($templates);
     if ($backfilled) {
@@ -3162,12 +3163,30 @@ switch ($action) {
       fn($s) => ['folder' => $s['folder'], 'leaf' => $s['leaf'], 'rel' => $s['rel']],
       staxx_scan_stacks()['stacks']
     );
+    $importList = staxx_import_list();
+    staxx_import_log_end();
     staxx_reply([
       'ok'         => true,
       'root'       => staxx_stack_root(),
       'existing'   => $existing,
       'backfilled' => $backfilled,
-    ] + staxx_import_list());
+    ] + $importList);
+
+  /* ---- PLAN_219: read a folder the person chose for compose projects ----
+   *
+   * Read-only. staxx_import_scan_folder() refuses the folders it must not
+   * read, in sentences meant to be shown as they are.
+   */
+  case 'import-scan-folder':
+    staxx_import_log_begin('Look in a folder');
+    $folderRows = staxx_import_scan_folder((string)($_POST['path'] ?? ''), $error);
+    staxx_import_log_end();
+    if ($error !== '' && !$folderRows) staxx_fail($error);
+    foreach ($folderRows as &$folderRow) {
+      if (isset($folderRow['icon'])) $folderRow['icon'] = staxx_import_icon_public($folderRow['icon']);
+    }
+    unset($folderRow);
+    staxx_reply(['ok' => true, 'rows' => $folderRows]);
 
   /* ---- write one imported stack ----
    *
@@ -3189,9 +3208,11 @@ switch ($action) {
     if (!is_array($about)) $about = [];
 
     $needsFix = '';
-    if (!staxx_import_write($name, $body, $about, $error, $bodyAsIs, $needsFix)) {
-      staxx_fail($error);
-    }
+    staxx_import_log_begin('Import of a template as '.$name);
+    $wrote = staxx_import_write($name, $body, $about, $error, $bodyAsIs, $needsFix);
+    staxx_import_log('write template '.$name.': '.($wrote ? 'written' : $error));
+    staxx_import_log_end();
+    if (!$wrote) staxx_fail($error);
     staxx_reply($needsFix === '' ? ['ok' => true, 'name' => $name]
                                  : ['ok' => true, 'name' => $name, 'needsFix' => $needsFix]);
 
@@ -3208,10 +3229,19 @@ switch ($action) {
     $about = json_decode((string)($_POST['about'] ?? ''), true);
     if (!is_array($about)) $about = [];
 
+    // 'source' picks the reader (PLAN_219): the Compose Manager folder by
+    // default, 'compose' for the container labels, 'folder' for a scanned
+    // folder, which the server scans again — only the folder and the row id
+    // come from the browser, never a file path.
+    $source = (string)($_POST['source'] ?? 'project');
+    if (!in_array($source, ['project', 'compose', 'folder'], true)) $source = 'project';
+
     $needsFix = '';
-    if (!staxx_import_write_project($name, $id, $about, $error, $needsFix)) {
-      staxx_fail($error);
-    }
+    staxx_import_log_begin('Import of '.$source.' '.$id.' as '.$name);
+    $wrote = staxx_import_write_project($name, $id, $about, $error, $needsFix, $source, (string)($_POST['folder'] ?? ''));
+    if (!$wrote) staxx_import_log('write failed: '.$error);
+    staxx_import_log_end();
+    if (!$wrote) staxx_fail($error);
     staxx_reply($needsFix === '' ? ['ok' => true, 'name' => $name]
                                  : ['ok' => true, 'name' => $name, 'needsFix' => $needsFix]);
 

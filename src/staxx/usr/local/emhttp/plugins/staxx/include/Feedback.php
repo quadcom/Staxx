@@ -29,6 +29,7 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/ImportLog.php';
 
 if (!defined('STAXX_FEEDBACK_BASE'))  define('STAXX_FEEDBACK_BASE', 'https://staxxfb.quadcom.ca');
 // Kind of report (what the window sends) => the board section of that exact name.
@@ -386,7 +387,7 @@ function staxx_feedback_send(string $title, string $content, string $screen = ''
 
 const STAXX_FEEDBACK_ITEM_MAX   = 1048576; // per item, read from the server
 const STAXX_FEEDBACK_ATTACH_MAX = 5242880; // FeedLog's own limit for one file
-const STAXX_FEEDBACK_FILES = ['compose.txt', 'last-start-or-update.log', 'container-logs.log', 'page-errors.txt', 'versions.txt'];
+const STAXX_FEEDBACK_FILES = ['compose.txt', 'last-start-or-update.log', 'container-logs.log', 'page-errors.txt', 'versions.txt', 'import.log'];
 
 /** [[text, byte offset], …] for every match of $re (group $g) in $text. */
 function staxx_feedback_find(string $re, string $text, int $g = 0): array {
@@ -700,6 +701,8 @@ function staxx_feedback_details(string $stack, string $errors, string $browser):
     $n = count(array_filter(preg_split('/\R/', $errors), fn($l) => trim($l) !== ''));
     $add('errors', 'page-errors.txt', 'Errors this page has run into ('.$n.')', staxx_feedback_tail($errors));
   }
+  // Offered with or without a stack: an Import that failed has no stack yet.
+  $add('import', 'import.log', 'What happened the last few times you used Import', staxx_import_log_recent(7));
   $add('versions', 'versions.txt', 'Docker and Docker Compose versions', staxx_feedback_versions($browser));
 
   $clean = staxx_feedback_clean($texts);
@@ -710,7 +713,7 @@ function staxx_feedback_details(string $stack, string $errors, string $browser):
   return ['ok' => true, 'items' => $items];
 }
 
-/** Uploads one of the five files to the card $postId (its id, not its slug). */
+/** Uploads one of the six files to the card $postId (its id, not its slug). */
 function staxx_feedback_attach(string $postId, string $file, string $text): array {
   $token = '';
   if (($refused = staxx_feedback_need_token($token)) !== null) return $refused;
