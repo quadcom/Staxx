@@ -114,7 +114,9 @@ function staxx_error_report_send(): int {
 
   $sent = 0;
   $facts = staxx_manifest_facts();
-  $ver   = preg_match('/^\d{2}\.\d{2}\.\d{2}/', (string)($facts['version'] ?? ''), $m) ? $m[0] : '';
+  // A development copy has no manifest, so no version; the intake refuses a report
+  // without one (and a refusal is final), so such a copy says 00.00.00 instead.
+  $ver   = preg_match('/^\d{2}\.\d{2}\.\d{2}/', (string)($facts['version'] ?? ''), $m) ? $m[0] : '00.00.00';
   $comp  = staxx_compose();
   $cver  = preg_match('/\d+\.\d+\.\d+/', (string)($comp['version'] ?? ''), $m) ? $m[0] : '';
 
