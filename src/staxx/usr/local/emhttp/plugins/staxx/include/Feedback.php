@@ -387,7 +387,7 @@ function staxx_feedback_send(string $title, string $content, string $screen = ''
 
 const STAXX_FEEDBACK_ITEM_MAX   = 1048576; // per item, read from the server
 const STAXX_FEEDBACK_ATTACH_MAX = 5242880; // FeedLog's own limit for one file
-const STAXX_FEEDBACK_FILES = ['compose.txt', 'last-start-or-update.log', 'container-logs.log', 'page-errors.txt', 'versions.txt', 'import.log'];
+const STAXX_FEEDBACK_FILES = ['compose.txt', 'last-start-or-update.log', 'container-logs.log', 'page-errors.txt', 'versions.txt', 'import.log', 'self-test.txt'];
 
 /** [[text, byte offset], …] for every match of $re (group $g) in $text. */
 function staxx_feedback_find(string $re, string $text, int $g = 0): array {
@@ -704,6 +704,7 @@ function staxx_feedback_details(string $stack, string $errors, string $browser):
   // Offered with or without a stack: an Import that failed has no stack yet.
   $add('import', 'import.log', 'What happened the last few times you used Import', staxx_import_log_recent(7));
   $add('versions', 'versions.txt', 'Docker and Docker Compose versions', staxx_feedback_versions($browser));
+  $add('selftest', 'self-test.txt', 'StaXX self-test', staxx_feedback_selftest());
 
   $clean = staxx_feedback_clean($texts);
   $items = [];
@@ -713,7 +714,19 @@ function staxx_feedback_details(string $stack, string $errors, string $browser):
   return ['ok' => true, 'items' => $items];
 }
 
-/** Uploads one of the six files to the card $postId (its id, not its slug). */
+/** The Settings page's self-test as plain lines, one check per line, with a
+ *  failing one marked. It runs no command, so it cannot hang a report, and it is
+ *  already built to leave out the server's name and address. */
+function staxx_feedback_selftest(): string {
+  $out = '';
+  foreach (staxx_selftest() as $label => $e) {
+    if ($label === 'endpoint reachable') continue;   // "you are reading its reply" is true only on the page
+    $out .=$label.': '.($e['detail'] ?? '').(($e['state'] ?? '') === 'bad' ? '   <- needs attention' : '')."\n";
+  }
+  return $out;
+}
+
+/** Uploads one of the seven files to the card $postId (its id, not its slug). */
 function staxx_feedback_attach(string $postId, string $file, string $text): array {
   $token = '';
   if (($refused = staxx_feedback_need_token($token)) !== null) return $refused;

@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- A bug report can now also carry StaXX's self-test, the same checks as Settings, Self-test, offered and ticked on every bug report like the other files.
 - When Docker will not remove a damaged app in Settings, Storage, StaXX now offers to restart Docker and try again, right there in the window. It warns you first that every container stops for about a minute, and names any running container that will not come back on its own.
 - Adding a setting from the editor's form now always keeps the file valid: a name holding a colon and a space is written in quotes, and a setting written on one line in curly brackets is left alone instead of being broken.
 - Import now finds compose stacks run by other tools, such as Dockge, Portainer, Arcane, Dockhand and Komodo, and lists them under Compose projects from other tools. StaXX reads where each one's files are from its containers, including files a tool keeps inside its own container, and copies them into a new stack the same way it copies a Compose Manager project.

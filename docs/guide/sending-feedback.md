@@ -68,6 +68,7 @@ A **Bug Report** has an **Include details that help fix this** box under the tex
 you want to send. Which files are offered depends on where you are. On a stack's editor, for
 example, the stack's own files are offered. If you have used **Import** in the last week,
 **What happened the last few times you used Import** is offered too, on any screen.
+**StaXX self-test**, the checks from **Settings → Self-test**, is offered on every bug report.
 
 Passwords, keys, email addresses and network addresses on your home network are replaced before
 anything is sent. These files are private. Only you and the StaXX team can see them, and they
