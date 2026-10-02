@@ -440,36 +440,40 @@
   // The kinds of report. Each label is the exact name of the board section the
   // server sends it to; only a bug report carries the detail files.
   var KINDS = [
-    { id: 'bug', label: 'Bug Report', icon: 'fa-bug', title: 'Report a problem', heading: 'What happened' },
-    { id: 'feature', label: 'Feature Requests', icon: 'fa-lightbulb-o', title: 'Suggest a feature',
+    { id: 'bug', label: 'Bug Report', icon: 'fa-bug', heading: 'What happened' },
+    { id: 'feature', label: 'Feature Requests', icon: 'fa-lightbulb-o',
       heading: 'What would you like StaXX to do?' },
-    { id: 'improvement', label: 'Improvements', icon: 'fa-level-up', title: 'Suggest an improvement',
+    { id: 'improvement', label: 'Improvements', icon: 'fa-level-up',
       heading: 'What could work better, and how?' }
   ];
-  var kind = KINDS[0];
+  // null until the person picks one, so a report never goes out under a kind
+  // they did not choose.
+  var kind = null;
   var kindBtns = [], bodyHeadEl;
+  var NO_KIND_HEADING = 'What would you like to tell us?';
 
-  function kindTitle() { return sentView && !sentView.hidden ? 'Report sent' : kind.title; }
+  function kindTitle() { return sentView && !sentView.hidden ? 'Report sent' : 'StaXX feedback'; }
 
   // Shows the chosen kind everywhere it is worded: switch, window title, body
   // heading and the details box.
   function applyKind() {
-    kindBtns.forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.kind === kind.id ? 'true' : 'false'); });
+    kindBtns.forEach(function (b) { b.setAttribute('aria-pressed', kind && b.dataset.kind === kind.id ? 'true' : 'false'); });
     titleEl.textContent = kindTitle();
-    bodyHeadEl.textContent = kind.heading;
-    editor.setAttribute('aria-label', kind.heading);
+    var heading = kind ? kind.heading : NO_KIND_HEADING;
+    bodyHeadEl.textContent = heading;
+    editor.setAttribute('aria-label', heading);
     syncDetailsBox();
     refreshReview();   // only a bug report carries files, so only it can be blocked
   }
 
   function setKind(id) {
-    kind = KINDS.filter(function (k) { return k.id === id; })[0] || KINDS[0];
+    kind = KINDS.filter(function (k) { return k.id === id; })[0] || null;
     applyKind();
   }
 
   // Ticks live on the items, so returning to Bug Report shows them as they were.
   function syncDetailsBox() {
-    if (detailsBox) detailsBox.hidden = !(kind.id === 'bug' && details && details.items.length);
+    if (detailsBox) detailsBox.hidden = !(kind && kind.id === 'bug' && details && details.items.length);
   }
 
   function setMsg(text) { formMsg.textContent = text || ''; }
@@ -516,7 +520,7 @@
     askBox.hidden = true;
     rowBtns.hidden = false;
     if (!sentView.hidden) formStep('form');
-    setKind('bug');   // the next report starts fresh, on Bug Report
+    setKind(null);   // the next report starts fresh, with no kind chosen
     setMsg('');
     hidePop(formWin);
   }
@@ -573,7 +577,7 @@
 
   // Built once and reused, so what was typed survives a close.
   function buildForm() {
-    var h = head('staxx-bugwin-title', KINDS[0].title);
+    var h = head('staxx-bugwin-title', 'StaXX feedback');
     titleEl = h.label;
     formWin = popoverWindow('staxx-bugwin-float', 'manual', 'staxx-bugwin-title');
 
@@ -609,13 +613,13 @@
     titleIn.type = 'text';
     titleIn.maxLength = 200;
     tl.appendChild(titleIn);
-    var bl = el('div', 'staxx-bugwin-label', KINDS[0].heading);
+    var bl = el('div', 'staxx-bugwin-label', NO_KIND_HEADING);
     bodyHeadEl = bl;
     editor = el('div', 'staxx-bugwin-editor');
     editor.contentEditable = 'true';
     editor.setAttribute('role', 'textbox');
     editor.setAttribute('aria-multiline', 'true');
-    editor.setAttribute('aria-label', KINDS[0].heading);
+    editor.setAttribute('aria-label', NO_KIND_HEADING);
     asEl = el('p', 'staxx-bugwin-as');
     formView.appendChild(tl);
     formView.appendChild(bl);
@@ -730,8 +734,7 @@
     editor.addEventListener('drop', onDrop);
     editor.addEventListener('dragover', function (event) { event.preventDefault(); });
 
-    // Bug Report is chosen from the start; without this its button only showed as
-    // chosen after the form had been closed once.
+    // Draws the no-kind state (nothing pressed, neutral heading, Send off).
     applyKind();
   }
 
@@ -814,7 +817,15 @@
   var REVIEW_MSG = 'Preview the files marked Check this file and approve them before sending.';
 
   function reviewBlocked() {
-    return !!(details && kind.id === 'bug' && details.items.some(needsReview));
+    return !!(details && kind && kind.id === 'bug' && details.items.some(needsReview));
+  }
+
+  var KIND_MSG = 'Choose Bug Report, Feature Requests or Improvements.';
+
+  // The one Send rule: the message saying why Send is off, or '' when it is on.
+  // A missing kind is reported before an unapproved file.
+  function sendBlocked() {
+    return !kind ? KIND_MSG : reviewBlocked() ? REVIEW_MSG : '';
   }
 
   // Redraws every row's status and the Send block from the items as they stand.
@@ -836,10 +847,10 @@
       });
     }
     if (!sendBtn) return;
-    var blocked = reviewBlocked();
-    sendBtn.disabled = busy || blocked;
-    if (blocked) setMsg(REVIEW_MSG);
-    else if (formMsg.textContent === REVIEW_MSG) setMsg('');
+    var why = sendBlocked();
+    sendBtn.disabled = busy || !!why;
+    if (why) setMsg(why);
+    else if (formMsg.textContent === REVIEW_MSG || formMsg.textContent === KIND_MSG) setMsg('');
   }
 
   function renderDetails() {
@@ -1339,7 +1350,7 @@
 
   function setBusy(on) {
     busy = on;
-    sendBtn.disabled = on || reviewBlocked();
+    sendBtn.disabled = on || !!sendBlocked();
     cancelBtn.disabled = on;
     titleIn.disabled = on;
     editor.contentEditable = on ? 'false' : 'true';
@@ -1412,7 +1423,8 @@
   }
 
   function send() {
-    if (reviewBlocked()) { setMsg(REVIEW_MSG); return; }   // the button is disabled too; this is the backstop
+    var why = sendBlocked();
+    if (why) { setMsg(why); return; }   // the button is disabled too; this is the backstop
     var title = titleIn.value.trim();
     if (!title) { setMsg('Give the report a title first.'); titleIn.focus(); return; }
 
