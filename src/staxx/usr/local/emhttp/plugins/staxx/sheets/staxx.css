@@ -16908,6 +16908,15 @@ dialog::backdrop {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   overflow: auto;
+  overscroll-behavior: contain;   /* the end of a long log does not hand the scroll on */
+}
+
+/* Set on <html> by feedback.js while a file preview is open. The gutter stays,
+   so the page does not shift sideways when its scrollbar goes. */
+html.staxx-noscroll,
+html.staxx-noscroll body {
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 
 .staxx-scaffold .staxx-bugwin-preview .staxx-bugwin-ptext::selection {

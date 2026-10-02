@@ -1121,6 +1121,12 @@
     pTitle = h.label;
     pWin = popoverWindow('staxx-bugwin-preview', 'auto', 'staxx-bugwin-preview-title');
     previewWin = pWin;
+    // The page behind holds still while a file is previewed, so scrolling past
+    // the end of a long log does not move it; the report window alone leaves it
+    // free (Adrian, 2026-10-02).
+    pWin.addEventListener('toggle', function (event) {
+      document.documentElement.classList.toggle('staxx-noscroll', event.newState === 'open');
+    });
     var body = el('div', 'staxx-confirm-body');
 
     var bar = el('div', 'staxx-bugwin-pbar');
