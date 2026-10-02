@@ -1273,6 +1273,7 @@
           return;
         }
         setMsg('');
+        refreshReview();   // clearing a picture error must not also clear why Send is waiting
         var img = el('img', 'staxx-bugwin-shot');
         // On a display scaled above 100% a screenshot holds more pixels than the area it showed, so drawn
         // pixel-for-pixel it came out larger than what was copied. The uploaded file stays full resolution.
