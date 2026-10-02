@@ -142,12 +142,18 @@ function staxx_update_failure_reason(string $log, string $image): string {
 
 /* -------------------------------------------------------------------- text -- */
 
-/** The name a person recognises: the stack, with the service when it differs. */
+/**
+ * The name a person recognises: the stack's own name (its last path part, since
+ * the stored path carries the folders), with the service when it differs.
+ */
 function staxx_notify_label(array $e): string {
   $stack = (string)($e['stack'] ?? '');
   $svc   = (string)($e['service'] ?? '');
   if ($stack === '') return $svc !== '' ? $svc : (string)($e['image'] ?? '?');
-  return $svc === '' ? $stack : staxx_update_container_label($stack, $svc);
+  $pos  = strrpos($stack, '/');
+  $leaf = $pos === false ? $stack : substr($stack, $pos + 1);
+  if ($leaf === '') $leaf = $stack;
+  return ($svc === '' || strcasecmp($leaf, $svc) === 0) ? $leaf : $leaf.' ('.$svc.')';
 }
 
 /** Do the first numbers of the old and new version differ, both being numeric? */

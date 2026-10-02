@@ -7,7 +7,7 @@ installing image updates. It is explained fully in [checking for updates](update
 service can instead be set to Manual, Automatic or Pinned; see
 [choosing how a container updates](update-policy.md).
 
-![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with its four ticks, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with a row for each kind of message, the summary, release notes, Use icons, Quiet hours and Send a test message, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
 
 ## Image updates
 
@@ -34,9 +34,26 @@ These three only appear while Updates, above, is Automatic.
 
 ## Notifications
 
+![The Notifications field: StaXX advanced email notifications ticked with its line beneath, rows for New image found, Image installed and Installation failed each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM, and the Send a test message button](../images/guide/settings-updates-notifications.png)
+
+Messages go through Unraid's own notifications: the bell, email, and any other service set up
+there. What each message holds is in [update checking](updates.md#notifications).
+
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
-| Notify me | New image / Image installed / Installation failed / Still pinned (weekly), each on or off | Installation failed and Still pinned (weekly) are on; the other two are off | Four separate switches for when StaXX sends you an Unraid notification: New image when a check finds something waiting, Image installed once an update has gone in, Installation failed when one hasn't, and Still pinned (weekly) once a week listing every container still pinned to an exact build. Any mix can be on at once. A service can take itself out of these messages in its own settings; see [choosing how a container updates](update-policy.md). |
+| StaXX advanced email notifications | On / Off | Off | With this on, StaXX sends its own email, with app icons and colours, to the address set in Unraid's notification settings. The bell and any other services still get every message. With it off, every message is plain text. |
+| New image found | Straight away / In the summary / Off | Off | Sets when you hear that a check found a newer version. |
+| Image installed | Straight away / In the summary / Off | In the summary | Sets when you hear that an update went in. |
+| Installation failed | Straight away / In the summary / Off | Straight away | Sets when you hear that an update did not go in. |
+| Still pinned | In the summary / Off | In the summary | With this on, the summary lists every container still pinned to an exact build, once a week. |
+| Summary | Daily / Weekly, a day of the week, a time | Daily at 08:00 | Sets when the summary is sent. Nothing is sent when there is nothing to report. |
+| Release notes | First lines and a link / Link only / Leave out | First lines and a link | Sets how much of each app's release notes a message shows. The summary only ever shows the link. |
+| Use icons | On / Off | On | With this on, small pictures such as ✅ and ❌ start each line. With it off, messages are words only. |
+| Quiet hours | On / Off, from and to | Off, 22:00 to 07:00 | With this on, a message that falls inside these hours waits for the next message or the summary. Failures are always sent straight away. |
+| Send a test message | A button | | Sends one message now, so you can see what yours look like. |
+
+A service can take itself out of these messages in its own settings; see
+[choosing how a container updates](update-policy.md).
 
 ## Previous image releases to keep
 

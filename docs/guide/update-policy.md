@@ -43,8 +43,8 @@ the note to jump straight to the server setting it names.
 
 ![The When to update box with Automatic chosen and the note beside the When row outlined, reading Waits 24 hours, then installs in the quiet hours](../images/guide/update-policy-when-note.png)
 
-Below the **When to update** box sits a **Notifications** box, showing the same three switches as your
-server-wide notification settings — **New image**, **Image installed** and **Installation failed** —
+Below the **When to update** box sits a **Notifications** box, showing the same three kinds of message as
+your server's notification settings — **New image**, **Image installed** and **Installation failed** —
 each on (an orange tick) or off (a red cross). They start out matching your server. Leave all three
 alone and this container follows the server, however you change it later. Flip any one of them and
 all three become this container's own from then on. A note beneath the switches reads "Default = …",
@@ -100,8 +100,8 @@ Turn on **Select** and tick the stacks you want to change, then press **Updates�
 running right now, after a window asks you to confirm it.
 
 A pinned container's **Notifications** box holds one switch, **Remind me it is still pinned**, in
-place of the other three. With it on, the weekly reminder lists this container while it stays
-pinned. With it off, the reminder leaves it out. It starts on.
+place of the other three. With it on, the weekly list of pinned containers in the
+[summary](updates.md#the-summary) includes this one while it stays pinned. With it off, the list leaves it out. It starts on.
 
 ![The Updates row in a pinned service's menu: Pinned ticked, with Default, Manual and Automatic beside it, and below it Notifications with the one switch Remind me it is still pinned, ticked](../images/guide/update-policy-pinned-menu.png)
 

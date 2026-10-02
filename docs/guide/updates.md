@@ -1,6 +1,6 @@
 # Update checking
 
-<!-- index: 10 | answers what a check does, why images are asked about at different rates, what N to look at means, and how the countdown to an automatic install works. -->
+<!-- index: 10 | answers what a check does, why images are asked about at different rates, what N to look at means, how the countdown to an automatic install works, and what the update messages say. -->
 
 ## The update check
 
@@ -176,6 +176,49 @@ While **Update all** is running, a progress line sits above the list, counting h
 done and naming the one it is updating now. Press **Stop** to end the run once that one stack has finished.
 
 ![The Update all progress line under the toolbar, reading 1 of 3 updated, updating demo-web now, 1 waiting, with the Stop button at its right](../images/guide/updates-queue.png)
+
+## Notifications
+
+StaXX tells you about updates through Unraid's own notifications: the bell, email, and any other
+service set up in Unraid. Email reaches you once it is set up in Unraid's own notification
+settings. Choose which messages you get, and when, on [the Updates tab](settings-updates.md#notifications).
+
+| Message | Sent | What it shows |
+|---|---|---|
+| Update finished | When updates have installed or failed | Each app with its old and new version, its size on disk and the first lines of its release notes. A failed app says why in plain words. |
+| Updates found | When a check finds a newer version | Each waiting app with the version it runs and the version on offer, and its release notes. |
+| Summary | Once a day, or once a week, at the time you choose | Everything that waited for it: apps updated, failed and waiting, apps still pinned, anything the self-test found wrong, and the space old images take once that reaches 1 GB. |
+
+An app whose first version number changes, such as 10.9 to 11.0, is marked **major version**.
+Every message links to StaXX's update view.
+
+![An Update finished email: the StaXX logo and "3 stacks updated, 1 failed" on a dark band, chips counting 3 updated and 1 failed, then plex and paperless-ngx each with an icon, old and new version, size and three or two release-note bullets ending in Full release notes, tdarr with its version and size, and dbgate under Failed with the reason "Docker Hub's download limit was reached. It resets within six hours.", then the Open StaXX button](../images/guide/updates-email-finished.png)
+
+### The summary
+
+The summary goes out at the time you set. On a day with nothing to report, nothing is sent. Each
+app in it shows a **Release notes** link, not the notes.
+
+![A daily summary email: chips for 3 updated, 1 failed, 2 waiting and 1 pinned, sections Updated, Failed, Waiting for you and Pinned, each app with its version and a Release notes link, Lidatube marked major version, a line saying 4.2 GB of old images can be cleaned up with a Clean up images link, and the Open StaXX button](../images/guide/updates-email-summary.png)
+
+### Quiet hours
+
+With **Quiet hours** on, a message that falls inside them waits, and arrives with the next message
+or the summary. Failures are always sent straight away.
+
+### StaXX advanced email notifications
+
+With this setting on, the email is StaXX's own, with each app's icon and coloured counts at the top.
+The bell and any other services set up in Unraid still get every message, as plain text. With it
+off, the email is plain text too.
+
+![An Updates found email: "3 updates waiting for you", posterr, Lidatube and ytptube each with an icon and old and new version, Lidatube marked major version, release-note bullets ending in Full release notes, and the Update them in StaXX button](../images/guide/updates-email-found.png)
+
+### Send a test message
+
+Press **Send a test message** on the Updates tab to send one Update finished message now, built from
+your latest updates. Its subject starts with **Test:**. It uses your saved settings, so save any
+change first.
 
 ## Docker Hub's limit
 

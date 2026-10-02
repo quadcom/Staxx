@@ -174,6 +174,10 @@ ok('a note line is cut at 120 characters', mb_strlen(explode("\n", staxx_notify_
 $maj = staxx_notify_text([$next], '2')['body'];
 ok('major version is marked', has($maj, 'major version'));
 ok('a minor change is not marked', !has(staxx_notify_text([$plex], '2')['body'], 'major version'));
+// The stored stack is a path with its folders; a message names only the last part.
+ok('label: folder dropped, same service adds nothing', staxx_notify_label(['stack' => 'Media/plex', 'service' => 'plex']) === 'plex');
+ok('label: service equal ignoring case adds nothing', staxx_notify_label(['stack' => 'Media/Lidatube', 'service' => 'lidatube']) === 'Lidatube');
+ok('label: differing service is bracketed', staxx_notify_label(['stack' => 'Paperless/paperless-ngx', 'service' => 'webserver']) === 'paperless-ngx (webserver)');
 $dotted = ['kind' => 'installed', 'stack' => 'a', 'service' => 'a', 'was' => '10.9', 'version' => '10.10'];
 ok('10.9 to 10.10 is not major', !has(staxx_notify_text([$dotted], '1')['body'], 'major version'));
 $sz = $sonarr; $sz['size'] = 1288490189;

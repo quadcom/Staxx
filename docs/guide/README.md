@@ -33,7 +33,8 @@ This guide is written in English only.
 - **[Versions tab](editor-versions.md)** — undoing an app's own update, reading a build's row,
   pinning a service to one exact build and releasing it again.
 - **[Update checking](updates.md)** — answers what a check does, why images are asked about at
-  different rates, what N to look at means, and how the countdown to an automatic install works.
+  different rates, what N to look at means, how the countdown to an automatic install works, and
+  what the update messages say.
 - **[Choosing how a container updates](update-policy.md)** — letting one container update itself, or
   wait for you, and whether it is mentioned in update messages — set on its own page or from its
   row.
