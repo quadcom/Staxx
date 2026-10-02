@@ -15969,13 +15969,13 @@
       importDestPath.innerHTML = 'Each template you tick will be written into a folder named after ' +
         'its own Docker folder, inside <code>' + esc(root) + '</code> — or at the top level for ' +
         'anything with no Docker folder. Whatever a template already had filled in — passwords and ' +
-        'API keys included — is copied straight into that file. A Compose Manager project always ' +
+        'API keys included — is copied straight into that file. A compose project always ' +
         'lands at the top level here, since it has no Docker folder of its own to match.';
     } else {
       var path = root + (importFolder ? '/' + importFolder : '');
       importDestPath.innerHTML = 'Templates you tick will be written to <code>' + esc(path) + '</code>. ' +
         'Whatever a template already had filled in — passwords and API keys included — is copied ' +
-        'straight into that file. A Compose Manager project you tick is written there too, in a ' +
+        'straight into that file. A compose project you tick is written there too, in a ' +
         'folder named after the project itself — see its own row for that name.';
     }
 

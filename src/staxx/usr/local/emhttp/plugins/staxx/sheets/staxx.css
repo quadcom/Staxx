@@ -10558,8 +10558,11 @@ div.title.staxx-has-titlebar {
   font-size: 1.2rem;
 }
 
-.staxx-scaffold .staxx-import-reportbtn {
-  margin-left: 0.6rem;
+/* Sits inside the red failure line, so its colour is restated: a red label reads as part of the error. */
+.staxx-scaffold button.staxx-import-reportbtn {
+  margin: 0 0 0 1rem;
+  vertical-align: middle;
+  color: var(--sm-fg);
 }
 
 .staxx-import-footrow {
