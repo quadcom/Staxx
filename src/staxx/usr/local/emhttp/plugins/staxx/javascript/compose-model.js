@@ -4387,6 +4387,10 @@
     }
 
     var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+    // A parent that already holds something other than a map (a flow `{}` or
+    // `{A: b}`, a scalar) cannot take a child line: it would land as an orphan
+    // under a value that is already complete and corrupt the file.
+    if (pair.value && !map) return -1;
     // A second copy of the same key is a corrupted file — compose (and any
     // human reading it) only ever sees the last one. Every caller here was
     // already trusting the key it named stayed absent (freeName, a form
@@ -4426,9 +4430,10 @@
       lines.push('');
     }
 
-    // A number-shaped name (a variable called 8075) is written quoted, since
-    // compose refuses a number as a key.
-    var keyRaw = /^[-+]?(\.?\d|\.(inf|nan)$)/i.test(key) ? emitScalar(key, 'plain', true) : key;
+    // emitScalar decides whether the name needs quotes (a number-shaped name,
+    // since compose refuses a number as a key; one holding ": " or " #").
+    var keyRaw = emitScalar(key, 'plain', true);
+    if (keyRaw === null) return -1;
     lines.push(pad(indent) + keyRaw + (raw === null ? ':' : ': ' + raw));
 
     splice(doc, to, 0, lines);

@@ -11251,6 +11251,98 @@ function notifyField(form, service) {
   }
 })();
 
+/* ---- insertChild: a new key under a parent (owed by PLAN_209) ------------ */
+
+console.log('\nIC. insertChild writes one new key under a parent');
+(function () {
+  function run(src, pathKeys, key, value, before, bare) {
+    var doc = Y.parse(src), pr = doc.root.pairs[pathKeys[0]];
+    for (var i = 1; i < pathKeys.length; i++) pr = pr.value.pairs[pathKeys[i]];
+    var at = Y.insertChild(doc, pr, key, value, before, bare);
+    return { at: at, out: Y.serialise(doc), doc: doc };
+  }
+  function reparses(out) { var d = Y.parse(out); return !d.unreadTail && Y.serialise(d) === out; }
+  var base = 'services:\n  a:\n    image: x\n    restart: no\n';
+
+  // lands last, at the siblings' column, rest of file byte-identical
+  var r = run(base, ['services', 'a'], 'tty', 'true');
+  ok('appends after the last sibling, same indent',
+     r.out === base + '    tty: \'true\'\n', JSON.stringify(r.out));
+  ok('...and returns the new line number', r.at === 4, r.at);
+  ok('...and the result re-parses', reparses(r.out));
+  r = run(base, ['services', 'a'], 'tty', 'true', null, true);
+  ok('bare writes a real boolean unquoted', r.out === base + '    tty: true\n', JSON.stringify(r.out));
+  r = run(base, ['services', 'a'], 'tty', null);
+  ok('a null value writes a bare "key:" line', r.out === base + '    tty:\n', JSON.stringify(r.out));
+
+  // a parent that nests by four keeps its own step
+  r = run('services:\n  a:\n    environment:\n        A: b\n', ['services', 'a', 'environment'], 'B', 'x');
+  ok('matches a four-space nesting habit',
+     r.out === 'services:\n  a:\n    environment:\n        A: b\n        B: x\n', JSON.stringify(r.out));
+
+  // before: only the true last key is skipped over (documented quirk, PLAN_67)
+  var xu = base + '    x-unraid:\n      k: 1\n';
+  r = run(xu, ['services', 'a'], 'tty', 'true', 'x-unraid');
+  ok('before: the named last key stays last',
+     r.out === base + '    tty: \'true\'\n    x-unraid:\n      k: 1\n', JSON.stringify(r.out));
+  r = run(xu, ['services', 'a'], 'tty', 'true', 'restart');
+  ok('before: a key that is not last is ignored and the line still appends at the end',
+     r.out === xu + '    tty: \'true\'\n', JSON.stringify(r.out));
+
+  // empty parent
+  r = run('services:\n  a:\n    environment:\n', ['services', 'a', 'environment'], 'B', 'x');
+  ok('under a parent with nothing yet: two columns in',
+     r.out === 'services:\n  a:\n    environment:\n      B: x\n', JSON.stringify(r.out));
+  ok('...and it re-parses', reparses(r.out));
+
+  // comments and blank lines
+  var cm = 'services:\n  a:\n    image: x\n    # note\n\n    restart: no\n\n  b:\n    image: y\n';
+  r = run(cm, ['services', 'a'], 'tty', 'true');
+  ok('comment and blank lines around the insertion point survive',
+     r.out.indexOf('    # note\n\n    restart: no\n') >= 0 && r.out.indexOf('\n  b:\n    image: y\n') > 0, JSON.stringify(r.out));
+  ok('the new key follows the file\'s blank-line habit and the next service is untouched',
+     r.out === 'services:\n  a:\n    image: x\n    # note\n\n    restart: no\n\n    tty: \'true\'\n\n  b:\n    image: y\n',
+     JSON.stringify(r.out));
+  ok('...and it re-parses', reparses(r.out));
+  r = run('services:\n  a:\n    image: x\n    # trailing note\n', ['services', 'a'], 'tty', 'true');
+  ok('a trailing comment is kept', r.out.indexOf('    # trailing note\n') >= 0 && r.out.indexOf("tty: 'true'") > 0, JSON.stringify(r.out));
+
+  // quoting of the key
+  var env = 'services:\n  a:\n    environment:\n      A: b\n';
+  r = run(env, ['services', 'a', 'environment'], '8075', 'x');
+  ok('a digits-only key is quoted so it stays a string (PLAN_209)',
+     r.out === env + "      '8075': x\n", JSON.stringify(r.out));
+  ok('...and it reads back as the string key "8075"', (function () {
+       var d = Y.parse(r.out); return !!d.root.pairs.services.value.pairs.a.value.pairs.environment.value.pairs['8075'];
+     })());
+  r = run(env, ['services', 'a', 'environment'], '-1', '1');
+  ok('a negative-number key is quoted', r.out === env + "      '-1': 1\n", JSON.stringify(r.out));
+  r = run(env, ['services', 'a', 'environment'], '.5', '1');
+  ok('a decimal key is quoted', r.out === env + "      '.5': 1\n", JSON.stringify(r.out));
+  r = run(env, ['services', 'a', 'environment'], 'A1', '1');
+  ok('an ordinary key is left plain', r.out === env + '      A1: 1\n', JSON.stringify(r.out));
+  r = run(env, ['services', 'a', 'environment'], 'x: y', '1');
+  ok('a key containing ": " is quoted',
+     r.out === env + "      'x: y': 1\n", JSON.stringify(r.out));
+
+  // refusals
+  r = run(base, ['services', 'a'], 'image', 'again');
+  ok('a key that already exists is refused (-1), file untouched', r.at === -1 && r.out === base);
+  r = run(base, ['services', 'a'], 'k', 'a\nb');
+  ok('a value with a line break is refused (-1), file untouched', r.at === -1 && r.out === base);
+  r = run('services:\n  a:\n    image: x\n} not yaml {\n', ['services', 'a'], 'tty', 'true');
+  ok('a document with an unread tail is refused (-1), file untouched',
+     r.at === -1 && r.out === 'services:\n  a:\n    image: x\n} not yaml {\n', JSON.stringify(r.out));
+
+  // flow style: a flow parent cannot take a child line, so it is refused
+  ['{}', '{A: b}'].forEach(function (flow) {
+    var src = 'services:\n  a:\n    environment: ' + flow + '\n';
+    r = run(src, ['services', 'a', 'environment'], 'B', 'x');
+    ok('a flow-style parent ' + flow + ' is refused and left untouched',
+       r.at === -1 && r.out === src, JSON.stringify(r.out));
+  });
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 check.done();
