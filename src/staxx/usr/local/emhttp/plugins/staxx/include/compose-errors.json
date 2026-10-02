@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-01",
+  "version": "2026-10-02",
   "entries": [
     {
       "id": "number-key",
@@ -82,6 +82,15 @@
       "means": "The service {service} does not say what to run. A container needs an image, which is the packaged app it starts from. Compose has nothing to start for {service} without one.",
       "fix": "Add an image line under {service}, such as image: nginx:latest. Use the name of the app you want to run. If you build the app yourself, add a build line instead.",
       "docs": "https://docs.docker.com/reference/compose-file/services/#image"
+    },
+    {
+      "id": "not-a-list",
+      "match": "services\\.(?<service>[^.\\s]+)\\.(?<key>[^.\\s]+) must be a array",
+      "sample": "validating /tmp/staxx-explain/compose.yaml: services.web.ports must be a array",
+      "title": "A setting that needs a list",
+      "means": "In the {service} service, the setting {key} has to be a list of values, but the file gives it a single value instead. Compose cannot read one value where it expects a list.",
+      "fix": "Write {key} as a list. Put each value on its own line under {key}, starting with a dash and a space, such as - \"8080:80\" for a port. Then run the check again.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/"
     }
   ]
 }
