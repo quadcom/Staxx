@@ -47,13 +47,16 @@ touched. Each row shows an icon, the name, where it came from, and what its cont
 
 ## Look in a folder
 
-<!-- SHOT: bringing-in-a-container-look-in-a-folder | close-up | the Compose projects from other tools group open, with one or two rows found and, at its foot, the Look in a folder box filled in with /mnt/user/appdata/dockge/stacks, the Look button, and the line Found 2 projects. -->
+![The Import window over the stack list, showing the Compose projects from other tools group with two projects found, uptime-kuma and wikijs, each marked Compose project in a folder and No container, the Look in a folder box beneath them, and Already imported collapsed below](../images/guide/bringing-in-a-container-other-tools.png)
+
+![Close-up of the Compose projects from other tools group: the two found projects, and the Look in a folder box outlined, holding /mnt/user/appdata/dockge/stacks beside the folder button and the Look button, with Found 2 projects under it](../images/guide/bringing-in-a-container-look-in-a-folder.png)
 
 To find a stack that has no containers on the server yet:
 
 1. Type the folder that holds your stacks into **Look in a folder**, at the foot of **Compose
    projects from other tools**. For Dockge, for example, that is the folder it keeps its stacks in.
-2. Press **Look**.
+2. Press **Look**. Or press the folder button beside the box, open the folder in the picker, and
+   press **Choose this folder**.
 
 StaXX reads that folder and the folders directly inside it. Each compose project it finds is added
 to the group, ready to tick.
@@ -98,7 +101,7 @@ An import that fails is listed with what went wrong and a **Report this problem*
 send a bug report with a record of what Import found attached; see [sending
 feedback](sending-feedback.md).
 
-<!-- SHOT: bringing-in-a-container-report-problem | close-up | the foot of the Import window after a run with one failure: the row naming the stack and what went wrong, with the Report this problem button beside it, above the Import and Close buttons. -->
+![The foot of the Import window after a run: Imported 1 of 2, then wikijs in red saying the project could not be found and to reopen the import panel and try again, with the Report this problem button outlined beside it, above the Import and Close buttons](../images/guide/bringing-in-a-container-report-problem.png)
 
 ![A stack row carrying the orange needs review tag under its name, outlined](../images/guide/bringing-in-a-container-needs-review.png)
 
