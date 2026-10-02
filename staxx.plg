@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20261001">
+<!ENTITY version              "00.05.00_dev20261002">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "d7690cdedfc575006677e24136d1d83b">
-<!ENTITY packageSHA256        "18c85c03e2758edf61914ea8d16435660f687f3b0037c6ac6fe73d8140c5b4de">
+<!ENTITY packageMD5           "7c3d789c124e428ed7da0b88b620aed9">
+<!ENTITY packageSHA256        "52da54d140ab55732e55430d4ba299b4d360751341f558d0e8ad0a70896d5e56">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,16 @@
 >
 
 <CHANGES>
-###00.05.00_dev20261001
+###00.05.00_dev20261002
+- A file Docker Compose refuses is no longer turned away when it arrives, whether from an Unraid template, a Compose Manager project, Apps, a paste, an upload or the image importer. It is saved, its row turns a soft red with a red wrench in the State column, and Open and fix (in the import window) or the wrench takes you straight to the problem.
+- When Docker Compose finds a problem in the editor, a floating window explains it: Docker's own message, what it means in plain English, how to fix it, and a link to Docker's page. Drag it anywhere, roll it up, or close it; the red "fix needed" button at the top of the editor brings it back. The faulty line is marked red, and Show me jumps to it.
+- For a setting whose name is only a number, Fix it for me shows the change first, makes it when you agree, and Undo takes it back.
+- A freshly imported stack still waiting for your review has a soft orange row.
+- The small "i" marks beside the editor's settings now open their help in the same floating window.
+- Settings, Integrations has a new switch, Send Docker errors StaXX cannot explain, on by default. With it on, StaXX sends Docker's message, with names, paths and addresses taken out, the first time it meets one it has no explanation for, so one can be written. New explanations reach StaXX once a day.
+- Dropping a picture or its address onto a container's icon in the editor now changes the icon straight away, on the stack list too, without pressing Save. A dropped picture is kept under the container's own name and replaces the one dropped before.
+- The thumbtack beside a stack with a pinned service is bigger and white, so it is easy to see.
+- Check for updates now counts through the images as it checks them, instead of only spinning.
 - A small speech-bubble button now sits in the bottom right corner of every StaXX screen, the editor and Settings included. Press it to report a bug, request a feature or suggest an improvement; each goes to its own section of StaXX's feedback board. Give it a title, say what you want to tell us, and paste screenshots straight into the text with Ctrl+V. The report window floats over the page without blocking it, so you can drag it aside, or roll it up to the top of the screen while you take a screenshot. Reports go under your own feedback-board account, signed in with Google or GitHub; connect once and StaXX remembers it. Each report also carries your StaXX and Unraid versions and the screen you were on, and nothing else about your server. Once sent, the window shows what went out and a link to your report on the board. Disconnect it any time in Settings, Integrations.
 - A report can also carry details that help fix the problem: the compose file of the stack you were editing, what happened the last time it started or updated, its recent container logs, errors the page ran into, and the versions in use. Passwords, keys, email addresses, network addresses and the names of computers on your network are replaced before anything leaves your server. Preview each file first, hide anything else you want kept private, and click a hidden part to put it back. A file holding a number that may be an address or a version number is marked Check this file, and the report waits until you have previewed and approved it. These files are private: only you and the StaXX team can see them, and they are deleted after 90 days.
 - Button text across StaXX is a little larger, to match the size of the text around it.
@@ -528,7 +537,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20261001-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261002-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
