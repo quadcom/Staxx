@@ -856,6 +856,13 @@
       lab.appendChild(box);
       lab.appendChild(el('span', '', it.label));
       it.statusEl = el('span');
+      // The status sits inside the tick box's label, so a click on it would flip
+      // the tick; "Check this file" and "Checked" open the preview instead.
+      it.statusEl.addEventListener('click', function (event) {
+        if (!it.statusEl.className) return;
+        event.preventDefault();
+        openPreview(it);
+      });
       lab.appendChild(it.statusEl);
       var view = el('button', 'staxx-bugwin-link', 'Preview');
       view.type = 'button';
@@ -1098,29 +1105,15 @@
     hideEverywhere(s);
   }
 
-  var KIND_WORDS = {
-    secret: 'a password or key',
-    email: 'an email address',
-    home: 'an address on your home network',
-    address: 'an address',
-    mac: 'a hardware address',
-    host: 'the name of a computer on your home network',
-    maybe: 'a number that may be a network address or a version number'
-  };
-
+  // A click puts the real value back at once, whatever kind it is (Adrian,
+  // 2026-10-02: a question at the window's foot read as nothing happening).
+  // Selecting it and pressing Hide this hides it again.
   function onTagClick(event) {
     var m = event.target.closest && event.target.closest('.staxx-bugwin-tag');
     if (!m || !details) return;
-    var tag = m.getAttribute('data-tag');
-    var kind = '';
-    details.items.forEach(function (it) {
-      it.segments.forEach(function (g) { if (g.tag === tag) kind = g.kind; });
-    });
     endAsk();
     setPMsg('');
-    if (kind === 'hidden') { showEverywhere(tag); return; }
-    showAsk('This looks like ' + (KIND_WORDS[kind] || 'something private') + '. Send it as it is?',
-      'Keep it hidden', 'Send it as it is', function () { showEverywhere(tag); });
+    showEverywhere(m.getAttribute('data-tag'));
   }
 
   function buildPreview() {

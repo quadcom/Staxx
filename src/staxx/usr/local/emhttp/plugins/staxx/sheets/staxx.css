@@ -16803,6 +16803,7 @@ dialog::backdrop {
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-checked {
   font-size: 1.3rem;
   font-weight: 700;
+  cursor: pointer;   /* opens the preview */
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-review { color: #f0a020; }

@@ -93,7 +93,7 @@ and when you show a part it hid on its own.
 ### Check this file
 
 A file marked **Check this file** holds a number that may be a network address or a version
-number. StaXX hides it until you decide. Press **Preview**, click any highlighted number you want
+number. StaXX hides it until you decide. Press **Check this file** or **Preview**, click any highlighted number you want
 sent as it is, then press **Approve**. Approve every marked file, or untick it, before you press
 **Send**.
 
