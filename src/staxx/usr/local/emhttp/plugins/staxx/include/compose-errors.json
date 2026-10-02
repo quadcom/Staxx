@@ -1,0 +1,96 @@
+{
+  "version": "2026-10-02",
+  "entries": [
+    {
+      "id": "number-key",
+      "match": "non-string key in services\\.(?<service>[^.\\s]+)\\.environment: (?<key>\\S+)",
+      "sample": "non-string key in services.web.environment: 8075",
+      "title": "A setting's name is a number",
+      "means": "Every setting in a container's environment has a name and a value. In {service}, one setting is named {key}. Docker Compose reads a name made only of digits as a number, not as a word. A name has to be a word, so Compose stops and will not read the file.",
+      "fix": "Put quotes around the name, so the line starts with \"{key}\": instead of {key}:. The value stays exactly the same. Fix it for me makes this change and shows you what it changed.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/#environment",
+      "autofix": "quote-env-key"
+    },
+    {
+      "id": "unknown-key",
+      "match": "(?<where>\\S+) additional properties '(?<key>[^']+)' not allowed",
+      "sample": "validating /tmp/x/compose.yaml: services.web additional properties 'restrat' not allowed",
+      "title": "A setting name Compose does not know",
+      "means": "Compose found a setting called {key} in {where}, and it is not one Compose knows. This is often a typing slip, such as a letter left out or the wrong capital. Compose stops rather than guess what you meant.",
+      "fix": "Look at the line with {key} on it. Check the spelling against Docker's page for this setting. If it is a setting you made up, remove the line. Then run the check again.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/"
+    },
+    {
+      "id": "undefined-network",
+      "match": "service \"(?<service>[^\"]+)\" refers to undefined network (?<network>\\S+?)(?::|\\s|$)",
+      "sample": "service \"web\" refers to undefined network backend: invalid compose project",
+      "title": "A network is used but never set up",
+      "means": "The service {service} is joined to a network called {network}. The file never says that this network exists. Compose will not start a container on a network it has not been told about.",
+      "fix": "Add {network} to the networks list at the bottom of the file. Or remove {network} from the networks of {service} if you do not need it.",
+      "docs": "https://docs.docker.com/reference/compose-file/networks/"
+    },
+    {
+      "id": "undefined-volume",
+      "match": "service \"(?<service>[^\"]+)\" refers to undefined volume (?<volume>\\S+?)(?::|\\s|$)",
+      "sample": "service \"web\" refers to undefined volume data: invalid compose project",
+      "title": "A named volume is used but never set up",
+      "means": "The service {service} uses a volume called {volume}. The file never says that this volume exists. A named volume has to be listed in the file before a container can use it.",
+      "fix": "Add {volume} to the volumes list at the bottom of the file. Or, if you meant a folder on the server, start the path with a slash, like /mnt/user/appdata/name.",
+      "docs": "https://docs.docker.com/reference/compose-file/volumes/"
+    },
+    {
+      "id": "undefined-depends",
+      "match": "service \"(?<service>[^\"]+)\" depends on undefined service \"?(?<target>[^\"\\s:]+)",
+      "sample": "service \"web\" depends on undefined service \"db\": invalid compose project",
+      "title": "It waits for a container that is not in the file",
+      "means": "The service {service} is set to wait for a service called {target}. There is no service with that name in the file. Compose cannot wait for something that does not exist.",
+      "fix": "Check the spelling of {target} in the depends_on list of {service}. If the other container is missing, add it. If you do not need to wait for it, remove that line.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/#depends_on"
+    },
+    {
+      "id": "yaml-indent",
+      "match": "yaml: line (?<line>\\d+): mapping values are not allowed in this context",
+      "sample": "yaml: line 4: mapping values are not allowed in this context",
+      "title": "A line is indented wrongly",
+      "means": "Compose could not read line {line}. It has a colon where the file's layout does not allow one. This usually means the line is indented too far, or not far enough, so it does not sit under the right setting.",
+      "fix": "Look at line {line} and the line above it. Lines under a setting must be indented by the same amount, using spaces. Move line {line} so it lines up with its neighbours.",
+      "docs": "https://docs.docker.com/reference/compose-file/"
+    },
+    {
+      "id": "yaml-tab",
+      "match": "yaml: line (?<line>\\d+): found character that cannot start any token",
+      "sample": "yaml: line 3: found character that cannot start any token",
+      "title": "A tab character where spaces are needed",
+      "means": "Compose could not read line {line}. It most likely starts with a tab character. This kind of file only allows spaces for indenting, and a tab looks the same on screen but is not accepted.",
+      "fix": "Delete the blank space at the start of line {line} and type spaces in its place. Two spaces for each step in is the usual choice.",
+      "docs": "https://docs.docker.com/reference/compose-file/"
+    },
+    {
+      "id": "bad-port",
+      "match": "invalid containerPort: (?<port>\\S+)",
+      "sample": "invalid containerPort: abc",
+      "title": "A port is not a number",
+      "means": "One of the ports in the file is written as {port}. A port has to be a number, such as 8080, or a range of numbers. Compose cannot open a port it cannot read as a number.",
+      "fix": "Find {port} in the ports list and replace it with the port number. A port line looks like \"8080:80\", with the port on the server first and the port in the container second.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/#ports"
+    },
+    {
+      "id": "no-image",
+      "match": "service \"(?<service>[^\"]+)\" has neither an image nor a build context specified",
+      "sample": "service \"web\" has neither an image nor a build context specified: invalid compose project",
+      "title": "The container has no image",
+      "means": "The service {service} does not say what to run. A container needs an image, which is the packaged app it starts from. Compose has nothing to start for {service} without one.",
+      "fix": "Add an image line under {service}, such as image: nginx:latest. Use the name of the app you want to run. If you build the app yourself, add a build line instead.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/#image"
+    },
+    {
+      "id": "not-a-list",
+      "match": "services\\.(?<service>[^.\\s]+)\\.(?<key>[^.\\s]+) must be a array",
+      "sample": "validating /tmp/staxx-explain/compose.yaml: services.web.ports must be a array",
+      "title": "A setting that needs a list",
+      "means": "In the {service} service, the setting {key} has to be a list of values, but the file gives it a single value instead. Compose cannot read one value where it expects a list.",
+      "fix": "Write {key} as a list. Put each value on its own line under {key}, starting with a dash and a space, such as - \"8080:80\" for a port. Then run the check again.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/"
+    }
+  ]
+}
