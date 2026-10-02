@@ -201,6 +201,14 @@ served exactly as committed. Put both back in the merge commit.
 
 ---
 
+## Files that reach `main` between releases
+
+`staxx.xml`, `ca_profile.xml` and `compose-errors.json` are committed on `main` directly and
+cherry-picked onto `dev` (see `notes/delivery.md`). So at a stable release `dev` already holds every
+such commit and the merge brings nothing new for them. If `compose-errors.json` conflicts anyway, keep
+the copy whose `version` date is later, and run `node tests/compose_errors.js` before committing the
+merge.
+
 ## The gotcha after a stable release
 
 A dev build takes its base from the manifest. Straight after a stable release the manifest says the

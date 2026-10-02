@@ -7,6 +7,12 @@ format: it is how people find StaXX and are told it has updated. `SUBMISSION.md`
 proved for it; `staxx.xml` and `ca_profile.xml` in the root are what it reads, committed on `main`
 directly and copied to `dev`.
 
+**`compose-errors.json` travels the same way** (PLAN_217, Adrian 2026-10-02). Every server fetches the
+Docker Compose explanations once a day from `main`
+(`src/staxx/usr/local/emhttp/plugins/staxx/include/compose-errors.json`), so a new explanation is
+committed on `main` directly, touching that one file and nothing else, then cherry-picked onto `dev`.
+The `staxx-board-check` skill does it. It is data, not code: no build, no version change.
+
 **The packaging chain itself is complete, and the manifest is the way in people should be pointed
 at.** Paste the manifest address into Unraid's **Plugins → Install Plugin** box and it installs like
 any other plugin: it survives a reboot, and Unraid notices later versions because it re-reads the
