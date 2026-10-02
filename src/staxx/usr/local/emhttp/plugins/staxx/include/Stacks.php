@@ -6201,7 +6201,7 @@ function staxx_leftovers_do_clear(array $items, string $stamp, bool $retry = fal
         // After a Docker restart there is no third thing to try from the page.
         echo $retry
           ? "Docker still would not remove $name. Restart the server, then clear it here from Damaged apps.\n"
-          : "Docker would not remove the damaged app \"$name\". Go to Settings → Docker, set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, clear it here from \"Damaged apps\".\n";
+          : "Docker would not remove the damaged app \"$name\".\n";
         $ok = false; continue;
       }
       $m['items'][] = ['kind' => 'damaged', 'name' => $name, 'id' => $id];
@@ -6248,7 +6248,7 @@ function staxx_leftovers_do_clear(array $items, string $stamp, bool $retry = fal
       if ($code !== 0) {
         if (!$damaged) { echo "Docker would not remove \"$name\".\n"; $ok = false; continue; }
         // Forced: the template is still cleared; the container waits under "Damaged apps".
-        echo "Docker would not remove the damaged app \"$name\". Its template is cleared. Go to Settings → Docker, set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, clear it here from \"Damaged apps\".\n";
+        echo "Docker would not remove the damaged app \"$name\". Its template is cleared.\n";
       }
     }
 

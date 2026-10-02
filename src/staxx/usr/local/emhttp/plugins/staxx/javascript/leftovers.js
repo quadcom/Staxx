@@ -165,7 +165,7 @@
     if (offer.running) return html + '<p class="staxx-hint">Restarting Docker…</p>';
     return html + '<div class="staxx-leftovers-confirm">'
       + (offer.error ? '<p class="staxx-settings-msg">' + esc(offer.error) + '</p>' : '')
-      + '<p>Docker would not remove ' + esc(offer.names.join(', ')) + '. Restarting Docker usually lets it go.</p>'
+      + '<p>Restarting Docker usually lets ' + esc(offer.names.join(', ')) + ' go.</p>'
       + '<p>Restarting Docker stops every container on this server for about a minute. '
       + 'The ones set to start automatically come back on their own.'
       + (offer.stay.length
@@ -436,7 +436,16 @@
     if (t.closest('#staxx-leftovers-clear')) return askConfirm();
     if (t.closest('#staxx-leftovers-go')) return runClear();
     if (t.closest('#staxx-leftovers-restart')) return runRestart();
-    if (t.closest('#staxx-leftovers-notnow')) { offer = null; paintAfter(); return; }
+    if (t.closest('#staxx-leftovers-notnow')) {
+      // The log names the refusal only, so the offer is the one place the fix is
+      // described; turning it down puts the by-hand steps where the offer was.
+      offer = null;
+      logText = (logText ? logText.replace(/\n*$/, '\n') : '') + 'To clear it later, go to Settings → Docker, '
+        + 'set Enable Docker to No and apply, then set it back to Yes and apply. When the StaXX tab is back, '
+        + 'clear it here from "Damaged apps".';
+      paintAfter();
+      return;
+    }
     if (t.closest('#staxx-leftovers-nope')) {
       var slot = document.getElementById('staxx-leftovers-confirm');
       if (slot) slot.innerHTML = '';
