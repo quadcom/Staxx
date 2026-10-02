@@ -470,7 +470,7 @@ ok('SVG, over-100KB, URL and fa- icons get the letter tile, not a picture', subs
    && substr_count($html, 'line-height:40px') === 4, (string)substr_count($html, 'line-height:40px'));
 $tile = staxx_notify_label($ev('vec'));
 ok('the tile is the first letter of the app name', has($html, '>'.mb_strtoupper(mb_substr($tile, 0, 1)).'</div>'));
-ok('page and card are dark with inline colours', has($html, 'background:#0d0d0d') && has($html, 'background:#1b1b1b') && has($html, 'width="640"') && !has($html, '<style'));
+ok('page and card are light with inline colours', has($html, 'background:#f4f4f5') && has($html, 'background:#ffffff') && has($html, 'width="640"') && !has($html, '<style'));
 ok('footer and button', has($html, 'Sent by StaXX on Tower. Change these emails in StaXX, Settings, Updates.')
    && has($html, 'href="http://tower.test'.staxx_view_url().'#updates"') && has($html, '>Open StaXX</a>') && has($html, 'Tower · '));
 reset_all(); dyn(3, 3); opts($htmlOn);

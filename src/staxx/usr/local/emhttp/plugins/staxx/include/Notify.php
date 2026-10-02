@@ -441,7 +441,7 @@ function staxx_notify_icon_cid(array $e, array &$images): string {
 
 /**
  * The HTML email for Layout $layout ('1' run finished, '2' found, '3'
- * summary). Always the dark design (Ruling 8); every colour is set on its own
+ * summary). Always the light design (Ruling 8); every colour is set on its own
  * element because mail readers drop <style> blocks unevenly, and layout is
  * tables for the same reason.
  *
@@ -467,7 +467,7 @@ function staxx_notify_html(array $events, string $layout): array {
   if ($logo !== false) $images['logo@staxx'] = ['image/png', $logo, 'staxx.png'];
 
   $link = static fn(string $url, string $label): string => preg_match('~^https?://~i', $url)
-    ? '<a href="'.$h($url).'" style="color:#ff9a4a;text-decoration:underline">'.$h($label).'&nbsp;↗</a>' : '';
+    ? '<a href="'.$h($url).'" style="color:#d35400;text-decoration:underline">'.$h($label).'&nbsp;↗</a>' : '';
   $li   = 'list-style:disc outside;display:list-item;margin:0 0 2px';
 
   // Release notes under one app: bullets with the link as the last bullet,
@@ -478,33 +478,33 @@ function staxx_notify_html(array $events, string $layout): array {
     if (!$bul) return $a === '' ? '' : '<div style="margin-top:4px;font-size:14px">'.$a.'</div>';
     $items = array_map(static fn($t) => '<li style="'.$li.'">'.$h($t).'</li>', $bul);
     if ($a !== '') $items[] = '<li style="'.$li.'">'.$a.'</li>';
-    return '<ul style="margin:6px 0 2px 18px;padding:0 0 0 4px;font-size:14px;color:#d6d6d6;list-style:disc outside">'.implode('', $items).'</ul>';
+    return '<ul style="margin:6px 0 2px 18px;padding:0 0 0 4px;font-size:14px;color:#333333;list-style:disc outside">'.implode('', $items).'</ul>';
   };
 
   $versions = static function (array $e) use ($h, $ic): string {
     $v = explode(' → ', staxx_notify_versions($e, true), 2);
-    $s = count($v) === 2 ? $h($v[0]).' → <b style="color:#4cc26a">'.$h($v[1]).'</b>' : $h($v[0]);
+    $s = count($v) === 2 ? $h($v[0]).' → <b style="color:#1a7f37">'.$h($v[1]).'</b>' : $h($v[0]);
     if ((int)($e['size'] ?? 0) > 0) $s .= ' · '.$h(staxx_images_human_bytes((int)$e['size']));
     if (staxx_notify_is_major($e)) {
-      $s .= '<span style="color:#f0a020;font-weight:700;font-size:13px;margin-left:6px">'.$ic('⚠️').'major version</span>';
+      $s .= '<span style="color:#a15c00;font-weight:700;font-size:13px;margin-left:6px">'.$ic('⚠️').'major version</span>';
     }
-    return '<div style="font-family:Consolas,Menlo,monospace;font-size:14px;color:#d6d6d6">'.$s.'</div>';
+    return '<div style="font-family:Consolas,Menlo,monospace;font-size:14px;color:#333333">'.$s.'</div>';
   };
 
   $item = static function (array $e, string $inner) use (&$images, $h): string {
     $name = staxx_notify_label($e);
     $cid  = staxx_notify_icon_cid($e, $images);
     $pic  = $cid !== ''
-      ? '<img src="cid:'.$cid.'" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;background:#2a2a2a">'
-      : '<div style="width:40px;height:40px;line-height:40px;text-align:center;border-radius:8px;background:#2a2a2a;color:#ddd;font-weight:700;font-size:16px">'.$h(mb_strtoupper(mb_substr($name, 0, 1))).'</div>';
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #2c2c2c"><tr>'
+      ? '<img src="cid:'.$cid.'" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;background:#f3f3f3">'
+      : '<div style="width:40px;height:40px;line-height:40px;text-align:center;border-radius:8px;background:#f3f3f3;color:#555555;font-weight:700;font-size:16px">'.$h(mb_strtoupper(mb_substr($name, 0, 1))).'</div>';
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #eeeeee"><tr>'
          . '<td width="54" valign="top" style="padding:12px 14px 12px 0">'.$pic.'</td>'
-         . '<td valign="top" style="padding:12px 0"><div style="font-weight:700;font-size:16px;color:#ececec">'.$h($name).'</div>'.$inner.'</td></tr></table>';
+         . '<td valign="top" style="padding:12px 0"><div style="font-weight:700;font-size:16px;color:#1d1d1f">'.$h($name).'</div>'.$inner.'</td></tr></table>';
   };
 
-  $head = static fn(string $t): string => '<div style="font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#a8a8a8;margin:18px 0 8px">'.$t.'</div>';
+  $head = static fn(string $t): string => '<div style="font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#555555;margin:18px 0 8px">'.$t.'</div>';
   $chip = static fn(string $t, string $bg, string $fg): string => '<span style="display:inline-block;font-size:13px;font-weight:700;padding:4px 12px;border-radius:999px;background:'.$bg.';color:'.$fg.';margin:0 8px 8px 0">'.$h($t).'</span>';
-  $reason = static fn(array $e): string => '<div style="color:#ff6b6b;font-size:14px">'.$h((string)($e['reason'] ?? '') ?: 'The update stopped before it finished.').'</div>';
+  $reason = static fn(array $e): string => '<div style="color:#c62828;font-size:14px">'.$h((string)($e['reason'] ?? '') ?: 'The update stopped before it finished.').'</div>';
   $sum = $layout === '3';
   $rows = static function (array $list, callable $inner) use ($item): string {
     $o = '';
@@ -515,10 +515,10 @@ function staxx_notify_html(array $events, string $layout): array {
 
   // Title, subtitle and the chips.
   $chips = '';
-  if ($u) $chips .= $chip($u.' updated', '#16351f', '#5fd47e');
-  if ($f) $chips .= $chip($f.' failed', '#3d1818', '#ff7b7b');
-  if ($w) $chips .= $chip($w.' waiting', '#3a2a0e', '#f5b53f');
-  if ($by['pinned']) $chips .= $chip(count($by['pinned']).' pinned', '#1a2647', '#8fb0ff');
+  if ($u) $chips .= $chip($u.' updated', '#e3f5e8', '#1a7f37');
+  if ($f) $chips .= $chip($f.' failed', '#fde7e7', '#c62828');
+  if ($w) $chips .= $chip($w.' waiting', '#fff1db', '#a15c00');
+  if ($by['pinned']) $chips .= $chip(count($by['pinned']).' pinned', '#e8eefc', '#2f55c4');
   if ($sum) {
     $weekly = staxx_notify_opt('UPDATE_DIGEST_EVERY') === 'week';
     $title  = $weekly ? 'Weekly summary · week of '.date('j M', $now - ((int)date('N', $now) - 1) * 86400)
@@ -541,15 +541,15 @@ function staxx_notify_html(array $events, string $layout): array {
   if ($by['pinned']) {
     $body .= $head($ic('📌').'Pinned').$rows($by['pinned'], static function (array $e) use ($h): string {
       $at = (int)($e['at'] ?? 0);
-      return '<div style="font-family:Consolas,Menlo,monospace;font-size:14px;color:#d6d6d6">'.($at > 0 ? 'pinned since '.$h(date('j M', $at)) : 'still pinned').'</div>';
+      return '<div style="font-family:Consolas,Menlo,monospace;font-size:14px;color:#333333">'.($at > 0 ? 'pinned since '.$h(date('j M', $at)) : 'still pinned').'</div>';
     });
   }
   if ($by['look']) {
     $body .= $head($ic('⚠️').'Needs a look');
-    foreach ($by['look'] as $e) $body .= '<div style="font-size:14px;color:#d6d6d6;padding:4px 0">'.$h($e['label'].': '.$e['detail']).'</div>';
+    foreach ($by['look'] as $e) $body .= '<div style="font-size:14px;color:#333333;padding:4px 0">'.$h($e['label'].': '.$e['detail']).'</div>';
   }
   if ($by['cleanup']) {
-    $body .= '<div style="margin-top:16px;font-size:14px;color:#d6d6d6">'.$ic('💾').$h(staxx_images_human_bytes((int)$by['cleanup'][0]['size']))
+    $body .= '<div style="margin-top:16px;font-size:14px;color:#333333">'.$ic('💾').$h(staxx_images_human_bytes((int)$by['cleanup'][0]['size']))
            . ' of old images can be cleaned up. '.$link($open, 'Clean up images').'</div>';
   }
   $button = ($layout === '2' ? 'Update them in StaXX' : 'Open StaXX');
@@ -557,13 +557,13 @@ function staxx_notify_html(array $events, string $layout): array {
 
   $logoTag = $logo === false ? '' : '<td width="48" valign="middle" style="padding-right:12px"><img src="cid:logo@staxx" width="36" height="36" alt="StaXX" style="display:block;width:36px;height:36px"></td>';
   $html = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'.$h($title).'</title></head>'
-    . '<body style="margin:0;padding:0;background:#0d0d0d">'
-    . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0d0d0d"><tr><td align="center" style="padding:20px 10px">'
-    . '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:100%;background:#1b1b1b;border-radius:10px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#ececec">'
-    . '<tr><td style="background:#111111;border-bottom:1px solid #2c2c2c;padding:18px 24px;border-radius:10px 10px 0 0"><table role="presentation" cellpadding="0" cellspacing="0"><tr>'.$logoTag
+    . '<body style="margin:0;padding:0;background:#f4f4f5">'
+    . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5"><tr><td align="center" style="padding:20px 10px">'
+    . '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:100%;background:#ffffff;border-radius:10px;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1d1d1f">'
+    . '<tr><td style="background:#1f1f1f;padding:18px 24px;border-radius:10px 10px 0 0"><table role="presentation" cellpadding="0" cellspacing="0"><tr>'.$logoTag
     . '<td valign="middle"><div style="font-size:18px;font-weight:700;color:#ffffff">'.$h($title).'</div><div style="font-size:13px;color:#cccccc">'.$h($sub).'</div></td></tr></table></td></tr>'
     . '<tr><td style="padding:20px 24px 8px">'.$body.'</td></tr>'
-    . '<tr><td style="background:#151515;border-top:1px solid #2c2c2c;padding:14px 24px;font-size:12.5px;color:#9a9a9a;border-radius:0 0 10px 10px">Sent by StaXX on '.$h($server).'. Change these emails in StaXX, Settings, Updates.</td></tr>'
+    . '<tr><td style="background:#fafafa;border-top:1px solid #eeeeee;padding:14px 24px;font-size:12.5px;color:#666666;border-radius:0 0 10px 10px">Sent by StaXX on '.$h($server).'. Change these emails in StaXX, Settings, Updates.</td></tr>'
     . '</table></td></tr></table></body></html>';
   return ['html' => $html, 'images' => $images];
 }
