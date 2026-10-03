@@ -17232,6 +17232,19 @@ html.staxx-noscroll body {
   font-size: 1.3rem;
 }
 
+.staxx-scaffold .staxx-nf .staxx-nf-ic {
+  display: inline-block;
+  width: 1.3em;
+  margin-right: 0.3em;
+  font-size: 1.05em;
+  text-align: center;
+}
+.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="FOUND"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_UNHEALTHY"] { color: #f0a020; }
+.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="INSTALLED"] { color: #3fb950; }
+.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="FAILED"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_RESTARTING"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_STOPPED"] { color: #f85149; }
+.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="PINNED"] { color: #fff; }
+.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="SUMMARY"] { color: #8b949e; }
+
 .staxx-scaffold .staxx-nf .staxx-nf-sub {
   display: block;
   margin: 1.6rem 0 0.6rem;

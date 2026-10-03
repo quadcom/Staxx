@@ -183,6 +183,9 @@ StaXX tells you about updates, and about apps that run into trouble, through Unr
 service set up in Unraid. Email reaches you once it is set up in Unraid's own notification
 settings. Choose which messages you get, and when, on [the Updates tab](settings-updates.md#notifications).
 
+In the bell and on your phone, each message is a short title and one line naming the apps that matter,
+such as "3 updated, 2 waiting. Failed: dbgate. Needs a look: plex." The email holds the full list.
+
 | Message | Sent | What it shows |
 |---|---|---|
 | Update finished | When updates have installed or failed | Each app with its old and new version, its size on disk and the first lines of its release notes. A failed app says why in plain words. |
@@ -195,14 +198,14 @@ settings. Choose which messages you get, and when, on [the Updates tab](settings
 An app whose first version number changes, such as 10.9 to 11.0, is marked **major version**.
 Every message links to StaXX's update view.
 
-![An Update finished email: the StaXX logo and "3 stacks updated, 1 failed" on a dark band, chips counting 3 updated and 1 failed, then plex and paperless-ngx each with an icon, old and new version, size and three or two release-note bullets ending in Full release notes, tdarr with its version and size, and dbgate under Failed with the reason "Docker Hub's download limit was reached. It resets within six hours.", then the Open StaXX button](../images/guide/updates-email-finished.png)
+![An Update finished email: the StaXX logo and "3 stacks updated, 1 failed" on a dark band, chips counting 3 updated and 1 failed, an Updated heading on a grey band, then plex and paperless-ngx each with an icon, old and new version, size and three or two release-note bullets ending in Full release notes, tdarr with its version and size, dbgate under a Failed heading with the reason "Docker Hub's download limit was reached. It resets within six hours.", then the Open StaXX button](../images/guide/updates-email-finished.png)
 
 ### The summary
 
 The summary goes out at the time you set. On a day with nothing to report, nothing is sent. Each
 app in it shows a **Release notes** link, not the notes.
 
-![A daily summary email: chips for 3 updated, 1 failed, 2 waiting and 1 pinned, sections Updated, Failed, Waiting for you and Pinned, each app with its version and a Release notes link, Lidatube marked major version, a line saying 4.2 GB of old images can be cleaned up with a Clean up images link, and the Open StaXX button](../images/guide/updates-email-summary.png)
+![A daily summary email: chips for 3 updated, 1 failed, 2 waiting, 1 pinned, 1 stopped and 1 healthy, then headings on grey bands for Updated, Failed, Waiting for you, Needs a look, Healthy again and Pinned, each app with its version and a Release notes link, Lidatube marked major version, plex under Needs a look with "Stopped. It ran out of memory.", a line saying 4.2 GB of old images can be cleaned up with a Clean up images link, and the Open StaXX button](../images/guide/updates-email-summary.png)
 
 ### Quiet hours
 

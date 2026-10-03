@@ -138,8 +138,8 @@ ok('an unrecognised error is cut at 200 characters', mb_strlen($long) === 200);
 /* ===== 3. Layout 1 ===== */
 reset_all();
 $t = staxx_notify_text([$jelly, $sonarr, $immich], '1');
-ok('L1 subject with counts and icons', $t['subject'] === '✅ StaXX updated 2 stacks, ❌ 1 failed', $t['subject']);
-ok('L1 description is the counts sentence', $t['description'] === '2 updated, 1 failed.', $t['description']);
+ok('L1 subject with counts and icons', $t['subject'] === 'StaXX updated 2 stacks, 1 failed', $t['subject']);
+ok('L1 description names what failed, then what updated', $t['description'] === 'Failed: immich. Updated: jellyfin, sonarr.', $t['description']);
 ok('L1 importance is warning on any failure', $t['importance'] === 'warning');
 ok('L1 link is the Updates view', $t['link'] === $link);
 ok('L1 versions line', has($t['body'], "✅ jellyfin".str_repeat(' ', 8)."10.9.11 → 10.10.3\n"), $t['body']);
@@ -149,9 +149,9 @@ ok('L1 fourth note line never shown', !has($t['body'], 'Fourth line') && !has($t
 ok('L1 failure shows its reason', has($t['body'], "❌ immich".str_repeat(' ', 10)."Docker Hub's download limit was reached."));
 ok('L1 failure has no filler lines', !has($t['body'], 'still running') && !has($t['body'], 'job log'));
 $t = staxx_notify_text([$sonarr], '1');
-ok('L1 only-installed importance is normal, singular subject', $t['importance'] === 'normal' && $t['subject'] === '✅ StaXX updated 1 stack', $t['subject']);
+ok('L1 only-installed importance is normal, singular subject', $t['importance'] === 'normal' && $t['subject'] === 'StaXX updated 1 stack' && $t['description'] === 'sonarr.', $t['subject']);
 $t = staxx_notify_text([$immich], '1');
-ok('L1 failed only subject', $t['subject'] === '❌ StaXX failed to update 1 stack', $t['subject']);
+ok('L1 failed only subject', $t['subject'] === 'StaXX failed to update 1 stack' && $t['description'] === 'Failed: immich.', $t['subject']);
 opts(['UPDATE_NOTIFY_ICONS' => 'false']);
 $t = staxx_notify_text([$jelly, $immich], '1');
 ok('L1 icons off: no emoji anywhere', !preg_match('/[\x{2705}\x{274C}\x{1F514}\x{2B06}\x{26A0}\x{1F4CB}]/u', $t['subject'].$t['body']) && has($t['body'], 'jellyfin  ') && $t['subject'] === 'StaXX updated 1 stack, 1 failed', $t['subject']);
@@ -190,15 +190,15 @@ ok('a service that differs from its stack is named beside it', has(staxx_notify_
 
 /* ===== 4. Layout 2 and Layout 3 ===== */
 $t = staxx_notify_text([$plex, $next], '2');
-ok('L2 subject and description', $t['subject'] === '🔔 StaXX found 2 updates waiting' && $t['description'] === '2 updates are waiting for you.', $t['subject']);
+ok('L2 subject and description', $t['subject'] === 'StaXX found 2 updates waiting' && $t['description'] === 'plex 1.41.0, nextcloud 30.0.0 (major version).', $t['subject'].' | '.$t['description']);
 ok('L2 lines and footer', has($t['body'], '⬆️ plex') && has($t['body'], "\nOpen StaXX to update them: $link"));
 ok('L2 carries release notes like L1 (Ruling 11)', has(staxx_notify_text([array_merge($plex, ['notesUrl' => $url])], '2')['body'], "Release notes ↗ $url"));
 
 $jellyUrl = $jelly;
 $pin = ['kind' => 'pinned', 'stack' => 'postgres17', 'service' => 'postgres17', 'at' => strtotime('2026-09-12 10:00')];
 $t = staxx_notify_text([$jelly, $sonarr, $immich, $next, $pin, ['kind' => 'look', 'label' => 'updates paused', 'detail' => 'paused'], ['kind' => 'cleanup', 'size' => 2147483648]], '3');
-ok('L3 subject: date and counts', $t['subject'] === '📋 StaXX daily summary, 2 Oct: 2 updated, 1 failed, 1 waiting', $t['subject']);
-ok('L3 description', $t['description'] === '2 updated, 1 failed, 1 waiting for you.', $t['description']);
+ok('L3 subject: date and counts', $t['subject'] === 'StaXX daily summary · 2 Oct', $t['subject']);
+ok('L3 description: counts, then names', $t['description'] === '2 updated, 1 waiting. Failed: immich.', $t['description']);
 ok('L3 sections', has($t['body'], '✅ Updated (2)') && has($t['body'], '❌ Failed (1)') && has($t['body'], '🔔 Waiting for you (1)')
    && has($t['body'], "📌 Pinned (1)\n   postgres17, pinned since 12 Sep") && has($t['body'], "⚠️ Needs a look\n   updates paused: paused"), $t['body']);
 ok('L3 never carries note lines, only the link', !has($t['body'], '•') && has($t['body'], "jellyfin 10.10.3 · Release notes ↗ $url") && has($t['body'], 'sonarr 4.0.10 · ') === false, $t['body']);
@@ -207,7 +207,7 @@ ok('L3 failure line has its reason', has($t['body'], "immich: Docker Hub's downl
 $plain = staxx_notify_text([$sonarr, ['kind' => 'installed', 'stack' => 'mariadb', 'service' => 'mariadb', 'was' => '11.4.2', 'version' => '11.4.3']], '3');
 ok('L3 without links joins apps on one line', has($plain['body'], '   sonarr 4.0.10 · mariadb 11.4.3'));
 opts(['UPDATE_DIGEST_EVERY' => 'week']);
-ok('L3 weekly subject', has(staxx_notify_text([$sonarr], '3')['subject'], 'weekly summary, week of 28 Sep'), staxx_notify_text([$sonarr], '3')['subject']);
+ok('L3 weekly subject', has(staxx_notify_text([$sonarr], '3')['subject'], 'StaXX weekly summary · week of 28 Sep'), staxx_notify_text([$sonarr], '3')['subject']);
 opts(['UPDATE_NOTIFY_NOTES' => 'none']);
 ok('L3 Leave out removes the links too', !has(staxx_notify_text([$jelly], '3')['body'], '↗'));
 opts([]);
@@ -254,7 +254,7 @@ staxx_notify_events([$jelly]);
 ok('summary kind: nothing sent, event waits in the digest', calls() === [] && count(digest()['events']) === 1);
 reset_all();
 staxx_notify_events([$plex]);
-ok('found with default (now) goes at once as Layout 2', (calls()[0]['-s'] ?? '') === '🔔 StaXX found 1 update waiting', calls()[0]['-s'] ?? '');
+ok('found with default (now) goes at once as Layout 2', (calls()[0]['-s'] ?? '') === 'StaXX found 1 update waiting', calls()[0]['-s'] ?? '');
 
 reset_all();
 opts(['UPDATE_QUIET' => 'true', 'UPDATE_QUIET_START' => '22:00', 'UPDATE_QUIET_END' => '07:00', 'UPDATE_NOTIFY_INSTALLED_WHEN' => 'now']);
@@ -296,7 +296,7 @@ ok('daily: not due before the send time', calls() === []);
 at('2026-10-02 08:01');
 staxx_notify_digest_pass();
 $cs = calls();
-ok('daily: due after the send time, sent as Layout 3', count($cs) === 1 && has($cs[0]['-s'] ?? '', 'daily summary, 2 Oct') && ($cs[0]['-i'] ?? '') === 'warning', json_encode($cs));
+ok('daily: due after the send time, sent as Layout 3', count($cs) === 1 && has($cs[0]['-s'] ?? '', 'daily summary · 2 Oct') && ($cs[0]['-i'] ?? '') === 'warning', json_encode($cs));
 ok('digest cleared and sentAt moved in the same write', digest()['events'] === [] && digest()['sentAt'] === strtotime('2026-10-02 08:01'));
 staxx_notify_digest_pass();
 ok('not sent twice', count(calls()) === 1);
@@ -523,7 +523,7 @@ $h3 = staxx_notify_html($sumEvents, '3')['html'];
 ok('summary shows links only, never bullets (Ruling 10)', !has($h3, '<ul') && has($h3, '>Release notes&nbsp;↗</a>') && !has($h3, 'Full release notes'));
 ok('summary sections and chips', has($h3, 'Updated') && has($h3, 'Failed') && has($h3, 'Waiting for you') && has($h3, 'Pinned') && has($h3, 'Needs a look')
    && has($h3, '1 pinned') && has($h3, 'Daily summary · 2 Oct'));
-ok('old-images line above the button with its link', has($h3, '💾 2.0 GB of old images can be cleaned up.') && has($h3, 'Clean up images&nbsp;↗')
+ok('old-images line above the button with its link', has($h3, '2.0 GB of old images can be cleaned up.') && has($h3, 'Clean up images&nbsp;↗')
    && strpos($h3, 'old images') < strpos($h3, '>Open StaXX</a>'));
 $h2f = staxx_notify_html([array_merge($next, ['notesUrl' => $url])], '2')['html'];
 ok('found layout: its own button, major mark, notes link', has($h2f, '>Update them in StaXX</a>') && has($h2f, 'major version') && has($h2f, '1 waiting') && has($h2f, 'Release notes&nbsp;↗'));
@@ -533,7 +533,8 @@ opts($htmlOn + ['UPDATE_NOTIFY_ICONS' => 'false']);
 ok('icons off: no emoji in the email', !preg_match('/[\x{2705}\x{274C}\x{1F514}\x{26A0}\x{1F4CC}\x{1F4BE}]/u', staxx_notify_html($sumEvents, '3')['html']));
 opts($htmlOn);
 $hs = staxx_notify_html([$jelly, $immich], '1')['html'];
-ok('icons on: emoji lead the section headings', has($hs, '✅ Updated') && has($hs, '❌ Failed'));
+ok('icons on: pictures, not emoji, lead the section headings', has($hs, 'src="cid:glyph-installed@staxx" alt="Updated" width="16" height="16"') && has($hs, 'alt="Failed"')
+   && !preg_match('/[\x{2705}\x{274C}\x{1F514}\x{26A0}\x{1F4CC}\x{1F4BE}]/u', $hs));
 
 // The summary and the test message take the HTML route too.
 reset_all(); dyn(3, 3); opts($htmlOn);
@@ -545,6 +546,91 @@ $r = staxx_notify_test();
 ok('test message: HTML email, subject prefixed "Test: "', $r['ok'] === true && has(mail_header(mail_raw(), 'Subject'), 'Tower: Test: ') && (calls()[0]['-i'] ?? '') === 'warning 1', json_encode(calls()));
 
 if ($sd !== '') { @exec('rm -rf '.escapeshellarg($sd)); staxx_scan_stacks_reset(); }
+
+/* ===== 10. PLAN_222: words-only subjects, one capped line, StaXX's own pictures ===== */
+$emoji = '/[\x{1F000}-\x{1FFFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{FE0F}]/u';
+$tdarr  = ['kind' => 'restarting', 'name' => 'tdarr', 'count' => 4, 'reason' => ''];
+$paper  = ['kind' => 'unhealthy', 'name' => 'paperless-ngx', 'count' => 3, 'reason' => ''];
+$plexS  = ['kind' => 'stopped', 'name' => 'plex', 'count' => 0, 'reason' => 'It ran out of memory.'];
+$plexE  = ['kind' => 'stopped', 'name' => 'plex', 'count' => 0, 'reason' => 'It stopped with error code 3.'];
+$healthy = ['kind' => 'healthy', 'name' => 'tdarr', 'count' => 0, 'reason' => ''];
+$lookE  = ['kind' => 'look', 'label' => 'updates paused', 'detail' => 'paused'];
+$cleanE = ['kind' => 'cleanup', 'size' => 2147483648];
+$five = [];
+foreach (['plex', 'sonarr', 'radarr', 'lidarr', 'bazarr'] as $n) $five[] = ['kind' => 'installed', 'stack' => $n, 'service' => $n, 'was' => '1', 'version' => '2'];
+
+reset_all();
+$t = staxx_notify_text([$tdarr], '1');
+ok('one app restarting: named title, description without the name', $t['subject'] === 'StaXX: tdarr keeps restarting' && $t['description'] === 'It has restarted 4 times in the last hour.', $t['subject'].' | '.$t['description']);
+$t = staxx_notify_text([$paper], '1');
+ok('one app unhealthy', $t['subject'] === 'StaXX: paperless-ngx is unhealthy' && $t['description'] === 'It failed its health check 3 times in a row.', $t['description']);
+$t = staxx_notify_text([$plexS], '1');
+ok('one app stopped: the reason is the line', $t['subject'] === 'StaXX: plex stopped by itself' && $t['description'] === 'It ran out of memory.', $t['description']);
+$t = staxx_notify_text([$tdarr, $paper, $plexS], '1');
+ok('several apps: a count title and one short sentence each', $t['subject'] === 'StaXX: 3 apps need a look'
+   && $t['description'] === 'tdarr keeps restarting. paperless-ngx is unhealthy. plex stopped: out of memory.', $t['description']);
+ok('stopped reason shortens to the error code', has(staxx_notify_text([$tdarr, $plexE], '1')['description'], 'plex stopped: error code 3.'));
+$t = staxx_notify_text([$sonarr, $plexS], '1');
+ok('update news with trouble: update title plus the count', $t['subject'] === 'StaXX updated 1 stack, 1 needs a look' && $t['description'] === 'sonarr. Needs a look: plex.', $t['subject'].' | '.$t['description']);
+$t = staxx_notify_text([$sonarr, $tdarr, $paper], '1');
+ok('...and "need" for several apps', $t['subject'] === 'StaXX updated 1 stack, 2 need a look', $t['subject']);
+$t = staxx_notify_text($five, '1');
+ok('names are capped at three, then "and N more"', $t['description'] === 'plex, sonarr, radarr and 2 more.', $t['description']);
+ok('the cap leaves three or fewer alone', staxx_notify_cap(['a', 'b', 'c']) === 'a, b, c' && staxx_notify_cap(['a']) === 'a');
+$t = staxx_notify_text([$jelly, $immich, $sonarr], '3');
+ok('summary: failed names in the description', $t['description'] === '2 updated. Failed: immich.', $t['description']);
+$t = staxx_notify_text([$jelly, $plexS, $tdarr, $next], '3');
+ok('summary: counts then needs a look', $t['description'] === '1 updated, 1 waiting. Needs a look: tdarr, plex.', $t['description']);
+ok('summary with nothing countable', staxx_notify_text([$healthy], '3')['description'] === 'Nothing new to report.');
+$t = staxx_notify_text([$jelly, $immich, $sonarr], '1');
+ok('mixed update: failed first, then updated', $t['description'] === 'Failed: immich. Updated: jellyfin, sonarr.');
+
+$layouts = [['1', [$jelly, $sonarr, $immich]], ['1', [$tdarr, $paper, $plexS]], ['1', [$sonarr, $plexS]], ['2', [$plex, $next]],
+            ['3', [$jelly, $immich, $next, $pin, $lookE, $cleanE, $tdarr, $healthy]], ['3', []]];
+foreach (['true', 'false'] as $iconSetting) {
+  foreach (['day', 'week'] as $every) {
+    opts(['UPDATE_NOTIFY_ICONS' => $iconSetting, 'UPDATE_DIGEST_EVERY' => $every]);
+    $bad = [];
+    foreach ($layouts as [$lay, $evs]) {
+      $t = staxx_notify_text($evs, $lay);
+      if (preg_match($emoji, $t['subject'].$t['description'])) $bad[] = $lay.': '.$t['subject'].' | '.$t['description'];
+    }
+    ok('no emoji in any subject or description (icons '.$iconSetting.', '.$every.')', $bad === [], implode('; ', $bad));
+  }
+}
+opts([]);
+ok('plain body keeps its emoji', has(staxx_notify_text([$jelly, $immich], '1')['body'], '✅ jellyfin') && has(staxx_notify_text([$jelly, $immich], '1')['body'], '❌ immich')
+   && has(staxx_notify_text([$jelly, $next, $pin, $plexS], '3')['body'], '📌 Pinned') && has(staxx_notify_text([$plexS], '1')['body'], '🛑'));
+opts(['UPDATE_NOTIFY_ICONS' => 'false']);
+ok('icons off: subject and description are the same words', staxx_notify_text([$sonarr], '1')['subject'] === 'StaXX updated 1 stack');
+opts([]);
+
+$all = [$jelly, $sonarr, $immich, $plex, $pin, $lookE, $cleanE, $tdarr, $plexS, $healthy];
+$hp = staxx_notify_html($all, '3'); $hh = $hp['html'];
+$glyphs = ['installed', 'failed', 'found', 'warning', 'healthy', 'pinned', 'cleanup'];
+$miss = array_filter($glyphs, static fn($g) => !has($hh, 'src="cid:glyph-'.$g.'@staxx"') || !isset($hp['images']['glyph-'.$g.'@staxx']));
+ok('icons on: every heading and the cleanup line use an attached picture', $miss === [], implode(',', $miss));
+ok('icons on: pictures are 16px PNGs with a plain-word alt', has($hh, 'alt="Updated" width="16" height="16" style="vertical-align:-2px;border:0;margin-right:4px"')
+   && ($hp['images']['glyph-installed@staxx'][0] ?? '') === 'image/png' && strncmp($hp['images']['glyph-installed@staxx'][1] ?? '', "\x89PNG", 4) === 0);
+ok('icons on: no emoji anywhere in the HTML', !preg_match($emoji, $hh));
+ok('a picture is attached once however often it is used', count(array_filter(array_keys($hp['images']), static fn($k) => strpos($k, 'glyph-warning') === 0)) === 1);
+$mj = $jelly; $mj['was'] = '9.0';
+ok('the major-version mark is a picture too', has(staxx_notify_html([$mj], '1')['html'], 'alt="Warning"') && has(staxx_notify_html([$mj], '1')['html'], 'major version'));
+opts(['UPDATE_NOTIFY_ICONS' => 'false']);
+$hp = staxx_notify_html($all, '3');
+ok('icons off: no pictures and no emoji in the email', !has($hp['html'], 'cid:glyph-') && !preg_match($emoji, $hp['html'])
+   && array_filter(array_keys($hp['images']), static fn($k) => strpos($k, 'glyph-') === 0) === []);
+opts([]);
+$hb = staxx_notify_html([$jelly, $sonarr, $immich], '1')['html'];
+ok('section headings are grey bands', has($hb, 'color:#333333;background:#e4e4e7;padding:9px 12px;border-radius:6px;margin:32px 0 6px') && !has($hb, 'margin:18px 0 8px'));
+ok('no divider directly under a band', preg_match_all('~margin:32px 0 6px">(?:<img[^>]*> )?[^<]*</div><table[^>]*style=""~', $hb) === 2);
+ok('dividers between rows stay', substr_count($hb, 'cellspacing="0" style="border-top:1px solid #eeeeee"') === 1);
+$hf = staxx_notify_html([$plex], '2')['html'];
+ok('found layout has no band, so its first row keeps its line', !has($hf, 'margin:32px 0 6px') && has($hf, 'cellspacing="0" style="border-top:1px solid #eeeeee"'));
+reset_all(); dyn(3, 3); opts($htmlOn);
+staxx_notify_events([$jelly, $immich]);
+ok('the sent email carries the pictures by cid', has(mail_raw(), 'Content-ID: <glyph-installed@staxx>') && has(mail_raw(), 'Content-ID: <glyph-failed@staxx>')
+   && !preg_match($emoji, mail_header(mail_raw(), 'Subject')));
 
 reset_all();
 @exec('rm -rf '.escapeshellarg($dir));

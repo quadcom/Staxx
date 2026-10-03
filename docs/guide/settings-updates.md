@@ -34,7 +34,7 @@ These three only appear while Updates, above, is Automatic.
 
 ## Notifications
 
-![The Notifications field: StaXX advanced email notifications ticked with its line beneath, rows for New image found, Image installed and Installation failed each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, App keeps restarting, Health check failed and App stopped by itself each offering Straight away, In the summary and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM and the line beneath them, and the Send a test message button](../images/guide/settings-updates-notifications.png)
+![The Notifications field: StaXX advanced email notifications ticked with its line beneath, and a row for each kind of message, each with its icon: New image found, Image installed, Installation failed, App keeps restarting, Health check failed and App stopped by itself each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM and the line beneath them, and the Send a test message button]](../images/guide/settings-updates-notifications.png)
 
 Messages go through Unraid's own notifications: the bell, email, and any other service set up
 there. What each message holds is in [update checking](updates.md#notifications).
@@ -51,7 +51,7 @@ there. What each message holds is in [update checking](updates.md#notifications)
 | App stopped by itself | Straight away / In the summary / Off | Straight away | Sets when you hear that a running app stopped with an error or ran out of memory. |
 | Summary | Daily / Weekly, a day of the week, a time | Daily at 08:00 | Sets when the summary is sent. Nothing is sent when there is nothing to report. |
 | Release notes | First lines and a link / Link only / Leave out | First lines and a link | Sets how much of each app's release notes a message shows. The summary only ever shows the link. |
-| Use icons | On / Off | On | With this on, small pictures such as ✅ and ❌ start each line. With it off, messages are words only. |
+| Use icons | On / Off | On | With this on, small pictures start the lines of an email. With it off, emails are words only. Notifications on your phone and the bell are always words only. |
 | Quiet hours | On / Off, from and to | Off, 22:00 to 07:00 | With this on, a message that falls inside these hours waits for the next message or the summary. Failed updates and app problems set to Straight away are always sent straight away. |
 | Send a test message | A button | | Sends one message now, so you can see what yours look like. |
 

@@ -29025,15 +29025,24 @@
     }).join('') + '</div>';
   }
 
-  function notifyLabel(emoji, text) {
-    return '<span class="staxx-nf-ic" data-ic="' + emoji + '"></span>' + esc(text);
+  // The Font Awesome 4 icon each kind of message wears in this panel; its
+  // colour comes from the sheet, keyed on data-nf-ic. Always drawn: Use icons
+  // is about the messages, these are the panel's own interface.
+  var NOTIFY_ICONS = {
+    FOUND: 'cloud-download', INSTALLED: 'check', FAILED: 'times-circle', PINNED: 'thumb-tack',
+    APP_RESTARTING: 'refresh', APP_UNHEALTHY: 'heartbeat', APP_STOPPED: 'stop', SUMMARY: 'list-alt'
+  };
+
+  function notifyLabel(kind, text) {
+    return '<i class="fa fa-' + NOTIFY_ICONS[kind] + ' staxx-nf-ic" data-nf-ic="' + kind +
+           '" aria-hidden="true"></i>' + esc(text);
   }
 
   function settingsNotifyHtml(def, values) {
     var hidden = SETTINGS_ROWS.filter(function (r) { return r.block === 'notify-me'; })
       .map(function (r) { return settingsControlHtml(r, values[r.key] || ''); }).join('');
-    function kindRow(kind, emoji, text, opts) {
-      return '<div class="staxx-nf-row"><span class="staxx-nf-name">' + notifyLabel(emoji, text) +
+    function kindRow(kind, text, opts) {
+      return '<div class="staxx-nf-row"><span class="staxx-nf-name">' + notifyLabel(kind, text) +
              '</span>' + notifySeg(kind, opts) + '</div>';
     }
     var dayOpts = NOTIFY_DAYS.map(function (d) {
@@ -29054,15 +29063,15 @@
         '<p class="staxx-hint" data-nf-show="html-missing">The HTML email is not available on ' +
           'this version of Unraid, so plain text is sent instead.</p>' +
         '<div class="staxx-nf-rows">' +
-          kindRow('FOUND', '🔔', 'New image found', NOTIFY_WHEN) +
-          kindRow('INSTALLED', '✅', 'Image installed', NOTIFY_WHEN) +
-          kindRow('FAILED', '❌', 'Installation failed', NOTIFY_WHEN) +
-          kindRow('PINNED', '📌', 'Still pinned', [NOTIFY_WHEN[1], NOTIFY_WHEN[2]]) +
-          kindRow('APP_RESTARTING', '🔁', 'App keeps restarting', NOTIFY_WHEN) +
-          kindRow('APP_UNHEALTHY', '💔', 'Health check failed', NOTIFY_WHEN) +
-          kindRow('APP_STOPPED', '🛑', 'App stopped by itself', NOTIFY_WHEN) +
+          kindRow('FOUND', 'New image found', NOTIFY_WHEN) +
+          kindRow('INSTALLED', 'Image installed', NOTIFY_WHEN) +
+          kindRow('FAILED', 'Installation failed', NOTIFY_WHEN) +
+          kindRow('PINNED', 'Still pinned', [NOTIFY_WHEN[1], NOTIFY_WHEN[2]]) +
+          kindRow('APP_RESTARTING', 'App keeps restarting', NOTIFY_WHEN) +
+          kindRow('APP_UNHEALTHY', 'Health check failed', NOTIFY_WHEN) +
+          kindRow('APP_STOPPED', 'App stopped by itself', NOTIFY_WHEN) +
         '</div>' +
-        '<span class="staxx-nf-sub">' + notifyLabel('📋', 'Summary') + '</span>' +
+        '<span class="staxx-nf-sub">' + notifyLabel('SUMMARY', 'Summary') + '</span>' +
         '<div class="staxx-nf-line">' + notifySeg('DIGEST_EVERY', [['day', 'Daily'], ['week', 'Weekly']]) +
           '<label data-nf-show="weekly">on <select class="staxx-nf-input" data-nf-in="UPDATE_DIGEST_DAY" ' +
             'aria-label="Day of the summary">' + dayOpts + '</select></label>' +
@@ -29088,7 +29097,7 @@
   }
 
   // Brings every visible part of the field in step with the hidden values:
-  // pressed buttons, filled boxes, which lines show, and the emoji.
+  // pressed buttons, filled boxes and which lines show.
   function notifyRefresh() {
     var box = document.getElementById('staxx-notify');
     if (!box) return;
@@ -29117,10 +29126,6 @@
     };
     Array.prototype.forEach.call(box.querySelectorAll('[data-nf-show]'), function (el) {
       el.hidden = !show[el.dataset.nfShow];
-    });
-    var icons = notifyGet('UPDATE_NOTIFY_ICONS') === 'true';
-    Array.prototype.forEach.call(box.querySelectorAll('.staxx-nf-ic'), function (el) {
-      el.textContent = icons ? el.dataset.ic + ' ' : '';
     });
   }
 

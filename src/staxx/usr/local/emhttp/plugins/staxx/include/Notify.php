@@ -259,6 +259,50 @@ function staxx_notify_watch_subject(array $list): string {
   return $name.(['restarting' => ' keeps restarting', 'unhealthy' => ' is unhealthy'][$list[0]['kind']] ?? ' stopped by itself');
 }
 
+/** Up to three distinct names, then "and N more": "plex, sonarr, radarr and 2 more". */
+function staxx_notify_cap(array $items): string {
+  $items = array_values(array_unique($items));
+  if (count($items) <= 3) return implode(', ', $items);
+  return implode(', ', array_slice($items, 0, 3)).' and '.(count($items) - 3).' more';
+}
+
+/** The capped names of the apps a list of events is about. */
+function staxx_notify_names(array $list): string {
+  return staxx_notify_cap(array_map('staxx_notify_label', $list));
+}
+
+/**
+ * The one line under the title when a message is only about running apps. One
+ * event: the sentence without the name ("It has restarted 4 times in the last
+ * hour."), since the title names the app. Several: one short sentence each.
+ */
+function staxx_notify_watch_desc(array $problems): string {
+  if (count($problems) === 1) {
+    $e = $problems[0];
+    $line = staxx_notify_watch_line($e)[1];
+    $rest = substr($line, strlen(staxx_notify_label($e)) + 1);
+    if (($e['kind'] ?? '') === 'stopped') {
+      $r = trim((string)($e['reason'] ?? ''));
+      return $r !== '' ? $r : 'It stopped by itself.';
+    }
+    return 'It '.$rest;
+  }
+  $out = [];
+  foreach ($problems as $e) {
+    $name = staxx_notify_label($e);
+    switch ($e['kind'] ?? '') {
+      case 'restarting': $out[] = $name.' keeps restarting.'; break;
+      case 'unhealthy':  $out[] = $name.' is unhealthy.'; break;
+      default:
+        $r = (string)($e['reason'] ?? '');
+        $short = preg_match('/error code (\d+)/', $r, $m) ? 'error code '.$m[1]
+               : (stripos($r, 'out of memory') !== false ? 'out of memory' : '');
+        $out[] = $name.' stopped'.($short !== '' ? ': '.$short : '').'.';
+    }
+  }
+  return implode(' ', $out);
+}
+
 /**
  * The words of one message from its events. $layout is '1' (an update run
  * finished), '2' (updates found) or '3' (the summary). Besides the update
@@ -288,15 +332,18 @@ function staxx_notify_text(array $events, string $layout): array {
     $weekly = staxx_notify_opt('UPDATE_DIGEST_EVERY') === 'week';
     $now    = staxx_notify_now();
     $when   = $weekly
-      ? 'weekly summary, week of '.date('j M', $now - ((int)date('N', $now) - 1) * 86400)
-      : 'daily summary, '.date('j M', $now);
-    $counts = []; $says = [];
-    if ($u) { $counts[] = $u.' updated'; $says[] = $u.' updated'; }
-    if ($f) { $counts[] = $f.' failed'; $says[] = $f.' failed'; }
-    if ($w) { $counts[] = $w.' waiting'; $says[] = $w.' waiting for you'; }
-    if ($p) { $counts[] = $p.' need a look'; $says[] = $p.($p === 1 ? ' app needs' : ' apps need').' a look'; }
-    $subject = $ic('📋').'StaXX '.$when.($counts ? ': '.implode(', ', $counts) : '');
-    $description = $says ? implode(', ', $says).'.' : 'Nothing new to report.';
+      ? 'weekly summary · week of '.date('j M', $now - ((int)date('N', $now) - 1) * 86400)
+      : 'daily summary · '.date('j M', $now);
+    // Subject and description are words only whatever "Use icons" says: they are
+    // the whole message on a phone and in the bell.
+    $subject = 'StaXX '.$when;
+    $cnt = []; $bits = [];
+    if ($u) $cnt[] = $u.' updated';
+    if ($w) $cnt[] = $w.' waiting';
+    if ($cnt) $bits[] = implode(', ', $cnt).'.';
+    if ($f) $bits[] = 'Failed: '.staxx_notify_names($by['failed']).'.';
+    if ($p) $bits[] = 'Needs a look: '.staxx_notify_names($problems).'.';
+    $description = $bits ? implode(' ', $bits) : 'Nothing new to report.';
 
     $appList = static function (array $list) use ($mode, $major): array {
       $items = []; $anyUrl = false;
@@ -365,8 +412,9 @@ function staxx_notify_text(array $events, string $layout): array {
 
   if ($layout === '2') {
     $add($by['found'], '⬆️');
-    $subject = $ic('🔔').'StaXX found '.$plural($w, 'update').' waiting';
-    $description = $w.($w === 1 ? ' update is' : ' updates are').' waiting for you.';
+    $subject = 'StaXX found '.$plural($w, 'update').' waiting';
+    $description = staxx_notify_cap(array_map(static fn($e) => staxx_notify_label($e).' '.staxx_notify_versions($e, false)
+      .(staxx_notify_is_major($e) ? ' (major version)' : ''), $by['found'])).'.';
     $lines[] = '';
     $lines[] = 'Open StaXX to update them: '.$link;
     return ['subject' => $subject, 'description' => $description, 'body' => implode("\n", $lines),
@@ -378,23 +426,27 @@ function staxx_notify_text(array $events, string $layout): array {
   $add($by['found'], '⬆️');
   foreach ($problems as $e) { [$icon, $line] = staxx_notify_watch_line($e); $lines[] = $ic($icon).$line; }
   if ($problems) { $lines[] = ''; $lines[] = 'Open StaXX: '.$link; }
-  $head = []; $counts = [];
-  if ($u) { $head[] = $ic('✅').'StaXX updated '.$plural($u, 'stack'); $counts[] = $u.' updated'; }
-  if ($f) {
-    $head[] = $ic('❌').($u ? $f.' failed' : 'StaXX failed to update '.$plural($f, 'stack'));
-    $counts[] = $f.' failed';
-  }
-  if ($w) {
-    $head[] = $ic('🔔').($u || $f ? $w.' waiting' : 'StaXX found '.$plural($w, 'update').' waiting');
-    $counts[] = $w.' waiting for you';
-  }
+  $head = [];
+  if ($u) $head[] = 'StaXX updated '.$plural($u, 'stack');
+  if ($f) $head[] = $u ? $f.' failed' : 'StaXX failed to update '.$plural($f, 'stack');
+  if ($w) $head[] = $u || $f ? $w.' waiting' : 'StaXX found '.$plural($w, 'update').' waiting';
   if ($p) {
     // Alone, the message is named for the app; beside update news it is one more count.
-    $head[] = $u || $f || $w ? $p.' need a look' : 'StaXX: '.staxx_notify_watch_subject($problems);
-    $counts[] = $p.($p === 1 ? ' app needs' : ' apps need').' a look';
+    $head[] = $u || $f || $w ? $p.($p === 1 ? ' needs' : ' need').' a look' : 'StaXX: '.staxx_notify_watch_subject($problems);
   }
-  return ['subject' => implode(', ', $head), 'description' => implode(', ', $counts).'.',
-          'body' => implode("\n", $lines), 'importance' => $importance, 'link' => $link];
+  if (!$u && !$f && !$w) {
+    $description = staxx_notify_watch_desc($problems);
+  } else {
+    $d = [];
+    if ($f) $d[] = 'Failed: '.staxx_notify_names($by['failed']).'.';
+    if ($u) $d[] = ($f || $w ? 'Updated: ' : '').staxx_notify_names($by['installed']).'.';
+    if ($w) $d[] = 'Waiting: '.staxx_notify_names($by['found']).'.';
+    if ($p) $d[] = 'Needs a look: '.staxx_notify_names($problems).'.';
+    $description = implode(' ', $d);
+  }
+  return ['subject' => implode(', ', $head), 'description' => $description,
+          'body' => implode("
+", $lines), 'importance' => $importance, 'link' => $link];
 }
 
 /* ------------------------------------------------------------------ sending -- */
@@ -498,6 +550,23 @@ function staxx_notify_icon_cid(array $e, array &$images): string {
 }
 
 /**
+ * The Content-ID of one of StaXX's own small pictures (images/notify/<kind>.png:
+ * found, installed, failed, pinned, restarting, unhealthy, stopped, healthy,
+ * summary, warning, cleanup), adding it to $images the first time. '' when the
+ * file is missing, so the caller leaves the picture out.
+ */
+function staxx_notify_glyph_cid(string $kind, array &$images): string {
+  if (!preg_match('/^[a-z]+$/', $kind)) return '';
+  $cid = 'glyph-'.$kind.'@staxx';
+  if (!isset($images[$cid])) {
+    $data = @file_get_contents(dirname(__DIR__).'/images/notify/'.$kind.'.png');
+    if ($data === false) return '';
+    $images[$cid] = ['image/png', $data, $kind.'.png'];
+  }
+  return $cid;
+}
+
+/**
  * The HTML email for Layout $layout ('1' run finished, '2' found, '3'
  * summary). Always the light design (Ruling 8); every colour is set on its own
  * element because mail readers drop <style> blocks unevenly, and layout is
@@ -509,7 +578,6 @@ function staxx_notify_icon_cid(array $e, array &$images): string {
 function staxx_notify_html(array $events, string $layout): array {
   $h     = static fn($s): string => htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
   $icons = staxx_notify_opt('UPDATE_NOTIFY_ICONS') !== 'false';
-  $ic    = static fn(string $s): string => $icons ? $s.' ' : '';
   $mode  = staxx_notify_opt('UPDATE_NOTIFY_NOTES');
   $now   = staxx_notify_now();
   $server = staxx_notify_server_name();
@@ -527,6 +595,13 @@ function staxx_notify_html(array $events, string $layout): array {
   $logo = @file_get_contents(dirname(__DIR__).'/images/staxx.png');
   if ($logo !== false) $images['logo@staxx'] = ['image/png', $logo, 'staxx.png'];
 
+  // One of StaXX's own pictures (with a trailing space) for a heading or mark; nothing when
+  // Use icons is off. $alt is the plain word a mail reader shows when it blocks pictures.
+  $gl = static function (string $kind, string $alt) use (&$images, $icons): string {
+    $cid = $icons ? staxx_notify_glyph_cid($kind, $images) : '';
+    return $cid === '' ? '' : '<img src="cid:'.$cid.'" alt="'.$alt.'" width="16" height="16" style="vertical-align:-2px;border:0;margin-right:4px"> ';
+  };
+
   $link = static fn(string $url, string $label): string => preg_match('~^https?://~i', $url)
     ? '<a href="'.$h($url).'" style="color:#d35400;text-decoration:underline">'.$h($label).'&nbsp;↗</a>' : '';
   $li   = 'list-style:disc outside;display:list-item;margin:0 0 2px';
@@ -542,28 +617,35 @@ function staxx_notify_html(array $events, string $layout): array {
     return '<ul style="margin:6px 0 2px 18px;padding:0 0 0 4px;font-size:14px;color:#333333;list-style:disc outside">'.implode('', $items).'</ul>';
   };
 
-  $versions = static function (array $e) use ($h, $ic): string {
+  $versions = static function (array $e) use ($h, $gl): string {
     $v = explode(' → ', staxx_notify_versions($e, true), 2);
     $s = count($v) === 2 ? $h($v[0]).' → <b style="color:#1a7f37">'.$h($v[1]).'</b>' : $h($v[0]);
     if ((int)($e['size'] ?? 0) > 0) $s .= ' · '.$h(staxx_images_human_bytes((int)$e['size']));
     if (staxx_notify_is_major($e)) {
-      $s .= '<span style="color:#a15c00;font-weight:700;font-size:13px;margin-left:6px">'.$ic('⚠️').'major version</span>';
+      $s .= '<span style="color:#a15c00;font-weight:700;font-size:13px;margin-left:6px">'.$gl('warning', 'Warning').'major version</span>';
     }
     return '<div style="font-family:Consolas,Menlo,monospace;font-size:14px;color:#333333">'.$s.'</div>';
   };
 
-  $item = static function (array $e, string $inner) use (&$images, $h): string {
+  // True right after a heading band: the first row under it draws no top line.
+  $afterBand = false;
+  $item = static function (array $e, string $inner) use (&$images, &$afterBand, $h): string {
+    $line = $afterBand ? '' : 'border-top:1px solid #eeeeee';
+    $afterBand = false;
     $name = staxx_notify_label($e);
     $cid  = staxx_notify_icon_cid($e, $images);
     $pic  = $cid !== ''
       ? '<img src="cid:'.$cid.'" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;background:#f3f3f3">'
       : '<div style="width:40px;height:40px;line-height:40px;text-align:center;border-radius:8px;background:#f3f3f3;color:#555555;font-weight:700;font-size:16px">'.$h(mb_strtoupper(mb_substr($name, 0, 1))).'</div>';
-    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #eeeeee"><tr>'
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="'.$line.'"><tr>'
          . '<td width="54" valign="top" style="padding:12px 14px 12px 0">'.$pic.'</td>'
          . '<td valign="top" style="padding:12px 0"><div style="font-weight:700;font-size:16px;color:#1d1d1f">'.$h($name).'</div>'.$inner.'</td></tr></table>';
   };
 
-  $head = static fn(string $t): string => '<div style="font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#555555;margin:18px 0 8px">'.$t.'</div>';
+  $head = static function (string $t) use (&$afterBand): string {
+    $afterBand = true;
+    return '<div style="font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#333333;background:#e4e4e7;padding:9px 12px;border-radius:6px;margin:32px 0 6px">'.$t.'</div>';
+  };
   $chip = static fn(string $t, string $bg, string $fg): string => '<span style="display:inline-block;font-size:13px;font-weight:700;padding:4px 12px;border-radius:999px;background:'.$bg.';color:'.$fg.';margin:0 8px 8px 0">'.$h($t).'</span>';
   $reason = static fn(array $e): string => '<div style="color:#c62828;font-size:14px">'.$h((string)($e['reason'] ?? '') ?: 'The update stopped before it finished.').'</div>';
   // The watcher's sentence under the app's name, without the name again ("Restarted 3 times in the
@@ -609,26 +691,26 @@ function staxx_notify_html(array $events, string $layout): array {
 
   $body = '<div>'.$chips.'</div>';
   $multi = $layout !== '2';
-  if ($by['installed']) $body .= ($multi ? $head($ic('✅').'Updated') : '').$rows($by['installed'], $withNotes);
-  if ($by['failed'])    $body .= ($multi ? $head($ic('❌').'Failed') : '').$rows($by['failed'], $reason);
-  if ($by['found'])     $body .= ($multi && ($by['installed'] || $by['failed'] || $sum) ? $head($ic('🔔').'Waiting for you') : '').$rows($by['found'], $withNotes);
+  if ($by['installed']) $body .= ($multi ? $head($gl('installed', 'Updated').'Updated') : '').$rows($by['installed'], $withNotes);
+  if ($by['failed'])    $body .= ($multi ? $head($gl('failed', 'Failed').'Failed') : '').$rows($by['failed'], $reason);
+  if ($by['found'])     $body .= ($multi && ($by['installed'] || $by['failed'] || $sum) ? $head($gl('found', 'Waiting for you').'Waiting for you') : '').$rows($by['found'], $withNotes);
   if ($problems) {
-    if ($by['installed'] || $by['failed'] || $by['found'] || $sum || $p > 1) $body .= $head($ic('⚠️').'Needs a look');
+    if ($by['installed'] || $by['failed'] || $by['found'] || $sum || $p > 1) $body .= $head($gl('warning', 'Needs a look').'Needs a look');
     foreach ($problems as $e) $body .= $item($e, $watch($e));
   }
-  if ($by['healthy']) $body .= $head($ic('💚').'Healthy again').$rows($by['healthy'], $watch);
+  if ($by['healthy']) $body .= $head($gl('healthy', 'Healthy again').'Healthy again').$rows($by['healthy'], $watch);
   if ($by['pinned']) {
-    $body .= $head($ic('📌').'Pinned').$rows($by['pinned'], static function (array $e) use ($h): string {
+    $body .= $head($gl('pinned', 'Pinned').'Pinned').$rows($by['pinned'], static function (array $e) use ($h): string {
       $at = (int)($e['at'] ?? 0);
       return '<div style="font-family:Consolas,Menlo,monospace;font-size:14px;color:#333333">'.($at > 0 ? 'pinned since '.$h(date('j M', $at)) : 'still pinned').'</div>';
     });
   }
   if ($by['look']) {
-    $body .= $head($ic('⚠️').'Needs a look');
+    $body .= $head($gl('warning', 'Needs a look').'Needs a look');
     foreach ($by['look'] as $e) $body .= '<div style="font-size:14px;color:#333333;padding:4px 0">'.$h($e['label'].': '.$e['detail']).'</div>';
   }
   if ($by['cleanup']) {
-    $body .= '<div style="margin-top:16px;font-size:14px;color:#333333">'.$ic('💾').$h(staxx_images_human_bytes((int)$by['cleanup'][0]['size']))
+    $body .= '<div style="margin-top:16px;font-size:14px;color:#333333">'.$gl('cleanup', 'Old images').$h(staxx_images_human_bytes((int)$by['cleanup'][0]['size']))
            . ' of old images can be cleaned up. '.$link($open, 'Clean up images').'</div>';
   }
   $button = ($layout === '2' ? 'Update them in StaXX' : 'Open StaXX');
