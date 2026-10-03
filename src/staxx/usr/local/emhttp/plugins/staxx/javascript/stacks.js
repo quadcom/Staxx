@@ -3930,6 +3930,13 @@
       : '"' + esc(c.mine) + '" is already used by "' + esc(c.container) + '".';
   }
 
+  // What both the editor's network-mode note and the merge's confirm step say
+  // about host-network services (PLAN_224), for one app or several.
+  function hostNetNote(one) {
+    return 'StaXX cannot see which ports ' + (one ? 'this app opens' : 'they open') +
+      '. If two apps, or Unraid itself, use the same port, the second one stops as soon as it starts.';
+  }
+
   function adviceText(f) {
     var advice = f.advice || [];
     var out = '';
@@ -4090,6 +4097,13 @@
                'title="Sets restart: unless-stopped.">Use unless-stopped</button>' +
                fieldNoticeDismissBtn(restartNoteId) + '</p>';
       }
+    }
+    // PLAN_224 — an app on the server's own network opens whatever port it
+    // likes inside itself, which neither StaXX nor Docker can read. Drawn
+    // from the field's current value on every parse, so it follows an edit.
+    if (f.binder === 'setting' && f.target === 'network_mode' && f.parts.value &&
+        String(f.parts.value.value).trim() === 'host') {
+      out += '<p class="staxx-fieldnote">' + esc(hostNetNote(true)) + '</p>';
     }
     return out;
   }
@@ -40899,6 +40913,24 @@
       blocks.push({
         title: 'A fresh image is built',
         sub: 'build: names an image after the stack, so the old one is left behind.'
+      });
+    }
+
+    // PLAN_224 — host-network services pick their own ports where StaXX and
+    // Docker cannot see them, so a clash only shows once one has stopped.
+    var hostNames = [];
+    try {
+      var hostDoc = YAML.parse(text), hostMap = YAML.servicesMap(hostDoc);
+      if (hostMap) hostMap.keys.forEach(function (k) {
+        var pr = hostMap.pairs[k], own = pr && pr.value && pr.value.kind === 'map' ? pr.value : null;
+        var nm = own && own.pairs['network_mode'];
+        if (nm && nm.value && String(nm.value.value).trim() === 'host') hostNames.push(k);
+      });
+    } catch (e) { /* an unparsable merge is refused at steps 3 and 4 */ }
+    if (hostNames.length) {
+      blocks.push({
+        title: mergeJoinNames(hostNames) + (hostNames.length === 1 ? ' uses' : ' use') + " the server's own network",
+        sub: hostNetNote(hostNames.length === 1)
       });
     }
 

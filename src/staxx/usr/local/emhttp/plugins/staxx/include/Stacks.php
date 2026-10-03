@@ -8116,6 +8116,173 @@ function staxx_stack_gate(string $stack, string $purpose, string $service, strin
   return $file;
 }
 
+/* ------------------------------------------------ host-network port clashes -- */
+
+/**
+ * Which of a stack's services (limited to $only when given) say
+ * `network_mode: host`. Such a service has no `ports:` for StaXX or Docker's
+ * own check to read — the app picks its port inside itself — so a clash only
+ * shows once it has started and exited.
+ *
+ * @param  string[] $only
+ * @return string[]
+ */
+function staxx_hostport_services(string $file, array $only = []): array {
+  $found = [];
+  foreach (staxx_compose_meta($file)['services'] as $svc => $meta) {
+    if (($meta['netMode'] ?? '') !== 'host') continue;
+    if ($only && !in_array((string)$svc, $only, true)) continue;
+    $found[] = (string)$svc;
+  }
+  return $found;
+}
+
+/**
+ * The port a log line says it could not open, or 0 when no line in $log
+ * reports an address already in use with a port beside it. Covers nginx
+ * (`bind() to 0.0.0.0:80 failed (98: Address in use)`), Go (`listen tcp
+ * :8080: bind: address already in use`) and Node (`EADDRINUSE: address already
+ * in use :::3000`). The port is the `:digits` nearest the phrase, because a
+ * timestamp's `12:34` sits on the same line and must never win.
+ */
+function staxx_hostport_log_port(string $log): int {
+  foreach (preg_split('/\R/', $log) as $line) {
+    if (!preg_match('/address (?:already )?in use/i', $line, $m, PREG_OFFSET_CAPTURE)) continue;
+    $from = $m[0][1];
+    $to   = $from + strlen($m[0][0]);
+    if (!preg_match_all('/:(\d{1,5})(?!\d)/', $line, $all, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) continue;
+    $best = 0;
+    $gap  = PHP_INT_MAX;
+    foreach ($all as $c) {
+      $port = (int)$c[1][0];
+      if ($port < 1 || $port > 65535) continue;
+      $s = $c[0][1];
+      $e = $s + strlen($c[0][0]);
+      $d = $e <= $from ? $from - $e : ($s >= $to ? $s - $to : 0);
+      if ($d < $gap) { $gap = $d; $best = $port; }
+    }
+    if ($best > 0) return $best;
+  }
+  return 0;
+}
+
+/**
+ * One sentence saying who holds $port. $ss (`ss -ltnpH` output for that port),
+ * $cgroup (that process's /proc/<pid>/cgroup text) and $dockerName (the
+ * container's name) are read from the server when null; a suite hands them
+ * in so no real port is needed.
+ */
+function staxx_hostport_owner(int $port, ?string $ss = null, ?string $cgroup = null, ?string $dockerName = null): string {
+  if ($ss === null) {
+    $ss = staxx_sh('ss -ltnpH '.escapeshellarg('( sport = :'.$port.' )'), 5);
+  }
+  if (!preg_match('/users:\(\("([^"]+)",pid=(\d+)/', $ss, $m)) {
+    return 'Port '.$port.' was in use when it started.';
+  }
+  $proc = preg_replace('/[^A-Za-z0-9._-]/', '', $m[1]);
+  if ($cgroup === null) $cgroup = (string)@file_get_contents('/proc/'.(int)$m[2].'/cgroup');
+
+  // Checked first: a container's own nginx is not Unraid's web page.
+  if (preg_match('/[0-9a-f]{64}/', $cgroup, $c)) {
+    $who = $dockerName;
+    if ($who === null) {
+      $who = trim(staxx_sh(escapeshellarg(staxx_docker_bin()).' inspect -f '
+                           .escapeshellarg('{{.Name}}').' '.escapeshellarg($c[0]), 5));
+    }
+    $who = ltrim($who, '/');
+    if ($who === '') $who = substr($c[0], 0, 12);
+    return 'Port '.$port.' is already used by the app '.$who.'.';
+  }
+  if ($proc === 'nginx' || $proc === 'emhttpd') {
+    return 'Port '.$port.' is already used by Unraid\'s own web page.';
+  }
+  return 'Port '.$port.' is already used by '.($proc !== '' ? $proc : 'another program').' on the server.';
+}
+
+/**
+ * After a start: for each of this stack's host-network containers (limited to
+ * the services in $only when given) that has exited or is restarting, read
+ * its recent log and print one plain sentence per port clash, into the job
+ * log. Returns how many clashes were found; the job turns that into a failed
+ * exit. $rows, $ss and $cgroup are injectable for the suite: $rows is a list
+ * of ['name', 'service', 'mode', 'state', 'log'].
+ *
+ * @param  string[] $only
+ * @param  ?array   $rows
+ */
+function staxx_hostport_check(string $name, array $only = [], ?array $rows = null, ?string $ss = null, ?string $cgroup = null): int {
+  if ($rows === null) {
+    $rows = [];
+    $file = staxx_find_compose_file(staxx_stack_dir($name));
+    $project = staxx_stack_project_guess($file, staxx_path_leaf($name));
+    if ($project === '') return 0;
+    $docker = escapeshellarg(staxx_docker_bin());
+    $ids = preg_split('/\s+/', trim(staxx_sh($docker.' ps -aq --filter '
+             .escapeshellarg('label=com.docker.compose.project='.$project), 10)), -1, PREG_SPLIT_NO_EMPTY);
+    $ids = array_values(array_filter($ids, fn($i) => preg_match('/^[0-9a-f]{12,64}$/', $i)));
+    if (!$ids) return 0;
+    // A real tab between the fields: `docker inspect --format` must never be
+    // given the two characters \t (see staxx_appwatch_snapshot()'s comment).
+    $fmt = implode("\t", ['{{.Name}}', '{{index .Config.Labels "com.docker.compose.service"}}',
+                          '{{.HostConfig.NetworkMode}}', '{{.State.Status}}', '{{.Id}}']);
+    $out = staxx_sh($docker.' inspect --format '.escapeshellarg($fmt).' '
+                    .implode(' ', array_map('escapeshellarg', $ids)), 15);
+    foreach (explode("\n", $out) as $line) {
+      $f = explode("\t", $line);
+      if (count($f) < 5) continue;
+      $rows[] = ['name' => ltrim($f[0], '/'), 'service' => $f[1], 'mode' => $f[2],
+                 'state' => $f[3], 'id' => $f[4], 'log' => null];
+    }
+  }
+
+  $found = 0;
+  foreach ($rows as $r) {
+    if (($r['mode'] ?? '') !== 'host') continue;
+    if (!in_array($r['state'] ?? '', ['exited', 'restarting'], true)) continue;
+    if ($only && !in_array((string)($r['service'] ?? ''), $only, true)) continue;
+    // --since keeps a restarted container's older failures from an earlier
+    // start from being read as this one's.
+    $log = $r['log'] ?? staxx_sh(escapeshellarg(staxx_docker_bin()).' logs --tail 50 --since 2m '
+                                 .escapeshellarg((string)$r['id']).' 2>&1', 10);
+    $port = staxx_hostport_log_port($log);
+    if ($port === 0) continue;
+    echo $r['name'].' stopped straight away: it could not open port '.$port.'. '
+       . staxx_hostport_owner($port, $ss, $cgroup)
+       . " Change the port this app listens on, then start it again.\n";
+    $found++;
+  }
+  return $found;
+}
+
+/**
+ * The shell command that runs the check above for one stack, as its own
+ * `php -r`, built the way staxx_leftovers_restart_job() builds its own: every
+ * value goes through var_export, never spliced raw.
+ *
+ * @param string[] $only
+ */
+function staxx_hostport_step(string $name, array $only): string {
+  return staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; '
+    .'exit(staxx_hostport_check('.var_export($name, true).', '.var_export(array_values($only), true).') > 0 ? 1 : 0);'
+  ).' 2>&1';
+}
+
+/**
+ * The detached shell command for a job: enter $dir, run $chain, report the
+ * chain's exit code. With a $check (a host-network stack that starts
+ * something) and a chain that succeeded, it waits five seconds for a bad port
+ * to make the app exit, runs the check, and reports 1 when the check found a
+ * clash. A chain that failed keeps its own code, and a check that merely
+ * crashed (not exit 1) never fails a start that worked.
+ */
+function staxx_job_inner(string $dir, string $chain, string $check = ''): string {
+  $head = 'cd '.escapeshellarg($dir).' && '.$chain;
+  if ($check === '') return $head.'; echo "'.STAXX_JOB_END.' $?"';
+  return $head.'; rc=$?; if [ "$rc" -eq 0 ]; then sleep 5; '.$check
+       .'; [ "$?" -ne 1 ] || rc=1; fi; echo "'.STAXX_JOB_END.' $rc"';
+}
+
 /**
  * Start a compose command in the background and return a job id.
  *
@@ -8323,9 +8490,11 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   );
   $chain = implode(' && ', $invocations);
 
-  $inner = 'cd '.escapeshellarg($dir).' && '
-         . $chain
-         . '; echo "'.STAXX_JOB_END.' $?"';
+  // A host-network service has no `ports:` for anything to check beforehand,
+  // so after a start the job looks once at whether it stopped on a taken port.
+  // Nothing about it is in $shown: the line shown is what compose ran.
+  $hostSvcs = $startsSomething ? staxx_hostport_services($file, $names) : [];
+  $inner = staxx_job_inner($dir, $chain, $hostSvcs ? staxx_hostport_step($name, $hostSvcs) : '');
 
   // The log's first line is what the output panel shows above the command's
   // own output, so it has to say what actually ran — service name included,

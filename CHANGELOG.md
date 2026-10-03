@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- StaXX now says when it cannot see the ports of apps on the server's own network, and when one of them cannot start because its port is taken, it says which port and what is using it. That start is shown as failed.
 - Emails and the settings use StaXX's own icons, email sections have clear headings, and phone notifications are short: a title and one line.
 - StaXX now sends a message when Docker itself stops answering for five minutes, and another when it is back.
 - StaXX now tells you when an app keeps restarting, fails its health check, or stops by itself.
