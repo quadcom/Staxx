@@ -300,6 +300,13 @@ ok('stayStopped is empty when nothing is damaged', staxx_leftovers($sRows, [])['
 ok('stay-stopped, pure: everything listed means nothing stays stopped',
    staxx_leftovers_stay_stopped([row('a', '', '', 'running')], ['a'], []) === []);
 
+// The page sends lists as key[]=a&key[]=b; PHP reads repeated plain keys as the last one only (the 2026-09-29 fault).
+// parse_str is the parser PHP applies to a POST body, so this pins the fact the endpoint relies on.
+parse_str('templates%5B%5D=a&templates%5B%5D=b', $p1);
+ok('a bracketed repeated key arrives as a list', ($p1['templates'] ?? null) === ['a', 'b'], json_encode($p1));
+parse_str('templates=a&templates=b', $p2);
+ok('a plain repeated key arrives as only the last value', ($p2['templates'] ?? null) === 'b', json_encode($p2));
+
 /* ---------------------------------------- opt-in: a real container ------- */
 
 if (getenv('STAXX_LEFTOVERS_CONTAINER') === '1') {
@@ -313,6 +320,8 @@ if (getenv('STAXX_LEFTOVERS_CONTAINER') === '1') {
     ok('the test container was created (never started)', $createdId !== '', $out);
     if ($createdId !== '') {
       file_put_contents("$tpl/my-$name.xml", tplXml($name));
+      // The template reader keeps a per-process copy of each folder, and this run already read the fixture folder.
+      staxx_unraid_template_xml('', true);
       $t = null;
       foreach (staxx_leftovers()['templates'] as $x) if ($x['name'] === $name) $t = $x;
       ok('the real listing shows the container id', $t !== null && ($t['container']['id'] ?? '') === $createdId, json_encode($t));

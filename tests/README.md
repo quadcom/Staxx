@@ -47,6 +47,7 @@ shows the pass/fail count the suite itself printed; a failing one shows its whol
 | `merge_walk_ta_dryrun` | the third walkthrough's dry run: three Community Applications templates (Tube Archivist, its Elasticsearch and its Redis), no traps planted, two pick orders; `--check` asserts the two address rewires, the surviving ports and mounts, a clean parse (PLAN_178) AND the PLAN_179 audit |
 | `meta_scaffold` | the commented x-unraid fields a new stack starts with |
 | `pin_image` | pinning an image to one exact build |
+| `post_arrays` | the request body a list field is sent as: the settings scripts' `call()` must add `[]` to every repeated key, or PHP reads only the last value. The server half is `leftovers.php`'s `parse_str` cases |
 | `pull_progress` | the row overlay's parser — layer/container progress, byte units, failures |
 | `registry_note` | the registry-behaviour note generator's own cases |
 | `stash_guard` | a set-aside may only hold the block it claims to |
