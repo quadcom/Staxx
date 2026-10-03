@@ -28514,7 +28514,7 @@
     'UPDATE_NOTIFY_FAILED_WHEN', 'UPDATE_DIGEST_EVERY', 'UPDATE_DIGEST_DAY', 'UPDATE_DIGEST_TIME',
     'UPDATE_NOTIFY_NOTES', 'UPDATE_NOTIFY_ICONS', 'UPDATE_QUIET', 'UPDATE_QUIET_START',
     'UPDATE_QUIET_END', 'UPDATE_NOTIFY_HTML', 'APP_NOTIFY_RESTARTING_WHEN',
-    'APP_NOTIFY_UNHEALTHY_WHEN', 'APP_NOTIFY_STOPPED_WHEN'];
+    'APP_NOTIFY_UNHEALTHY_WHEN', 'APP_NOTIFY_STOPPED_WHEN', 'APP_NOTIFY_DOCKER_WHEN'];
   (function () {
     var at = SETTINGS_ROWS.map(function (r) { return r.key; }).indexOf('UPDATE_RETAIN');
     var rows = NOTIFY_KEYS.map(function (k) {
@@ -29030,7 +29030,7 @@
   // is about the messages, these are the panel's own interface.
   var NOTIFY_ICONS = {
     FOUND: 'cloud-download', INSTALLED: 'check', FAILED: 'times-circle', PINNED: 'thumb-tack',
-    APP_RESTARTING: 'refresh', APP_UNHEALTHY: 'heartbeat', APP_STOPPED: 'stop', SUMMARY: 'list-alt'
+    APP_RESTARTING: 'refresh', APP_UNHEALTHY: 'heartbeat', APP_STOPPED: 'stop', APP_DOCKER: 'server', SUMMARY: 'list-alt'
   };
 
   function notifyLabel(kind, text) {
@@ -29070,6 +29070,7 @@
           kindRow('APP_RESTARTING', 'App keeps restarting', NOTIFY_WHEN) +
           kindRow('APP_UNHEALTHY', 'Health check failed', NOTIFY_WHEN) +
           kindRow('APP_STOPPED', 'App stopped by itself', NOTIFY_WHEN) +
+          kindRow('APP_DOCKER', 'Docker stops answering', [NOTIFY_WHEN[0], NOTIFY_WHEN[2]]) +
         '</div>' +
         '<span class="staxx-nf-sub">' + notifyLabel('SUMMARY', 'Summary') + '</span>' +
         '<div class="staxx-nf-line">' + notifySeg('DIGEST_EVERY', [['day', 'Daily'], ['week', 'Weekly']]) +
@@ -29106,7 +29107,7 @@
       FAILED: notifyKindState('FAILED'),
       PINNED: notifyGet('UPDATE_NOTIFY_PINNED') === 'true' ? 'summary' : 'off',
       APP_RESTARTING: notifyAppState('RESTARTING'), APP_UNHEALTHY: notifyAppState('UNHEALTHY'),
-      APP_STOPPED: notifyAppState('STOPPED'),
+      APP_STOPPED: notifyAppState('STOPPED'), APP_DOCKER: notifyAppState('DOCKER'),
       DIGEST_EVERY: notifyGet('UPDATE_DIGEST_EVERY'), NOTES: notifyGet('UPDATE_NOTIFY_NOTES')
     };
     Array.prototype.forEach.call(box.querySelectorAll('[data-nf]'), function (b) {

@@ -21,11 +21,11 @@ CFG="/boot/config/plugins/staxx/staxx.cfg"
 store_root=$(cfg_get STORE_ROOT "${CFG}" 2>/dev/null || true)
 [[ -n "${store_root}" ]] || exit 0
 
-# Docker not started yet (cron can fire before it is, at boot): its socket is
-# not there. A dearer `docker info` is not needed every minute; the pass
-# itself does nothing when Docker cannot be read.
+# No Docker installed at all means nothing to watch. A missing socket is NOT a
+# reason to leave: Docker being down is exactly what PLAN_223 reports, so the
+# pass runs and decides cheaply (it waits out boot and a restart, and stays
+# quiet when Docker is switched off or the array is stopped).
 command -v docker >/dev/null 2>&1 || exit 0
-[[ -S /var/run/docker.sock ]] || exit 0
 
 # Resolved explicitly rather than trusted from PATH, as update-check does.
 php_bin=""

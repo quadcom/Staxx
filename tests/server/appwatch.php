@@ -41,6 +41,13 @@ putenv('STAXX_NOTIFY_AGENTS='.$dir.'/agents');
 putenv('STAXX_NOW='.strtotime('2026-10-03 12:00:00'));
 putenv('STAXX_NOTIFY_OPTS=');
 putenv('STAXX_APPWATCH_FILE='.$dir.'/appwatch.json');
+// Docker-down inputs (PLAN_223): fixtures instead of the real flash config,
+// array state and uptime. Booting (under the 10-minute grace) keeps the
+// older tests below, which make Docker unreadable, free of any Docker-down record.
+putenv('STAXX_APPWATCH_DOCKERCFG='.$dir.'/docker.cfg');
+putenv('STAXX_APPWATCH_VARINI='.$dir.'/array-var.ini');
+putenv('STAXX_APPWATCH_UPTIME='.$dir.'/uptime');
+file_put_contents($dir.'/uptime', "5.00 0.00\n");
 
 // A fake docker: `ps` and `inspect` print canned files; a "fail" file makes it exit 1.
 $fake = $dir.'/docker';
@@ -209,6 +216,80 @@ if (function_exists('staxx_notify_text') && strpos((string)@file_get_contents('/
 staxx_appwatch_pass();
 $n1 = calls_n();
 ok('pass 3 with nothing new adds no further message', calls_n() === $n1);
+
+/* ===== Docker itself down (PLAN_223): the step ===== */
+function dstep(array $rec, bool $ans, bool $en, bool $arr, int $up, int $t): array { return staxx_appwatch_docker_step($rec, $ans, $en, $arr, $up, $t); }
+$UP = 100000;   // well past the boot grace
+$D = $T;
+[$e, $r] = dstep([], true, true, true, $UP, $D);
+ok('answering with no record gives nothing', $e === [] && $r === []);
+[$e, $r] = dstep(['downSince' => $D, 'reported' => false], false, false, true, $UP, $D + 400);
+ok('switched off gives nothing and clears the record', $e === [] && $r === [], json_encode([$e, $r]));
+[$e, $r] = dstep(['downSince' => $D, 'reported' => true], false, true, false, $UP, $D + 400);
+ok('array stopped gives nothing and clears the record', $e === [] && $r === []);
+[$e, $r] = dstep([], false, true, true, 599, $D);
+ok('uptime under 10 minutes gives nothing and starts no clock', $e === [] && $r === []);
+[$e, $r] = dstep([], false, true, true, 600, $D);
+ok('uptime of exactly 10 minutes starts the clock', $e === [] && $r === ['downSince' => $D, 'reported' => false], json_encode($r));
+[$e, $r] = dstep($r, false, true, true, $UP, $D + 240);
+ok('down 4 minutes gives nothing and keeps the record', $e === [] && $r === ['downSince' => $D, 'reported' => false], json_encode($r));
+[$e, $r] = dstep($r, false, true, true, $UP, $D + 300);
+ok('down 5 minutes gives one dockerdown, count 5, blank app fields',
+   kinds($e) === ['dockerdown'] && $e[0]['count'] === 5 && $e[0]['stack'] === '' && $e[0]['service'] === '' && $e[0]['image'] === '' && $e[0]['name'] === '' && $r['reported'] === true, json_encode([$e, $r]));
+[$e, $r] = dstep($r, false, true, true, $UP, $D + 360);
+ok('the next minute gives nothing (already reported)', $e === [] && $r === ['downSince' => $D, 'reported' => true]);
+[$e, $r2] = dstep($r, true, true, true, $UP, $D + 750);
+ok('back after a report gives one dockerback with the minutes, and clears the record', kinds($e) === ['dockerback'] && $e[0]['count'] === 12 && $r2 === [], json_encode([$e, $r2]));
+[$e, $r2] = dstep(['downSince' => $D, 'reported' => false], true, true, true, $UP, $D + 200);
+ok('back before 5 minutes gives nothing and clears the record', $e === [] && $r2 === []);
+
+/* ===== the two readers and the uptime, against fixtures ===== */
+@unlink($dir.'/docker.cfg');
+ok('docker.cfg missing: Docker counts as on', staxx_appwatch_docker_enabled() === true);
+file_put_contents($dir.'/docker.cfg', "DOCKER_IMAGE_SIZE=\"20\"\n");
+ok('docker.cfg without the line: on', staxx_appwatch_docker_enabled() === true);
+file_put_contents($dir.'/docker.cfg', "DOCKER_ENABLED=\"yes\"\n");
+ok('DOCKER_ENABLED="yes": on', staxx_appwatch_docker_enabled() === true);
+file_put_contents($dir.'/docker.cfg', "DOCKER_ENABLED=\"no\"\n");
+ok('DOCKER_ENABLED="no": off', staxx_appwatch_docker_enabled() === false);
+@unlink($dir.'/array-var.ini');
+ok('var.ini missing: array counts as started', staxx_appwatch_array_started() === true);
+file_put_contents($dir.'/array-var.ini', "NAME=\"Tower\"\n");
+ok('var.ini without mdState: started', staxx_appwatch_array_started() === true);
+file_put_contents($dir.'/array-var.ini', "mdState=\"STARTED\"\n");
+ok('mdState="STARTED": started', staxx_appwatch_array_started() === true);
+file_put_contents($dir.'/array-var.ini', "mdState=\"STOPPED\"\n");
+ok('mdState="STOPPED": not started', staxx_appwatch_array_started() === false);
+file_put_contents($dir.'/uptime', "1234.56 4000.00\n");
+ok('uptime reads whole seconds', staxx_appwatch_uptime() === 1234);
+
+/* ===== Docker down across whole passes ===== */
+file_put_contents($dir.'/docker.cfg', "DOCKER_ENABLED=\"yes\"\n");
+file_put_contents($dir.'/array-var.ini', "mdState=\"STARTED\"\n");
+file_put_contents($dir.'/uptime', "100000.00 0.00\n");
+$before = saved()['snapshot'] ?? null;
+touch($dir.'/fail');
+putenv('STAXX_NOW='.$D);
+staxx_appwatch_pass();
+$s = saved();
+ok('pass with Docker unreadable starts the down record and keeps the snapshot', ($s['docker']['downSince'] ?? 0) === $D && $s['docker']['reported'] === false && ($s['snapshot'] ?? null) === $before, json_encode($s));
+$c0 = calls_n();
+putenv('STAXX_NOW='.($D + 300));
+staxx_appwatch_pass();
+ok('after 5 minutes the record is marked reported', (saved()['docker']['reported'] ?? false) === true);
+if (strpos((string)@file_get_contents('/usr/local/emhttp/plugins/staxx/include/Notify.php'), 'dockerdown') !== false) {
+  ok('and one message was handed to the notifier', calls_n() > $c0 || is_file($dir.'/digest.json'));
+} else {
+  echo "skip   delivery: Notify.php does not know dockerdown yet\n";
+}
+$c1 = calls_n();
+putenv('STAXX_NOW='.($D + 360));
+staxx_appwatch_pass();
+ok('another unreadable minute sends nothing more', calls_n() === $c1);
+unlink($dir.'/fail');
+putenv('STAXX_NOW='.($D + 600));
+staxx_appwatch_pass();
+ok('Docker answering again clears the record and keeps a snapshot', !isset(saved()['docker']) && isset(saved()['snapshot']['aa11']), json_encode(saved()));
 
 @exec('rm -rf '.escapeshellarg($dir));
 @unlink($ff); @unlink($ff.'.lock'); @unlink($ff.'.tmp');

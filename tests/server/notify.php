@@ -632,6 +632,50 @@ staxx_notify_events([$jelly, $immich]);
 ok('the sent email carries the pictures by cid', has(mail_raw(), 'Content-ID: <glyph-installed@staxx>') && has(mail_raw(), 'Content-ID: <glyph-failed@staxx>')
    && !preg_match($emoji, mail_header(mail_raw(), 'Subject')));
 
+/* ===== 11. PLAN_223: Docker itself stops answering, and is back ===== */
+$dDown = ['kind' => 'dockerdown', 'stack' => '', 'service' => '', 'image' => '', 'name' => '', 'count' => 12];
+$dBack = ['kind' => 'dockerback', 'stack' => '', 'service' => '', 'image' => '', 'name' => '', 'count' => 12];
+reset_all();
+$t = staxx_notify_text([$dDown], '1');
+ok('docker down: subject, one line with the real minutes, alert', $t['subject'] === 'StaXX: Docker has stopped answering'
+   && $t['description'] === 'Docker has not answered for 12 minutes, so your apps may not be running. Open Settings → Docker and check that Enable Docker is set to Yes, or restart the server.'
+   && $t['importance'] === 'alert', $t['subject'].' | '.$t['description']);
+$t = staxx_notify_text([$dBack], '1');
+ok('docker back: subject, one line with the real minutes, normal', $t['subject'] === 'StaXX: Docker is back'
+   && $t['description'] === 'Docker is answering again after 12 minutes. Apps that are not set to start by themselves may need starting.'
+   && $t['importance'] === 'normal', $t['subject'].' | '.$t['description']);
+ok('docker words: no emoji in subject or description, emoji kept in the plain body', !preg_match($emoji, staxx_notify_text([$dDown], '1')['subject'].staxx_notify_text([$dDown], '1')['description'])
+   && has(staxx_notify_text([$dDown], '1')['body'], '⚠️'));
+ok('docker words: one minute is singular', has(staxx_notify_text([['kind' => 'dockerdown', 'count' => 1]], '1')['description'], 'for 1 minute,'));
+$hd = staxx_notify_html([$dDown], '1');
+ok('docker down email: title, sentence, a picture and no emoji', has($hd['html'], 'Docker has stopped answering') && has($hd['html'], 'Open Settings → Docker')
+   && has($hd['html'], 'cid:glyph-warning@staxx') && !preg_match($emoji, $hd['html']));
+ok('docker back email uses the healthy picture', has(staxx_notify_html([$dBack], '1')['html'], 'cid:glyph-healthy@staxx'));
+
+reset_all();
+staxx_notify_events([$dDown]);
+$cs = calls();
+ok('docker down is sent straight away as one alert', count($cs) === 1 && ($cs[0]['-s'] ?? '') === 'StaXX: Docker has stopped answering' && ($cs[0]['-i'] ?? '') === 'alert', json_encode($cs));
+reset_all();
+staxx_notify_events([$dBack]);
+$cs = calls();
+ok('docker back is sent straight away as normal', count($cs) === 1 && ($cs[0]['-s'] ?? '') === 'StaXX: Docker is back' && ($cs[0]['-i'] ?? '') === 'normal', json_encode($cs));
+reset_all(); opts(['APP_NOTIFY_DOCKER_WHEN' => 'off']);
+staxx_notify_events([$dDown, $dBack]);
+ok('APP_NOTIFY_DOCKER_WHEN off sends nothing and queues nothing', calls() === [] && digest()['events'] === []);
+reset_all(); opts(['UPDATE_QUIET' => 'true', 'UPDATE_QUIET_START' => '22:00', 'UPDATE_QUIET_END' => '07:00']);
+at('2026-10-02 23:30:00');
+staxx_notify_events([$dDown]);
+$cs = calls();
+ok('quiet hours do not hold a docker message', count($cs) === 1 && ($cs[0]['-i'] ?? '') === 'alert' && digest()['events'] === [], json_encode($cs));
+at('2026-10-02 12:00:00');
+reset_all();
+staxx_notify_events([$dDown, $tdarr]);
+ok('a docker message travels alone, beside an app one', count(calls()) === 2);
+reset_all(); dyn(3, 3); opts($htmlOn);
+staxx_notify_events([$dDown]);
+ok('the docker email is sent as HTML', has(mail_header(mail_raw(), 'Subject'), 'Docker has stopped answering') && has(mail_part(mail_raw(), 'text/html'), 'Docker has stopped answering'));
+
 reset_all();
 @exec('rm -rf '.escapeshellarg($dir));
 echo $fails === 0 ? "\nAll passed.\n" : "\n$fails FAILED.\n";

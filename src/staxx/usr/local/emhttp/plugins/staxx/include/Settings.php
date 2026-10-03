@@ -180,6 +180,7 @@ function staxx_settings_keys(): array {
     'APP_NOTIFY_RESTARTING_WHEN' => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
     'APP_NOTIFY_UNHEALTHY_WHEN'  => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
     'APP_NOTIFY_STOPPED_WHEN'    => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
+    'APP_NOTIFY_DOCKER_WHEN'     => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'off']],
     'UPDATE_DIGEST_EVERY' => ['type' => 'choice', 'default' => 'day', 'choices' => ['day', 'week']],
     // Day of a weekly summary, Sunday 0.
     'UPDATE_DIGEST_DAY'   => ['type' => 'choice', 'default' => '1', 'choices' => ['0', '1', '2', '3', '4', '5', '6']],

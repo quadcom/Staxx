@@ -45,6 +45,7 @@ function staxx_notify_opt(string $key): string {
     'UPDATE_DIGEST_TIME' => '08:00', 'UPDATE_NOTIFY_NOTES' => 'lines', 'UPDATE_NOTIFY_ICONS' => 'true',
     'UPDATE_QUIET' => 'false', 'UPDATE_QUIET_START' => '22:00', 'UPDATE_QUIET_END' => '07:00',
     'APP_NOTIFY_RESTARTING_WHEN' => 'now', 'APP_NOTIFY_UNHEALTHY_WHEN' => 'now', 'APP_NOTIFY_STOPPED_WHEN' => 'now',
+    'APP_NOTIFY_DOCKER_WHEN' => 'now',
   ];
   // A suite sets STAXX_NOTIFY_OPTS (JSON) to vary settings within one process,
   // since staxx_cfg() reads its files once.
@@ -238,8 +239,25 @@ const STAXX_NOTIFY_WATCH = ['restarting', 'unhealthy', 'stopped'];
 /** Every kind a summary may hold from the event queue (pinned, look and cleanup are added at send time). */
 const STAXX_NOTIFY_DIGEST_KINDS = ['found', 'installed', 'failed', 'restarting', 'unhealthy', 'stopped', 'healthy'];
 
+/** The two kinds about Docker itself (PLAN_223); they name no app and follow APP_NOTIFY_DOCKER_WHEN. */
+const STAXX_NOTIFY_DOCKER = ['dockerdown', 'dockerback'];
+
+/** The words after "StaXX: " and the one sentence for a Docker event; count is whole minutes. */
+function staxx_notify_docker_words(array $e): array {
+  $n    = (int)($e['count'] ?? 0);
+  $mins = $n.' '.($n === 1 ? 'minute' : 'minutes');
+  if (($e['kind'] ?? '') === 'dockerdown') {
+    return ['Docker has stopped answering',
+            'Docker has not answered for '.$mins.', so your apps may not be running. Open Settings → Docker and check that Enable Docker is set to Yes, or restart the server.'];
+  }
+  return ['Docker is back', 'Docker is answering again after '.$mins.'. Apps that are not set to start by themselves may need starting.'];
+}
+
 /** The icon and the sentence for one watcher event, e.g. ['🔁', 'Plex has restarted 3 times in the last hour.']. */
 function staxx_notify_watch_line(array $e): array {
+  if (in_array($e['kind'] ?? '', STAXX_NOTIFY_DOCKER, true)) {
+    return [$e['kind'] === 'dockerdown' ? '⚠️' : '💚', staxx_notify_docker_words($e)[1]];
+  }
   $name = staxx_notify_label($e);
   $n    = (int)($e['count'] ?? 0);
   $times = $n.' '.($n === 1 ? 'time' : 'times');
@@ -253,6 +271,7 @@ function staxx_notify_watch_line(array $e): array {
 
 /** The words after "StaXX: " in the subject of a message about running apps: one app's, or a count. */
 function staxx_notify_watch_subject(array $list): string {
+  if (in_array($list[0]['kind'] ?? '', STAXX_NOTIFY_DOCKER, true)) return staxx_notify_docker_words($list[0])[0];
   $n = staxx_notify_app_count($list);
   if ($n !== 1) return $n.' apps need a look';
   $name = staxx_notify_label($list[0]);
@@ -277,6 +296,7 @@ function staxx_notify_names(array $list): string {
  * hour."), since the title names the app. Several: one short sentence each.
  */
 function staxx_notify_watch_desc(array $problems): string {
+  if (in_array($problems[0]['kind'] ?? '', STAXX_NOTIFY_DOCKER, true)) return staxx_notify_docker_words($problems[0])[1];
   if (count($problems) === 1) {
     $e = $problems[0];
     $line = staxx_notify_watch_line($e)[1];
@@ -316,6 +336,13 @@ function staxx_notify_text(array $events, string $layout): array {
   $ic    = static fn(string $s): string => $icons ? $s.' ' : '';
   $mode  = staxx_notify_opt('UPDATE_NOTIFY_NOTES');
   $link  = staxx_view_url().'#updates';
+  // A Docker message always travels alone (staxx_notify_events sends it on its own).
+  if ($events && in_array($events[0]['kind'] ?? '', STAXX_NOTIFY_DOCKER, true)) {
+    [$icon, $line] = staxx_notify_watch_line($events[0]);
+    return ['subject' => 'StaXX: '.staxx_notify_docker_words($events[0])[0], 'description' => $line,
+            'body' => $ic($icon).$line."\n\nOpen StaXX: ".$link,
+            'importance' => $events[0]['kind'] === 'dockerdown' ? 'alert' : 'normal', 'link' => $link];
+  }
   $by    = ['installed' => [], 'failed' => [], 'found' => [], 'pinned' => [], 'look' => [], 'cleanup' => [],
             'restarting' => [], 'unhealthy' => [], 'stopped' => [], 'healthy' => []];
   foreach ($events as $e) if (isset($by[$e['kind'] ?? ''])) $by[$e['kind']][] = $e;
@@ -674,7 +701,12 @@ function staxx_notify_html(array $events, string $layout): array {
             ['stopped', '#fde7e7', '#c62828'], ['healthy', '#e3f5e8', '#1a7f37']] as [$k, $bg, $fg]) {
     if ($by[$k]) $chips .= $chip(staxx_notify_app_count($by[$k]).' '.$k, $bg, $fg);
   }
-  if ($sum) {
+  // A Docker message (PLAN_223) is alone: its subject as the title, its sentence as the body.
+  $dock = $events && in_array($events[0]['kind'] ?? '', STAXX_NOTIFY_DOCKER, true) ? $events[0] : null;
+  if ($dock) {
+    $title = staxx_notify_docker_words($dock)[0];
+    $sub   = $server.' · '.date('j M, H:i', $now);
+  } elseif ($sum) {
     $weekly = staxx_notify_opt('UPDATE_DIGEST_EVERY') === 'week';
     $title  = $weekly ? 'Weekly summary · week of '.date('j M', $now - ((int)date('N', $now) - 1) * 86400)
                       : 'Daily summary · '.date('j M', $now);
@@ -691,6 +723,11 @@ function staxx_notify_html(array $events, string $layout): array {
 
   $body = '<div>'.$chips.'</div>';
   $multi = $layout !== '2';
+  if ($dock) {
+    $down = $dock['kind'] === 'dockerdown';
+    $body .= '<div style="font-size:15px;color:'.($down ? '#c62828' : '#1a7f37').'">'
+           . $gl($down ? 'warning' : 'healthy', $down ? 'Docker is down' : 'Docker is back').$h(staxx_notify_docker_words($dock)[1]).'</div>';
+  }
   if ($by['installed']) $body .= ($multi ? $head($gl('installed', 'Updated').'Updated') : '').$rows($by['installed'], $withNotes);
   if ($by['failed'])    $body .= ($multi ? $head($gl('failed', 'Failed').'Failed') : '').$rows($by['failed'], $reason);
   if ($by['found'])     $body .= ($multi && ($by['installed'] || $by['failed'] || $sum) ? $head($gl('found', 'Waiting for you').'Waiting for you') : '').$rows($by['found'], $withNotes);
@@ -894,6 +931,14 @@ function staxx_notify_events(array $events): void {
   foreach ($events as $e) {
     $kind = (string)($e['kind'] ?? '');
     if ($kind === 'pinned') { $pinned[] = $e; continue; }
+    // Docker itself (PLAN_223): straight away on its own, never held for quiet hours and
+    // never in the summary; a day-late "Docker was down" is no use.
+    if (in_array($kind, STAXX_NOTIFY_DOCKER, true)) {
+      if (staxx_notify_opt('APP_NOTIFY_DOCKER_WHEN') === 'off') continue;
+      $t = staxx_notify_text([$e], '1');
+      staxx_notify_send($t['subject'], $t['description'], $t['body'], $t['link'], $t['importance'], [$e], '1');
+      continue;
+    }
     // The app watcher's kinds (PLAN_221). Like 'failed' they are never held for
     // quiet hours; 'healthy' only ever rides in the summary, and not at all
     // when the unhealthy messages are off.

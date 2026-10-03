@@ -176,6 +176,77 @@ function staxx_appwatch_events(array $old, array $now, array $state, int $time):
   return [$events, $new];
 }
 
+/** How long Docker must stay unanswering before the message goes (PLAN_223): longer than an ordinary restart. */
+const STAXX_APPWATCH_DOCKER_DOWN_SECS = 300;
+/** A server up for less than this is still booting, so Docker not answering is not reported. */
+const STAXX_APPWATCH_BOOT_GRACE_SECS = 600;
+
+/** A path a suite can redirect through an environment variable, else the real one. */
+function staxx_appwatch_path(string $env, string $default): string {
+  $f = getenv($env);
+  return ($f !== false && $f !== '') ? $f : $default;
+}
+
+/**
+ * Whether Docker is switched on in Unraid (DOCKER_ENABLED in docker.cfg). On
+ * when the file or the line is missing: a guess towards telling, not silence.
+ */
+function staxx_appwatch_docker_enabled(): bool {
+  $txt = @file_get_contents(staxx_appwatch_path('STAXX_APPWATCH_DOCKERCFG', '/boot/config/docker.cfg'));
+  if ($txt === false) return true;
+  if (!preg_match_all('/^\s*DOCKER_ENABLED\s*=\s*"?([^"\r\n]*?)"?\s*$/m', $txt, $m)) return true;
+  return strtolower(trim((string)end($m[1]))) !== 'no';
+}
+
+/**
+ * Whether the array is started (mdState in var.ini); Docker cannot run
+ * otherwise. Started when unreadable, so a missing file errs towards telling.
+ */
+function staxx_appwatch_array_started(): bool {
+  $txt = @file_get_contents(staxx_appwatch_path('STAXX_APPWATCH_VARINI', '/var/local/emhttp/var.ini'));
+  if ($txt === false) return true;
+  if (!preg_match_all('/^\s*mdState\s*=\s*"?([^"\r\n]*?)"?\s*$/m', $txt, $m)) return true;
+  return strtoupper(trim((string)end($m[1]))) === 'STARTED';
+}
+
+/** Seconds the server has been up; very large when unreadable, so a missing file errs towards telling. */
+function staxx_appwatch_uptime(): int {
+  $txt = @file_get_contents(staxx_appwatch_path('STAXX_APPWATCH_UPTIME', '/proc/uptime'));
+  if ($txt === false || !preg_match('/^\s*(\d+)/', $txt, $m)) return PHP_INT_MAX;
+  return (int)$m[1];
+}
+
+/**
+ * Docker itself being down (PLAN_223). Pure: all the rules live here so a suite
+ * can drive each case with no Docker and no clock.
+ *
+ * $rec is the memory from last minute: [] or ['downSince' => unix time,
+ * 'reported' => bool]. Down means not answering while Docker is switched on,
+ * the array is started and the server is past its boot grace; otherwise any
+ * record is dropped and nothing is said. The message goes once Docker has been
+ * down STAXX_APPWATCH_DOCKER_DOWN_SECS in a row, once per outage, and one more
+ * goes when it answers again after that. 'count' is whole minutes.
+ *
+ * @return array{0: array[], 1: array} [events, new record]
+ */
+function staxx_appwatch_docker_step(array $rec, bool $answering, bool $enabled, bool $arrayStarted, int $uptime, int $now): array {
+  $since = isset($rec['downSince']) ? (int)$rec['downSince'] : null;
+  $blank = ['stack' => '', 'service' => '', 'image' => '', 'name' => ''];
+
+  if ($answering) {
+    if ($since !== null && !empty($rec['reported'])) {
+      return [[$blank + ['kind' => 'dockerback', 'count' => intdiv(max(0, $now - $since), 60)]], []];
+    }
+    return [[], []];
+  }
+  if (!$enabled || !$arrayStarted || $uptime < STAXX_APPWATCH_BOOT_GRACE_SECS) return [[], []];
+  if ($since === null) return [[], ['downSince' => $now, 'reported' => false]];
+  if (empty($rec['reported']) && $now - $since >= STAXX_APPWATCH_DOCKER_DOWN_SECS) {
+    return [[$blank + ['kind' => 'dockerdown', 'count' => intdiv($now - $since, 60)]], ['downSince' => $since, 'reported' => true]];
+  }
+  return [[], ['downSince' => $since, 'reported' => !empty($rec['reported'])]];
+}
+
 /**
  * One look: read last minute's file, snapshot, work out the events, write the
  * file back, hand the events to the message system. A pass still running from
@@ -192,10 +263,30 @@ function staxx_appwatch_pass(): void {
   $old   = is_array($saved['snapshot'] ?? null) ? $saved['snapshot'] : [];
   $state = is_array($saved['state'] ?? null) ? $saved['state'] : [];
 
-  $now = staxx_appwatch_snapshot();
-  if ($now === null) { flock($lock, LOCK_UN); fclose($lock); return; }
+  $rec  = is_array($saved['docker'] ?? null) ? $saved['docker'] : [];
+  $time = staxx_notify_now();
+  // The 'docker' key is only written while a record exists, so a healthy
+  // server's file looks as it did before PLAN_223.
+  $write = function (array $snapshot, array $st, array $dockerRec) use ($file) {
+    $data = ['snapshot' => $snapshot, 'state' => $st];
+    if ($dockerRec) $data['docker'] = $dockerRec;
+    $tmp = $file.'.tmp';
+    if (file_put_contents($tmp, json_encode($data)) !== false) @rename($tmp, $file);
+  };
 
-  [$events, $newState] = staxx_appwatch_events($old, $now, $state, staxx_notify_now());
+  $now = staxx_appwatch_snapshot();
+  if ($now === null) {
+    // Docker could not be read: keep the old snapshot and state exactly, and
+    // only touch the file when the down record changed.
+    [$dockerEvents, $newRec] = staxx_appwatch_docker_step($rec, false, staxx_appwatch_docker_enabled(), staxx_appwatch_array_started(), staxx_appwatch_uptime(), $time);
+    if ($newRec !== $rec) $write($old, $state, $newRec);
+    if ($dockerEvents) staxx_notify_events($dockerEvents);
+    flock($lock, LOCK_UN); fclose($lock);
+    return;
+  }
+
+  [$dockerEvents, $newRec] = staxx_appwatch_docker_step($rec, true, true, true, PHP_INT_MAX, $time);
+  [$events, $newState] = staxx_appwatch_events($old, $now, $state, $time);
 
   // The store is only walked when there is something to say, not every minute.
   if ($events) {
@@ -206,8 +297,9 @@ function staxx_appwatch_pass(): void {
     }
   }
 
-  $tmp = $file.'.tmp';
-  if (file_put_contents($tmp, json_encode(['snapshot' => $now, 'state' => $newState])) !== false) @rename($tmp, $file);
+  $write($now, $newState, $newRec);
+  // Docker events carry no dir or stack lookup, so they join after the loop above.
+  $events = array_merge($dockerEvents, $events);
   if ($events) staxx_notify_events($events);
 
   flock($lock, LOCK_UN);

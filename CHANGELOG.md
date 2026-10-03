@@ -7,6 +7,7 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - Emails and the settings use StaXX's own icons, email sections have clear headings, and phone notifications are short: a title and one line.
+- StaXX now sends a message when Docker itself stops answering for five minutes, and another when it is back.
 - StaXX now tells you when an app keeps restarting, fails its health check, or stops by itself.
 - Update messages now say much more. Each app shows its old and new version, its size on disk after the update, a mark when the first number of the version changes, and the first lines of its release notes with a link to the rest. A failed update says why in plain words, such as a download limit reached or a tag that no longer exists. Every message links to StaXX's Updates view.
 - Settings, Updates, Notifications now lets you choose, for each kind of message, Straight away, In the summary, or Off. The summary is daily or weekly at a time you pick, and nothing is sent on a day with nothing to report. It also carries the weekly list of pinned apps, anything the self-test found wrong, and how much space old images take when that is 1 GB or more.

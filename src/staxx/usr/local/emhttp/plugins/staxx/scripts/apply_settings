@@ -250,11 +250,12 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
   )
 
   # PLAN_221: the app watcher runs once a minute, and only while at least one
-  # of its three messages is not off (a missing key reads as on). A minute is
+  # of its messages is not off (a missing key reads as on); the fourth is the
+  # Docker-down message (PLAN_223), which the same pass sends. A minute is
   # cheap: one inspect of 78 containers measured 0.064 s. An unreadable store
   # counts as on, so a boot that beat the pool keeps the line.
   watch_on="false"
-  for watch_key in APP_NOTIFY_RESTARTING_WHEN APP_NOTIFY_UNHEALTHY_WHEN APP_NOTIFY_STOPPED_WHEN; do
+  for watch_key in APP_NOTIFY_RESTARTING_WHEN APP_NOTIFY_UNHEALTHY_WHEN APP_NOTIFY_STOPPED_WHEN APP_NOTIFY_DOCKER_WHEN; do
     watch_val=""
     if [[ "${store_cfg_readable}" == "true" ]]; then
       watch_val=$(cfg_get "${watch_key}" "${store_cfg}")

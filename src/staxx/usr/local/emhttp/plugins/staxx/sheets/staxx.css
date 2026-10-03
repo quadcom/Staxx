@@ -17241,7 +17241,7 @@ html.staxx-noscroll body {
 }
 .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="FOUND"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_UNHEALTHY"] { color: #f0a020; }
 .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="INSTALLED"] { color: #3fb950; }
-.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="FAILED"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_RESTARTING"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_STOPPED"] { color: #f85149; }
+.staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="FAILED"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_RESTARTING"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_STOPPED"], .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="APP_DOCKER"] { color: #f85149; }
 .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="PINNED"] { color: #fff; }
 .staxx-scaffold .staxx-nf .staxx-nf-ic[data-nf-ic="SUMMARY"] { color: #8b949e; }
 
