@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20261002">
+<!ENTITY version              "00.05.00_dev20261003">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "7c3d789c124e428ed7da0b88b620aed9">
-<!ENTITY packageSHA256        "52da54d140ab55732e55430d4ba299b4d360751341f558d0e8ad0a70896d5e56">
+<!ENTITY packageMD5           "b4d3298c02332c7c08432a60ced6ae49">
+<!ENTITY packageSHA256        "afb09626d62307a053327b244fa93f259238e306b0cfeeee01bc13a31c5456ee">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,20 @@
 >
 
 <CHANGES>
-###00.05.00_dev20261002
+###00.05.00_dev20261003
+- Update messages now say much more. Each app shows its old and new version, its size on disk after the update, a mark when the first number of the version changes, and the first lines of its release notes with a link to the rest. A failed update says why in plain words, such as a download limit reached or a tag that no longer exists. Every message links to StaXX's Updates view.
+- Settings, Updates, Notifications now lets you choose, for each kind of message, Straight away, In the summary, or Off. The summary is daily or weekly at a time you pick, and nothing is sent on a day with nothing to report. It also carries the weekly list of pinned apps, anything the self-test found wrong, and how much space old images take when that is 1 GB or more.
+- Quiet hours hold messages until the next one or the summary. Failures are always sent straight away.
+- StaXX advanced email notifications, off unless you turn it on, sends StaXX's own email, with app icons and colours, to the address set in Unraid's notification settings. The notification bell and any other services set up in Unraid still get every message.
+- Use icons turns the emoji in messages on or off, and Send a test message shows you the result right away.
+- What changes on a server that already runs StaXX: installed-update messages now wait for the daily summary, unless you had them switched on, in which case they still come straight away. The weekly reminder about pinned apps now arrives inside the summary instead of as a message of its own.
+- A bug report can now also carry StaXX's self-test, the same checks as Settings, Self-test, offered and ticked on every bug report like the other files.
+- When Docker will not remove a damaged app in Settings, Storage, StaXX now offers to restart Docker and try again, right there in the window. It warns you first that every container stops for about a minute, and names any running container that will not come back on its own.
+- Adding a setting from the editor's form now always keeps the file valid: a name holding a colon and a space is written in quotes, and a setting written on one line in curly brackets is left alone instead of being broken.
+- Import now finds compose stacks run by other tools, such as Dockge, Portainer, Arcane, Dockhand and Komodo, and lists them under Compose projects from other tools. StaXX reads where each one's files are from its containers, including files a tool keeps inside its own container, and copies them into a new stack the same way it copies a Compose Manager project.
+- A stack with no containers can be found too: type the folder that holds your stacks into Look in a folder, at the foot of that group, and press Look, or press the folder button beside it to pick the folder instead. StaXX reads that folder and the folders directly inside it.
+- A Compose Manager project whose file Docker Compose refuses can now be ticked and imported. It is saved and marked as needing a fix, like any other file Docker Compose refuses.
+- StaXX keeps a short record of what Import found and did the last five times you used it. When an import fails, Report this problem opens a bug report with the record attached, so the problem can be found and fixed. As with the other files, private details are replaced and you can preview it before it is sent.
 - A file Docker Compose refuses is no longer turned away when it arrives, whether from an Unraid template, a Compose Manager project, Apps, a paste, an upload or the image importer. It is saved, its row turns a soft red with a red wrench in the State column, and Open and fix (in the import window) or the wrench takes you straight to the problem.
 - When Docker Compose finds a problem in the editor, a floating window explains it: Docker's own message, what it means in plain English, how to fix it, and a link to Docker's page. Drag it anywhere, roll it up, or close it; the red "fix needed" button at the top of the editor brings it back. The faulty line is marked red, and Show me jumps to it.
 - For a setting whose name is only a number, Fix it for me shows the change first, makes it when you agree, and Undo takes it back.
@@ -537,7 +550,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20261002-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261003-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
