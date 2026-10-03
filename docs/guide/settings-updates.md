@@ -46,10 +46,13 @@ there. What each message holds is in [update checking](updates.md#notifications)
 | Image installed | Straight away / In the summary / Off | In the summary | Sets when you hear that an update went in. |
 | Installation failed | Straight away / In the summary / Off | Straight away | Sets when you hear that an update did not go in. |
 | Still pinned | In the summary / Off | In the summary | With this on, the summary lists every container still pinned to an exact build, once a week. |
+| App keeps restarting | Straight away / In the summary / Off | Straight away | Sets when you hear that an app restarted by itself 3 or more times within an hour. |
+| Health check failed | Straight away / In the summary / Off | Straight away | Sets when you hear that an app's health check turned unhealthy. |
+| App stopped by itself | Straight away / In the summary / Off | Straight away | Sets when you hear that a running app stopped with an error or ran out of memory. |
 | Summary | Daily / Weekly, a day of the week, a time | Daily at 08:00 | Sets when the summary is sent. Nothing is sent when there is nothing to report. |
 | Release notes | First lines and a link / Link only / Leave out | First lines and a link | Sets how much of each app's release notes a message shows. The summary only ever shows the link. |
 | Use icons | On / Off | On | With this on, small pictures such as ✅ and ❌ start each line. With it off, messages are words only. |
-| Quiet hours | On / Off, from and to | Off, 22:00 to 07:00 | With this on, a message that falls inside these hours waits for the next message or the summary. Failures are always sent straight away. |
+| Quiet hours | On / Off, from and to | Off, 22:00 to 07:00 | With this on, a message that falls inside these hours waits for the next message or the summary. Failed updates and app problems set to Straight away are always sent straight away. |
 | Send a test message | A button | | Sends one message now, so you can see what yours look like. |
 
 A service can take itself out of these messages in its own settings; see

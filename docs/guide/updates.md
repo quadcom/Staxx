@@ -179,7 +179,7 @@ done and naming the one it is updating now. Press **Stop** to end the run once t
 
 ## Notifications
 
-StaXX tells you about updates through Unraid's own notifications: the bell, email, and any other
+StaXX tells you about updates, and about apps that run into trouble, through Unraid's own notifications: the bell, email, and any other
 service set up in Unraid. Email reaches you once it is set up in Unraid's own notification
 settings. Choose which messages you get, and when, on [the Updates tab](settings-updates.md#notifications).
 
@@ -188,6 +188,9 @@ settings. Choose which messages you get, and when, on [the Updates tab](settings
 | Update finished | When updates have installed or failed | Each app with its old and new version, its size on disk and the first lines of its release notes. A failed app says why in plain words. |
 | Updates found | When a check finds a newer version | Each waiting app with the version it runs and the version on offer, and its release notes. |
 | Summary | Once a day, or once a week, at the time you choose | Everything that waited for it: apps updated, failed and waiting, apps still pinned, anything the self-test found wrong, and the space old images take once that reaches 1 GB. |
+| App keeps restarting | When an app restarts by itself 3 or more times within an hour | The app and how many times it restarted. |
+| Health check failed | When an app's health check turns unhealthy | The app and how many checks in a row it failed. Once it is healthy again, the next summary says so. |
+| App stopped by itself | When a running app stops with an error or runs out of memory | The app and the reason. An app you stop, or that StaXX or a backup stops, is not reported. |
 
 An app whose first version number changes, such as 10.9 to 11.0, is marked **major version**.
 Every message links to StaXX's update view.
@@ -204,7 +207,7 @@ app in it shows a **Release notes** link, not the notes.
 ### Quiet hours
 
 With **Quiet hours** on, a message that falls inside them waits, and arrives with the next message
-or the summary. Failures are always sent straight away.
+or the summary. Failed updates, and app problems set to **Straight away**, are always sent straight away.
 
 ### StaXX advanced email notifications
 

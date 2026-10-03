@@ -175,6 +175,11 @@ function staxx_settings_keys(): array {
     'UPDATE_NOTIFY_FOUND_WHEN'     => ['type' => 'choice', 'default' => 'now',     'choices' => ['now', 'summary']],
     'UPDATE_NOTIFY_INSTALLED_WHEN' => ['type' => 'choice', 'default' => 'summary', 'choices' => ['now', 'summary']],
     'UPDATE_NOTIFY_FAILED_WHEN'    => ['type' => 'choice', 'default' => 'now',     'choices' => ['now', 'summary']],
+    // PLAN_221: messages about running apps; unlike the update kinds these
+    // carry no separate switch, so Off is a value of its own.
+    'APP_NOTIFY_RESTARTING_WHEN' => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
+    'APP_NOTIFY_UNHEALTHY_WHEN'  => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
+    'APP_NOTIFY_STOPPED_WHEN'    => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
     'UPDATE_DIGEST_EVERY' => ['type' => 'choice', 'default' => 'day', 'choices' => ['day', 'week']],
     // Day of a weekly summary, Sunday 0.
     'UPDATE_DIGEST_DAY'   => ['type' => 'choice', 'default' => '1', 'choices' => ['0', '1', '2', '3', '4', '5', '6']],

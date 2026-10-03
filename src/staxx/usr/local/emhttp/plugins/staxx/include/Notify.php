@@ -44,6 +44,7 @@ function staxx_notify_opt(string $key): string {
     'UPDATE_NOTIFY_FAILED_WHEN' => 'now', 'UPDATE_DIGEST_EVERY' => 'day', 'UPDATE_DIGEST_DAY' => '1',
     'UPDATE_DIGEST_TIME' => '08:00', 'UPDATE_NOTIFY_NOTES' => 'lines', 'UPDATE_NOTIFY_ICONS' => 'true',
     'UPDATE_QUIET' => 'false', 'UPDATE_QUIET_START' => '22:00', 'UPDATE_QUIET_END' => '07:00',
+    'APP_NOTIFY_RESTARTING_WHEN' => 'now', 'APP_NOTIFY_UNHEALTHY_WHEN' => 'now', 'APP_NOTIFY_STOPPED_WHEN' => 'now',
   ];
   // A suite sets STAXX_NOTIFY_OPTS (JSON) to vary settings within one process,
   // since staxx_cfg() reads its files once.
@@ -149,7 +150,11 @@ function staxx_update_failure_reason(string $log, string $image): string {
 function staxx_notify_label(array $e): string {
   $stack = (string)($e['stack'] ?? '');
   $svc   = (string)($e['service'] ?? '');
-  if ($stack === '') return $svc !== '' ? $svc : (string)($e['image'] ?? '?');
+  // A container outside any stack (the app watcher's) has only its name.
+  if ($stack === '') {
+    foreach ([(string)($e['name'] ?? ''), $svc, (string)($e['image'] ?? '')] as $n) if ($n !== '') return $n;
+    return '?';
+  }
   $pos  = strrpos($stack, '/');
   $leaf = $pos === false ? $stack : substr($stack, $pos + 1);
   if ($leaf === '') $leaf = $stack;
@@ -223,8 +228,35 @@ function staxx_notify_note_lines(array $e, string $mode): array {
 /** How many distinct apps a list of events names. */
 function staxx_notify_app_count(array $list): int {
   $seen = [];
-  foreach ($list as $e) $seen[($e['stack'] ?? '').'/'.($e['service'] ?? '').'/'.($e['image'] ?? '')] = 1;
+  foreach ($list as $e) $seen[($e['stack'] ?? '').'/'.($e['service'] ?? '').'/'.($e['image'] ?? '').'/'.($e['name'] ?? '')] = 1;
   return count($seen);
+}
+
+/** The kinds the app watcher (PLAN_221) sends: problems with a running app. */
+const STAXX_NOTIFY_WATCH = ['restarting', 'unhealthy', 'stopped'];
+
+/** Every kind a summary may hold from the event queue (pinned, look and cleanup are added at send time). */
+const STAXX_NOTIFY_DIGEST_KINDS = ['found', 'installed', 'failed', 'restarting', 'unhealthy', 'stopped', 'healthy'];
+
+/** The icon and the sentence for one watcher event, e.g. ['🔁', 'Plex has restarted 3 times in the last hour.']. */
+function staxx_notify_watch_line(array $e): array {
+  $name = staxx_notify_label($e);
+  $n    = (int)($e['count'] ?? 0);
+  $times = $n.' '.($n === 1 ? 'time' : 'times');
+  switch ($e['kind'] ?? '') {
+    case 'restarting': return ['🔁', $name.' has restarted '.$times.' in the last hour.'];
+    case 'unhealthy':  return ['💔', $name.' failed its health check '.$times.' in a row.'];
+    case 'stopped':    return ['🛑', trim($name.' stopped. '.(string)($e['reason'] ?? ''))];
+    default:           return ['💚', $name.' is healthy again.'];
+  }
+}
+
+/** The words after "StaXX: " in the subject of a message about running apps: one app's, or a count. */
+function staxx_notify_watch_subject(array $list): string {
+  $n = staxx_notify_app_count($list);
+  if ($n !== 1) return $n.' apps need a look';
+  $name = staxx_notify_label($list[0]);
+  return $name.(['restarting' => ' keeps restarting', 'unhealthy' => ' is unhealthy'][$list[0]['kind']] ?? ' stopped by itself');
 }
 
 /**
@@ -240,12 +272,16 @@ function staxx_notify_text(array $events, string $layout): array {
   $ic    = static fn(string $s): string => $icons ? $s.' ' : '';
   $mode  = staxx_notify_opt('UPDATE_NOTIFY_NOTES');
   $link  = staxx_view_url().'#updates';
-  $by    = ['installed' => [], 'failed' => [], 'found' => [], 'pinned' => [], 'look' => [], 'cleanup' => []];
+  $by    = ['installed' => [], 'failed' => [], 'found' => [], 'pinned' => [], 'look' => [], 'cleanup' => [],
+            'restarting' => [], 'unhealthy' => [], 'stopped' => [], 'healthy' => []];
   foreach ($events as $e) if (isset($by[$e['kind'] ?? ''])) $by[$e['kind']][] = $e;
   $plural = static fn(int $n, string $w): string => $n.' '.$w.($n === 1 ? '' : 's');
   $apps   = 'staxx_notify_app_count';
   $u = $apps($by['installed']); $f = $apps($by['failed']); $w = $apps($by['found']);
-  $importance = $f > 0 ? 'warning' : 'normal';
+  // Apps with a problem; 'healthy' is only ever good news and never counts here.
+  $problems = array_merge($by['restarting'], $by['unhealthy'], $by['stopped']);
+  $p = $apps($problems);
+  $importance = ($by['restarting'] || $by['stopped']) ? 'alert' : ($f > 0 || $by['unhealthy'] ? 'warning' : 'normal');
   $major = static fn(array $e): string => staxx_notify_is_major($e) ? '   '.$ic('⚠️').'major version' : '';
 
   if ($layout === '3') {
@@ -258,6 +294,7 @@ function staxx_notify_text(array $events, string $layout): array {
     if ($u) { $counts[] = $u.' updated'; $says[] = $u.' updated'; }
     if ($f) { $counts[] = $f.' failed'; $says[] = $f.' failed'; }
     if ($w) { $counts[] = $w.' waiting'; $says[] = $w.' waiting for you'; }
+    if ($p) { $counts[] = $p.' need a look'; $says[] = $p.($p === 1 ? ' app needs' : ' apps need').' a look'; }
     $subject = $ic('📋').'StaXX '.$when.($counts ? ': '.implode(', ', $counts) : '');
     $description = $says ? implode(', ', $says).'.' : 'Nothing new to report.';
 
@@ -280,6 +317,14 @@ function staxx_notify_text(array $events, string $layout): array {
       }
     }
     if ($w) { $out[] = $ic('🔔').'Waiting for you ('.$w.')'; $out = array_merge($out, $appList($by['found'])); }
+    if ($problems) {
+      $out[] = $ic('⚠️').'Apps that need a look ('.$p.')';
+      foreach ($problems as $e) $out[] = '   '.staxx_notify_watch_line($e)[1];
+    }
+    if ($by['healthy']) {
+      $out[] = $ic('💚').'Healthy again ('.count($by['healthy']).')';
+      foreach ($by['healthy'] as $e) $out[] = '   '.staxx_notify_label($e);
+    }
     if ($by['pinned']) {
       $out[] = $ic('📌').'Pinned ('.count($by['pinned']).')';
       foreach ($by['pinned'] as $e) {
@@ -331,6 +376,8 @@ function staxx_notify_text(array $events, string $layout): array {
   $add($by['installed'], '✅');
   $add($by['failed'], '❌');
   $add($by['found'], '⬆️');
+  foreach ($problems as $e) { [$icon, $line] = staxx_notify_watch_line($e); $lines[] = $ic($icon).$line; }
+  if ($problems) { $lines[] = ''; $lines[] = 'Open StaXX: '.$link; }
   $head = []; $counts = [];
   if ($u) { $head[] = $ic('✅').'StaXX updated '.$plural($u, 'stack'); $counts[] = $u.' updated'; }
   if ($f) {
@@ -340,6 +387,11 @@ function staxx_notify_text(array $events, string $layout): array {
   if ($w) {
     $head[] = $ic('🔔').($u || $f ? $w.' waiting' : 'StaXX found '.$plural($w, 'update').' waiting');
     $counts[] = $w.' waiting for you';
+  }
+  if ($p) {
+    // Alone, the message is named for the app; beside update news it is one more count.
+    $head[] = $u || $f || $w ? $p.' need a look' : 'StaXX: '.staxx_notify_watch_subject($problems);
+    $counts[] = $p.($p === 1 ? ' app needs' : ' apps need').' a look';
   }
   return ['subject' => implode(', ', $head), 'description' => implode(', ', $counts).'.',
           'body' => implode("\n", $lines), 'importance' => $importance, 'link' => $link];
@@ -462,8 +514,11 @@ function staxx_notify_html(array $events, string $layout): array {
   $now   = staxx_notify_now();
   $server = staxx_notify_server_name();
   $open  = staxx_notify_base_url($server).staxx_view_url().'#updates';
-  $by    = ['installed' => [], 'failed' => [], 'found' => [], 'pinned' => [], 'look' => [], 'cleanup' => []];
+  $by    = ['installed' => [], 'failed' => [], 'found' => [], 'pinned' => [], 'look' => [], 'cleanup' => [],
+            'restarting' => [], 'unhealthy' => [], 'stopped' => [], 'healthy' => []];
   foreach ($events as $e) if (isset($by[$e['kind'] ?? ''])) $by[$e['kind']][] = $e;
+  $problems = array_merge($by['restarting'], $by['unhealthy'], $by['stopped']);
+  $p = staxx_notify_app_count($problems);
   $u = staxx_notify_app_count($by['installed']); $f = staxx_notify_app_count($by['failed']);
   $w = staxx_notify_app_count($by['found']);
   $plural = static fn(int $n, string $x): string => $n.' '.$x.($n === 1 ? '' : 's');
@@ -511,6 +566,14 @@ function staxx_notify_html(array $events, string $layout): array {
   $head = static fn(string $t): string => '<div style="font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#555555;margin:18px 0 8px">'.$t.'</div>';
   $chip = static fn(string $t, string $bg, string $fg): string => '<span style="display:inline-block;font-size:13px;font-weight:700;padding:4px 12px;border-radius:999px;background:'.$bg.';color:'.$fg.';margin:0 8px 8px 0">'.$h($t).'</span>';
   $reason = static fn(array $e): string => '<div style="color:#c62828;font-size:14px">'.$h((string)($e['reason'] ?? '') ?: 'The update stopped before it finished.').'</div>';
+  // The watcher's sentence under the app's name, without the name again ("Restarted 3 times in the
+  // last hour."): red for restarting and stopped, amber for unhealthy, green for healthy.
+  $watch = static function (array $e) use ($h): string {
+    $colour = ['unhealthy' => '#a15c00', 'healthy' => '#1a7f37'][$e['kind']] ?? '#c62828';
+    $t = substr(staxx_notify_watch_line($e)[1], strlen(staxx_notify_label($e)) + 1);
+    $t = $t === 'is healthy again.' ? 'Healthy again.' : ucfirst(preg_replace('/^has /', '', $t));
+    return '<div style="color:'.$colour.';font-size:14px">'.$h($t).'</div>';
+  };
   $sum = $layout === '3';
   $rows = static function (array $list, callable $inner) use ($item): string {
     $o = '';
@@ -525,6 +588,10 @@ function staxx_notify_html(array $events, string $layout): array {
   if ($f) $chips .= $chip($f.' failed', '#fde7e7', '#c62828');
   if ($w) $chips .= $chip($w.' waiting', '#fff1db', '#a15c00');
   if ($by['pinned']) $chips .= $chip(count($by['pinned']).' pinned', '#e8eefc', '#2f55c4');
+  foreach ([['restarting', '#fde7e7', '#c62828'], ['unhealthy', '#fff1db', '#a15c00'],
+            ['stopped', '#fde7e7', '#c62828'], ['healthy', '#e3f5e8', '#1a7f37']] as [$k, $bg, $fg]) {
+    if ($by[$k]) $chips .= $chip(staxx_notify_app_count($by[$k]).' '.$k, $bg, $fg);
+  }
   if ($sum) {
     $weekly = staxx_notify_opt('UPDATE_DIGEST_EVERY') === 'week';
     $title  = $weekly ? 'Weekly summary · week of '.date('j M', $now - ((int)date('N', $now) - 1) * 86400)
@@ -532,6 +599,7 @@ function staxx_notify_html(array $events, string $layout): array {
     $sub = $server;
   } else {
     $parts = [];
+    if ($p) $parts[] = $u || $f || $w ? $p.' need a look' : staxx_notify_watch_subject($problems);
     if ($u) $parts[] = $plural($u, 'stack').' updated';
     if ($f) $parts[] = $u ? $f.' failed' : $plural($f, 'stack').' failed to update';
     if ($w) $parts[] = $u || $f ? $w.' waiting' : $plural($w, 'update').' waiting for you';
@@ -544,6 +612,11 @@ function staxx_notify_html(array $events, string $layout): array {
   if ($by['installed']) $body .= ($multi ? $head($ic('✅').'Updated') : '').$rows($by['installed'], $withNotes);
   if ($by['failed'])    $body .= ($multi ? $head($ic('❌').'Failed') : '').$rows($by['failed'], $reason);
   if ($by['found'])     $body .= ($multi && ($by['installed'] || $by['failed'] || $sum) ? $head($ic('🔔').'Waiting for you') : '').$rows($by['found'], $withNotes);
+  if ($problems) {
+    if ($by['installed'] || $by['failed'] || $by['found'] || $sum || $p > 1) $body .= $head($ic('⚠️').'Needs a look');
+    foreach ($problems as $e) $body .= $item($e, $watch($e));
+  }
+  if ($by['healthy']) $body .= $head($ic('💚').'Healthy again').$rows($by['healthy'], $watch);
   if ($by['pinned']) {
     $body .= $head($ic('📌').'Pinned').$rows($by['pinned'], static function (array $e) use ($h): string {
       $at = (int)($e['at'] ?? 0);
@@ -708,7 +781,7 @@ function staxx_notify_digest_add(array $events, bool $held): void {
   staxx_notify_digest_edit(static function (array &$d) use ($events, $held): void {
     foreach ($events as $e) {
       $e['held'] = $held;
-      $key = static fn(array $x): string => ($x['kind'] ?? '').'|'.($x['stack'] ?? '').'|'.($x['service'] ?? '');
+      $key = static fn(array $x): string => ($x['kind'] ?? '').'|'.($x['stack'] ?? '').'|'.($x['service'] ?? '').'|'.($x['name'] ?? '');
       $d['events'] = array_values(array_filter($d['events'], static fn($o) => $key($o) !== $key($e)));
       $d['events'][] = $e;
     }
@@ -739,6 +812,19 @@ function staxx_notify_events(array $events): void {
   foreach ($events as $e) {
     $kind = (string)($e['kind'] ?? '');
     if ($kind === 'pinned') { $pinned[] = $e; continue; }
+    // The app watcher's kinds (PLAN_221). Like 'failed' they are never held for
+    // quiet hours; 'healthy' only ever rides in the summary, and not at all
+    // when the unhealthy messages are off.
+    if (in_array($kind, STAXX_NOTIFY_WATCH, true)) {
+      $when = staxx_notify_opt('APP_NOTIFY_'.strtoupper($kind).'_WHEN');
+      if ($when === 'off') continue;
+      if ($when === 'summary') staxx_notify_digest_add([$e], false); else $send[] = $e;
+      continue;
+    }
+    if ($kind === 'healthy') {
+      if (staxx_notify_opt('APP_NOTIFY_UNHEALTHY_WHEN') !== 'off') staxx_notify_digest_add([$e], false);
+      continue;
+    }
     if (!in_array($kind, ['found', 'installed', 'failed'], true)) continue;
     if (staxx_notify_opt('UPDATE_NOTIFY_'.strtoupper($kind).'_WHEN') === 'summary') {
       staxx_notify_digest_add([$e], false);
@@ -804,13 +890,13 @@ function staxx_notify_digest_pass(): void {
     $taken = $data;
     $data['events'] = [];
     $data['sentAt'] = $now;
-    if (array_filter($taken['events'], static fn($e) => in_array($e['kind'] ?? '', ['found', 'installed', 'failed'], true))) {
+    if (array_filter($taken['events'], static fn($e) => in_array($e['kind'] ?? '', STAXX_NOTIFY_DIGEST_KINDS, true))) {
       $data['pinnedDue'] = false;
     }
   });
   if (!$ok || $taken === null) return;
 
-  $events = array_values(array_filter($taken['events'], static fn($e) => in_array($e['kind'] ?? '', ['found', 'installed', 'failed'], true)));
+  $events = array_values(array_filter($taken['events'], static fn($e) => in_array($e['kind'] ?? '', STAXX_NOTIFY_DIGEST_KINDS, true)));
   if (!$events) return;                            // a quiet day
 
   if (!empty($taken['pinnedDue'])) $events = array_merge($events, $taken['pinned']);

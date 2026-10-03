@@ -28513,7 +28513,8 @@
     'UPDATE_NOTIFY_PINNED', 'UPDATE_NOTIFY_FOUND_WHEN', 'UPDATE_NOTIFY_INSTALLED_WHEN',
     'UPDATE_NOTIFY_FAILED_WHEN', 'UPDATE_DIGEST_EVERY', 'UPDATE_DIGEST_DAY', 'UPDATE_DIGEST_TIME',
     'UPDATE_NOTIFY_NOTES', 'UPDATE_NOTIFY_ICONS', 'UPDATE_QUIET', 'UPDATE_QUIET_START',
-    'UPDATE_QUIET_END', 'UPDATE_NOTIFY_HTML'];
+    'UPDATE_QUIET_END', 'UPDATE_NOTIFY_HTML', 'APP_NOTIFY_RESTARTING_WHEN',
+    'APP_NOTIFY_UNHEALTHY_WHEN', 'APP_NOTIFY_STOPPED_WHEN'];
   (function () {
     var at = SETTINGS_ROWS.map(function (r) { return r.key; }).indexOf('UPDATE_RETAIN');
     var rows = NOTIFY_KEYS.map(function (k) {
@@ -29011,6 +29012,12 @@
     return notifyGet('UPDATE_NOTIFY_' + kind + '_WHEN') === 'summary' ? 'summary' : 'now';
   }
 
+  // The running-app messages keep their answer in one key: now, summary or off.
+  function notifyAppState(kind) {
+    var v = notifyGet('APP_NOTIFY_' + kind + '_WHEN');
+    return v === 'summary' || v === 'off' ? v : 'now';
+  }
+
   function notifySeg(name, opts) {
     return '<div class="staxx-views" role="group">' + opts.map(function (o) {
       return '<button type="button" class="staxx-viewbtn" data-nf="' + name + '" data-v="' + o[0] +
@@ -29051,6 +29058,9 @@
           kindRow('INSTALLED', '✅', 'Image installed', NOTIFY_WHEN) +
           kindRow('FAILED', '❌', 'Installation failed', NOTIFY_WHEN) +
           kindRow('PINNED', '📌', 'Still pinned', [NOTIFY_WHEN[1], NOTIFY_WHEN[2]]) +
+          kindRow('APP_RESTARTING', '🔁', 'App keeps restarting', NOTIFY_WHEN) +
+          kindRow('APP_UNHEALTHY', '💔', 'Health check failed', NOTIFY_WHEN) +
+          kindRow('APP_STOPPED', '🛑', 'App stopped by itself', NOTIFY_WHEN) +
         '</div>' +
         '<span class="staxx-nf-sub">' + notifyLabel('📋', 'Summary') + '</span>' +
         '<div class="staxx-nf-line">' + notifySeg('DIGEST_EVERY', [['day', 'Daily'], ['week', 'Weekly']]) +
@@ -29086,6 +29096,8 @@
       FOUND: notifyKindState('FOUND'), INSTALLED: notifyKindState('INSTALLED'),
       FAILED: notifyKindState('FAILED'),
       PINNED: notifyGet('UPDATE_NOTIFY_PINNED') === 'true' ? 'summary' : 'off',
+      APP_RESTARTING: notifyAppState('RESTARTING'), APP_UNHEALTHY: notifyAppState('UNHEALTHY'),
+      APP_STOPPED: notifyAppState('STOPPED'),
       DIGEST_EVERY: notifyGet('UPDATE_DIGEST_EVERY'), NOTES: notifyGet('UPDATE_NOTIFY_NOTES')
     };
     Array.prototype.forEach.call(box.querySelectorAll('[data-nf]'), function (b) {
@@ -29118,6 +29130,8 @@
     if (name === 'FOUND' || name === 'INSTALLED' || name === 'FAILED') {
       notifyPut('UPDATE_NOTIFY_' + name, v === 'off' ? 'false' : 'true');
       if (v !== 'off') notifyPut('UPDATE_NOTIFY_' + name + '_WHEN', v);
+    } else if (name.indexOf('APP_') === 0) {
+      notifyPut('APP_NOTIFY_' + name.slice(4) + '_WHEN', v);
     } else if (name === 'PINNED') {
       notifyPut('UPDATE_NOTIFY_PINNED', v === 'summary' ? 'true' : 'false');
     } else if (name === 'DIGEST_EVERY') {
