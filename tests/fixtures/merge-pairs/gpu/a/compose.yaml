@@ -1,0 +1,16 @@
+services:
+  transcode:
+    image: example/gpu-transcode:1
+    pull_policy: never
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  web:
+    image: example/gpu-web:1
+    pull_policy: never

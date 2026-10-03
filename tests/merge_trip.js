@@ -722,6 +722,60 @@ function unretire(text, newName, date) {
 })();
 
 /* =========================================================================
+ * PLAN_179 round 2026-10-03 — graphics-card lines. A GPU is asked for per
+ * service, never per stack, so a merge must carry each service's lines across
+ * unchanged and must not spread them to a neighbour.
+ * ========================================================================= */
+
+console.log('\nGPU. each service keeps its own graphics-card lines');
+
+// Parse tree -> plain value. Flow lists ("[gpu]") come back opaque from compose-model, so they
+// are read through parseFlowList(); every fixture value here is a scalar, a list or a map.
+function gpuPlain(node) {
+  if (!node) return undefined;
+  if (node.kind === 'scalar') return node.value;
+  if (node.kind === 'seq') return node.items.map(function (it) { return gpuPlain(it.value); });
+  if (node.kind === 'map') {
+    var o = {};
+    node.keys.forEach(function (k) { o[k] = gpuPlain(node.pairs[k].value); });
+    return o;
+  }
+  if (node.kind === 'opaque' && node.reason === 'flow') return CM.parseFlowList(node.raw) || [];
+  return undefined;
+}
+
+// The graphics-related parts of one service: deploy, runtime, devices and the one environment name.
+function gpuLines(text, svc) {
+  var plain = gpuPlain(CM.parse(text).root) || {};
+  var s = (plain.services || {})[svc] || {};
+  var env = s.environment || {};
+  return JSON.stringify({
+    deploy: s.deploy === undefined ? null : s.deploy,
+    runtime: s.runtime === undefined ? null : s.runtime,
+    devices: s.devices === undefined ? null : s.devices,
+    nvidia: env.NVIDIA_VISIBLE_DEVICES === undefined ? null : env.NVIDIA_VISIBLE_DEVICES
+  });
+}
+
+(function () {
+  var a = loadRaw('gpu', 'a');
+  var b = loadRaw('gpu', 'b');
+  var w = auditedBuild([a, b], { date: '2026-10-03', name: 'gpudemo' });
+  ok('the merge is not refused', typeof w.text === 'string' && w.text.length > 0, JSON.stringify(w.refused || w.error || ''));
+  if (typeof w.text !== 'string') return;
+  assertRoundTrip('GPU', w.text);
+
+  var expect = [['transcode', a], ['web', a], ['ml', b], ['media', b]];
+  expect.forEach(function (e) {
+    var merged = gpuLines(w.text, e[0]), source = gpuLines(e[1].text, e[0]);
+    ok(e[0] + ' — its graphics-card lines match the source', merged === source, merged + ' vs ' + source);
+  });
+  ok('transcode really asks for a card (sanity check on the fixture)', /"driver":"nvidia"/.test(gpuLines(w.text, 'transcode')));
+  ok('web gains nothing graphics-related',
+     gpuLines(w.text, 'web') === JSON.stringify({ deploy: null, runtime: null, devices: null, nvidia: null }));
+})();
+
+/* =========================================================================
  * Summary
  * ========================================================================= */
 
