@@ -7,7 +7,7 @@ installing image updates. It is explained fully in [checking for updates](update
 service can instead be set to Manual, Automatic or Pinned; see
 [choosing how a container updates](update-policy.md).
 
-![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with a row for each kind of message, the summary, release notes, Use icons, Quiet hours and Send a test message, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with a row for each kind of message, including the three about running apps, the summary, release notes, Use icons, Quiet hours and Send a test message, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
 
 ## Image updates
 
@@ -34,7 +34,7 @@ These three only appear while Updates, above, is Automatic.
 
 ## Notifications
 
-![The Notifications field: StaXX advanced email notifications ticked with its line beneath, rows for New image found, Image installed and Installation failed each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM, and the Send a test message button](../images/guide/settings-updates-notifications.png)
+![The Notifications field: StaXX advanced email notifications ticked with its line beneath, rows for New image found, Image installed and Installation failed each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, App keeps restarting, Health check failed and App stopped by itself each offering Straight away, In the summary and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM and the line beneath them, and the Send a test message button](../images/guide/settings-updates-notifications.png)
 
 Messages go through Unraid's own notifications: the bell, email, and any other service set up
 there. What each message holds is in [update checking](updates.md#notifications).

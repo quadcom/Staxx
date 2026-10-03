@@ -29081,7 +29081,7 @@
           '<label data-nf-show="quiet">to <input type="time" class="staxx-nf-input" data-nf-in="UPDATE_QUIET_END" ' +
             'aria-label="Quiet hours end"></label></div>' +
         '<p class="staxx-hint" data-nf-show="quiet">During quiet hours, messages wait for the next one ' +
-          'or the summary. Failures are always sent straight away.</p>' +
+          'or the summary. Failed updates, and app problems set to Straight away, are always sent straight away.</p>' +
         '<div class="staxx-nf-line"><button type="button" class="staxx-btn" data-nf-test>Send a test message</button>' +
           '<span class="staxx-hint" id="staxx-nf-test-msg" role="status"></span></div>' +
       '</div></div>';
