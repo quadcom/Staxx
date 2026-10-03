@@ -28,12 +28,19 @@
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, all named "zzc155…", under the scratch stacks
- * folder. Nothing here starts or pulls anything by default — the one case
- * that touches Docker at all is the successful merge's down step, which is
- * run against a stack that was never started (so it is taking nothing down)
- * purely to prove the step itself works; if this box has no compose or no
- * Docker daemon, that one case is skipped rather than failed — see SKIP
- * below.
+ * folder. Nothing here pulls anything by default — the cases that touch
+ * Docker at all are the successful merge's down step, run against stacks
+ * that were never started, and the C11b rollback, whose "up -d" does start
+ * the two sources' containers again (compose projects zzc155rolla and
+ * zzc155rollb). If this box has no compose or no Docker daemon, those cases
+ * are skipped rather than failed — see SKIP below.
+ *
+ * A shutdown teardown (zzc155_teardown) runs on every exit path and, for the
+ * exact projects zzc155rolla, zzc155rollb, zzc155downsrc and zzc155applive,
+ * runs `down -v --remove-orphans` and then removes any container still
+ * labelled with that project by id. The scratch stack folders are deleted by
+ * run-with-store.sh, so without it those containers would be left behind
+ * with nothing listing them.
  *
  * PLAN_155 "Step 6 as settled" added two flags, $stop and $start, to
  * staxx_merge_stacks(). Proving $stop actually gates the down step needs a
@@ -76,6 +83,42 @@ if (staxx_stack_root() !== '/tmp/zzc155-store/stacks') {
 $root = staxx_stack_root();
 @exec('rm -rf '.escapeshellarg($root));
 mkdir($root, 0755, true);
+
+// Removes whatever the cases below really started, by exact compose project
+// name. run-with-store.sh deletes the scratch stack folders afterwards, so a
+// container left running here would never be listed by anything again.
+// Registered up front so it also runs after a fatal error or an exit(1).
+// Only the projects named here are touched; nothing is matched by prefix and
+// no image is removed.
+//   zzc155rolla, zzc155rollb  the C11b rollback brings both sources back with
+//                             `up -d`; this runs by default whenever compose
+//                             and Docker are present, not only when opted in.
+//   zzc155downsrc             D3b's source, brought up on purpose (opt-in).
+//   zzc155applive             D4's new stack, started by start=true (opt-in).
+function zzc155_teardown(): void {
+  if (!staxx_docker_running()) return;
+  $code = 0;
+  foreach (['zzc155rolla', 'zzc155rollb', 'zzc155downsrc', 'zzc155applive'] as $project) {
+    $label = 'label=com.docker.compose.project='.$project;
+    $ids = trim(staxx_sh('docker ps -aq --filter '.escapeshellarg($label).' 2>&1', 30, $code));
+    if ($ids === '') continue;
+    $compose = staxx_compose_cmd();
+    // `down -v` takes this project's volumes (including a container's anonymous
+    // one) with it and touches no other project's.
+    if ($compose !== '') {
+      staxx_sh($compose.' -p '.escapeshellarg($project).' down -v --remove-orphans 2>&1', 120, $code);
+    }
+    // Safety net: anything still carrying the project label is removed by id.
+    // -v drops that container's own anonymous volumes only.
+    $left = preg_split('/\s+/', trim(staxx_sh('docker ps -aq --filter '.escapeshellarg($label).' 2>&1', 30, $code)));
+    foreach ($left as $id) {
+      if (preg_match('/^[0-9a-f]{12,64}$/', $id)) {
+        staxx_sh('docker rm -fv '.escapeshellarg($id).' 2>&1', 60, $code);
+      }
+    }
+  }
+}
+register_shutdown_function('zzc155_teardown');
 
 function mkStack(string $root, string $rel, string $compose, array $extras = []): void {
   $dir = $root.'/'.$rel;
