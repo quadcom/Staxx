@@ -3662,7 +3662,10 @@ div.title.staxx-has-titlebar {
    both columns, and the :has() lifts the single-column cap only for a menu
    that has actually split; every other menu keeps the 34rem above. */
 .staxx-menu-items--split { display: flex; align-items: stretch; }
-.staxx-menu-col { flex: 0 0 auto; min-width: 22rem; }
+/* Each column caps at the single-column width (PLAN_227). Uncapped, a long
+   note such as the update-message default grew column 1 to fill the menu and
+   pushed the folder column outside the box; capped, the note wraps instead. */
+.staxx-menu-col { flex: 0 0 auto; min-width: 22rem; max-width: 34rem; }
 .staxx-menu-col + .staxx-menu-col { border-left: 0.1rem solid var(--sm-hairline); }
 .staxx-menu-col > .staxx-menu-sep:first-child { margin-top: 0; border-top: 0; }
 .staxx-menu:has(.staxx-menu-items--split) { width: max-content; max-width: min(64rem, calc(100vw - 1.6rem)); }
