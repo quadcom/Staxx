@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20261003">
+<!ENTITY version              "00.05.00_dev20261004">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "b4d3298c02332c7c08432a60ced6ae49">
-<!ENTITY packageSHA256        "afb09626d62307a053327b244fa93f259238e306b0cfeeee01bc13a31c5456ee">
+<!ENTITY packageMD5           "d57a2961c9ab4523afea1e06adefd4de">
+<!ENTITY packageSHA256        "892d6e65a68aea7a9df450f5836779f21731154f4aae9d7da03b064903bb49ca">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,11 @@
 >
 
 <CHANGES>
-###00.05.00_dev20261003
+###00.05.00_dev20261004
+- StaXX now says when it cannot see the ports of apps on the server's own network, and when one of them cannot start because its port is taken, it says which port and what is using it. That start is shown as failed.
+- Emails and the settings use StaXX's own icons, email sections have clear headings, and phone notifications are short: a title and one line.
+- StaXX now sends a message when Docker itself stops answering for five minutes, and another when it is back.
+- StaXX now tells you when an app keeps restarting, fails its health check, or stops by itself.
 - Update messages now say much more. Each app shows its old and new version, its size on disk after the update, a mark when the first number of the version changes, and the first lines of its release notes with a link to the rest. A failed update says why in plain words, such as a download limit reached or a tag that no longer exists. Every message links to StaXX's Updates view.
 - Settings, Updates, Notifications now lets you choose, for each kind of message, Straight away, In the summary, or Off. The summary is daily or weekly at a time you pick, and nothing is sent on a day with nothing to report. It also carries the weekly list of pinned apps, anything the self-test found wrong, and how much space old images take when that is 1 GB or more.
 - Quiet hours hold messages until the next one or the summary. Failures are always sent straight away.
@@ -550,7 +554,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20261003-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261004-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
