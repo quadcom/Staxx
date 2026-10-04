@@ -88,7 +88,9 @@ When a start fails with the red warning triangle, press it and read the end of t
 app could not open its port, the log also names what is using that port. Change the port that app
 listens on, then start it again.
 
-<!-- SHOT: marks-failed-start-port | full frame | a stack row with the red failed chip, and its log open ending with the "stopped straight away: it could not open port 80" sentence -->
+![The DEV-TESTING folder with four stacks: demo-web's State column shows the red warning triangle, outlined](../images/guide/marks-failed-start-port.png)
+
+![The Start failed window: four lines of Container demo-web Recreate, Recreated, Starting and Started, then "demo-web stopped straight away: it could not open port 80. Port 80 is already used by Unraid's own web page. Change the port this app listens on, then start it again.", and a Close button](../images/guide/marks-failed-start-port-log.png)
 
 If a command's outcome is never seen by this page (most often because the browser tab was closed
 or reloaded while it was running), the row shows no chip for it at all. It settles back to showing

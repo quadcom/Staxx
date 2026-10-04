@@ -185,7 +185,7 @@ size; that the originals are retired; and that nothing is deleted.
 When the summary names apps that use **the server's own network**, make sure no two of them use the
 same port, and none uses a port Unraid itself uses.
 
-<!-- SHOT: merging-stacks-confirm-host-network | close-up | the summary list on the Confirm step with the line "<app> and <app> use the server's own network" and its sentence beginning "StaXX cannot see which ports they open" -->
+![The summary on the Confirm step: New stack demoapp in DEV-TESTING, both containers built again, the database keeps its data, 2 files come along, then, outlined, "mariadb and nginx use the server's own network" with "StaXX cannot see which ports they open. If two apps, or Unraid itself, use the same port, the second one stops as soon as it starts." beneath it, and the two retired and nothing deleted lines in yellow](../images/guide/merging-stacks-confirm-host-network.png)
 
 Both switches start off. Turning on **Start the new stack when done** also turns on **Stop the
 original stacks**. The sentence under the switches states what your choice means:

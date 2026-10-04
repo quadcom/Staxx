@@ -90,7 +90,7 @@ section you folded, in this browser, so folding **Ports** folds it on every stac
 When **Network mode** is set to **host**, the app uses the server's own network. Make sure no two apps
 on the server's own network use the same port, and none uses a port Unraid itself uses.
 
-<!-- SHOT: editor-configure-host-network-note | close-up | a service's Network mode field set to host, with the note under it beginning "StaXX cannot see which ports this app opens" -->
+![The Advanced group in the form with Network mode set to host, outlined together with the orange note under it: "StaXX cannot see which ports this app opens. If two apps, or Unraid itself, use the same port, the second one stops as soon as it starts."](../images/guide/editor-configure-host-network-note.png)
 
 ## The Image box
 
