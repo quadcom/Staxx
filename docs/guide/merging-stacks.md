@@ -166,7 +166,7 @@ an offer; the file on the right stays as it was until you answer one.
 | Dependencies | A line from one service to another makes the first wait for the second to start. Lines StaXX drew from the changes you approved on step 3 are already there. **Show me** replays a short demonstration of the drag. |
 | Health checks | Switch on a health check for a service that others wait for. **Add one** has StaXX work out a check once the stack is running. **No — I want to add my own** displays the advanced health check form; for what its fields mean, look up Docker health checks in Docker's own documentation. |
 | Updates | **Default**, **Manual** or **Automatic** for the new stack. The line under it says what Default means on your server. Automatic adds **Immediately** or **After the delay**. See [choosing how a container updates](update-policy.md). |
-| Notifications | The same three switches as everywhere else: **New image**, **Image installed**, **Installation failed**. |
+| Notifications | The same three switches as everywhere else: **New image found**, **Image installed**, **Installation failed**. |
 
 ## Step 6 · Confirm
 

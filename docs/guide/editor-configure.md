@@ -103,12 +103,16 @@ value yourself.
 
 ## The Updates box
 
-![The Updates section of a service in the form: the When to update box with Pinned, Default, Manual and Automatic, Default ticked, and the Notifications box beneath it](../images/guide/editor-configure-when-to-update.png)
+![The Updates section of a service in the form: the When to update box with Pinned, Default, Manual and Automatic, Default ticked and the note Default = Manual, and the Notifications box beneath it with New image found, Image installed and Installation failed ticked and the line Default = New image found (in the summary), Image installed (in the summary), Installation failed (in the summary)](../images/guide/editor-configure-when-to-update.png)
 
 Each service's **Updates** group carries a **When to update** choice: **Pinned**, **Default**,
 **Manual** or **Automatic**, in that order. Choosing **Pinned** fixes this service to the exact
 build it is running now, and it is never checked for an update again. See
 [checking for updates](update-policy.md) for what each choice does and how a pin is released.
+
+Below it, the **Notifications** box turns each update message on or off for this service. See
+[choosing how a container updates](update-policy.md#from-a-containers-own-page) for how it works
+with the messages set in Settings.
 
 ## What sits on a row
 

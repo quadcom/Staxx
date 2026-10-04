@@ -23,7 +23,7 @@ Change both from a container's own page in the editor, or straight from its row 
 
 ## From a container's own page
 
-![The When to update box in the editor, showing the When row with Pinned, Default, Manual and Automatic, set to Automatic with Immediate and Delayed underneath it, and beneath it a separate Notifications box with three switches — New image, Image installed and Installation failed — each shown as an orange tick, and a note reading Default = New image, Image installed, Installation failed](../images/guide/update-policy-editor.png)
+![The When to update box in the editor, showing the When row with Pinned, Default, Manual and Automatic, set to Automatic with Immediate and Delayed underneath it and Delayed ticked, the note Waits 24 hours, then installs in the quiet hours, and beneath it the Notifications box with New image found, Image installed and Installation failed ticked and a line saying when Settings sends each one](../images/guide/update-policy-editor.png)
 
 Open the stack, then the container inside it, and find the **When to update** box below its container
 settings.
@@ -43,21 +43,26 @@ the note to jump straight to the server setting it names.
 
 ![The When to update box with Automatic chosen and the note beside the When row outlined, reading Waits 24 hours, then installs in the quiet hours](../images/guide/update-policy-when-note.png)
 
-Below the **When to update** box sits a **Notifications** box, showing the same three kinds of message as
-your server's notification settings — **New image**, **Image installed** and **Installation failed** —
-each on (an orange tick) or off (a red cross). They start out matching your server. Leave all three
-alone and this container follows the server, however you change it later. Flip any one of them and
-all three become this container's own from then on. A note beneath the switches reads "Default = …",
-naming whichever of the server's own switches are on.
+Below the **When to update** box sits a **Notifications** box. It holds the same three messages as
+the [Updates tab](settings-updates.md#notifications) in Settings: **New image found**, **Image
+installed** and **Installation failed**, each on (an orange tick) or off (a red cross). They start
+out matching Settings. Leave all three alone and this container follows Settings, however you change
+it later. Flip any one of them and all three become this container's own from then on. A note
+beneath the switches reads "Default = …", naming the messages Settings has on and when each is sent:
+straight away or in the summary.
 
-![The Notifications switches in the row menu, with the Default line beneath them outlined](../images/guide/update-policy-notifications-note.png)
+These switches turn a message on or off for this container only. When it is sent follows Settings.
+Turn on a message here that Settings has off, and this container's message is sent straight away. A
+note under the switches says so.
+
+![The Notifications switches in the row menu, New image found, Image installed and Installation failed, with the Default line beneath them outlined, saying each is sent in the summary](../images/guide/update-policy-notifications-note.png)
 
 This box sets only the one container whose page you have open. To set a whole stack at once, use its
 row menu instead.
 
 ## From the row menu
 
-![Part of a two-service stack's row menu: Autostart, Delay, Updates — all 2 with Default ticked beside Manual and Automatic, then Notifications — all 2 with New image, Image installed and Installation failed ticked, and the Default line beneath](../images/guide/update-policy-menu.png)
+![Part of a two-service stack's row menu: Autostart, Delay, Updates — all 2 with Default ticked beside Manual and Automatic, then Notifications — all 2 with New image found, Image installed and Installation failed ticked, and the Default line beneath](../images/guide/update-policy-menu.png)
 
 Open a container's own menu, or a stack's menu, from [the row menu](the-stack-list.md#the-row-menu).
 Both carry the same **Updates** row and the same three **Notifications** switches, working the same
@@ -91,7 +96,7 @@ Turn on **Select** and tick the stacks you want to change, then press **Updates�
   exactly as it is, with no message.
 - **Notifications…** offers the same three switches as a container's own page. Press
   **Apply to N stacks** to set them for every service in every ticked stack. When the chosen stacks
-  hold a pinned service, a fourth switch, **Remind me it is still pinned**, sets the weekly reminder
+  hold a pinned service, a fourth switch, **Still pinned**, sets the weekly reminder
   for the pinned services only.
 
 ## Containers that need an extra step
@@ -99,11 +104,11 @@ Turn on **Select** and tick the stacks you want to change, then press **Updates�
 **Pinned to one exact build.** Choosing **Pinned** fixes a container to the exact build it is
 running right now, after a window asks you to confirm it.
 
-A pinned container's **Notifications** box holds one switch, **Remind me it is still pinned**, in
+A pinned container's **Notifications** box holds one switch, **Still pinned**, in
 place of the other three. With it on, the weekly list of pinned containers in the
 [summary](updates.md#the-summary) includes this one while it stays pinned. With it off, the list leaves it out. It starts on.
 
-![The Updates row in a pinned service's menu: Pinned ticked, with Default, Manual and Automatic beside it, and below it Notifications with the one switch Remind me it is still pinned, ticked](../images/guide/update-policy-pinned-menu.png)
+![The Updates row in a pinned service's menu: Pinned ticked, with Default, Manual and Automatic beside it, and below it Notifications with the one switch Still pinned, ticked](../images/guide/update-policy-pinned-menu.png)
 
 From then on, clicking **Default**, **Manual** or **Automatic** on that same container does not set
 it straight away — it opens a small window listing the tags that image offers instead. Pick one,

@@ -176,7 +176,7 @@ move or import one under a name already in use.
 
 ## The row menu
 
-![The whole stack menu open, in two columns: the stack name across the top; on the left Start, a greyed-out Stop, Recreate with the hint Rebuilds every container, Update, Pull images, Check this image again, Logs, then Edit compose file, Fill in details, Export, then an Autostart switch, a Delay box, the Updates row with Default ticked, three Notifications switches, What do these marks mean, and Remove stack; on the right the Move to folder list, New folder and Remove from folder](../images/guide/the-stack-list-row-menu.png)
+![The whole stack menu open, in two columns: the stack name across the top; on the left Start, a greyed-out Stop, Recreate with the hint Rebuilds every container, Update, Pull images, Check this image again, Skip this version, What changed, Logs, then Edit compose file, Fill in details, Export, then an Autostart switch, a Delay box, the Updates row with Default ticked, the New image found, Image installed and Installation failed switches with their Default line, What do these marks mean, and Remove stack; on the right the Move to folder list, New folder and Remove from folder](../images/guide/the-stack-list-row-menu.png)
 Right-click the row to open it. Items appear in this order, and only when they apply, in two
 columns: what you can do to the stack on the left, where it lives on the right.
 
