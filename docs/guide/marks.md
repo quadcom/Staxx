@@ -84,6 +84,12 @@ The first chip on a stack or container row.
 | <img src="../images/guide/marks-state-failed.png" alt="Red, warning triangle" width="200"> | That command failed | Press it to read what happened |
 | <img src="../images/guide/marks-state-needs-fix.png" alt="Red, wrench mark" width="200"> | Docker Compose cannot read this stack's file, so it cannot start | Press it to open the file at the problem |
 
+When a start fails with the red warning triangle, press it and read the end of the log. If it says an
+app could not open its port, the log also names what is using that port. Change the port that app
+listens on, then start it again.
+
+<!-- SHOT: marks-failed-start-port | full frame | a stack row with the red failed chip, and its log open ending with the "stopped straight away: it could not open port 80" sentence -->
+
 If a command's outcome is never seen by this page (most often because the browser tab was closed
 or reloaded while it was running), the row shows no chip for it at all. It settles back to showing
 whatever state the container is actually in.
@@ -205,7 +211,7 @@ same mark appears on a [folder row](folders.md) when a stack inside it is broken
 ![A stack row for a stack called zz-screenshot-demo running one container called demo-database on the postgres image, a red box drawn around its green "running(1)" pill to show it is a button you can press](../images/guide/marks-health-offer-pill.png)
 
 Press a green running chip that has nothing checking it and StaXX works out a health check for that
-container. See [the health check offer](editing-a-stack.md#health-check-offer) for what happens next.
+container. See [Health checks](health-checks.md) for what happens next.
 
 ## Terms used here
 

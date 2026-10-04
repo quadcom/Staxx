@@ -138,7 +138,7 @@ running container first, then shows you what it found and what the check actuall
 ![The Health check group in the editor with every box empty — "How the check runs" and "The check itself" — and a "Work out a health check" button in the top right of the group](../images/guide/editing-a-stack-health-offer.png)
 
 Nothing is written until you say yes. StaXX never touches a service that already has a check of its
-own. See [what every mark means](marks.md) for what a health check is and how StaXX decides on one.
+own. See [Health checks](health-checks.md) for what a health check is and how StaXX decides on one.
 
 ## Things the form points out
 

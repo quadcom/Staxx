@@ -16,7 +16,7 @@ A check runs on the schedule you set, and whenever you press **Check for updates
 
 ## Check cadence
 
-![The Updates tab: Check for image updates with how often and time of day, the Updates tick between Manual and Automatic, a greyed-out When to install box, and the Notifications ticks](../images/guide/settings-image-updates.png)
+![The Check for image updates box on the Updates tab: How often set to Every day and Time of day set to 04:00 AM, with the line beneath them](../images/guide/updates-check-for-image-updates.png)
 
 A pass runs every hour and asks only the images that are due. [The Updates tab](settings-updates.md)
 sets how often StaXX gives every image a full look, whether due or not. How often one particular
@@ -183,6 +183,8 @@ StaXX tells you about updates, and about apps that run into trouble, through Unr
 service set up in Unraid. Email reaches you once it is set up in Unraid's own notification
 settings. Choose which messages you get, and when, on [the Updates tab](settings-updates.md#notifications).
 
+![The Notifications box on the Updates tab: StaXX advanced email notifications ticked, then a row for each kind of message with its icon and its choice of Straight away, In the summary or Off, ending with Docker stops answering; below them the Summary set to Daily at 08:00 AM, Release notes, Use icons and Quiet hours ticked from 10:00 PM to 07:00 AM, and the Send a test message button](../images/guide/settings-updates-notifications.png)
+
 In the bell and on your phone, each message is a short title and one line naming the apps that matter,
 such as "3 updated, 2 waiting. Failed: dbgate. Needs a look: plex." The email holds the full list.
 
@@ -194,6 +196,8 @@ such as "3 updated, 2 waiting. Failed: dbgate. Needs a look: plex." The email ho
 | App keeps restarting | When an app restarts by itself 3 or more times within an hour | The app and how many times it restarted. |
 | Health check failed | When an app's health check turns unhealthy | The app and how many checks in a row it failed. Once it is healthy again, the next summary says so. |
 | App stopped by itself | When a running app stops with an error or runs out of memory | The app and the reason. An app you stop, or that StaXX or a backup stops, is not reported. |
+| Docker has stopped answering | When Docker has not answered for 5 minutes in a row | How long it has been, and a line to check that **Enable Docker** is set to **Yes** in Unraid's Docker settings, or restart the server. |
+| Docker is back | When Docker answers again after that message was sent | How long it was away, and that apps not set to start by themselves may need starting. |
 
 An app whose first version number changes, such as 10.9 to 11.0, is marked **major version**.
 Every message links to StaXX's update view.
@@ -210,7 +214,7 @@ app in it shows a **Release notes** link, not the notes.
 ### Quiet hours
 
 With **Quiet hours** on, a message that falls inside them waits, and arrives with the next message
-or the summary. Failed updates, and app problems set to **Straight away**, are always sent straight away.
+or the summary. Failed updates, and app problems set to **Straight away**, are always sent straight away. The same goes for the two Docker messages.
 
 ### StaXX advanced email notifications
 

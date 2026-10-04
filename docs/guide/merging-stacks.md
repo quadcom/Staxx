@@ -182,6 +182,11 @@ in order: the new stack's name and folder; that every container is rebuilt; that
 its data; how many changes you approved and what they were; how many files come along and their
 size; that the originals are retired; and that nothing is deleted.
 
+When the summary names apps that use **the server's own network**, make sure no two of them use the
+same port, and none uses a port Unraid itself uses.
+
+<!-- SHOT: merging-stacks-confirm-host-network | close-up | the summary list on the Confirm step with the line "<app> and <app> use the server's own network" and its sentence beginning "StaXX cannot see which ports they open" -->
+
 Both switches start off. Turning on **Start the new stack when done** also turns on **Stop the
 original stacks**. The sentence under the switches states what your choice means:
 

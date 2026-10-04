@@ -15,6 +15,9 @@ the container is the installed, running program. One image can run as many conta
 container's name is whatever `container_name:` says in the compose file, or one Docker makes up if
 that key is absent — an ordinary compose field, not something StaXX renames.
 
+**Health check** — a small test a container runs again and again to show the app inside is
+working, not just running. See [Health checks](guide/health-checks.md).
+
 **Compose file** — a text file listing the containers you want and how they should be set up. Its
 filename is usually `compose.yaml`. It is the standard way to describe containers, understood by
 Docker on any machine — Windows, Mac, Linux, a server, a laptop.

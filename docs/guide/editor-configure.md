@@ -87,6 +87,11 @@ section you folded, in this browser, so folding **Ports** folds it on every stac
 | Logging | How this service's logs are kept. |
 | Advanced | Anything else the file sets, with no better home. Always shown. |
 
+When **Network mode** is set to **host**, the app uses the server's own network. Make sure no two apps
+on the server's own network use the same port, and none uses a port Unraid itself uses.
+
+<!-- SHOT: editor-configure-host-network-note | close-up | a service's Network mode field set to host, with the note under it beginning "StaXX cannot see which ports this app opens" -->
+
 ## The Image box
 
 ![The Image box in the Container group holding mariadb:11.4, with its list open underneath: 11.4, latest and beta at the top, then the folded headings Other rolling tags (4), Version numbers (45) and On this server (104)](../images/guide/editor-configure-image-list.png)

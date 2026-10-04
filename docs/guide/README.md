@@ -44,6 +44,9 @@ This guide is written in English only.
   on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page.
 - **[Editing a stack](editing-a-stack.md)** — changing a setting and saving it, tidying a file into
   StaXX's layout, being offered a health check, and ports on a container with its own address.
+- **[Health checks](health-checks.md)** — what a health check is, how to have StaXX work one out
+  from the running chip or the editor, what the offer shows, and what the chip's colour says
+  afterwards.
 - **[Password generator and hashing tool](passwords-and-hashes.md)** — the Password button in a
   stack's editor: making a password or a passphrase, turning one into the scrambled form some apps
   ask for, and why a dollar sign is written twice in a compose file.

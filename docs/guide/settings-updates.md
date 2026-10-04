@@ -7,7 +7,8 @@ installing image updates. It is explained fully in [checking for updates](update
 service can instead be set to Manual, Automatic or Pinned; see
 [choosing how a container updates](update-policy.md).
 
-![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with a row for each kind of message, including the three about running apps, the summary, release notes, Use icons, Quiet hours and Send a test message, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
+![The Updates tab in full: Check for image updates with How often and Time of day, the Updates default with Manual and Automatic, When to install, Notifications with a row for each kind of message, including the three about running apps and one for Docker stopping, the summary, release notes, Use icons, Quiet hours and Send a test message, Previous image releases to keep set to 2, and the Update-check activity table](../images/guide/settings-updates-tab.png)
+
 
 ## Image updates
 
@@ -34,7 +35,8 @@ These three only appear while Updates, above, is Automatic.
 
 ## Notifications
 
-![The Notifications field: StaXX advanced email notifications ticked with its line beneath, and a row for each kind of message, each with its icon: New image found, Image installed, Installation failed, App keeps restarting, Health check failed and App stopped by itself each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM and the line beneath them, and the Send a test message button]](../images/guide/settings-updates-notifications.png)
+![The Notifications field: StaXX advanced email notifications ticked with its line beneath, and a row for each kind of message, each with its icon: New image found, Image installed, Installation failed, App keeps restarting, Health check failed and App stopped by itself each offering Straight away, In the summary and Off, Still pinned offering In the summary and Off, Docker stops answering offering Straight away and Off, the Summary set to Daily at 08:00, Release notes set to First lines and a link, Use icons and Quiet hours ticked with from 10:00 PM to 07:00 AM and the line beneath them, and the Send a test message button](../images/guide/settings-updates-notifications.png)
+
 
 Messages go through Unraid's own notifications: the bell, email, and any other service set up
 there. What each message holds is in [update checking](updates.md#notifications).
@@ -49,10 +51,11 @@ there. What each message holds is in [update checking](updates.md#notifications)
 | App keeps restarting | Straight away / In the summary / Off | Straight away | Sets when you hear that an app restarted by itself 3 or more times within an hour. |
 | Health check failed | Straight away / In the summary / Off | Straight away | Sets when you hear that an app's health check turned unhealthy. |
 | App stopped by itself | Straight away / In the summary / Off | Straight away | Sets when you hear that a running app stopped with an error or ran out of memory. |
+| Docker stops answering | Straight away / Off | Straight away | Sends a message when Docker has not answered for five minutes in a row, and another when it answers again. Nothing is sent while Docker is switched off in Unraid's Docker settings, while the array is stopped, or in the first ten minutes after the server starts. Quiet hours never hold these messages back. |
 | Summary | Daily / Weekly, a day of the week, a time | Daily at 08:00 | Sets when the summary is sent. Nothing is sent when there is nothing to report. |
 | Release notes | First lines and a link / Link only / Leave out | First lines and a link | Sets how much of each app's release notes a message shows. The summary only ever shows the link. |
 | Use icons | On / Off | On | With this on, small pictures start the lines of an email. With it off, emails are words only. Notifications on your phone and the bell are always words only. |
-| Quiet hours | On / Off, from and to | Off, 22:00 to 07:00 | With this on, a message that falls inside these hours waits for the next message or the summary. Failed updates and app problems set to Straight away are always sent straight away. |
+| Quiet hours | On / Off, from and to | Off, 22:00 to 07:00 | With this on, a message that falls inside these hours waits for the next message or the summary. Failed updates, app problems and Docker messages set to Straight away are always sent straight away. |
 | Send a test message | A button | | Sends one message now, so you can see what yours look like. |
 
 A service can take itself out of these messages in its own settings; see
