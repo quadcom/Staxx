@@ -652,7 +652,7 @@ $dBack = ['kind' => 'dockerback', 'stack' => '', 'service' => '', 'image' => '',
 reset_all();
 $t = staxx_notify_text([$dDown], '1');
 ok('docker down: subject, one line with the real minutes, alert', $t['subject'] === 'StaXX: Docker has stopped answering'
-   && $t['description'] === 'Docker has not answered for 12 minutes, so your apps may not be running. Open Settings → Docker and check that Enable Docker is set to Yes, or restart the server.'
+   && $t['description'] === 'Docker has not answered for 12 minutes, so your apps may not be running. Open Settings, then Docker, and check that Enable Docker is set to Yes, or restart the server.'
    && $t['importance'] === 'alert', $t['subject'].' | '.$t['description']);
 $t = staxx_notify_text([$dBack], '1');
 ok('docker back: subject, one line with the real minutes, normal', $t['subject'] === 'StaXX: Docker is back'
@@ -662,7 +662,7 @@ ok('docker words: no emoji in subject or description, emoji kept in the plain bo
    && has(staxx_notify_text([$dDown], '1')['body'], '⚠️'));
 ok('docker words: one minute is singular', has(staxx_notify_text([['kind' => 'dockerdown', 'count' => 1]], '1')['description'], 'for 1 minute,'));
 $hd = staxx_notify_html([$dDown], '1');
-ok('docker down email: title, sentence, a picture and no emoji', has($hd['html'], 'Docker has stopped answering') && has($hd['html'], 'Open Settings → Docker')
+ok('docker down email: title, sentence, a picture and no emoji', has($hd['html'], 'Docker has stopped answering') && has($hd['html'], 'Open Settings, then Docker,')
    && has($hd['html'], 'cid:glyph-warning@staxx') && !preg_match($emoji, $hd['html']));
 ok('docker back email uses the healthy picture', has(staxx_notify_html([$dBack], '1')['html'], 'cid:glyph-healthy@staxx'));
 

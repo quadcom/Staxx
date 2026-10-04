@@ -248,7 +248,7 @@ function staxx_notify_docker_words(array $e): array {
   $mins = $n.' '.($n === 1 ? 'minute' : 'minutes');
   if (($e['kind'] ?? '') === 'dockerdown') {
     return ['Docker has stopped answering',
-            'Docker has not answered for '.$mins.', so your apps may not be running. Open Settings → Docker and check that Enable Docker is set to Yes, or restart the server.'];
+            'Docker has not answered for '.$mins.', so your apps may not be running. Open Settings, then Docker, and check that Enable Docker is set to Yes, or restart the server.'];
   }
   return ['Docker is back', 'Docker is answering again after '.$mins.'. Apps that are not set to start by themselves may need starting.'];
 }
