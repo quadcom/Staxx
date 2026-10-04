@@ -953,7 +953,12 @@ function staxx_notify_events(array $events): void {
       continue;
     }
     if (!in_array($kind, ['found', 'installed', 'failed'], true)) continue;
-    if (staxx_notify_opt('UPDATE_NOTIFY_'.strtoupper($kind).'_WHEN') === 'summary') {
+    // PLAN_227: Settings' Off writes UPDATE_NOTIFY_<KIND>=false, so an event only
+    // reaches here then because an app's own tick overrode it. That is sent
+    // straight away (quiet hours still hold it, as for any 'now' event), not at
+    // the stale _WHEN left from before Off was pressed. A missing key is '', not off.
+    $off = staxx_notify_opt('UPDATE_NOTIFY_'.strtoupper($kind)) === 'false';
+    if (!$off && staxx_notify_opt('UPDATE_NOTIFY_'.strtoupper($kind).'_WHEN') === 'summary') {
       staxx_notify_digest_add([$e], false);
     } elseif ($kind !== 'failed' && staxx_notify_quiet($now)) {
       staxx_notify_digest_add([$e], true);

@@ -37,7 +37,8 @@
   // the shape staxx_update_notify_map() itself defaults an empty config to,
   // for the one page load where the attribute failed to parse.
   var UPDATE_SETTINGS = { mode: 'manual', delay: 24, quiet: true,
-                           notify: { found: false, installed: false, failed: true, pinned: true } };
+                           notify: { found: false, installed: false, failed: true, pinned: true },
+                           when: { found: 'now', installed: 'summary', failed: 'now' } };
   try {
     var updSettingsRaw = JSON.parse(scaffold.dataset.updateSettings || '');
     if (updSettingsRaw) UPDATE_SETTINGS = updSettingsRaw;
@@ -4355,7 +4356,7 @@
    * PLAN_150 phase 4b / PLAN_154 / PLAN_155 — the Updates and Notifications
    * fieldsets: Updates keeps the When row (and Immediate/Delayed); a
    * separate Notifications fieldset beneath it holds one row of three
-   * on/off switches — New image / Image installed / Installation failed —
+   * on/off switches — New image found / Image installed / Installation failed —
    * built from the two 'policy' fields harvestUpdatePolicy() (compose-
    * model.js) always pushes for every service (mode, then the single
    * notify block). Kept apart from fieldHtml()/boxHtml() entirely — a tick
@@ -4421,8 +4422,36 @@
     var stackScoped = NOTIFY_ROW_EVENTS.some(function (ev) { return events[ev[0]].scope === 'stack'; });
     var on = NOTIFY_ROW_EVENTS.filter(function (ev) {
       return stackScoped ? !!events[ev[0]].stackChoice : !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[ev[0]]);
-    }).map(function (ev) { return ev[1]; });
+    }).map(function (ev) {
+      // PLAN_227 — say when each message goes, as the settings page does.
+      var w = (UPDATE_SETTINGS.when && UPDATE_SETTINGS.when[ev[0]]) || (ev[0] === 'installed' ? 'summary' : 'now');
+      return ev[1] + (w === 'summary' ? ' (in the summary)' : ' (straight away)');
+    });
     return 'Default = ' + (on.length ? on.join(', ') : 'none');
+  }
+
+  // PLAN_227 — the sentence for messages an app sends by its own choice
+  // although Settings has them off (an app's own switch beats Settings).
+  // `kinds` is the event keys that apply; returns '' when there are none.
+  function updateNotifyOverrideText(kinds) {
+    var labels = NOTIFY_ROW_EVENTS.filter(function (ev) { return kinds.indexOf(ev[0]) !== -1; })
+                                  .map(function (ev) { return ev[1]; });
+    if (!labels.length) return '';
+    var list = labels.length === 1 ? labels[0]
+             : labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1];
+    return 'Settings has ' + list + ' off. ' +
+           (labels.length === 1 ? "This app's message is" : "This app's messages are") +
+           ' still sent, straight away.';
+  }
+
+  // The event keys one policy's events answer on by its own choice while
+  // Settings has that message off.
+  function updateNotifyOverrideKinds(events) {
+    return NOTIFY_ROW_EVENTS.map(function (ev) { return ev[0]; }).filter(function (k) {
+      var e = events[k];
+      var own = e.scope === 'service' ? e.choice === 'yes' : e.scope === 'stack' ? !!e.stackChoice : false;
+      return own && !(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[k]);
+    });
   }
 
   // The control value string setPart() understands for the When field's
@@ -4521,8 +4550,8 @@
 
   // The Notifications row (PLAN_155) — one row of three two-state switches,
   // worded the same everywhere they appear (settings panel, editor, row
-  // menu): New image / Image installed / Installation failed.
-  var NOTIFY_ROW_EVENTS = [['found', 'New image'], ['installed', 'Image installed'], ['failed', 'Installation failed']];
+  // menu): New image found / Image installed / Installation failed.
+  var NOTIFY_ROW_EVENTS = [['found', 'New image found'], ['installed', 'Image installed'], ['failed', 'Installation failed']];
 
   // One flag switch, the same markup settingsControlHtml()'s 'flags' control
   // draws (.staxx-tickopt.staxx-flagopt with a checkbox — orange tick on,
@@ -4560,7 +4589,7 @@
           '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
         '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
           '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
-        '<span class="staxx-tickword">Remind me it is still pinned</span></label>';
+        '<span class="staxx-tickword">Still pinned</span></label>';
       return '<div class="staxx-upd-row" data-row="' + index + '">' +
                '<div class="staxx-upd-options">' +
                  '<div class="staxx-tickrow" role="group" aria-label="Notifications">' + pinnedOptHtml + '</div>' +
@@ -4594,7 +4623,9 @@
                   '</div>';
 
     var note = f.policy.hasOwn ? '' : updateNotifyNoteHtml(events);
-    return rowHtml + (note ? '<p class="staxx-upd-note staxx-upd-note--group">' + note + '</p>' : '');
+    var overrideText = updateNotifyOverrideText(updateNotifyOverrideKinds(events));
+    return rowHtml + (note ? '<p class="staxx-upd-note staxx-upd-note--group">' + note + '</p>' : '') +
+           (overrideText ? '<p class="staxx-upd-note staxx-upd-note--group">' + esc(overrideText) + '</p>' : '');
   }
 
   // This service's image line and whether it has a build: key — read
@@ -6101,7 +6132,13 @@
       return !!(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[ev]);
     }
 
-    var note = null;
+    var note = null, overrideNote = null;
+
+    // PLAN_227 — a message counts when ANY readable service answers on by
+    // its own choice while Settings has it off.
+    function overrideKindsOf(fn) {
+      return NOTIFY_ROW_EVENTS.map(function (ev) { return ev[0]; }).filter(fn);
+    }
 
     if (readable.length) {
       var tickrow = document.createElement('div');
@@ -6122,6 +6159,15 @@
         skel.body.appendChild(note);
       }
 
+      overrideNote = document.createElement('p');
+      overrideNote.className = 'staxx-menu-updnote';
+      var shownKinds = overrideKindsOf(function (k) {
+        return readable.some(function (f) { return updateNotifyOverrideKinds(f.policy.events).indexOf(k) !== -1; });
+      });
+      overrideNote.textContent = updateNotifyOverrideText(shownKinds);
+      overrideNote.hidden = !overrideNote.textContent;
+      skel.body.appendChild(overrideNote);
+
       var services = readable.map(function (f) { return f.service; });
 
       tickrow.addEventListener('change', function () {
@@ -6136,6 +6182,12 @@
           // answers [] — neither leaves the ticks anything to reflect.
           if (!applied || !applied.length) return;
           if (note) { note.remove(); note = null; }   // the ticks now say it themselves
+          // PLAN_227 — every service now holds the ticks' values, so the
+          // override note follows them without waiting for the redraw.
+          overrideNote.textContent = updateNotifyOverrideText(overrideKindsOf(function (k) {
+            return value[k] && !(UPDATE_SETTINGS.notify && UPDATE_SETTINGS.notify[k]);
+          }));
+          overrideNote.hidden = !overrideNote.textContent;
           if (menu.hidden) refreshRows(); else menuRedraw = true;
         });
       });
@@ -6147,7 +6199,7 @@
       pinnedRow.className = 'staxx-tickrow';
       pinnedRow.setAttribute('role', 'group');
       pinnedRow.innerHTML = updFlagOptionHtml('staxx-menu-updnotifypinned', 0, 'pinned',
-        'Remind me it is still pinned', pinnedOn);
+        'Still pinned', pinnedOn);
       skel.body.appendChild(pinnedRow);
 
       if (readable.length) {
@@ -33204,7 +33256,7 @@
       pinnedHtml =
         '<div class="staxx-upd-row">' +
           '<div class="staxx-upd-options"><div class="staxx-tickrow" role="group" aria-label="Notifications">' +
-            updFlagOptionHtml('staxx-bulknotify', 0, 'pinned', 'Remind me it is still pinned', bulkNotifyState.pinned) +
+            updFlagOptionHtml('staxx-bulknotify', 0, 'pinned', 'Still pinned', bulkNotifyState.pinned) +
           '</div></div>' +
           '<p class="staxx-upd-note">' + esc('Applies to the ' +
             (bulkPinnedCount === 1 ? '1 pinned service' : bulkPinnedCount + ' pinned services') +
@@ -40426,7 +40478,7 @@
     };
   }
 
-  var MERGE_NOTIFY_EVENTS = [['found', 'New image'], ['installed', 'Image installed'], ['failed', 'Installation failed']];
+  var MERGE_NOTIFY_EVENTS = [['found', 'New image found'], ['installed', 'Image installed'], ['failed', 'Installation failed']];
 
   // One of the three switches, drawn exactly as the settings panel's own
   // two-state control (`.staxx-tickopt.staxx-flagopt`) — orange tick on,

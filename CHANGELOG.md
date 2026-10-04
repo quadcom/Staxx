@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- The editor's message ticks now use the same names as Settings (New image found, Image installed, Installation failed, Still pinned), and the Default line under them says when each message is sent. An app ticked on while Settings has that message off is sent straight away, and the editor says so.
 - StaXX now says when it cannot see the ports of apps on the server's own network, and when one of them cannot start because its port is taken, it says which port and what is using it. That start is shown as failed.
 - Emails and the settings use StaXX's own icons, email sections have clear headings, and phone notifications are short: a title and one line.
 - StaXX now sends a message when Docker itself stops answering for five minutes, and another when it is back.

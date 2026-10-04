@@ -256,6 +256,20 @@ reset_all();
 staxx_notify_events([$plex]);
 ok('found with default (now) goes at once as Layout 2', (calls()[0]['-s'] ?? '') === 'StaXX found 1 update waiting', calls()[0]['-s'] ?? '');
 
+// PLAN_227: an app ticked on while Settings has the message Off is sent straight away, whatever _WHEN was left at.
+reset_all();
+opts(['UPDATE_NOTIFY_FOUND' => 'false', 'UPDATE_NOTIFY_FOUND_WHEN' => 'summary']);
+staxx_notify_events([$plex]);
+ok('found with Settings off + stale summary: sent at once, not digested', count(calls()) === 1 && digest()['events'] === [], json_encode(calls()));
+reset_all();
+opts(['UPDATE_NOTIFY_FOUND' => 'true', 'UPDATE_NOTIFY_FOUND_WHEN' => 'summary']);
+staxx_notify_events([$plex]);
+ok('found with Settings on + summary: still digested, not sent', calls() === [] && count(digest()['events']) === 1);
+reset_all();
+opts(['UPDATE_NOTIFY_INSTALLED' => 'false', 'UPDATE_NOTIFY_INSTALLED_WHEN' => 'summary']);
+staxx_notify_events([$jelly]);
+ok('installed with Settings off + stale summary: sent at once, not digested', count(calls()) === 1 && digest()['events'] === [], json_encode(calls()));
+
 reset_all();
 opts(['UPDATE_QUIET' => 'true', 'UPDATE_QUIET_START' => '22:00', 'UPDATE_QUIET_END' => '07:00', 'UPDATE_NOTIFY_INSTALLED_WHEN' => 'now']);
 at('2026-10-02 23:30:00');

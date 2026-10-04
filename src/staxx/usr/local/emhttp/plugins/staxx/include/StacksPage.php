@@ -28,6 +28,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';   // staxx_import_taken_facts(), for the first clash check
 require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';   // staxx_storage_alert_state(), for the notice below (PLAN_181 Part D)
 require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';   // staxx_backup_partial_notice(), for the notice below (PLAN_186)
+require_once '/usr/local/emhttp/plugins/staxx/include/Notify.php';   // staxx_notify_opt(), for the message timings below (PLAN_227)
 
 // PLAN_97 Phase 1: nothing below this point may run with an unchosen data
 // store — staxx_list_stacks(), staxx_autostart_sync() and staxx_folder_layout()
@@ -129,6 +130,12 @@ $updateSettingsForJs = [
                // global answer, read the browser needs for the same "Follows
                // your setting" fallback the other three already get.
                'pinned'    => $updateSet['notifyPinned']],
+  // PLAN_227 — when each message is sent, so the editor's Default line can say
+  // so. Read through staxx_notify_opt(), the same reader that routes the
+  // messages, so the line cannot drift from what actually happens.
+  'when'   => ['found'     => staxx_notify_opt('UPDATE_NOTIFY_FOUND_WHEN') === 'summary' ? 'summary' : 'now',
+               'installed' => staxx_notify_opt('UPDATE_NOTIFY_INSTALLED_WHEN') === 'now' ? 'now' : 'summary',
+               'failed'    => staxx_notify_opt('UPDATE_NOTIFY_FAILED_WHEN') === 'summary' ? 'summary' : 'now'],
 ];
 
 // Every tag below carries its file's modification time in the URL, via
