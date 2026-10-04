@@ -24,8 +24,8 @@ Dashboard and icon actions (all POST, all in `include/action.php`):
   sent, and icon files nothing references any more are pruned.
 - `dash_icons` — takes `set` and optionally `collection`; replies that set's cached listing.
 - `dash_icon_pick` — takes `set` and `file`; downloads it into `config/icons/dash/` and replies the
-  local file name and address. It only ever downloads from the four raw.githubusercontent.com
-  prefixes `staxx_dash_allowed_prefix()` builds (hernandito, ground7, homarr-labs, tabler).
+  local file name and address. It only ever downloads from the five raw.githubusercontent.com
+  prefixes `staxx_dash_allowed_prefix()` builds (hernandito, ground7, selfhst, homarr-labs, tabler).
 - `dash_icon_upload` — takes `name` and `data` (base64 text in the urlencoded body, never
   multipart); replies the stored file name and address.
 - `folder_icon` — takes a folder `name` and `icon` (a file already in `config/icons/dash/`, or ''

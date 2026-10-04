@@ -2088,6 +2088,9 @@ switch ($action) {
     // staxx_icons_into_stacks_auto()): a single is_file() check once its
     // marker exists, so it costs nothing on every other call.
     staxx_icons_into_stacks_auto();
+    // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): one-off fetch of
+    // the light/dark drawings for logos picked before they were fetched at pick time.
+    staxx_dash_icon_variants_backfill_auto();
 
     $skip = array_values(array_filter(
       explode(',', (string)($_POST['skip'] ?? '')),

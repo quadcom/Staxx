@@ -8,10 +8,11 @@
  * `dash_save` (action.php) is the only writer, and it always runs the saved
  * shape back through staxx_dash_normalise_layout() before it reaches disk.
  *
- * Folder and loose-stack icons can come from four outside picture sets, only
+ * Folder and loose-stack icons can come from five outside picture sets, only
  * ever fetched at the user's own request from the picker (never during a
- * page render): two animated-icon collections, one app-logo collection and
- * one line-icon collection. Downloads are restricted to exactly the four
+ * page render): two animated-icon collections, two app-logo collections
+ * (Dashboard Icons and selfh.st icons) and one line-icon collection.
+ * Downloads are restricted to exactly the five
  * raw.githubusercontent.com prefixes staxx_dash_allowed_prefix() returns —
  * nothing else is ever asked for — and every downloaded file is proved to
  * really be a picture the same way include/Icons.php already proves one
@@ -27,8 +28,9 @@
  * 2026-09-25, so it is recorded here instead. The second animated set is
  * ground7's unraid-animated-svgs (MIT, (c) 2020 Josiah Hutchinson, `Always
  * Animate/` only — its `Animate on Hover/` icons do not play by themselves).
- * App logos come from homarr-labs/dashboard-icons (Apache-2.0; the logos
- * themselves stay their owners' trademarks). Line icons come from
+ * App logos come from homarr-labs/dashboard-icons (Apache-2.0) and from
+ * selfhst/icons (CC-BY-4.0); the logos themselves stay their owners'
+ * trademarks. Line icons come from
  * tabler/tabler-icons (MIT, (c) 2020-2026 Pawel Kuna), `icons/outline/` only.
  * A downloaded icon is kept exactly as fetched, so its licence notice
  * travels with it on this box.
@@ -305,6 +307,13 @@ function staxx_dash_icons_prune(array $layout): void {
   $dir = staxx_dash_icons_dir();
   if ($dir === '' || !is_dir($dir)) return;
   $keep = staxx_dash_icons_still_used($layout);
+  // The -light/-dark drawings fetched beside a used icon are kept with it.
+  foreach ($keep as $f) {
+    $e = (string)pathinfo($f, PATHINFO_EXTENSION);
+    $b = (string)pathinfo($f, PATHINFO_FILENAME);
+    $keep[] = $b.'-light.'.$e;
+    $keep[] = $b.'-dark.'.$e;
+  }
   foreach (staxx_dash_icon_files_on_disk() as $f) {
     if (!in_array($f, $keep, true)) @unlink($dir.'/'.$f);
   }
@@ -343,7 +352,7 @@ function staxx_dash_save_layout(string $rawJson, string &$error = ''): ?array {
 /* ------------------------------------------------------------- icon sets -- */
 
 /**
- * The four picture sets the picker offers, and everything else about them
+ * The five picture sets the picker offers, and everything else about them
  * this file, action.php and the About section (a different phase) all read
  * from — one table so a set's credit line can never drift from the address
  * it is actually fetched from. `branch` is fixed for two of them and null
@@ -376,8 +385,19 @@ function staxx_dash_icon_sets(): array {
       'label'   => "ground7's animated icons",
       'credit'  => 'Animated icons by ground7 (Josiah Hutchinson), MIT licence.',
     ],
+    'selfhst' => [
+      'tab'     => 'selfh.st logos',
+      'owner'   => 'selfhst',
+      'repo'    => 'icons',
+      'branch'  => 'main',
+      'folder'  => '',
+      'repoUrl' => 'https://github.com/selfhst/icons',
+      'licence' => 'CC-BY-4.0.',
+      'label'   => 'selfh.st icons',
+      'credit'  => 'App logos from selfh.st icons, CC-BY-4.0. Logos are their owners\' trademarks.',
+    ],
     'logos' => [
-      'tab'     => 'App logos',
+      'tab'     => 'Homarr apps',
       'owner'   => 'homarr-labs',
       'repo'    => 'dashboard-icons',
       'branch'  => 'main',
@@ -413,7 +433,7 @@ function staxx_dash_sets_summary(): array {
 }
 
 /**
- * Everything StaXX owes credit to, for the Settings "About" tab: the four
+ * Everything StaXX owes credit to, for the Settings "About" tab: the five
  * icon sets read straight from staxx_dash_icon_sets() (so a licence can never
  * differ from the picker's own credit line), then the fixed entries below.
  * `services` are only asked questions of, so they carry no licence line.
@@ -424,13 +444,13 @@ function staxx_dash_sets_summary(): array {
 function staxx_about_credits(): array {
   $credits = [];
   foreach (staxx_dash_icon_sets() as $set) {
+    // selfh.st is also where stacks' own app icons come from, so its row says both.
+    $use = $set['owner'] === 'selfhst'
+      ? 'App icons for stacks, and folder icons in the Dashboard tile picker ('.$set['tab'].').'
+      : 'Folder and stack icons offered in the Dashboard tile picker ('.$set['tab'].').';
     $credits[] = ['name' => $set['label'], 'url' => $set['repoUrl'],
-                  'use' => 'Folder and stack icons offered in the Dashboard tile picker ('.$set['tab'].').',
-                  'licence' => $set['licence']];
+                  'use' => $use, 'licence' => $set['licence']];
   }
-  $credits[] = ['name' => 'selfh.st icons', 'url' => 'https://selfh.st/icons/',
-                'use' => 'App icons for stacks, served by jsDelivr.',
-                'licence' => 'CC-BY-4.0.'];
   $credits[] = ['name' => 'Docker Compose', 'url' => 'https://github.com/docker/compose',
                 'use' => 'Runs every stack. StaXX can install it when the server has none.',
                 'licence' => 'Apache-2.0, Docker Inc.'];
@@ -467,14 +487,15 @@ function staxx_dash_default_branch(array $set): string {
 
 /** The exact raw.githubusercontent.com prefix a picked file from this set
  *  must start with — section 10's allowlist, spelled out in code so
- *  staxx_dash_icon_pick() can refuse anything else outright. Space in a
- *  path segment is written %20, matching how GitHub itself encodes it. */
+ *  staxx_dash_icon_pick() can refuse anything else outright. It is the
+ *  repository-and-branch root only: listing paths already carry the set's
+ *  folder, and staxx_dash_icon_pick() checks that folder against the path.
+ *  Space in a path segment is written %20, matching how GitHub encodes it. */
 function staxx_dash_allowed_prefix(string $setId, string $branch): string {
   $sets = staxx_dash_icon_sets();
   if (!isset($sets[$setId])) return '';
   $set = $sets[$setId];
-  $folder = str_replace(' ', '%20', $set['folder']);
-  return 'https://raw.githubusercontent.com/'.$set['owner'].'/'.$set['repo'].'/'.rawurlencode($branch).'/'.$folder;
+  return 'https://raw.githubusercontent.com/'.$set['owner'].'/'.$set['repo'].'/'.rawurlencode($branch).'/';
 }
 
 /* ------------------------------------------------------------- listings -- */
@@ -490,8 +511,8 @@ function staxx_dash_icons_cache_dir(): string {
   return $dir === '' ? '' : $dir.'/.cache';
 }
 
-/** Tabler's own tags.json at the repository root, if it has one — {file
- *  path (without icons/outline/) => space-separated tags}. [] on anything
+/** Tabler's own tags.json at the repository root, if it has one — {icon
+ *  name (the file stem, without folder or .svg) => space-separated tags}. [] on anything
  *  going wrong; a set with no keyword file is just searched by file name. */
 function staxx_dash_tabler_tags(string $branch): array {
   $url = 'https://raw.githubusercontent.com/tabler/tabler-icons/'.rawurlencode($branch).'/tags.json';
@@ -516,6 +537,32 @@ function staxx_dash_logos_aliases(string $branch): array {
     if ($aliases !== []) $out[(string)$name] = implode(' ', array_map('strval', $aliases));
   }
   return $out;
+}
+
+/** selfh.st's own index.json (the repository's tree reply is over 10 MB, past
+ *  the listing cap) as [files, keywords], or null when it cannot be read.
+ *  Files are svg/<ref>.svg, else png/<ref>.png; keywords are keyed by <ref>. */
+function staxx_dash_selfhst_listing(): ?array {
+  $data = staxx_hub_json('https://raw.githubusercontent.com/selfhst/icons/main/index.json',
+                         ['User-Agent: StaXX'], 10, 15, 2 * 1024 * 1024);
+  if (!is_array($data)) return null;
+  $files = [];
+  $keywords = [];
+  foreach ($data as $entry) {
+    if (!is_array($entry)) continue;
+    $ref = strtolower(trim((string)($entry['Reference'] ?? '')));
+    if (!staxx_icon_safe_ref($ref)) continue;
+    if (($entry['SVG'] ?? '') === 'Yes')     $files[] = 'svg/'.$ref.'.svg';
+    elseif (($entry['PNG'] ?? '') === 'Yes') $files[] = 'png/'.$ref.'.png';
+    else continue;
+    $words = [];
+    foreach (['Name', 'Category', 'Tags'] as $k) {
+      $w = trim((string)($entry[$k] ?? ''));
+      if ($w !== '') $words[] = $w;
+    }
+    if ($words !== []) $keywords[$ref] = implode(' ', $words);
+  }
+  return [$files, $keywords];
 }
 
 /**
@@ -547,30 +594,38 @@ function staxx_dash_icon_listing(string $setId, string &$error = ''): array {
 
   $branch = staxx_dash_default_branch($set);
 
-  $url  = 'https://api.github.com/repos/'.$set['owner'].'/'.$set['repo']
-        . '/git/trees/'.rawurlencode($branch).'?recursive=1';
-  $data = staxx_hub_json($url, ['User-Agent: StaXX'], 10, 15, 8 * 1024 * 1024);
-
-  if (!is_array($data) || !isset($data['tree']) || !is_array($data['tree'])) {
-    $error = 'Could not reach GitHub to list this set\'s icons. Check that the server can get online, then open the picker again.';
-    return $cached ?? $empty; // a stale cache still beats an empty picker
-  }
-
-  $prefix = $set['folder'];
-  $files  = [];
-  foreach ($data['tree'] as $node) {
-    if (!is_array($node) || ($node['type'] ?? '') !== 'blob') continue;
-    $path = (string)($node['path'] ?? '');
-    if ($prefix !== '' && strncmp($path, $prefix, strlen($prefix)) !== 0) continue;
-    $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
-    if (!in_array($ext, ['svg', 'png'], true)) continue;
-    if ($setId === 'hernandito' && (strpos($path, '/') === false || strncmp($path, 'deprecated/', 11) === 0)) continue;
-    $files[] = $path;
-  }
-
+  $unreachable = 'Could not reach GitHub to list this set\'s icons. Check that the server can get online, then open the picker again.';
   $keywords = [];
-  if ($setId === 'topics') $keywords = staxx_dash_tabler_tags($branch);
-  if ($setId === 'logos')  $keywords = staxx_dash_logos_aliases($branch);
+
+  if ($setId === 'selfhst') {
+    $list = staxx_dash_selfhst_listing();
+    if ($list === null) { $error = $unreachable; return $cached ?? $empty; }
+    [$files, $keywords] = $list;
+  } else {
+    $url  = 'https://api.github.com/repos/'.$set['owner'].'/'.$set['repo']
+          . '/git/trees/'.rawurlencode($branch).'?recursive=1';
+    $data = staxx_hub_json($url, ['User-Agent: StaXX'], 10, 15, 8 * 1024 * 1024);
+
+    if (!is_array($data) || !isset($data['tree']) || !is_array($data['tree'])) {
+      $error = $unreachable;
+      return $cached ?? $empty; // a stale cache still beats an empty picker
+    }
+
+    $prefix = $set['folder'];
+    $files  = [];
+    foreach ($data['tree'] as $node) {
+      if (!is_array($node) || ($node['type'] ?? '') !== 'blob') continue;
+      $path = (string)($node['path'] ?? '');
+      if ($prefix !== '' && strncmp($path, $prefix, strlen($prefix)) !== 0) continue;
+      $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+      if (!in_array($ext, ['svg', 'png'], true)) continue;
+      if ($setId === 'hernandito' && (strpos($path, '/') === false || strncmp($path, 'deprecated/', 11) === 0)) continue;
+      $files[] = $path;
+    }
+
+    if ($setId === 'topics') $keywords = staxx_dash_tabler_tags($branch);
+    if ($setId === 'logos')  $keywords = staxx_dash_logos_aliases($branch);
+  }
 
   $result = ['fetchedAt' => time(), 'branch' => $branch, 'files' => $files, 'keywords' => $keywords];
 
@@ -630,7 +685,7 @@ function staxx_dash_icons_reply(string $setId, string $collection = ''): array {
       'file'     => $path,
       'name'     => staxx_dash_display_name($path),
       'thumb'    => $prefix.str_replace(' ', '%20', $path),
-      'keywords' => (string)($listing['keywords'][$path] ?? ''),
+      'keywords' => (string)($listing['keywords'][pathinfo($path, PATHINFO_FILENAME)] ?? ''),
     ];
   }
 
@@ -679,7 +734,7 @@ function staxx_dash_icon_save(string $name, string $body, string &$error = ''): 
 /**
  * dash_icon_pick (action.php): download exactly the one file the picker
  * offered, refusing anything whose address is not built from one of the
- * four allowed prefixes (staxx_dash_allowed_prefix()) or that carries a
+ * five allowed prefixes (staxx_dash_allowed_prefix()) or that carries a
  * '..' segment — so this endpoint can never be turned into a fetch of
  * something else. Every body is proved to really be the picture its
  * extension claims (staxx_icon_is_picture(), the same check a service icon
@@ -718,7 +773,65 @@ function staxx_dash_icon_pick(string $setId, string $path, string &$error = ''):
   $name = staxx_dash_icon_local_name($setId, pathinfo($path, PATHINFO_FILENAME), $ext, $body);
   if (!staxx_dash_icon_save($name, $body, $error)) return null;
 
+  if (in_array($setId, ['selfhst', 'logos'], true)) staxx_dash_icon_fetch_variants($prefix, $path, $name);
+
   return ['icon' => $name, 'url' => staxx_dash_icon_url($name)];
+}
+
+/**
+ * Fetch the '-light' and '-dark' drawings that sit beside an icon in its set
+ * and keep them as '<local base>-light.<ext>' / '-dark.<ext>', which
+ * staxx_dash_icon_themed() swaps in to suit Unraid's theme. A missing or
+ * unreadable sibling is skipped without a word: most logos have none, and the
+ * pick must still succeed. The short timeout keeps a slow answer from holding
+ * the pick up. $remotePath is relative to $prefix, spaces not yet encoded.
+ */
+function staxx_dash_icon_fetch_variants(string $prefix, string $remotePath, string $localName): void {
+  $ext  = strtolower((string)pathinfo($remotePath, PATHINFO_EXTENSION));
+  $dir  = (string)pathinfo($remotePath, PATHINFO_DIRNAME);
+  $stem = (string)pathinfo($remotePath, PATHINFO_FILENAME);
+  $base = (string)pathinfo($localName, PATHINFO_FILENAME);
+  foreach (['light', 'dark'] as $v) {
+    $rel  = ($dir === '.' ? '' : $dir.'/').$stem.'-'.$v.'.'.$ext;
+    $body = staxx_icon_get($prefix.str_replace(' ', '%20', $rel), 6);
+    if ($body !== null && staxx_icon_is_picture($ext, $body)) {
+      staxx_dash_icon_save($base.'-'.$v.'.'.$ext, $body);
+    }
+  }
+}
+
+/**
+ * TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): one-off catch-up for
+ * icons picked before the light/dark drawings were fetched. Called from the
+ * action.php 'icon-todo' case.
+ */
+function staxx_dash_icon_variants_backfill_auto(): void {
+  // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): nowhere to look, or fetching is off, so leave the marker alone and try again later.
+  $dir = staxx_dash_icons_dir();
+  if ($dir === '' || !staxx_icon_fetching()) return;
+  // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): a single is_file() once the walk has happened.
+  $marker = staxx_dash_icons_cache_dir().'/variants-backfilled';
+  if (is_file($marker)) return;
+
+  // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): walk every icon the saved layout and folders still use.
+  $sets = staxx_dash_icon_sets();
+  foreach (staxx_dash_icons_still_used(staxx_dash_layout_load()) as $file) {
+    // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): only the two sets that have variants, and a file name that is safe.
+    if (!preg_match('/^(selfhst|logos)-(.+)\.(svg|png)$/', $file, $m) || !staxx_valid_filename($file)) continue;
+    [, $setId, $stem, $ext] = $m;
+    // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): skip clash-suffixed names (the remote name is unknown) and icons that already have a sibling.
+    if (preg_match('/-[0-9a-f]{8}$/', $stem) || !isset($sets[$setId])) continue;
+    $base = $setId.'-'.$stem;
+    if (is_file($dir.'/'.$base.'-light.'.$ext) || is_file($dir.'/'.$base.'-dark.'.$ext)) continue;
+    // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): rebuild the remote path from the local name and fetch as the pick does.
+    $prefix = staxx_dash_allowed_prefix($setId, staxx_dash_default_branch($sets[$setId]));
+    staxx_dash_icon_fetch_variants($prefix, ($ext === 'svg' ? 'svg/' : 'png/').$stem.'.'.$ext, $file);
+  }
+
+  // TEMPORARY (PLAN_226 — remove no earlier than 00.05.02): mark done even if some fetches failed, so there is no retry loop.
+  $cache = staxx_dash_icons_cache_dir();
+  if (!is_dir($cache)) @mkdir($cache, 0755, true);
+  @touch($marker);
 }
 
 /**
@@ -753,6 +866,7 @@ function staxx_dash_icon_upload(string $filename, string $body, string &$error =
  *  replaced picture never serves stale out of the browser's cache. */
 function staxx_dash_icon_url(string $file): string {
   if (!staxx_valid_filename($file)) return '';
+  $file = staxx_dash_icon_themed($file);
   $dir = staxx_dash_icons_dir();
   $path = $dir === '' ? '' : $dir.'/'.$file;
   $mtime = ($path !== '' && is_file($path)) ? (int)@filemtime($path) : 0;

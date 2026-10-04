@@ -88,12 +88,13 @@ Press **Choose icon…** to open the picker. Choose a tab, find an icon, then pr
 |---|---|
 | **Animated (hernandito)** | Animated folder icons in several colour collections. Pick a collection from the menu. |
 | **Animated (ground7)** | Animated icons that play on their own. |
-| **App logos** | Logos of popular apps. Search also finds an app by its other names. |
+| **selfh.st logos** | Logos of popular apps. Search also finds an app by its tags, such as **streaming** or **games**. |
+| **Homarr apps** | Logos of popular apps. Search also finds an app by its other names. |
 | **Topics** | Simple line drawings of subjects such as media, downloads and security. Search also finds an icon by its tags. |
 | **Upload** | Your own picture. Drop it in the box or choose a file. SVG, PNG or WebP work, and a square picture suits best. |
 | **Plain** | A set of plain orange symbols such as a folder, a server and a film. |
 
-On every tab except **Upload** and **Plain**, type in the search box to narrow the icons, for example **media**, **download** or **plex**. A picture from **Animated**, **App logos**, **Topics** or **Upload** fills the whole square.
+On every tab except **Upload** and **Plain**, type in the search box to narrow the icons, for example **media**, **download** or **plex**. A picture from **Animated**, **selfh.st logos**, **Homarr apps**, **Topics** or **Upload** fills the whole square. A logo from **selfh.st logos** or **Homarr apps** changes to its light or dark version to match your Unraid theme, when the logo has one.
 
 The picker shows each set's credit under the grid:
 
@@ -101,7 +102,8 @@ The picker shows each set's credit under the grid:
 |---|---|
 | **Animated (hernandito)** | Animated folder icons by hernandito, used with permission. |
 | **Animated (ground7)** | Animated icons by ground7 (Josiah Hutchinson), MIT licence. |
-| **App logos** | App logos from Dashboard Icons by homarr-labs, Apache-2.0. Logos are their owners' trademarks. |
+| **selfh.st logos** | App logos from selfh.st icons, CC-BY-4.0. Logos are their owners' trademarks. |
+| **Homarr apps** | App logos from Dashboard Icons by homarr-labs, Apache-2.0. Logos are their owners' trademarks. |
 | **Topics** | Topic icons from Tabler Icons by Pawel Kuna, MIT licence. |
 
 Each credit links to the set's home page.

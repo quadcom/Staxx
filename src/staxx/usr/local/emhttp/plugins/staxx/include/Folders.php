@@ -883,6 +883,29 @@ function staxx_folder_set_icon(string $name, string $icon, string &$error): bool
   }, $error);
 }
 
+/** Is Unraid showing a dark theme (black or gray)? Read from dynamix.cfg each
+ *  time, not remembered: the file is tiny and a theme change should show at once. */
+function staxx_unraid_theme_dark(): bool {
+  $path = getenv('STAXX_DYNAMIX_CFG');
+  $path = ($path !== false && $path !== '') ? $path : '/boot/config/plugins/dynamix/dynamix.cfg';
+  $cfg  = @parse_ini_file($path, true, INI_SCANNER_RAW) ?: [];
+  $theme = strtolower(trim((string)($cfg['display']['theme'] ?? ''), " \t\"'"));
+  return $theme === 'black' || $theme === 'gray';
+}
+
+/** The file to draw for a stored dash icon name: its '-light' drawing on a dark
+ *  theme or its '-dark' drawing on a light one when that file exists, else the
+ *  name unchanged. Lives here, not in Dashboard.php, for the same cycle reason
+ *  as staxx_folder_pic_url(). */
+function staxx_dash_icon_themed(string $file): string {
+  $cfg = staxx_config_root();
+  if ($cfg === '' || !staxx_valid_filename($file)) return $file;
+  $alt = pathinfo($file, PATHINFO_FILENAME).(staxx_unraid_theme_dark() ? '-light' : '-dark');
+  $ext = pathinfo($file, PATHINFO_EXTENSION);
+  $alt .= $ext === '' ? '' : '.'.$ext;
+  return is_file($cfg.'/icons/dash/'.$alt) ? $alt : $file;
+}
+
 /**
  * The address a folder's icon file is loaded from. Written out here rather than
  * calling staxx_dash_icon_url(): Dashboard.php requires the table file that
@@ -891,6 +914,7 @@ function staxx_folder_set_icon(string $name, string $icon, string &$error): bool
  */
 function staxx_folder_pic_url(string $file): string {
   $cfg   = staxx_config_root();
+  if ($cfg !== '' && staxx_valid_filename($file)) $file = staxx_dash_icon_themed($file);
   $mtime = ($cfg !== '' && staxx_valid_filename($file)) ? (int)@filemtime($cfg.'/icons/dash/'.$file) : 0;
   return '/plugins/'.STAXX_PLUGIN.'/include/icon.php?dash='.rawurlencode($file).'&v='.$mtime;
 }

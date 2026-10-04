@@ -51,7 +51,8 @@
   var SOURCE_TABS = [
     { key: 'hernandito', label: 'Animated (hernandito)', collections: true },
     { key: 'ground7',    label: 'Animated (ground7)' },
-    { key: 'logos',      label: 'App logos' },
+    { key: 'selfhst',    label: 'selfh.st logos' },
+    { key: 'logos',      label: 'Homarr apps' },
     { key: 'topics',     label: 'Topics', light: true },
     { key: 'upload',     label: 'Upload' },
     { key: 'plain',      label: 'Plain' }
@@ -813,7 +814,7 @@
       });
     }
     var def = SOURCE_TABS.filter(function (t) { return t.key === picker.tab; })[0];
-    var thumbCls = (picker.tab === 'logos' || picker.tab === 'topics') ? ' staxx-dash-pick-thumb--62' : '';
+    var thumbCls = (picker.tab === 'logos' || picker.tab === 'topics' || picker.tab === 'selfhst') ? ' staxx-dash-pick-thumb--62' : '';
     els.pickerGrid.className = 'staxx-dash-picker-grid' + (def.light ? ' staxx-dash-picker-grid--light' : '');
     els.pickerGrid.innerHTML = files.map(function (f) {
       return '<button type="button" class="staxx-dash-pick-tile' + (def.light ? ' staxx-dash-pick-tile--light' : '') +

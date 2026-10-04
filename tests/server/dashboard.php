@@ -158,7 +158,7 @@ if ($cacheDir === '') {
   file_put_contents($cacheFile, json_encode([
     'fetchedAt' => time(), 'branch' => 'main',
     'files'     => ['svg/zz-one.svg', 'svg/zz-two.svg', 'png/zz-three.png'],
-    'keywords'  => ['svg/zz-one.svg' => 'first'],
+    'keywords'  => ['zz-one' => 'first'],
   ]));
   $reply = staxx_dash_icons_reply('logos');
   check('the picker reply from a fresh cache is ok', ($reply['ok'] ?? false) === true, $reply);
@@ -166,6 +166,21 @@ if ($cacheDir === '') {
     && ($reply['files'][0]['file'] ?? '') === 'svg/zz-one.svg'
     && ($reply['files'][0]['keywords'] ?? '') === 'first', $reply);
   if ($realCache === false) @unlink($cacheFile); else file_put_contents($cacheFile, $realCache);
+
+  // selfhst: the real listing is built from index.json; here the cache is seeded.
+  $sFile = $cacheDir.'/selfhst.json';
+  $realS = @file_get_contents($sFile);
+  file_put_contents($sFile, json_encode([
+    'fetchedAt' => time(), 'branch' => 'main',
+    'files'     => ['svg/plex.svg', 'png/foo.png'],
+    'keywords'  => ['plex' => 'Plex Media'],
+  ]));
+  $reply = staxx_dash_icons_reply('selfhst');
+  check('the selfhst reply gives plex its svg address on the selfhst repository, with its keywords',
+    ($reply['files'][0]['thumb'] ?? '') === 'https://raw.githubusercontent.com/selfhst/icons/main/svg/plex.svg'
+    && ($reply['files'][0]['keywords'] ?? '') === 'Plex Media'
+    && ($reply['files'][1]['thumb'] ?? '') === 'https://raw.githubusercontent.com/selfhst/icons/main/png/foo.png', $reply);
+  if ($realS === false) @unlink($sFile); else file_put_contents($sFile, $realS);
 
   // hernandito: the folder-named collage is not listed, the icons are.
   $hFile = $cacheDir.'/hernandito.json';
@@ -238,6 +253,77 @@ if (staxx_compose_cmd() === '') {
     @unlink(staxx_dash_state_file());
   }
 }
+
+/* ------------------------------------------- icons that follow the theme (PLAN_225) -- */
+
+// Unraid's theme is read from the ini named by STAXX_DYNAMIX_CFG on every call, so
+// one /tmp file is rewritten between cases. No network: only files this block writes.
+$themeCfg = '/tmp/zzdash-dynamix.cfg';
+putenv('STAXX_DYNAMIX_CFG='.$themeCfg);
+$setTheme = function (string $theme) use ($themeCfg): void {
+  file_put_contents($themeCfg, "[display]\ntheme=\"$theme\"\n");
+};
+
+foreach (['black' => true, 'gray' => true, 'white' => false, 'azure' => false] as $theme => $dark) {
+  $setTheme($theme);
+  check("the $theme theme is ".($dark ? 'dark' : 'light'), staxx_unraid_theme_dark() === $dark);
+}
+@unlink($themeCfg);
+check('a missing dynamix.cfg is light', staxx_unraid_theme_dark() === false);
+
+$iconsDir = staxx_dash_icons_dir();
+if ($iconsDir === '') {
+  echo "SKIP   no data store, so the themed-icon cases have nowhere to put their files\n";
+} else {
+  @mkdir($iconsDir, 0755, true);
+  $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
+  $made = ['selfhst-x.svg', 'selfhst-x-light.svg', 'selfhst-x-dark.svg', 'logos-y.svg', 'logos-z.svg', 'logos-z-light.svg'];
+  foreach ($made as $f) file_put_contents($iconsDir.'/'.$f, $svg);
+
+  $setTheme('black');
+  check('a dark theme picks the -light sibling', staxx_dash_icon_themed('selfhst-x.svg') === 'selfhst-x-light.svg',
+    staxx_dash_icon_themed('selfhst-x.svg'));
+  check('both address builders name the -light sibling on a dark theme',
+    strpos(staxx_dash_icon_url('selfhst-x.svg'), 'dash=selfhst-x-light.svg') !== false
+    && strpos(staxx_folder_pic_url('selfhst-x.svg'), 'dash=selfhst-x-light.svg') !== false,
+    [staxx_dash_icon_url('selfhst-x.svg'), staxx_folder_pic_url('selfhst-x.svg')]);
+  check('a file with no siblings stays itself on a dark theme', staxx_dash_icon_themed('logos-y.svg') === 'logos-y.svg');
+
+  $setTheme('white');
+  check('a light theme picks the -dark sibling', staxx_dash_icon_themed('selfhst-x.svg') === 'selfhst-x-dark.svg',
+    staxx_dash_icon_themed('selfhst-x.svg'));
+  check('both address builders name the -dark sibling on a light theme',
+    strpos(staxx_dash_icon_url('selfhst-x.svg'), 'dash=selfhst-x-dark.svg') !== false
+    && strpos(staxx_folder_pic_url('selfhst-x.svg'), 'dash=selfhst-x-dark.svg') !== false,
+    [staxx_dash_icon_url('selfhst-x.svg'), staxx_folder_pic_url('selfhst-x.svg')]);
+  check('a file with no siblings stays itself on a light theme', staxx_dash_icon_themed('logos-y.svg') === 'logos-y.svg');
+
+  // Prune deletes every unreferenced file in the scratch dash folder, so the files
+  // made above are all it may remove; it never touches .cache, where the marker lives.
+  staxx_dash_icons_prune(['items' => [
+    ['type' => 'folder', 'c' => 0, 'r' => 0, 'name' => 'T', 'icon' => 'selfhst-x.svg', 'stacks' => []],
+  ]]);
+  check('prune keeps a used icon and both its siblings',
+    is_file($iconsDir.'/selfhst-x.svg') && is_file($iconsDir.'/selfhst-x-light.svg') && is_file($iconsDir.'/selfhst-x-dark.svg'));
+  check('prune removes an unused icon together with its sibling',
+    !is_file($iconsDir.'/logos-z.svg') && !is_file($iconsDir.'/logos-z-light.svg'));
+
+  // TEMPORARY — goes with the backfill itself, no earlier than 00.05.02 (PLAN_226).
+  $markerDir = staxx_dash_icons_cache_dir();
+  @mkdir($markerDir, 0755, true);
+  $marker = $markerDir.'/variants-backfilled';
+  $hadMarker = is_file($marker);
+  file_put_contents($marker, '');
+  $before = scandir($iconsDir);
+  staxx_dash_icon_variants_backfill_auto();
+  check('the variants backfill returns at once when its marker exists, changing no icon file',
+    scandir($iconsDir) === $before, scandir($iconsDir));
+  if (!$hadMarker) @unlink($marker);
+
+  foreach ($made as $f) @unlink($iconsDir.'/'.$f);
+}
+@unlink($themeCfg);
+putenv('STAXX_DYNAMIX_CFG');
 
 echo $fails === 0 ? "\nAll dashboard checks passed.\n" : "\n$fails check(s) failed.\n";
 exit($fails === 0 ? 0 : 1);

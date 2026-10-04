@@ -216,7 +216,8 @@ StaXX uses work by these people and projects. Settings, About lists the same cre
 - [Dashboard Icons](https://github.com/homarr-labs/dashboard-icons) by homarr-labs, Apache-2.0.
   The logos remain their owners' trademarks.
 - [Tabler Icons](https://github.com/tabler/tabler-icons) by Paweł Kuna, MIT licence.
-- [selfh.st icons](https://selfh.st/icons/), CC-BY-4.0, for the app icons on stacks.
+- [selfh.st icons](https://selfh.st/icons/), CC-BY-4.0, for the app icons on stacks and the
+  selfh.st logos tab in the Dashboard tile's icon picker.
 - [Docker Compose](https://github.com/docker/compose), Apache-2.0, Docker Inc., which StaXX
   installs when a server has none.
 - [Community Applications](https://ca.unraid.net/), whose app feed and images the importer reads.
