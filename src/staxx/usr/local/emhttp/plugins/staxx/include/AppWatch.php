@@ -113,9 +113,12 @@ function staxx_appwatch_stack_for(string $workingDir, array $map): string {
  * an hour) and 'reported' (flags 'restarting', 'unhealthy') so one problem
  * is one message, not one a minute.
  *
+ * $backup is true while Appdata Backup is running: apps it stops are not
+ * reported as stopping by themselves.
+ *
  * @return array{0: array[], 1: array}
  */
-function staxx_appwatch_events(array $old, array $now, array $state, int $time): array {
+function staxx_appwatch_events(array $old, array $now, array $state, int $time, bool $backup = false): array {
   $events = [];
   $new = [];
   $baseline = !$old;   // first pass after boot: remember, say nothing
@@ -146,12 +149,16 @@ function staxx_appwatch_events(array $old, array $now, array $state, int $time):
       $rep['restarting'] = false;
     }
 
-    // Health check.
+    // Health check. Only for a running container: Docker reports a stopped
+    // container with a health check as unhealthy, so the nightly Appdata Backup
+    // stopping apps looked like failures.
     $health    = (string)($n['health'] ?? '');
     $oldHealth = $o ? (string)$o['health'] : '';
     $restarted = $o && ($rise > 0 || ($o['status'] !== 'running' && $n['status'] === 'running'));
     $wasRep    = !empty($rep['unhealthy']);
-    if ($health === 'unhealthy') {
+    if ($n['status'] !== 'running') {
+      // flag kept as it was, no event
+    } elseif ($health === 'unhealthy') {
       if ($restarted) $rep['unhealthy'] = false;
       elseif ($oldHealth !== 'unhealthy' && !$wasRep) {
         $events[] = $base + ['kind' => 'unhealthy', 'count' => (int)$n['streak'], 'reason' => ''];
@@ -163,8 +170,9 @@ function staxx_appwatch_events(array $old, array $now, array $state, int $time):
     }
 
     // Stopped by itself. Clean exits and signal stops (0, 137, 143) are what
-    // a person, a backup and a shutdown all produce, so they stay silent.
-    if ($o && $o['status'] === 'running' && in_array($n['status'], ['exited', 'dead'], true)) {
+    // a person, a backup and a shutdown all produce, so they stay silent; so
+    // does every stop while Appdata Backup is running (it can leave code 2).
+    if (!$backup && $o && $o['status'] === 'running' && in_array($n['status'], ['exited', 'dead'], true)) {
       $reason = '';
       if (!empty($n['oom'])) $reason = 'It ran out of memory.';
       elseif (!in_array((int)$n['exitCode'], [0, 137, 143], true)) $reason = 'It stopped with error code '.(int)$n['exitCode'].'.';
@@ -185,6 +193,18 @@ const STAXX_APPWATCH_BOOT_GRACE_SECS = 600;
 function staxx_appwatch_path(string $env, string $default): string {
   $f = getenv($env);
   return ($f !== false && $f !== '') ? $f : $default;
+}
+
+/**
+ * Whether Appdata Backup is running now. It writes its PID into the marker
+ * file at start and removes it at the end; the PID is checked because a
+ * crashed run leaves the file behind and would otherwise silence stops for ever.
+ */
+function staxx_appwatch_backup_running(): bool {
+  $txt = @file_get_contents(staxx_appwatch_path('STAXX_APPWATCH_BACKUP', '/tmp/appdata.backup/running'));
+  if ($txt === false) return false;
+  $pid = trim($txt);
+  return preg_match('/^\d+$/', $pid) === 1 && is_dir('/proc/'.$pid);
 }
 
 /**
@@ -286,7 +306,7 @@ function staxx_appwatch_pass(): void {
   }
 
   [$dockerEvents, $newRec] = staxx_appwatch_docker_step($rec, true, true, true, PHP_INT_MAX, $time);
-  [$events, $newState] = staxx_appwatch_events($old, $now, $state, $time);
+  [$events, $newState] = staxx_appwatch_events($old, $now, $state, $time, staxx_appwatch_backup_running());
 
   // The store is only walked when there is something to say, not every minute.
   if ($events) {

@@ -71,7 +71,7 @@ function c(array $o = []): array {
 }
 function kinds(array $events): array { return array_column($events, 'kind'); }
 /** Run one comparison; returns [events, newState]. */
-function step(array $old, array $now, array $state, int $t): array { return staxx_appwatch_events($old, $now, $state, $t); }
+function step(array $old, array $now, array $state, int $t, bool $backup = false): array { return staxx_appwatch_events($old, $now, $state, $t, $backup); }
 
 $T = 1000000;
 
@@ -150,6 +150,36 @@ ok('no health check before counts as "not unhealthy"', kinds($e) === ['unhealthy
 $st = ['a1' => ['restarts' => [], 'reported' => ['restarting' => false, 'unhealthy' => true]]];
 [$e, $st] = step(['a1' => c(['health' => 'unhealthy'])], ['a1' => c(['health' => 'unhealthy', 'restarts' => 1])], $st, $T);
 ok('a restart clears the unhealthy flag', $st['a1']['reported']['unhealthy'] === false && $e === []);
+
+/* ===== Appdata Backup (PLAN_229) ===== */
+// A stopped container with a health check reads as unhealthy to Docker; that is not a failure.
+[$e, $st] = step(['a1' => c(['health' => 'healthy'])], ['a1' => c(['status' => 'exited', 'health' => 'unhealthy', 'streak' => 3])], [], $T);
+ok('a stopped container reading unhealthy gives no health event', !in_array('unhealthy', kinds($e), true), json_encode($e));
+$st = ['a1' => ['restarts' => [], 'reported' => ['restarting' => false, 'unhealthy' => true]]];
+[$e, $st] = step(['a1' => c(['health' => 'unhealthy'])], ['a1' => c(['status' => 'exited', 'health' => 'healthy'])], $st, $T);
+ok('a stopped container keeps its unhealthy flag and gives no healthy event', $e === [] && $st['a1']['reported']['unhealthy'] === true, json_encode([$e, $st]));
+[$e] = step(['a1' => c(['health' => 'healthy'])], ['a1' => c(['health' => 'unhealthy', 'streak' => 3])], [], $T);
+ok('a running container going unhealthy is still reported', kinds($e) === ['unhealthy']);
+$stopped = ['a1' => c(['status' => 'exited', 'exitCode' => 2])];
+[$e] = step($run, $stopped, [], $T, true);
+ok('error-code stop while the backup runs: nothing', $e === [], json_encode($e));
+[$e] = step($run, $stopped, [], $T, false);
+ok('same stop with no backup running is reported', kinds($e) === ['stopped']);
+[$e] = step($run, ['a1' => c(['status' => 'exited', 'exitCode' => 1, 'oom' => true])], [], $T, true);
+ok('an out-of-memory stop is silent too while the backup runs', $e === []);
+
+$bk = $dir.'/backup-running';
+putenv('STAXX_APPWATCH_BACKUP='.$bk);
+@unlink($bk);
+ok('backup marker missing: not running', staxx_appwatch_backup_running() === false);
+file_put_contents($bk, (string)getmypid());
+ok('backup marker with a live PID: running', staxx_appwatch_backup_running() === true);
+file_put_contents($bk, "999999999\n");
+ok('backup marker with a dead PID: not running', staxx_appwatch_backup_running() === false);
+file_put_contents($bk, 'not-a-pid');
+ok('backup marker that is not a number: not running', staxx_appwatch_backup_running() === false);
+@unlink($bk);
+putenv('STAXX_APPWATCH_BACKUP');   // unset, so the whole-pass tests below never see a marker
 
 /* ===== gone, first run, new containers ===== */
 [$e, $st] = step(['a1' => c(), 'b2' => c(['name' => 'b'])], ['a1' => c()], ['b2' => ['restarts' => [$T], 'reported' => []]], $T);
