@@ -13391,7 +13391,8 @@ dialog::backdrop {
   max-width: 92vw;
   max-height: 88vh;
   overflow: auto;
-  background: #fff;
+  /* Follows the page's own dark surface; a fixed white left the light text unreadable. */
+  background: var(--background-color, #1c1c1c);
   border: 1px solid var(--staxx-card-line, var(--sm-line));
   border-radius: 0.8rem;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
