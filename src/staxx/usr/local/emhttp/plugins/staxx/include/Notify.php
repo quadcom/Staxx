@@ -550,10 +550,12 @@ function staxx_notify_base_url(string $server): string {
 
 /**
  * The Content-ID of an app's icon picture, adding it to $images the first
- * time (one copy per file). Only a PNG, JPEG or GIF under 100 KB that the
- * service names as ./.staxx/<file> goes in; SVG, WebP and ICO (many mail
- * readers do not draw them), a URL, an fa- glyph, no icon or a big file
- * return '' and the caller draws a letter tile instead.
+ * time (one copy per file). Only an icon the service names as ./.staxx/<file>
+ * goes in. A PNG, JPEG or GIF up to 100 KB is attached as it is. A larger one
+ * is shrunk to fit 96x96 (never enlarged, transparency kept) and attached as
+ * a PNG. An SVG up to 1 MB is drawn at 96x96 by resvg and attached as a PNG.
+ * Everything else (ICO, WebP, a URL, an fa- glyph, no icon, or a picture that
+ * cannot be drawn or shrunk) returns '' and the caller draws a letter tile.
  */
 function staxx_notify_icon_cid(array $e, array &$images): string {
   $stack = (string)($e['stack'] ?? '');
@@ -564,16 +566,66 @@ function staxx_notify_icon_cid(array $e, array &$images): string {
   $icon = (string)(($meta['services'][$svc]['x']['icon'] ?? ''));
   if (!($meta['ok'] ?? false) || !preg_match('~^\./\.staxx/([^/]+)$~', $icon, $m)) return '';
   $ext  = strtolower((string)pathinfo($m[1], PATHINFO_EXTENSION));
-  $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif'][$ext] ?? '';
+  $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'svg' => 'image/svg+xml'][$ext] ?? '';
   $path = $mime === '' ? '' : staxx_icon_serve_path($stack, $m[1]);
-  if ($path === '' || filesize($path) > 102400) return '';
+  if ($path === '') return '';
   $cid = 'icon-'.md5($path).'@staxx';
-  if (!isset($images[$cid])) {
-    $data = @file_get_contents($path);
-    if ($data === false) return '';
-    $images[$cid] = [$mime, $data, basename($path)];
+  if (isset($images[$cid])) return $cid;
+  $size = (int)@filesize($path);
+  $name = basename($path);
+  if ($mime === 'image/svg+xml') {
+    if ($size > 1048576) return '';
+    $data = staxx_notify_draw_svg($path);
+    if ($data === '') return '';
+    $images[$cid] = ['image/png', $data, preg_replace('/\.svg$/i', '', $name).'.png'];
+    return $cid;
   }
+  if ($size > 5242880) return '';
+  $data = @file_get_contents($path);
+  if ($data === false) return '';
+  if ($size > 102400) {
+    $data = staxx_notify_shrink($data);
+    if ($data === '') return '';
+    $mime = 'image/png';
+    $name = preg_replace('/\.[^.]+$/', '', $name).'.png';
+  }
+  $images[$cid] = [$mime, $data, $name];
   return $cid;
+}
+
+/** An SVG drawn at 96x96 by resvg, as PNG bytes; '' when resvg is missing or fails. */
+function staxx_notify_draw_svg(string $svg): string {
+  $bin = getenv('STAXX_RESVG_BIN');
+  $bin = ($bin !== false && $bin !== '') ? $bin : '/usr/local/lib/staxx/resvg';
+  if (!is_executable($bin)) return '';
+  $tmp = @tempnam(sys_get_temp_dir(), 'staxx-svg');
+  if ($tmp === false) return '';
+  $png = $tmp.'.png';
+  $code = 1;
+  staxx_sh(escapeshellarg($bin).' -w 96 -h 96 '.escapeshellarg($svg).' '.escapeshellarg($png), 10, $code);
+  $data = ($code === 0 && is_file($png)) ? (string)@file_get_contents($png) : '';
+  @unlink($tmp);
+  @unlink($png);
+  return $data;
+}
+
+/** A picture scaled down to fit 96x96 and re-encoded as PNG with its transparency; '' without GD or on any failure. */
+function staxx_notify_shrink(string $data): string {
+  if (!function_exists('imagecreatefromstring')) return '';
+  $src = @imagecreatefromstring($data);
+  if ($src === false) return '';
+  $w = imagesx($src); $h = imagesy($src);
+  $f = min(1, 96 / max($w, $h, 1));
+  $nw = max(1, (int)round($w * $f)); $nh = max(1, (int)round($h * $f));
+  $dst = imagecreatetruecolor($nw, $nh);
+  imagealphablending($dst, false);
+  imagesavealpha($dst, true);
+  imagefill($dst, 0, 0, imagecolorallocatealpha($dst, 0, 0, 0, 127));
+  imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
+  ob_start();
+  $done = imagepng($dst);
+  $out = (string)ob_get_clean();
+  return $done ? $out : '';
 }
 
 /**

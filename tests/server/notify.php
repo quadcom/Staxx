@@ -472,6 +472,8 @@ ok('no recipient set: no email, the rest still goes', mail_raw() === '' && (call
 reset_all(); dyn(3, 3); opts($htmlOn);
 $e1 = $ev('web'); $e2 = $ev('two'); $e3 = $ev('web', ['was' => '0.9']);
 $mixed = [$e1, $ev('vec'), $ev('big'), $ev('url'), $ev('glyph')];
+// No resvg, so an SVG icon takes the letter tile whether or not the box has resvg installed.
+putenv('STAXX_RESVG_BIN=/nonexistent/resvg');
 staxx_notify_events($mixed);
 $raw = mail_raw(); $html = mail_part($raw, 'text/html'); $txt = mail_part($raw, 'text/plain');
 $all = staxx_notify_text($mixed, '1');
@@ -484,10 +486,11 @@ ok('MIME: related holding alternative (text then HTML)', has($raw, 'Content-Type
 ok('the plain-text part is the text layout', $txt === $all['body'], $txt);
 ok('the logo goes by cid', has($html, 'src="cid:logo@staxx"') && has($raw, 'Content-ID: <logo@staxx>') && has($html, 'width="36" height="36"'));
 ok('a PNG icon goes by cid, one copy', preg_match_all('~Content-ID: <icon-~', $raw) === 1 && has($html, 'src="cid:icon-'));
-ok('SVG, over-100KB, URL and fa- icons get the letter tile, not a picture', substr_count($html, 'src="cid:icon-') === 1
+ok('with no resvg: SVG, over-100KB, URL and fa- icons get the letter tile, not a picture', substr_count($html, 'src="cid:icon-') === 1
    && substr_count($html, 'line-height:40px') === 4, (string)substr_count($html, 'line-height:40px'));
 $tile = staxx_notify_label($ev('vec'));
 ok('the tile is the first letter of the app name', has($html, '>'.mb_strtoupper(mb_substr($tile, 0, 1)).'</div>'));
+putenv('STAXX_RESVG_BIN');
 ok('page and card are light with inline colours', has($html, 'background:#f4f4f5') && has($html, 'background:#ffffff') && has($html, 'width="640"') && !has($html, '<style'));
 ok('footer and button', has($html, 'Sent by StaXX on Tower. Change these emails in StaXX, Settings, Updates.')
    && has($html, 'href="http://tower.test'.staxx_view_url().'#updates"') && has($html, '>Open StaXX</a>') && has($html, 'Tower · '));
@@ -689,6 +692,50 @@ ok('a docker message travels alone, beside an app one', count(calls()) === 2);
 reset_all(); dyn(3, 3); opts($htmlOn);
 staxx_notify_events([$dDown]);
 ok('the docker email is sent as HTML', has(mail_header(mail_raw(), 'Subject'), 'Docker has stopped answering') && has(mail_part(mail_raw(), 'text/html'), 'Docker has stopped answering'));
+
+/* ===== 12. PLAN_230: an SVG is drawn, a big picture is shrunk ===== */
+$icStack = 'zzicon-notify';
+$icDir = staxx_stack_dir($icStack);
+@mkdir($icDir.'/'.STAXX_RECORD_DIR, 0755, true);
+file_put_contents($icDir.'/compose.yaml',
+  "services:\n  vec:\n    image: busybox\n    x-unraid:\n      icon: ./.staxx/vec.svg\n"
+ ."  big:\n    image: busybox\n    x-unraid:\n      icon: ./.staxx/big.png\n");
+file_put_contents($icDir.'/.staxx/vec.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
+$tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+$fakeResvg = $dir.'/resvg-stub.sh';
+file_put_contents($fakeResvg, "#!/bin/sh\nfor a in \"\$@\"; do last=\"\$a\"; done\nprintf '%s' ".escapeshellarg($tinyPng)." | base64 -d >\"\$last\"\n");
+chmod($fakeResvg, 0755);
+if (function_exists('imagecreatetruecolor')) {
+  $noise = imagecreatetruecolor(800, 800);
+  for ($y = 0; $y < 800; $y++) for ($x = 0; $x < 800; $x++) imagesetpixel($noise, $x, $y, mt_rand(0, 0xFFFFFF));
+  imagepng($noise, $icDir.'/.staxx/big.png', 0);
+}
+staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
+$icEv = static fn(string $svc): array => ['stack' => $icStack, 'service' => $svc];
+
+putenv('STAXX_RESVG_BIN='.$fakeResvg);
+$im = [];
+$cid = staxx_notify_icon_cid($icEv('vec'), $im);
+ok('an SVG icon is attached as a PNG drawn by resvg', $cid !== '' && ($im[$cid][0] ?? '') === 'image/png'
+   && substr($im[$cid][2] ?? '', -4) === '.png' && strncmp($im[$cid][1] ?? '', "\x89PNG", 4) === 0);
+$n = count($im); staxx_notify_icon_cid($icEv('vec'), $im);
+ok('the same SVG is attached once', count($im) === $n);
+putenv('STAXX_RESVG_BIN='.$dir.'/no-such-resvg');
+$im = [];
+ok('no resvg gives a letter tile', staxx_notify_icon_cid($icEv('vec'), $im) === '' && $im === []);
+putenv('STAXX_RESVG_BIN');
+
+if (!is_file($icDir.'/.staxx/big.png')) {
+  echo "skip   big PNG shrink (no GD)\n";
+} else {
+  $im = [];
+  $cid = staxx_notify_icon_cid($icEv('big'), $im);
+  $dim = $cid === '' ? false : @getimagesizefromstring($im[$cid][1]);
+  ok('a PNG over 100 KB is shrunk to fit 96x96 and attached', filesize($icDir.'/.staxx/big.png') > 102400 && $cid !== ''
+     && ($im[$cid][0] ?? '') === 'image/png' && $dim !== false && $dim[0] <= 96 && $dim[1] <= 96, json_encode($dim));
+}
+@exec('rm -rf '.escapeshellarg($icDir));
+staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
 
 reset_all();
 @exec('rm -rf '.escapeshellarg($dir));

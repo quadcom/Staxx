@@ -14,6 +14,7 @@ set -euo pipefail
 # user put there is left alone. Run before the plugin folder is deleted, since
 # this script (and ensure-compose itself) live inside it.
 bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose --remove 2>/dev/null || true
+bash /usr/local/emhttp/plugins/staxx/scripts/ensure-resvg --remove 2>/dev/null || true
 
 # Unraid's cron builder concatenates every *.cron file under a plugin's own
 # folder on the flash drive into root's crontab, so leaving ours behind keeps

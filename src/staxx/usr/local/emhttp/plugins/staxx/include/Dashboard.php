@@ -454,6 +454,9 @@ function staxx_about_credits(): array {
   $credits[] = ['name' => 'Docker Compose', 'url' => 'https://github.com/docker/compose',
                 'use' => 'Runs every stack. StaXX can install it when the server has none.',
                 'licence' => 'Apache-2.0, Docker Inc.'];
+  $credits[] = ['name' => 'resvg', 'url' => 'https://github.com/linebender/resvg',
+                'use' => 'Draws SVG app icons as pictures for emails. StaXX installs it.',
+                'licence' => 'MIT, the resvg authors.'];
   $credits[] = ['name' => 'Community Applications', 'url' => 'https://ca.unraid.net/',
                 'use' => 'The app feed and images the importer reads.',
                 'licence' => 'Feed and images belong to Community Applications and their authors.'];

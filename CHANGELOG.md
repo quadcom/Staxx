@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- App logos drawn as SVG now show in emails instead of a letter, and large logos are shrunk to fit rather than left out. StaXX installs a small program, resvg, to draw them.
 - StaXX no longer sends "needs a look" messages when a backup or a script stops apps: a stopped app is not reported as failing its health check, and an app something told to stop is not reported as stopping by itself.
 - A notice in the Notifications panel keeps its message on full-width lines, with its time and button underneath, however long the button's label.
 - When StaXX sits under Unraid's Docker menu, Unraid's padlock now unlocks and locks StaXX's list and Docker Containers' list together.

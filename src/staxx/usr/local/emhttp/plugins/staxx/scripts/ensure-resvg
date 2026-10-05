@@ -1,0 +1,98 @@
+#!/bin/bash
+# StaXX — make sure the `resvg` SVG-to-PNG drawer is installed, so emails can
+# show app icons as pictures (most mail apps will not draw an SVG). Run with no
+# arguments at install and at every boot (postinstall does the latter);
+# `--remove` deletes what this script put in place. Non-fatal for callers: when
+# it cannot install, emails fall back to a letter tile.
+#
+# Every path is overridable by environment variable, which is what lets
+# tests/server/resvg_ensure.php run this against /tmp.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+RESVG_VERSION="v0.48.1"
+RESVG_SHA256="fa8c26495a187e592c501db15bf9e8a9fdc051d4b2b336b39703d5b59f912b9d"   # of the tar.gz
+
+TARGET="${STAXX_RESVG_TARGET:-/usr/local/lib/staxx/resvg}"
+CACHE="${STAXX_RESVG_CACHE:-/boot/config/plugins/staxx/resvg}"
+URL="${STAXX_RESVG_URL:-https://github.com/linebender/resvg/releases/download/${RESVG_VERSION}/resvg-linux-x86_64.tar.gz}"
+# Overridable only so the test suite can pin a tiny fixture; never set in production.
+SHA256="${STAXX_RESVG_SHA256:-$RESVG_SHA256}"
+
+MARKER="${TARGET}.version"
+FLASH_COPY="${CACHE}/resvg-${RESVG_VERSION}.tar.gz"
+
+fail() {
+  echo "$1" >&2
+  exit 1
+}
+
+sha_of() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+install_from() {
+  # The archive's only member is a file named resvg at its top level.
+  local dir
+  dir="$(mktemp -d)"
+  if ! tar -xzf "$1" -C "${dir}" resvg 2>/dev/null; then
+    rm -rf "${dir}"
+    fail "The resvg archive could not be unpacked, so nothing was installed."
+  fi
+  install -D -m 755 "${dir}/resvg" "${TARGET}"
+  rm -rf "${dir}"
+  echo "${RESVG_VERSION}" > "${MARKER}"
+  # A pin bump replaces the flash copy rather than accumulating old ones.
+  local f
+  for f in "${CACHE}"/resvg-v*.tar.gz; do
+    [[ -e "${f}" ]] || continue
+    [[ "${f}" == "${FLASH_COPY}" ]] && continue
+    rm -f "${f}"
+  done
+  echo "resvg ${RESVG_VERSION} installed."
+}
+
+if [[ "${1:-}" == "--remove" ]]; then
+  if [[ -z "${CACHE}" || "${CACHE}" == "/" ]]; then
+    echo "refusing to remove: STAXX_RESVG_CACHE is empty or /" >&2
+    exit 1
+  fi
+  rm -f "${TARGET}" "${MARKER}"
+  rm -rf "${CACHE}"
+  exit 0
+elif [[ -n "${1:-}" ]]; then
+  echo "Usage: ensure-resvg [--remove]" >&2
+  exit 1
+fi
+
+# 1. Already installed at this version.
+if [[ -x "${TARGET}" && -f "${MARKER}" && "$(cat "${MARKER}")" == "${RESVG_VERSION}" ]]; then
+  exit 0
+fi
+
+mkdir -p "${CACHE}"
+
+# 2. A flash copy that matches the pin needs no network.
+if [[ -f "${FLASH_COPY}" ]]; then
+  if [[ "$(sha_of "${FLASH_COPY}")" == "${SHA256}" ]]; then
+    install_from "${FLASH_COPY}"
+    exit 0
+  fi
+  echo "the flash copy at ${FLASH_COPY} does not match the pinned checksum; discarding it." >&2
+  rm -f "${FLASH_COPY}"
+fi
+
+# 3. Download and verify against the pinned constant, never a remote checksum.
+tmp="$(mktemp "${CACHE}/download.XXXXXX")"
+if ! curl -fsSL --retry 2 --connect-timeout 15 --max-time 120 -o "${tmp}" "${URL}"; then
+  rm -f "${tmp}"
+  fail "The resvg download could not be reached, so emails will show letter tiles. Put the ${RESVG_VERSION} resvg-linux-x86_64.tar.gz at ${FLASH_COPY} to install it offline."
+fi
+if [[ "$(sha_of "${tmp}")" != "${SHA256}" ]]; then
+  rm -f "${tmp}"
+  fail "The resvg download could not be verified, so nothing was installed and emails will show letter tiles."
+fi
+mv "${tmp}" "${FLASH_COPY}"
+install_from "${FLASH_COPY}"
