@@ -14,7 +14,9 @@
 
 Every save keeps a copy of both what you replaced and what you just wrote, so the newest row is
 always the file as it now stands. A save that changes nothing is not kept. A file you drop into the
-folder yourself gets its first copy the first time you open or start it.
+folder yourself gets its first copy the first time you open or start it. That copy is named
+**As StaXX first found it**, shows when the file was last changed, and is kept until you clear its
+name.
 
 ## What the list shows
 

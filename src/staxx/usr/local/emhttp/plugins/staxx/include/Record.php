@@ -201,8 +201,12 @@ function staxx_record_write_index(string $rel, array $record): bool {
  * kept — a capture failure must never block the save that triggered it. On
  * failure $note carries one plain sentence for the person; the caller shows
  * it as a warning after saving, not as a refusal to save.
+ *
+ * $name and $at are only passed by staxx_record_seed(), to label the first
+ * copy and date it by the file's own mtime; every ordinary save leaves them
+ * at '' and "now".
  */
-function staxx_record_capture(string $rel, string $file, string &$note): bool {
+function staxx_record_capture(string $rel, string $file, string &$note, string $name = '', ?int $at = null): bool {
   $note = '';
 
   // A basename, never a path. Handed a full path this would look for a file
@@ -259,11 +263,11 @@ function staxx_record_capture(string $rel, string $file, string &$note): bool {
 
   $versions[] = [
     'n'    => $n,
-    'at'   => time(),
+    'at'   => $at ?? time(),
     'size' => strlen($bytes),
     'hash' => $hash,
     'file' => $file,
-    'name' => '',
+    'name' => $name,
   ];
 
   $ok = staxx_record_write_index($rel, ['v' => 1, 'next' => $n + 1, 'versions' => $versions]);
@@ -291,6 +295,11 @@ function staxx_record_capture(string $rel, string $file, string &$note): bool {
  * history directory — that function already reads the file fresh off disk,
  * hashes it, and skips a capture that duplicates the newest kept version, so
  * there is nothing left for this to do but check the history is empty first.
+ *
+ * The copy is named and dated by the file's own mtime: left unnamed and
+ * stamped now, it listed as "1 minute ago" like a save although nothing was
+ * saved (found 2026-10-05, PLAN_228). Being named means it is never pruned —
+ * accepted, it is the file as the author left it.
  */
 function staxx_record_seed(string $rel, string &$note): bool {
   $note = '';
@@ -299,7 +308,9 @@ function staxx_record_seed(string $rel, string &$note): bool {
   $file = staxx_find_compose_file(staxx_stack_dir($rel));
   if ($file === '') return true; // no compose file to seed from
 
-  return staxx_record_capture($rel, basename($file), $note);
+  $mtime = @filemtime($file);
+  return staxx_record_capture($rel, basename($file), $note,
+    'As StaXX first found it', $mtime === false ? null : $mtime);
 }
 
 /** Every kept version, newest first. [] when there is no history at all. */
