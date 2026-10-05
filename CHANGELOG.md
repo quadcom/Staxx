@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- A notice in the Notifications panel keeps its message on full-width lines, with its time and button underneath, however long the button's label.
 - When StaXX sits under Unraid's Docker menu, Unraid's padlock now unlocks and locks StaXX's list and Docker Containers' list together.
 - The window listing a stack's services, opened from the cubes button on a card, is dark again, so the service names can be read.
 - The first copy History keeps of a compose file you added yourself is now named "As StaXX first found it", shows when the file was last changed rather than when you opened it, and is kept for good like any named version.

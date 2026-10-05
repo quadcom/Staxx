@@ -436,10 +436,14 @@
     if (n.html) body.innerHTML = n.html; else body.textContent = n.text;
     li.appendChild(body);
 
+    var meta = document.createElement('div');
+    meta.className = 'staxx-noticepanel-row-meta';
+    li.appendChild(meta);
+
     var time = document.createElement('span');
     time.className = 'staxx-noticepanel-row-time';
     time.textContent = timeAgoWords(Math.floor(n.addedAt / 1000)) + ' ago';
-    li.appendChild(time);
+    meta.appendChild(time);
 
     if (n.action) {
       var btn = document.createElement('button');
@@ -450,7 +454,7 @@
         n.action.run();
         closeNoticePanel();
       });
-      li.appendChild(btn);
+      meta.appendChild(btn);
     }
 
     if (!n.sticky) {
@@ -597,13 +601,20 @@
     for (var sb = 0; sb < stickyBlocks.length; sb++) {
       (function (block) {
         var kind = block.dataset.noticeKind || 'warn';
-        var text = block.textContent.replace(/\s+/g, ' ').trim();
         var buttons = block.querySelectorAll('button');
         var action = null;
+        var textSource = block;
         if (buttons.length) {
           var btn = buttons[buttons.length - 1];
           action = { label: btn.textContent.trim(), run: function () { btn.click(); } };
+          // The action button's label is shown on the button itself, so it is
+          // left out of the message (read from a copy: the real button is the
+          // one action.run clicks); inline buttons earlier in the sentence stay.
+          textSource = block.cloneNode(true);
+          var cloneButtons = textSource.querySelectorAll('button');
+          cloneButtons[cloneButtons.length - 1].remove();
         }
+        var text = textSource.textContent.replace(/\s+/g, ' ').trim();
         block.hidden = true;
         notices.add({ kind: kind, text: text, action: action, sticky: true });
       })(stickyBlocks[sb]);
