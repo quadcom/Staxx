@@ -43,9 +43,9 @@ StaXX remembers what you have dismissed in this browser for a week before showin
 messages, such as Docker not running, cannot be dismissed and clear themselves once the problem is
 fixed.
 
-![The notice line to the left of the button row, ringed: a warning icon, one message about a check that could not reach the registry, and a count of 2 at its right end, with the Database folder and two of its stacks beneath](../images/guide/the-stack-list-notices-ticker.png)
+![The notice line to the left of the button row, ringed: a warning icon, a message saying Docker's image storage has 14.2 GB of clutter and is 87% full, and a count of 2 at its right end, with the Database folder and two of its stacks beneath](../images/guide/the-stack-list-notices-ticker.png)
 
-![The Notifications panel opened under that line: two entries, each with an icon, its message, how long ago it arrived and a dismiss cross, one carrying a Check now button, and a Dismiss all button in the panel's footer](../images/guide/the-stack-list-notices-panel.png)
+![The Notifications panel opened under that line: two entries, each with an icon, its message, how long ago it arrived and a dismiss cross, the first carrying a Review stored images button, and a Dismiss all button in the panel's footer](../images/guide/the-stack-list-notices-panel.png)
 
 ## The title bar
 
@@ -91,7 +91,7 @@ sideways or a small laptop, two on a tablet held upright, one on a phone.
 
 ![The same folder on a tablet held upright: the Database heading, then its stacks as cards two across](../images/guide/the-stack-list-cards-two.png)
 
-![The Database folder on a phone: the heading gives its name, its update marker and its "6 stacks, 5 running" line the full width of the screen, with its six app icons on a line of their own beneath; then its stacks one card per row, each with the WebUI, Logs, Repo and CA buttons on a line of their own at a finger's size and the running chip on the line beneath them](../images/guide/the-stack-list-cards-phone.png)
+![The Database folder on a phone: the heading gives its name, its next-check countdown and its "6 stacks, 5 running" line the full width of the screen, with its six app icons on a line of their own beneath; then its stacks one card per row, each with the WebUI, Logs, Repo and CA buttons on a line of their own at a finger's size and the running chip on the line beneath them](../images/guide/the-stack-list-cards-phone.png)
 
 On a phone, a card's four small buttons take a line of their own at a size a finger can hit, with
 the state chips on the line beneath them.
@@ -111,10 +111,10 @@ services as cards of their own.
 
 | Example | Part | What it does |
 |---|---|---|
-| <img src="../images/guide/the-stack-list-row-handle.png" alt="A stack row close-up with the drag handle at the far left ringed"> | Drag handle | Drag the row to move it. Greyed out when there is nothing to move it against. |
+| <img src="../images/guide/the-stack-list-row-handle.png" alt="A stack row close-up, with the page unlocked, and the drag handle at the far left ringed"> | Drag handle | Shown while Unraid's padlock is open. Drag the row to move it. Greyed out when there is nothing to move it against. |
 | <img src="../images/guide/the-stack-list-row-picture.png" alt="The same row with the app picture ringed, a green dot on its lower corner"> | App picture | Click it to open the stack for editing. The dot on its corner is green when the stack is running, red when a container inside says it is unwell. |
 | <img src="../images/guide/the-stack-list-row-chips.png" alt="The same row with the block of four chips, WebUI, Repo, Logs and CA, ringed"> | Four chips | Shortcuts out to the app and its project. See the table below. |
-| <img src="../images/guide/the-stack-list-row-name.png" alt="The same row with the stack name ringed, a small orange bolt beneath it"> | Name | The folder this stack lives in, which is also its name. The small bolt under it means it starts when the server boots. |
+| <img src="../images/guide/the-stack-list-row-name.png" alt="The same row with the stack name ringed, a small orange bolt and a green circling-arrows mark beneath it"> | Name | The folder this stack lives in, which is also its name. The small bolt under it means it starts when the server boots. |
 
 Two more parts are only on a stack holding more than one container. A cubes button left of the app
 picture opens and closes its container list. A line under the name counts its containers.
@@ -143,10 +143,10 @@ when you hover it. See [row marks and icons](marks.md) for the full key.
 |---|---|---|
 | <img src="../images/guide/the-stack-list-mark-pin.png" alt="A white drawing pin under a stack name"> | Drawing pin, under the name | One or more services is held at one exact build. Hover it to see which. |
 | <img src="../images/guide/the-stack-list-mark-triangle.png" alt="A small orange warning triangle under a stack name"> | Orange triangle, under the name | Either the stack was imported and its original has changed since, or a service is on a network that gives it its own address, so the ports in its file do nothing. Hover it to see which. |
-| <img src="../images/guide/the-stack-list-mark-image-mismatch.png" alt="An orange warning triangle under the image name in the Services column"> | Orange triangle, under the image name | The file asks for a different image than the one running. Restart to apply it. |
-| <img src="../images/guide/the-stack-list-broken-stack.png" alt="A stack row with a red warning triangle where the app picture would be"> | Red triangle in place of the app picture | Compose cannot read this stack's file, or there is no file at all. |
-| <img src="../images/guide/the-stack-list-mark-needs-review.png" alt="An orange outlined tag reading needs review beside a stack name"> | needs review | Imported and not checked over yet. It will not start on its own. |
-| <img src="../images/guide/the-stack-list-mark-waiting-to-confirm.png" alt="An orange outlined button reading waiting to confirm beside a stack name"> | waiting to confirm | Just switched over from an older container. Press it to say whether the app works. |
+| <img src="../images/guide/the-stack-list-mark-image-mismatch.png" alt="An orange warning triangle beside the image name in the Services column"> | Orange triangle, under the image name | The file asks for a different image than the one running. Restart to apply it. |
+| <img src="../images/guide/the-stack-list-mark-broken.png" alt="A red warning triangle in a red-edged box where the app picture would be"> | Red triangle in place of the app picture | Compose cannot read this stack's file, or there is no file at all. |
+| <img src="../images/guide/the-stack-list-mark-needs-review.png" alt="An orange outlined tag reading needs review under a stack name"> | needs review | Imported and not checked over yet. It will not start on its own. |
+| <img src="../images/guide/the-stack-list-mark-waiting-to-confirm.png" alt="An orange outlined button reading waiting to confirm under a stack name"> | waiting to confirm | Just switched over from an older container. Press it to say whether the app works. |
 
 ## The State column
 
@@ -225,7 +225,7 @@ Autostart and Delay work the same way here as on the stack menu, but apply to th
 
 ## Folders
 
-![A collapsed folder row named Media, reading 16 stacks and 12 running, with the row of small app pictures for everything inside it ringed](../images/guide/the-stack-list-folder-row.png)
+![A collapsed folder row named Media, reading 18 stacks and 13 running, with the row of small app pictures for everything inside it ringed, between the Paperless and Tesla folders](../images/guide/the-stack-list-folder-row.png)
 
 ![The folder menu open: Start everything, Stop everything, Check this folder, Update this folder, Rename folder, Folder icon…, Remove icon, Delay and Delete folder](../images/guide/the-stack-list-folder-menu.png)
 A folder row shows totals for everything filed inside it in place of its own Services, State and
@@ -245,6 +245,18 @@ Click its picture to open the folder menu.
 | Delay | How long to wait before the next thing starts. |
 | Delete folder | Deletes the folder. Stacks inside are moved back to the top level first, not deleted. |
 
+## Reordering the list
+
+![The StaXX page unlocked: the padlock in Unraid's top bar ringed and showing red, and a drag handle at the left of every folder row and of each stack row in the open Database folder](../images/guide/the-stack-list-unlocked.png)
+
+The page opens locked. To change the order:
+
+1. Click the padlock in Unraid's top bar. A drag handle appears at the left of every row.
+2. Drag a row by its handle to where you want it.
+3. Click the padlock again to lock the page.
+
+Stacks start in the order they appear on the list.
+
 ## Acting on several stacks at once
 
 Press **Select** on the button row to switch the list into selection mode. Every stack row and every
@@ -252,7 +264,7 @@ folder header gains a switch at its left edge, the same on/off glyph used for Au
 Switching a folder on or off switches every stack inside it; a folder with only some of its stacks on
 shows its switch on but dimmed.
 
-![The list in selection mode: the DEV-TESTING folder header with its switch on but dimmed, two stacks beneath it switched on and a third off, and the bar at the foot saying 2 stacks chosen, in the order shown, with Start, Stop, Restart, Check for updates and Update](../images/guide/the-stack-list-selection-mode.png)
+![The list in selection mode: under the button row, a bar saying 2 stacks chosen, in the order shown, with Start, Stop, Restart, Check for updates, Update, Updates… and Notifications…; below, the DEV-TESTING folder with its switch on but dimmed, and two of its four stacks switched on](../images/guide/the-stack-list-selection-mode.png)
 
 A row of buttons slides open under **Select** once something is chosen: **Start**, **Stop**,
 **Restart**, **Check for updates**, **Update**, **Updates…** and **Notifications…**.
