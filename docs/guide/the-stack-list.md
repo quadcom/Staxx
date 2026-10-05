@@ -45,7 +45,7 @@ fixed.
 
 ![The notice line to the left of the button row, ringed: a warning icon, a message saying Docker's image storage has 14.2 GB of clutter and is 87% full, and a count of 2 at its right end, with the Database folder and two of its stacks beneath](../images/guide/the-stack-list-notices-ticker.png)
 
-![The Notifications panel opened under that line: two entries, each with an icon, its message, how long ago it arrived and a dismiss cross, the first carrying a Review stored images button, and a Dismiss all button in the panel's footer](../images/guide/the-stack-list-notices-panel.png)
+![The Notifications panel: two entries, each with an icon, its message and a dismiss cross, with how long ago it arrived underneath, the first also carrying a Review stored images button under its message, and a Dismiss all button in the panel's footer](../images/guide/the-stack-list-notices-panel.png)
 
 ## The title bar
 
