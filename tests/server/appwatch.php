@@ -71,7 +71,7 @@ function c(array $o = []): array {
 }
 function kinds(array $events): array { return array_column($events, 'kind'); }
 /** Run one comparison; returns [events, newState]. */
-function step(array $old, array $now, array $state, int $t, bool $backup = false): array { return staxx_appwatch_events($old, $now, $state, $t, $backup); }
+function step(array $old, array $now, array $state, int $t): array { return staxx_appwatch_events($old, $now, $state, $t); }
 
 $T = 1000000;
 
@@ -160,26 +160,21 @@ $st = ['a1' => ['restarts' => [], 'reported' => ['restarting' => false, 'unhealt
 ok('a stopped container keeps its unhealthy flag and gives no healthy event', $e === [] && $st['a1']['reported']['unhealthy'] === true, json_encode([$e, $st]));
 [$e] = step(['a1' => c(['health' => 'healthy'])], ['a1' => c(['health' => 'unhealthy', 'streak' => 3])], [], $T);
 ok('a running container going unhealthy is still reported', kinds($e) === ['unhealthy']);
-$stopped = ['a1' => c(['status' => 'exited', 'exitCode' => 2])];
-[$e] = step($run, $stopped, [], $T, true);
-ok('error-code stop while the backup runs: nothing', $e === [], json_encode($e));
-[$e] = step($run, $stopped, [], $T, false);
-ok('same stop with no backup running is reported', kinds($e) === ['stopped']);
-[$e] = step($run, ['a1' => c(['status' => 'exited', 'exitCode' => 1, 'oom' => true])], [], $T, true);
-ok('an out-of-memory stop is silent too while the backup runs', $e === []);
+[$e] = step($run, ['a1' => c(['status' => 'exited', 'exitCode' => 2])], [], $T);
+ok('a stopped event carries the container id', kinds($e) === ['stopped'] && ($e[0]['id'] ?? '') === 'a1', json_encode($e));
 
-$bk = $dir.'/backup-running';
-putenv('STAXX_APPWATCH_BACKUP='.$bk);
-@unlink($bk);
-ok('backup marker missing: not running', staxx_appwatch_backup_running() === false);
-file_put_contents($bk, (string)getmypid());
-ok('backup marker with a live PID: running', staxx_appwatch_backup_running() === true);
-file_put_contents($bk, "999999999\n");
-ok('backup marker with a dead PID: not running', staxx_appwatch_backup_running() === false);
-file_put_contents($bk, 'not-a-pid');
-ok('backup marker that is not a number: not running', staxx_appwatch_backup_running() === false);
-@unlink($bk);
-putenv('STAXX_APPWATCH_BACKUP');   // unset, so the whole-pass tests below never see a marker
+// Docker's own "stopped by a command" flag.
+$root = $dir.'/dockerroot';
+putenv('STAXX_APPWATCH_DOCKER_ROOT='.$root);
+function cfg(string $id, string $text): void { global $root; @mkdir($root.'/containers/'.$id, 0755, true); file_put_contents($root.'/containers/'.$id.'/config.v2.json', $text); }
+cfg('ab12', '{"HasBeenManuallyStopped":true}');
+cfg('cd34', '{"HasBeenManuallyStopped":false}');
+cfg('ef56', '{not json');
+ok('manual-stop flag true: true', staxx_appwatch_manual_stop('ab12') === true);
+ok('manual-stop flag false: false', staxx_appwatch_manual_stop('cd34') === false);
+ok('manual-stop file missing: false', staxx_appwatch_manual_stop('0a0a') === false);
+ok('manual-stop id not hex: false', staxx_appwatch_manual_stop('../ab12') === false);
+ok('manual-stop invalid JSON: false', staxx_appwatch_manual_stop('ef56') === false);
 
 /* ===== gone, first run, new containers ===== */
 [$e, $st] = step(['a1' => c(), 'b2' => c(['name' => 'b'])], ['a1' => c()], ['b2' => ['restarts' => [$T], 'reported' => []]], $T);
@@ -320,6 +315,22 @@ unlink($dir.'/fail');
 putenv('STAXX_NOW='.($D + 600));
 staxx_appwatch_pass();
 ok('Docker answering again clears the record and keeps a snapshot', !isset(saved()['docker']) && isset(saved()['snapshot']['aa11']), json_encode(saved()));
+
+/* ===== a stop someone asked for, across a whole pass ===== */
+if (function_exists('staxx_notify_text') && strpos((string)@file_get_contents('/usr/local/emhttp/plugins/staxx/include/Notify.php'), "'stopped'") !== false) {
+  foreach ([['ab12', true, 'asked-for stop (flag true): nothing handed to the notifier'], ['cd34', false, 'crash-style stop (flag false): handed to the notifier']] as [$cid, $silent, $what]) {
+    fake([$cid => ['name' => 'job', 'status' => 'running']]);
+    staxx_appwatch_pass();
+    fake([$cid => ['name' => 'job', 'status' => 'exited', 'exit' => 2]]);
+    $c = calls_n();
+    staxx_appwatch_pass();
+    ok($what, $silent ? calls_n() === $c : calls_n() > $c);
+  }
+} else {
+  echo "skip   manual-stop pass: Notify.php does not know the app-watching kinds yet
+";
+}
+putenv('STAXX_APPWATCH_DOCKER_ROOT');
 
 @exec('rm -rf '.escapeshellarg($dir));
 @unlink($ff); @unlink($ff.'.lock'); @unlink($ff.'.tmp');

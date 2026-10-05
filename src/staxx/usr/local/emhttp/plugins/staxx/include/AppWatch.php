@@ -113,12 +113,9 @@ function staxx_appwatch_stack_for(string $workingDir, array $map): string {
  * an hour) and 'reported' (flags 'restarting', 'unhealthy') so one problem
  * is one message, not one a minute.
  *
- * $backup is true while Appdata Backup is running: apps it stops are not
- * reported as stopping by themselves.
- *
  * @return array{0: array[], 1: array}
  */
-function staxx_appwatch_events(array $old, array $now, array $state, int $time, bool $backup = false): array {
+function staxx_appwatch_events(array $old, array $now, array $state, int $time): array {
   $events = [];
   $new = [];
   $baseline = !$old;   // first pass after boot: remember, say nothing
@@ -170,13 +167,14 @@ function staxx_appwatch_events(array $old, array $now, array $state, int $time, 
     }
 
     // Stopped by itself. Clean exits and signal stops (0, 137, 143) are what
-    // a person, a backup and a shutdown all produce, so they stay silent; so
-    // does every stop while Appdata Backup is running (it can leave code 2).
-    if (!$backup && $o && $o['status'] === 'running' && in_array($n['status'], ['exited', 'dead'], true)) {
+    // a person, a backup and a shutdown all produce, so they stay silent. A stop
+    // someone asked for (any tool using Docker's stop) is dropped later in the
+    // pass by staxx_appwatch_manual_stop().
+    if ($o && $o['status'] === 'running' && in_array($n['status'], ['exited', 'dead'], true)) {
       $reason = '';
       if (!empty($n['oom'])) $reason = 'It ran out of memory.';
       elseif (!in_array((int)$n['exitCode'], [0, 137, 143], true)) $reason = 'It stopped with error code '.(int)$n['exitCode'].'.';
-      if ($reason !== '') $events[] = $base + ['kind' => 'stopped', 'count' => 0, 'reason' => $reason];
+      if ($reason !== '') $events[] = $base + ['kind' => 'stopped', 'count' => 0, 'reason' => $reason, 'id' => $id];
     }
 
     $new[$id] = ['restarts' => $times, 'reported' => ['restarting' => !empty($rep['restarting']), 'unhealthy' => !empty($rep['unhealthy'])]];
@@ -196,15 +194,33 @@ function staxx_appwatch_path(string $env, string $default): string {
 }
 
 /**
- * Whether Appdata Backup is running now. It writes its PID into the marker
- * file at start and removes it at the end; the PID is checked because a
- * crashed run leaves the file behind and would otherwise silence stops for ever.
+ * Docker's data folder: where it keeps one folder per container.
  */
-function staxx_appwatch_backup_running(): bool {
-  $txt = @file_get_contents(staxx_appwatch_path('STAXX_APPWATCH_BACKUP', '/tmp/appdata.backup/running'));
-  if ($txt === false) return false;
-  $pid = trim($txt);
-  return preg_match('/^\d+$/', $pid) === 1 && is_dir('/proc/'.$pid);
+function staxx_appwatch_docker_root(): string {
+  $env = getenv('STAXX_APPWATCH_DOCKER_ROOT');
+  if ($env !== false && $env !== '') return $env;
+  static $root = null;
+  if ($root === null) {
+    $bin = getenv('STAXX_DOCKER_BIN');
+    $bin = ($bin !== false && $bin !== '') ? $bin : staxx_docker_bin();
+    $code = 1;
+    $out = trim(staxx_sh(escapeshellarg($bin).' info -f '.escapeshellarg('{{.DockerRootDir}}'), 8, $code));
+    $root = ($code === 0 && $out !== '' && $out[0] === '/') ? $out : '/var/lib/docker';
+  }
+  return $root;
+}
+
+/**
+ * Whether Docker's stop command was used on this container. Docker sets the
+ * flag whenever anything stops it that way (a backup tool, a script, Unraid's
+ * Docker page) and clears it on start; a crash or out-of-memory kill leaves it
+ * false. It is Docker's own file rather than a public interface, so a missing
+ * or unreadable file means "tell".
+ */
+function staxx_appwatch_manual_stop(string $id): bool {
+  if (!preg_match('/^[0-9a-f]+$/', $id)) return false;
+  $j = json_decode((string)@file_get_contents(staxx_appwatch_docker_root().'/containers/'.$id.'/config.v2.json'), true);
+  return is_array($j) && ($j['HasBeenManuallyStopped'] ?? null) === true;
 }
 
 /**
@@ -306,7 +322,10 @@ function staxx_appwatch_pass(): void {
   }
 
   [$dockerEvents, $newRec] = staxx_appwatch_docker_step($rec, true, true, true, PHP_INT_MAX, $time);
-  [$events, $newState] = staxx_appwatch_events($old, $now, $state, $time, staxx_appwatch_backup_running());
+  [$events, $newState] = staxx_appwatch_events($old, $now, $state, $time);
+  // A stop someone asked for is not the app stopping by itself.
+  $events = array_values(array_filter($events, fn($e) => !($e['kind'] === 'stopped' && staxx_appwatch_manual_stop((string)$e['id']))));
+  foreach ($events as $i => $e) unset($events[$i]['id']);
 
   // The store is only walked when there is something to say, not every minute.
   if ($events) {

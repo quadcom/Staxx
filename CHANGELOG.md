@@ -6,7 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
-- StaXX no longer sends "needs a look" messages when Appdata Backup stops apps for its nightly run: a stopped app is not reported as failing its health check, and apps stopping while the backup runs are not reported as stopping by themselves.
+- StaXX no longer sends "needs a look" messages when a backup or a script stops apps: a stopped app is not reported as failing its health check, and an app something told to stop is not reported as stopping by itself.
 - A notice in the Notifications panel keeps its message on full-width lines, with its time and button underneath, however long the button's label.
 - When StaXX sits under Unraid's Docker menu, Unraid's padlock now unlocks and locks StaXX's list and Docker Containers' list together.
 - The window listing a stack's services, opened from the cubes button on a card, is dark again, so the service names can be read.
