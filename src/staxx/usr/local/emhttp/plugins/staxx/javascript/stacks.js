@@ -33974,11 +33974,20 @@
   // placeholder moves, so only that is still read live in dragover below.
   var draggingGripSiblings = [];
 
-  // Unraid's own top bar draws a padlock on the standalone StaXX page (its
-  // .page header carries Lock="true"; the Docker tab draws none) and calls
-  // window.LockButton() from a hard-coded onclick — see the definition below. Its own Docker Containers
-  // page starts every load locked, so this does too: the grips stay inert
-  // until the padlock is clicked open, exactly as stock Unraid behaves.
+  // There is one padlock, Unraid's, and StaXX obeys it (Adrian, 2026-10-05).
+  // Unraid draws it in the top bar on the standalone StaXX page (Lock="true"
+  // in its .page header) and on the Docker menu (Docker.page), and calls
+  // window.LockButton() from a hard-coded onclick. Its memory is the
+  // 'lockbutton' cookie: present means unlocked. Docker Containers clears it
+  // on every load, so the page always opens locked; this does the same, so
+  // the two never disagree when they share the Docker menu (PLAN_228).
+  function lockCookieSet() {
+    return document.cookie.split(';').some(function (c) { return c.replace(/^\s+/, '').indexOf('lockbutton=') === 0; });
+  }
+  function lockCookieWrite(unlocked) {
+    document.cookie = 'lockbutton=' + (unlocked ? 'lockbutton' : '; max-age=0') + '; path=/';
+  }
+  lockCookieWrite(false);
   var sortLocked = true;
 
   // The class lives on .staxx-scaffold, the page's outer wrapper, rather
@@ -34013,10 +34022,25 @@
   // exists, so this has to be a real global for the click to find. Its
   // absence is exactly the "LockButton is not defined" error the feedback
   // board reported on 2026-09-17.
-  window.LockButton = function () {
-    sortLocked = !sortLocked;
+  //
+  // Under the Docker menu, Docker Containers defines its own LockButton on the
+  // same screen, and whichever script runs last owns the name. So: when its
+  // one was already there, this calls it (it flips the cookie and its own
+  // list); and whichever one answered, the click listener below re-reads the
+  // cookie afterwards, so StaXX follows the padlock either way.
+  var unraidLockButton = typeof window.LockButton === 'function' ? window.LockButton : null;
+  function syncSortLock() {
+    sortLocked = !lockCookieSet();
     applySortLock();
+  }
+  window.LockButton = function () {
+    if (unraidLockButton) unraidLockButton();
+    else lockCookieWrite(sortLocked);   // locked now, so this click unlocks
+    syncSortLock();
   };
+  document.addEventListener('click', function (event) {
+    if (event.target.closest && event.target.closest('div.nav-item.LockButton')) setTimeout(syncSortLock, 0);
+  });
 
   if (rowsHost) {
     // One delegated listener for every select mark on the page, rather than
