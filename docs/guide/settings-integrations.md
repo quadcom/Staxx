@@ -1,12 +1,13 @@
 # Integrations tab
 
-<!-- index: 85 | Docker Hub sign-in, your own registries, StaXXCrypt, and connecting to Nginx Proxy Manager and Pi-hole. -->
+<!-- index: 85 | Docker Hub sign-in, your own registries, StaXXCrypt, connecting to Nginx Proxy Manager and Pi-hole, and app icons in emails. -->
 
 This tab, in **Settings**, holds sign-in details for Docker Hub, your own image registries, the
-StaXXCrypt hashing container, and Nginx Proxy Manager and Pi-hole.
+StaXXCrypt hashing container, and Nginx Proxy Manager and Pi-hole. It also shows whether StaXX
+can put SVG app icons in its emails.
 
 ![The Integrations tab in full: the Docker Hub access box with its Username and Access token fields, the Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box with its dropdown, its state line, the four password formats each marked passes, the What is inside it list and the Show the recipe link](../images/guide/settings-registries-tab.png)
-![The lower part of the Integrations tab: the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch, Test connection with its result, and the Feedback board line reading connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
+![The lower part of the Integrations tab: the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch, the Test connection button, the App icons in emails box reading Installed, version 0.48.1 with its resvg link, and the Feedback board line reading connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
 
 ## Docker Hub access
 
@@ -80,6 +81,14 @@ Press **Test connection** to sign in to Nginx Proxy Manager and Pi-hole with the
 passwords you have saved, and see what each one says. Save your changes first.
 
 See [Proxy and DNS](proxy-and-dns.md) for using Nginx Proxy Manager and Pi-hole with your stacks.
+
+## App icons in emails
+
+![The App icons in emails box on the Integrations tab: its paragraph about SVG icons and resvg, the line Installed, version 0.48.1, and the link resvg, by the resvg authors, MIT licence, with the foot of the Check the connection box above and the Feedback board line below](../images/guide/settings-integrations-app-icons.png)
+
+StaXX installs a small program, resvg, that turns SVG app icons into pictures for its emails.
+This box shows whether it is installed, and links to the resvg project. While it reads
+**Not installed**, an app with an SVG icon shows a letter in its emails.
 
 ## Terms used here
 
