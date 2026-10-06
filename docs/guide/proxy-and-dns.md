@@ -16,9 +16,9 @@ Manager; Pi-hole is optional.
 
 ## Setting up the connection
 
-![The Integrations tab showing the Nginx Proxy Manager box with an example address and email, the Pi-hole box with an example address, Allow insecure connections switched on, the Test connection button, the App icons in emails box and the Feedback board line](../images/guide/settings-integrations-proxy.png)
+![The Integrations tab showing the Proxy and DNS box: the Nginx Proxy Manager box with an example address and email, the Pi-hole box with an example address, Allow insecure connections switched on and the Test connection button; below it the Error explanations, App icons in emails and Feedback board lines](../images/guide/settings-integrations-proxy.png)
 
-Under **Settings**, on the **Integrations** tab, fill in the address of Nginx Proxy Manager's admin page
+Under **Settings**, on the **Integrations** tab, in the **Proxy and DNS** box, fill in the address of Nginx Proxy Manager's admin page
 (the one on port 81) and the email and password you sign in with there. Fill in Pi-hole's address too if
 you want local DNS names as well. Press **Save**, then **Test connection** to check both.
 
