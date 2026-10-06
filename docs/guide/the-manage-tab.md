@@ -1,6 +1,8 @@
 # The Manage tab
 
-<!-- index: 8 | what the Manage tab is for, how to open it, and what each of its three panes — log, shell and file browser — does and refuses to do. -->
+<!-- index: 8 | what the Manage tab is for, how to open it, and what each of its three panes — log, shell and file browser — does and refuses to do. | parent: the-stack-editor.md -->
+
+[StaXX guide](README.md) › [The stack editor](the-stack-editor.md) › The Manage tab
 
 Manage gives you a live console for one running container: its log, a real command line inside it, and a look at its files. Open it from a stack's **Logs** button on the list, or from the **Manage** tab in [the stack editor](the-stack-editor.md) once a stack is open. A **Logs** item against one particular container opens Manage with that container already picked; the stack's own **Logs** button opens on **All**.
 

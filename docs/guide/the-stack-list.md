@@ -2,6 +2,8 @@
 
 <!-- index: 5 | a walk round the page you land on: every button along the top, every part of a row, and every item in the menus. -->
 
+[StaXX guide](README.md) › The stacks page
+
 This is the screen you land on. It lists every stack, one row each. This page walks it top to
 bottom, part by part.
 

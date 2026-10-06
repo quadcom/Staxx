@@ -1,6 +1,8 @@
 # Icons and images tab
 
-<!-- index: 83 | the Icons and images tab: container icons, reading an image's documentation and StaXX fields. -->
+<!-- index: 83 | the Icons and images tab: container icons, reading an image's documentation and StaXX fields. | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › Icons and images tab
 
 The **Icons and images** tab, in [Settings](settings.md), controls how StaXX finds an icon for each
 container and how much it reads about an image when you add one.

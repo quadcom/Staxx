@@ -1,13 +1,15 @@
 # About tab
 
-<!-- index: 87 | the version of StaXX and Docker Compose you are running, the work by others StaXX uses, and the services it contacts -->
+<!-- index: 87 | the version of StaXX and Docker Compose you are running, the work by others StaXX uses, and the services it contacts | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › About tab
 
 **About**, the last tab in **Settings**, shows which version you are running, who made the work StaXX
 uses, and which outside services StaXX talks to. Nothing on this tab changes a setting.
 
 ## What the tab shows
 
-![The Settings panel on the About tab: the StaXX version, the Docker Compose version installed by StaXX, the Credits list with each name linked and its licence below, and Services StaXX contacts](../images/guide/settings-about-tab.png)
+![The Settings panel on the About tab: the StaXX version, the Docker Compose version installed by StaXX, the Credits list, resvg among them, with each name linked and its licence below, and Services StaXX contacts](../images/guide/settings-about-tab.png)
 
 | Section | What it shows |
 |---|---|

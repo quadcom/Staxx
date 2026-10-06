@@ -1,13 +1,15 @@
 # Integrations tab
 
-<!-- index: 85 | Docker Hub sign-in, your own registries, StaXXCrypt, connecting to Nginx Proxy Manager and Pi-hole, and app icons in emails. -->
+<!-- index: 85 | Docker Hub sign-in, your own registries, StaXXCrypt, connecting to Nginx Proxy Manager and Pi-hole, error explanations and the feedback board. | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › Integrations tab
 
 This tab, in **Settings**, holds sign-in details for Docker Hub, your own image registries, the
-StaXXCrypt hashing container, and the Proxy and DNS connection to Nginx Proxy Manager and Pi-hole. It also shows whether StaXX
-can put SVG app icons in its emails.
+StaXXCrypt hashing container, and the Proxy and DNS connection to Nginx Proxy Manager and Pi-hole. It
+also holds the Error explanations switch and your connection to the feedback board.
 
 ![The Integrations tab in full: the Docker Hub access box with its Username and Access token fields, the Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box with its dropdown, its state line, the four password formats each marked passes, the What is inside it list and the Show the recipe link](../images/guide/settings-registries-tab.png)
-![The lower part of the Integrations tab: the Proxy and DNS box holding the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch and the Test connection button, then the Error explanations switch, the App icons in emails box reading Installed, version 0.48.1 with its resvg link, and the Feedback board line reading connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
+![The lower part of the Integrations tab: the Proxy and DNS box holding the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch and the Test connection button, then the Error explanations switch, and the Feedback board box reading Connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
 
 ## Docker Hub access
 
@@ -71,7 +73,7 @@ passwords you have saved, and see what each one says. Save your changes first.
 
 ## Error explanations
 
-![The Error explanations box on the Integrations tab: the Send Docker errors StaXX cannot explain switch turned on, with its two-sentence explanation under it, between the foot of the Proxy and DNS box above and the App icons in emails box below](../images/guide/settings-integrations-error-explanations.png)
+![The Error explanations box on the Integrations tab: the Send Docker errors StaXX cannot explain switch turned on, with its two-sentence explanation under it, between the foot of the Proxy and DNS box above and the Feedback board box below](../images/guide/settings-integrations-error-explanations.png)
 
 | Setting | What it does |
 |---|---|
@@ -79,19 +81,13 @@ passwords you have saved, and see what each one says. Save your changes first.
 
 New explanations reach StaXX once a day, whichever way this is set.
 
-## App icons in emails
-
-![The App icons in emails box on the Integrations tab: its paragraph about SVG icons and resvg, the line Installed, version 0.48.1, and the link resvg, by the resvg authors, MIT licence, with the foot of the Error explanations box above and the Feedback board line below](../images/guide/settings-integrations-app-icons.png)
-
-StaXX installs a small program, resvg, that turns SVG app icons into pictures for its emails.
-This box shows whether it is installed, and links to the resvg project. While it reads
-**Not installed**, an app with an SVG icon shows a letter in its emails.
-
 ## Feedback board
+
+![The Feedback board box on the Integrations tab before connecting: the line Not connected with a Connect button, and its explanation underneath, with the foot of the Error explanations box above](../images/guide/settings-integrations-feedback.png)
 
 | Setting | What it does |
 |---|---|
-| Feedback board | Shows the account you are connected as. **Disconnect** ends the connection. When you are not connected it shows **Connect** instead. See [sending feedback](sending-feedback.md). |
+| Feedback board | Press **Connect** and sign in with Google or GitHub to send bug reports and ideas from the speech-bubble button. Once you are connected, the box shows your account name, and **Disconnect** ends the connection. See [sending feedback](sending-feedback.md). |
 
 ## Terms used here
 

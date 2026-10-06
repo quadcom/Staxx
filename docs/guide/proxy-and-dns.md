@@ -2,6 +2,8 @@
 
 <!-- index: 47 | giving an app a web address through Nginx Proxy Manager and a local DNS name in Pi-hole, and what the DNS mark on the stack list means. -->
 
+[StaXX guide](README.md) › Proxy and DNS
+
 Give an app a domain name and StaXX creates its proxy entry in Nginx Proxy Manager. It can also add
 the same name to Pi-hole, so devices on your network find the app by it. You need Nginx Proxy
 Manager; Pi-hole is optional.

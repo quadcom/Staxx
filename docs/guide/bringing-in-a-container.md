@@ -2,6 +2,8 @@
 
 <!-- index: 65 | a walkthrough of Import, from pressing the button to opening the new stack and taking it over. -->
 
+[StaXX guide](README.md) › Import an existing container
+
 Import takes a container already running on your server and writes it out as an ordinary StaXX
 stack. Nothing switches off, starts or changes while it runs.
 

@@ -1,6 +1,8 @@
 # Versions tab
 
-<!-- index: 9.5 | undoing an app's own update, reading a build's row, pinning a service to one exact build and releasing it again. -->
+<!-- index: 9.5 | undoing an app's own update, reading a build's row, pinning a service to one exact build and releasing it again. | parent: the-stack-editor.md -->
+
+[StaXX guide](README.md) › [The stack editor](the-stack-editor.md) › Versions tab
 
 **Versions** undoes an app's own update. It sits in the [stack editor](the-stack-editor.md), beside
 **Configure** and [**History**](editor-history.md).

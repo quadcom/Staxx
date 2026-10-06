@@ -2,6 +2,8 @@
 
 <!-- index: 41 | what a health check is, how to have StaXX work one out from the running chip or the editor, what the offer shows, and what the chip's colour says afterwards. -->
 
+[StaXX guide](README.md) › Health checks
+
 A health check is a question an app is asked again and again, to show it is working and not just
 running. StaXX can work one out for a service that has none. You reach it from the running chip on
 a row, or from the **Health check** group in [the stack editor](the-stack-editor.md).

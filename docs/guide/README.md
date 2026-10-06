@@ -92,7 +92,8 @@ This guide is written in English only.
 - **[Updates tab](settings-updates.md)** — the Updates tab: the check schedule, the default action,
   install timing, notifications and the update-check activity table.
 - **[Integrations tab](settings-integrations.md)** — Docker Hub sign-in, your own registries,
-  StaXXCrypt, connecting to Nginx Proxy Manager and Pi-hole, and app icons in emails.
+  StaXXCrypt, connecting to Nginx Proxy Manager and Pi-hole, error explanations and the feedback
+  board.
 - **[Self-test tab](settings-self-test.md)** — the health check on the Settings panel, and what its
   backup line does and does not tell you
 - **[About tab](settings-about.md)** — the version of StaXX and Docker Compose you are running, the

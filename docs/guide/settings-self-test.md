@@ -1,6 +1,8 @@
 # Self-test tab
 
-<!-- index: 86 | the health check on the Settings panel, and what its backup line does and does not tell you -->
+<!-- index: 86 | the health check on the Settings panel, and what its backup line does and does not tell you | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › Self-test tab
 
 **Self-test**, the last tab in **Settings**, runs the moment you open it, fresh every time — there
 is nothing to press first.

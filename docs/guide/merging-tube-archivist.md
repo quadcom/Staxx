@@ -1,6 +1,8 @@
 # Example: merging Tube Archivist
 
-<!-- index: 66 | a worked example of the Merge tool: joining the three Tube Archivist apps from Community Applications into one stack, with every card you will see and the answer to give. -->
+<!-- index: 66 | a worked example of the Merge tool: joining the three Tube Archivist apps from Community Applications into one stack, with every card you will see and the answer to give. | parent: merging-stacks.md -->
+
+[StaXX guide](README.md) › [Merging stacks into one](merging-stacks.md) › Example: merging Tube Archivist
 
 Tube Archivist comes from Community Applications as three separate apps: **TubeArchivist** itself,
 **TubeArchivist-ES** for its search, and **TubeArchivist-Redis** for its cache. Installed that way,

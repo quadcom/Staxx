@@ -2,6 +2,8 @@
 
 <!-- index: 30 | what is in the data store, what is on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page. -->
 
+[StaXX guide](README.md) › File locations and the data store
+
 Almost everything StaXX knows sits in one folder you chose yourself: the data store. Three lines
 live on the flash drive instead.
 

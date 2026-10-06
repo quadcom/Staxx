@@ -2,6 +2,8 @@
 
 <!-- index: 67 | taking a stack off the list, what actually happens to it, and how to get it back. -->
 
+[StaXX guide](README.md) › Removing a stack
+
 Removing a stack takes it off the list. Its containers stop, and the whole folder is zipped up and
 kept in the archive folder. Open it from the stack's own menu.
 

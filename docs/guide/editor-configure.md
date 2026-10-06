@@ -1,6 +1,8 @@
 # Configure tab
 
-<!-- index: 7 | the three ways to see a stack's file, the form's sections, and what sits on a row inside them. -->
+<!-- index: 7 | the three ways to see a stack's file, the form's sections, and what sits on a row inside them. | parent: the-stack-editor.md -->
+
+[StaXX guide](README.md) › [The stack editor](the-stack-editor.md) › Configure tab
 
 The Configure tab is where you change a stack's settings, either as a form or as the raw compose
 file itself. It opens by default when you open a stack; see [the stack editor](the-stack-editor.md)

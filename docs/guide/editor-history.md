@@ -1,6 +1,8 @@
 # History tab
 
-<!-- index: 9 | undoing your own edits to a stack's file, what the list of kept versions holds, naming one to keep it for good, and what to do when the compose file is missing. -->
+<!-- index: 9 | undoing your own edits to a stack's file, what the list of kept versions holds, naming one to keep it for good, and what to do when the compose file is missing. | parent: the-stack-editor.md -->
+
+[StaXX guide](README.md) › [The stack editor](the-stack-editor.md) › History tab
 
 **History** undoes your own edits to a stack's file. It sits in the
 [stack editor](the-stack-editor.md), beside **Configure** and [**Versions**](editor-versions.md).

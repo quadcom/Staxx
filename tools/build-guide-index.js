@@ -28,7 +28,10 @@ var END = '<!-- pages:end -->';
 var WIDTH = 100;
 var INDENT = '  ';
 
-var MARKER = /^<!--\s*index:\s*([^|]*?)\s*\|\s*(.*?)\s*-->\s*$/;
+/* The optional third field names the page's parent for its breadcrumb trail. */
+var MARKER = /^<!--\s*index:\s*([^|]*?)\s*\|\s*(.*?)\s*(?:\|\s*parent:\s*(\S+?\.md))?\s*-->\s*$/;
+var TRAIL_START = '[StaXX guide](' + INDEX_FILE + ')';
+var SEP = ' › ';
 var HEADING = /^#\s+(.*?)\s*$/;
 
 /* Reads one page's title, sort key and summary. The title comes from the H1
@@ -39,6 +42,7 @@ function readPage(guideDir, file) {
   var title = '';
   var order = null;
   var summary = '';
+  var parent = null;
   var i;
 
   for (i = 0; i < lines.length; i++) {
@@ -48,6 +52,7 @@ function readPage(guideDir, file) {
     if (mark) {
       order = Number(mark[1]);
       summary = mark[2];
+      parent = mark[3] || null;
       break;
     }
   }
@@ -66,7 +71,8 @@ function readPage(guideDir, file) {
     throw new Error(file + ' has an index marker with no summary after the "|".');
   }
 
-  return { file: file, order: order, title: title, link: file, summary: summary };
+  return { file: file, order: order, title: title, link: file, summary: summary,
+    parent: parent };
 }
 
 function collectPages(guideDir) {
@@ -130,7 +136,69 @@ function writeIndex(guideDir, bullets) {
   return true;
 }
 
+/* The breadcrumb line each page should carry: the guide's front page, every
+ * ancestor by its own heading, then the page's own heading unlinked. A missing
+ * parent or a loop is an error naming the page, never a silently short trail. */
+function expectedTrails(pages) {
+  var byFile = {};
+  var trails = {};
+  pages.forEach(function (p) { byFile[p.file] = p; });
+  pages.forEach(function (p) {
+    var parts = [p.title];
+    var seen = {};
+    var cur = p;
+    seen[p.file] = true;
+    while (cur.parent !== null) {
+      var up = byFile[cur.parent];
+      if (!up) { throw new Error(p.file + ' names parent ' + cur.parent + ', which is not a guide page.'); }
+      if (seen[up.file]) { throw new Error(p.file + ' has a parent loop through ' + up.file + '.'); }
+      seen[up.file] = true;
+      parts.unshift('[' + up.title + '](' + up.link + ')');
+      cur = up;
+    }
+    parts.unshift(TRAIL_START);
+    trails[p.file] = parts.join(SEP);
+  });
+  return trails;
+}
+
+/* Puts the trail one blank line below the index marker, replacing the line
+ * already there if it starts the same way and touching nothing else. */
+function applyTrail(text, trail) {
+  var lines = text.split('\n');
+  var m = -1;
+  var i;
+  for (i = 0; i < lines.length; i++) {
+    if (MARKER.test(lines[i])) { m = i; break; }
+  }
+  if (m === -1) { return text; }
+  var j = m + 1;
+  while (j < lines.length && lines[j].trim() === '') { j++; }
+  if (j < lines.length && lines[j].indexOf(TRAIL_START) === 0) {
+    lines.splice(m + 1, j - m, '', trail);
+  } else {
+    lines.splice(m + 1, j - m - 1, '', trail, '');
+  }
+  return lines.join('\n');
+}
+
+/* Writes every page's trail; returns how many files changed. */
+function writeTrails(guideDir, pages) {
+  var dir = guideDir || GUIDE_DIR;
+  var trails = expectedTrails(pages);
+  var n = 0;
+  pages.forEach(function (p) {
+    var file = path.join(dir, p.file);
+    var current = fs.readFileSync(file, 'utf8');
+    var next = applyTrail(current, trails[p.file]);
+    if (next !== current) { fs.writeFileSync(file, next); n++; }
+  });
+  return n;
+}
+
 module.exports = {
+  expectedTrails: expectedTrails,
+  writeTrails: writeTrails,
   collectPages: collectPages,
   renderBullets: renderBullets,
   readIndex: readIndex,
@@ -147,6 +215,7 @@ if (require.main === module) {
     var changed = writeIndex(GUIDE_DIR, renderBullets(pages));
     console.log('\n' + pages.length + ' page(s); docs/guide/' + INDEX_FILE
       + (changed ? ' rewritten.' : ' already up to date.'));
+    console.log(writeTrails(GUIDE_DIR, pages) + ' page trail(s) written.');
   } catch (e) {
     console.error('\n' + e.message + '\n');
     process.exit(1);

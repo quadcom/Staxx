@@ -2,6 +2,8 @@
 
 <!-- index: 42 | the Password button in a stack's editor: making a password or a passphrase, turning one into the scrambled form some apps ask for, and why a dollar sign is written twice in a compose file. -->
 
+[StaXX guide](README.md) › Password generator and hashing tool
+
 Some apps want a password. Some want it scrambled first. The **Password** button does both, in
 [the stack editor](the-stack-editor.md), without the value ever leaving the page.
 

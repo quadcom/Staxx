@@ -2,6 +2,8 @@
 
 <!-- index: 90 | How to report a bug, suggest a feature or suggest an improvement from inside StaXX, and what is sent with it. -->
 
+[StaXX guide](README.md) › Sending feedback
+
 A speech-bubble button sits in the bottom right corner of every StaXX screen, the stack editor and
 **Settings** included. Press it to report a bug or suggest an idea. Your report goes to StaXX's
 feedback board, where the StaXX team reads it.

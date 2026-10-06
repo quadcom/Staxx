@@ -1,6 +1,8 @@
 # General tab
 
-<!-- index: 81 | where StaXX appears, installing apps, and switching container shells and file browsing on or off. -->
+<!-- index: 81 | where StaXX appears, installing apps, and switching container shells and file browsing on or off. | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › General tab
 
 ![The General tab in full: the seven tabs across the top, then Show StaXX in with its two small pictures, Docker menu with its two, Installs from the Apps page, and the Container access box holding Container shells and Container files side by side, each with its dropdown, then the Dashboard tile box with its Edit dashboard tile… button](../images/guide/settings-general-tab.png)
 

@@ -2,6 +2,8 @@
 
 <!-- index: 75 | undoing your own edits or an app's own update from the stack editor's History and Versions tabs, and bringing every stack back if the data store is lost. -->
 
+[StaXX guide](README.md) › Recovery and redundancy
+
 **History** undoes your own edits to a stack's file. See [History](editor-history.md). **Versions**
 undoes an app's own update, including pinning a service to one exact build and releasing it again.
 See [Versions](editor-versions.md). Both sit in the [stack editor](the-stack-editor.md), beside

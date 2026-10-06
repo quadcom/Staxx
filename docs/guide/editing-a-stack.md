@@ -2,6 +2,8 @@
 
 <!-- index: 40 | changing a setting and saving it, tidying a file into StaXX's layout, being offered a health check, and ports on a container with its own address. -->
 
+[StaXX guide](README.md) › Editing a stack
+
 This page covers the things you do inside the editor. For a tour of the screen itself — its
 tabs, views and buttons — see [the stack editor](the-stack-editor.md).
 

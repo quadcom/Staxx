@@ -2,6 +2,8 @@
 
 <!-- index: 15 | letting one container update itself, or wait for you, and whether it is mentioned in update messages — set on its own page or from its row. -->
 
+[StaXX guide](README.md) › Choosing how a container updates
+
 Every container can have its own answer to two questions: does StaXX install a newer version for
 it on its own, and which of StaXX's update messages does it show up in? Left alone, both follow your
 server-wide setting in [the Updates tab](settings-updates.md). Set them here to make one container

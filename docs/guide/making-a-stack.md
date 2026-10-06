@@ -2,6 +2,8 @@
 
 <!-- index: 55 | starting a stack with nothing but a name: the skeleton you are given, the settings offered as comments, every refusal and why, and the single folder that comes out of it. -->
 
+[StaXX guide](README.md) › Create a new stack
+
 Use this when there is no catalogue entry for what you want: an image you already have in mind, or a compose file written elsewhere.
 
 ## Steps

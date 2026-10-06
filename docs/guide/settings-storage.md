@@ -1,6 +1,8 @@
 # Storage tab
 
-<!-- index: 82 | the Storage tab: the data store, moving it, checking your backup, flash-drive copies, image clean-up, what Unraid Docker and Compose Manager left behind, and archived stacks. -->
+<!-- index: 82 | the Storage tab: the data store, moving it, checking your backup, flash-drive copies, image clean-up, what Unraid Docker and Compose Manager left behind, and archived stacks. | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › Storage tab
 
 The **Storage** tab, in [the settings panel](settings.md), holds where your stacks are kept, the
 copies StaXX keeps for safety, and the tools for clearing out old images.

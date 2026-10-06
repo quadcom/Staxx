@@ -2,6 +2,8 @@
 
 <!-- index: 65 | joining two or more stacks that are really one application into a single brand new stack, step by step through the six screens of the Merge tool: picking, naming, the compose files, the settings and files, the suggestions, and the confirmation. -->
 
+[StaXX guide](README.md) › Merging stacks into one
+
 Merging joins two or more stacks that belong to the same application into one new stack. It reads
 their compose files and writes a new stack that holds every container together. The originals are
 retired, not deleted, and only stop running if you ask for it.

@@ -29,7 +29,7 @@ shows the pass/fail count the suite itself printed; a failing one shows its whol
 | `crosslinks` | the browser half of the same: wording, and the confirmed-link write |
 | `db_images` | the table of well-known database images |
 | `export_redact` | what export blanks out before a stack leaves the machine |
-| `guide_coverage` | which shipped features the user guide still says nothing about |
+| `guide_coverage` | which shipped features the user guide still says nothing about, and whether every page carries its generated breadcrumb line |
 | `health_offer` | picking a health check, and the narrow door for one found elsewhere |
 | `image_import` | Docker Hub / local image -> starting compose file |
 | `js_undeclared` | names assigned but declared nowhere |

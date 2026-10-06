@@ -1,6 +1,8 @@
 # Updates tab
 
-<!-- index: 84 | the Updates tab: the check schedule, the default action, install timing, notifications and the update-check activity table. -->
+<!-- index: 84 | the Updates tab: the check schedule, the default action, install timing, notifications and the update-check activity table. | parent: settings.md -->
+
+[StaXX guide](README.md) › [Settings](settings.md) › Updates tab
 
 The **Updates** tab, in [Settings](settings.md), sets the server-wide defaults for checking and
 installing image updates. It is explained fully in [checking for updates](updates.md). A single

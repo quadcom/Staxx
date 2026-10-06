@@ -2,6 +2,8 @@
 
 <!-- index: 80 | how to open the settings panel, what its seven tabs are, and how to save or cancel a change. -->
 
+[StaXX guide](README.md) › Settings
+
 Press **Settings**, the cog above your stack list, to open this panel. If StaXX's own page will not
 open, see [If you cannot reach StaXX](where-things-live.md#if-you-cannot-reach-staxx).
 

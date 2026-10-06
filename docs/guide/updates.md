@@ -2,6 +2,8 @@
 
 <!-- index: 10 | answers what a check does, why images are asked about at different rates, what N to look at means, how the countdown to an automatic install works, and what the update messages say. -->
 
+[StaXX guide](README.md) › Update checking
+
 ## The update check
 
 ![The Check for updates button while a check is running, greyed out and counting "Checking 32 of 88…"](../images/guide/updates-checking.png)

@@ -159,6 +159,35 @@ console.log('\n1. Index in sync');
     problem('the bullet list has been hand-edited away from what the builder would '
             + 'write — run the index builder to put it back');
   }
+
+  // The breadcrumb line under each page's marker is generated too, so a page
+  // whose line is missing or differs is stale rather than hand-written.
+  var trails;
+  try {
+    trails = builder.expectedTrails(builder.collectPages(GUIDE_DIR));
+  } catch (e) {
+    problem('the index builder could not work out the breadcrumb trails — '
+            + (e && e.message ? e.message : String(e)));
+    return;
+  }
+  var stale = 0;
+  pages.forEach(function (name) {
+    var lines = (read(path.join(GUIDE_DIR, name)) || '').split('\n');
+    var at = -1, i;
+    for (i = 0; i < lines.length; i++) {
+      if (/^<!--\s*index:/i.test(lines[i])) { at = i; break; }
+    }
+    var j = at + 1;
+    while (at >= 0 && j < lines.length && lines[j].trim() === '') j++;
+    var got = (at >= 0 && j < lines.length && lines[j].indexOf('[StaXX guide](README.md)') === 0)
+      ? lines[j].replace(/\s+$/, '') : null;
+    if (got !== trails[name]) {
+      stale++;
+      problem(name + ' has a missing or out-of-date breadcrumb line — run '
+              + 'node tools/build-guide-index.js');
+    }
+  });
+  if (!stale) note('every guide page carries its breadcrumb line');
 })();
 
 /* =========================================================================

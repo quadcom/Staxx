@@ -2,6 +2,8 @@
 
 <!-- index: 70 | how Export blanks your passwords and paths out of a copy, what it refuses to send, and what the other person has to fill in. -->
 
+[StaXX guide](README.md) › Export and import a stack
+
 Your compose file holds things that belong only to you: passwords, keys, your own folder paths.
 **Export** makes a copy with those taken out, and leaves your own stack untouched.
 

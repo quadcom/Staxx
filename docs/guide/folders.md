@@ -2,6 +2,8 @@
 
 <!-- index: 50 | grouping stacks on the list: making a folder, moving a stack in or out, running everything inside one at once, renaming, and deleting. -->
 
+[StaXX guide](README.md) › Folders
+
 A folder groups stacks under one heading, and you can collapse it to hide the stacks inside. See
 [the folder row and its menu](the-stack-list.md#folders) for what it looks like on the list.
 

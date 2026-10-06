@@ -2,6 +2,8 @@
 
 <!-- index: 6 | a walk round the window that opens when you open a stack: the header row across the top, its four tabs, and the buttons along the bottom. -->
 
+[StaXX guide](README.md) › The stack editor
+
 Open it by clicking [a stack's picture](the-stack-list.md) on the list, or by opening **Add** and
 choosing **Add a blank stack**.
 Clicking one service's own icon, rather than the stack's, opens the same window in Split view,

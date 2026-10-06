@@ -2,6 +2,8 @@
 
 <!-- index: 52 | putting a StaXX tile on Unraid's Dashboard: arranging folders and stacks on it, choosing folder icons, and using it. -->
 
+[StaXX guide](README.md) › Dashboard tile
+
 The StaXX tile sits on Unraid's Dashboard among the other tiles. It shows a grid of rounded squares, like app icons on a phone. Each square is a folder or a single stack, and you decide which. Only what you place on the tile shows on it.
 
 To reach the editor, open **Settings**, then **General**, and press **Edit dashboard tile…** in the **Dashboard tile** box. On the Dashboard, the gear in the tile's header opens the same editor.

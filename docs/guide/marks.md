@@ -2,6 +2,8 @@
 
 <!-- index: 20 | a quick key to every mark and colour on the stacks page: what each one means and what to do about it. -->
 
+[StaXX guide](README.md) › Row marks and icons
+
 Every chip on [the stacks page](the-stack-list.md) is built from two things chosen independently: a
 colour and a mark. Learn the two rules below and you can read any chip on the page, including ones
 this list does not spell out.

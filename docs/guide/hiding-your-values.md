@@ -2,6 +2,8 @@
 
 <!-- index: 45 | the Sanitise tick that hides values marked secret while you photograph the editor, exactly what it leaves showing, what it switches off while it is on, and the one tab it cannot cover. -->
 
+[StaXX guide](README.md) › Sanitise mode
+
 **Sanitise** hides the values you marked secret so you can take a screenshot. Find it as a tick box
 on the top row of [the stack editor](the-stack-editor.md), beside the stack's name and just left of
 the **Password** button. It starts off.

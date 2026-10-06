@@ -2,6 +2,8 @@
 
 <!-- index: 60 | a step-by-step walkthrough of adding a catalogue app: what carries across, what needs checking before you start it, and why nothing exists until you save. -->
 
+[StaXX guide](README.md) › Install an app from Community Applications
+
 Community Applications is the catalogue of ready-made apps Unraid users already know. This turns
 one catalogue entry into an ordinary compose file, ready for you to check before anything runs.
 

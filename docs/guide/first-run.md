@@ -2,6 +2,8 @@
 
 <!-- index: 1 | the one screen you see before anything else: choosing where StaXX keeps its data, and what the choice means. -->
 
+[StaXX guide](README.md) › Your first run
+
 ![The page before a data store is chosen: an orange-edged notice saying no data store has been chosen yet, with Choose a data store and Go to Settings buttons](../images/guide/first-run-notice.png)
 
 The first time you open StaXX after installing it, there is no stack list yet. In its place is one
