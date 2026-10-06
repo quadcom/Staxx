@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20261005">
+<!ENTITY version              "00.05.00_dev20261006">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "0a98f63ae902f76a981db516f3527e64">
-<!ENTITY packageSHA256        "1f2f53647ba06cc9995c00962dc8d5dfdeb2b910ff460885af03c6c7827894c4">
+<!ENTITY packageMD5           "3454cd482e2ff7c7ad18d9f025cc10b3">
+<!ENTITY packageSHA256        "f6b230f335d5b7dea639a4b6ce3df29f94df849f5793ccfa17a2bfccef917030">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,14 @@
 >
 
 <CHANGES>
-###00.05.00_dev20261005
+###00.05.00_dev20261006
+- In Settings, Integrations, Nginx Proxy Manager, Pi-hole, Allow insecure connections and Check the connection now sit together in one Proxy and DNS box, with Error explanations after it.
+- App logos drawn as SVG now show in emails instead of a letter, and large logos are shrunk to fit rather than left out. StaXX installs a small program, resvg, to draw them.
+- StaXX no longer sends "needs a look" messages when a backup or a script stops apps: a stopped app is not reported as failing its health check, and an app something told to stop is not reported as stopping by itself.
+- A notice in the Notifications panel keeps its message on full-width lines, with its time and button underneath, however long the button's label.
+- When StaXX sits under Unraid's Docker menu, Unraid's padlock now unlocks and locks StaXX's list and Docker Containers' list together.
+- The window listing a stack's services, opened from the cubes button on a card, is dark again, so the service names can be read.
+- The first copy History keeps of a compose file you added yourself is now named "As StaXX first found it", shows when the file was last changed rather than when you opened it, and is kept for good like any named version.
 - The editor's message ticks now use the same names as Settings (New image found, Image installed, Installation failed, Still pinned), and the Default line under them says when each message is sent. An app ticked on while Settings has that message off is sent straight away, and the editor says so.
 - StaXX now says when it cannot see the ports of apps on the server's own network, and when one of them cannot start because its port is taken, it says which port and what is using it. That start is shown as failed.
 - Emails and the settings use StaXX's own icons, email sections have clear headings, and phone notifications are short: a title and one line.
@@ -555,7 +562,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20261005-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261006-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
