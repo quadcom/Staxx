@@ -1497,29 +1497,37 @@
   function settingsBox() { return document.getElementById(SETTINGS_ID); }
 
   function refreshSettings() {
-    var box = settingsBox();
-    if (!box) return;
+    if (!settingsBox()) return;
     call('feedback-status').then(function (r) {
-      box = settingsBox();
-      if (!box) return;
+      var box = settingsBox();
+      var row = box && box.querySelector('.staxx-feedback-settings-row');
+      if (!row) return;
       if (r.ok && r.connected) {
-        box.innerHTML = '<span class="staxx-feedback-settings-text">Feedback board: connected as ' +
-          esc(r.name || 'your account') + '</span> ' +
+        row.innerHTML = '<span class="staxx-feedback-settings-text">Connected as ' +
+          esc(r.name || 'your account') + '.</span> ' +
           '<button type="button" class="staxx-btn" data-fb="disconnect">Disconnect</button>';
       } else {
-        box.innerHTML = '<span class="staxx-feedback-settings-text">Feedback board: not connected</span> ' +
+        row.innerHTML = '<span class="staxx-feedback-settings-text">Not connected.</span> ' +
           '<button type="button" class="staxx-btn" data-fb="connect">Connect</button>';
       }
     });
   }
 
   // The Integrations pane is drawn by script each time Settings opens, so the
-  // line is added to it then, the way leftovers.js adds its own section.
+  // box is added to it then, the way leftovers.js adds its own section. The
+  // title and hint are fixed; only the status row is refilled.
   function loadSettingsLine() {
     var pane = document.querySelector('[data-pane="registries"]');
     if (!pane || settingsBox()) return;
     var div = el('div', 'staxx-field staxx-feedback-settings');
     div.id = SETTINGS_ID;
+    // data-key gives it the titled-box look the pane's other sections have.
+    div.setAttribute('data-key', 'feedback-board');
+    div.innerHTML = '<span>Feedback board</span>' +
+      '<span class="staxx-hint">Bug reports and ideas sent from the speech-bubble button go to ' +
+      'StaXX\'s feedback board, under your own account there. Connect once, signing in with ' +
+      'Google or GitHub.</span>' +
+      '<div class="staxx-feedback-settings-row"></div>';
     pane.appendChild(div);
     refreshSettings();
   }

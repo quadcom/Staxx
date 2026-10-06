@@ -2931,16 +2931,8 @@ switch ($action) {
     // only needs it to say plain text will be sent when it cannot.
     $notifyFile = '/usr/local/emhttp/plugins/staxx/include/Notify.php';
     if (is_file($notifyFile)) require_once $notifyFile;
-    // resvgVersion: the Integrations tab's "App icons in emails" status — the
-    // installed version, or '' when the program is not there to use.
-    $resvgVersion = '';
-    if (is_executable('/usr/local/lib/staxx/resvg')) {
-      // The marker holds the release tag ("v0.48.1"); the page shows the bare number.
-      $resvgVersion = ltrim(trim((string)@file_get_contents('/usr/local/lib/staxx/resvg.version')), 'vV');
-    }
     staxx_reply(['ok' => true, 'settings' => staxx_settings_read(),
-                 'notifyOverrule' => function_exists('staxx_notify_overrule_ok') ? staxx_notify_overrule_ok() : true,
-                 'resvgVersion' => $resvgVersion]);
+                 'notifyOverrule' => function_exists('staxx_notify_overrule_ok') ? staxx_notify_overrule_ok() : true]);
 
   // PLAN_214 — the Updates tab's "Send a test message" button. Sends through
   // the normal route with the saved settings; staxx_notify_test() answers

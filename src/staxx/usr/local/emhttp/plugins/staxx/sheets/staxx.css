@@ -17006,7 +17006,7 @@ html.staxx-noscroll body {
   border-color: var(--sm-danger);
 }
 
-.staxx-scaffold .staxx-feedback-settings {
+.staxx-scaffold .staxx-feedback-settings-row {
   display: flex;
   align-items: center;
   gap: 1rem;

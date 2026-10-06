@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- In Settings, Integrations, the Feedback board sits in its own box with a short explanation of what it is. resvg, the program that draws SVG app logos for emails, is credited on the About tab only.
 - In Settings, Integrations, Nginx Proxy Manager, Pi-hole, Allow insecure connections and Check the connection now sit together in one Proxy and DNS box, with Error explanations after it.
 - App logos drawn as SVG now show in emails instead of a letter, and large logos are shrunk to fit rather than left out. StaXX installs a small program, resvg, to draw them.
 - StaXX no longer sends "needs a look" messages when a backup or a script stops apps: a stopped app is not reported as failing its health check, and an app something told to stop is not reported as stopping by itself.

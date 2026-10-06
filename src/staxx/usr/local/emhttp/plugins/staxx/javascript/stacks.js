@@ -30157,25 +30157,6 @@
               'and stacks on it, each with its own icon. Only what you place on it shows on the ' +
               'tile.</span>' +
             '</div>';
-        } else if (tab === 'registries') {
-          // Read-only, so no setting for saveSettings() to read back. Plain
-          // text in the same box styling as the sections above it.
-          rowsHtml +=
-            '<div class="staxx-field" data-key="resvg-info">' +
-              '<span>App icons in emails</span>' +
-              '<span class="staxx-hint">Most email apps, Gmail and Outlook among them, cannot show SVG ' +
-              'pictures, and many app icons are SVG. StaXX uses resvg, a small open-source program, to ' +
-              'turn those icons into ordinary PNG pictures when it sends an email, so each app shows ' +
-              'its own icon instead of a letter. StaXX downloads it when it is installed, checks it is ' +
-              'the expected file, and uses it for nothing else.</span>' +
-              '<span class="staxx-about-fact">' + (res.resvgVersion
-                ? 'Installed, version ' + esc(res.resvgVersion) + '.'
-                : 'Not installed. StaXX could not download it, so emails show a letter in place of ' +
-                  'SVG icons until it can.') + '</span>' +
-              '<ul class="staxx-about-list"><li><a class="staxx-about-name" ' +
-              'href="https://github.com/linebender/resvg" target="_blank" rel="noopener">' +
-              'resvg, by the resvg authors, MIT licence</a></li></ul>' +
-            '</div>';
         } else if (tab === 'icons') {
           rowsHtml +=
             '<div class="staxx-field" data-key="scaffold-sweep">' +
