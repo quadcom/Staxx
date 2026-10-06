@@ -28538,33 +28538,27 @@
     // own sign-in, Pi-hole's, the one insecure-connections switch that
     // covers both, and the test button.
     {
-      key: 'NPM_URL', control: 'text', label: 'Nginx Proxy Manager address', tab: 'registries',
+      outer: 'proxy-dns', key: 'NPM_URL', control: 'text', label: 'Nginx Proxy Manager address', tab: 'registries',
       block: 'npm-access', sublabel: 'Address', placeholder: 'http://192.168.1.20:81'
     },
     {
-      key: 'NPM_USER', control: 'text', label: 'Nginx Proxy Manager email', tab: 'registries',
+      outer: 'proxy-dns', key: 'NPM_USER', control: 'text', label: 'Nginx Proxy Manager email', tab: 'registries',
       block: 'npm-access', sublabel: 'Email', placeholder: 'you@example.com'
     },
     {
-      key: 'NPM_PASS', control: 'password', label: 'Nginx Proxy Manager password', tab: 'registries',
+      outer: 'proxy-dns', key: 'NPM_PASS', control: 'password', label: 'Nginx Proxy Manager password', tab: 'registries',
       block: 'npm-access', sublabel: 'Password'
     },
     {
-      key: 'PIHOLE_URL', control: 'text', label: 'Pi-hole address', tab: 'registries',
+      outer: 'proxy-dns', key: 'PIHOLE_URL', control: 'text', label: 'Pi-hole address', tab: 'registries',
       block: 'pihole-access', sublabel: 'Address', placeholder: 'http://192.168.1.30'
     },
     {
-      key: 'PIHOLE_PASS', control: 'password', label: 'Pi-hole app password', tab: 'registries',
+      outer: 'proxy-dns', key: 'PIHOLE_PASS', control: 'password', label: 'Pi-hole app password', tab: 'registries',
       block: 'pihole-access', sublabel: 'App password'
     },
     {
-      // PLAN_212 — one switch in a box of its own. Unsaved reads as on, the
-      // server's default (default.cfg).
-      key: 'ERROR_REPORTS', control: 'toggle', label: 'Send Docker errors StaXX cannot explain',
-      tab: 'registries', block: 'error-explanations', noSubheading: true, on: 'true', off: 'false'
-    },
-    {
-      key: 'EXPOSE_ALLOW_INSECURE', control: 'toggle', label: 'Allow insecure connections', tab: 'registries',
+      outer: 'proxy-dns', key: 'EXPOSE_ALLOW_INSECURE', control: 'toggle', label: 'Allow insecure connections', tab: 'registries',
       on: 'yes', off: 'no',
       help: 'Allow insecure connections to Nginx Proxy Manager and Pi-hole: plain http, and https ' +
             'without checking the certificate. With plain http their passwords cross your network ' +
@@ -28575,9 +28569,15 @@
     {
       // Nothing here is saved — see the row.control === 'action' guards
       // beside the 'readout' ones above.
-      key: 'EXPOSE_TEST', control: 'action', label: 'Check the connection', tab: 'registries',
+      outer: 'proxy-dns', key: 'EXPOSE_TEST', control: 'action', label: 'Check the connection', tab: 'registries',
       help: 'Signs in to Nginx Proxy Manager and Pi-hole with the saved addresses and passwords, and ' +
             'reports what each one says.'
+    },
+    {
+      // PLAN_212 — one switch in a box of its own. Unsaved reads as on, the
+      // server's default (default.cfg).
+      key: 'ERROR_REPORTS', control: 'toggle', label: 'Send Docker errors StaXX cannot explain',
+      tab: 'registries', block: 'error-explanations', noSubheading: true, on: 'true', off: 'false'
     }
   ];
   // PLAN_214: the Notifications field is drawn by settingsNotifyHtml() from
@@ -30108,18 +30108,36 @@
         // A blocked row only draws its box once, at the block's first row in
         // this tab — every later row of the same block draws nothing.
         var seenBlocks = {};
-        var rowsHtml = SETTINGS_ROWS.filter(function (row) {
+        // A row.outer marks rows whose boxes are grouped in one titled outer
+        // box ("Proxy and DNS"); the run of consecutive rows sharing the
+        // marker is wrapped once, and each inner box draws as it always did.
+        var outerOpen = '';
+        var outerTitles = { 'proxy-dns': 'Proxy and DNS' };
+        var rowsHtml = '';
+        SETTINGS_ROWS.filter(function (row) {
           // A row.within row is drawn by its host row (settingsFieldHtml()'s
           // STORE_ROOT branch), not laid out here — same idea as row.block.
           return row.tab === tab && !row.within;
-        }).map(function (row) {
+        }).forEach(function (row) {
+          var html;
           if (row.block) {
-            if (seenBlocks[row.block]) return '';
+            if (seenBlocks[row.block]) return;
             seenBlocks[row.block] = true;
-            return settingsBlockHtml(row.block, res.settings);
+            html = settingsBlockHtml(row.block, res.settings);
+          } else {
+            html = settingsFieldHtml(row, res.settings[row.key] || '', res.settings);
           }
-          return settingsFieldHtml(row, res.settings[row.key] || '', res.settings);
-        }).join('');
+          if (row.outer !== outerOpen) {
+            if (outerOpen) rowsHtml += '</div>';
+            if (row.outer) {
+              rowsHtml += '<div class="staxx-field staxx-field--outer" data-key="' + esc(row.outer) +
+                          '"><span>' + esc(outerTitles[row.outer]) + '</span>';
+            }
+            outerOpen = row.outer || '';
+          }
+          rowsHtml += html;
+        });
+        if (outerOpen) rowsHtml += '</div>';
         // Two things that are not settings sit at the end of the tab they
         // are about, rather than pinned to the bottom of the whole panel:
         // PLAN_83's sweep reads and checks every stack there and then, so it

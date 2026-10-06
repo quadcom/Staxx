@@ -11550,6 +11550,35 @@ dialog::backdrop {
   margin: 0.6rem 0 0;
 }
 
+/* "Proxy and DNS" (Integrations): one outer box holding the Nginx Proxy
+ * Manager, Pi-hole, insecure-connections and test boxes. Its own box and
+ * title come from the rules above; the rules below give the boxes inside it
+ * the same look, one level down, and the room for their titles. */
+.staxx-settings-pane > .staxx-field--outer[data-key] {
+  padding-top: 0.6rem;
+}
+.staxx-settings-pane > .staxx-field--outer > .staxx-field[data-key] {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 3rem 0 0;
+  padding: 1.8rem 1.4rem 1.4rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.8rem;
+}
+.staxx-settings-pane > .staxx-field--outer > .staxx-field[data-key] > span:first-child {
+  position: absolute;
+  top: -0.9em;
+  left: 1rem;
+  margin: 0;
+  padding: 0 0.6rem;
+  background-color: var(--background-color, #1c1c1c);
+}
+.staxx-settings-pane > .staxx-field--outer > .staxx-field[data-key] > span.staxx-hint {
+  order: 1;
+  margin: 0.6rem 0 0;
+}
+
 /* The gap above the first box on a tab matches the gap between boxes,
  * whether that first thing is a setting or a group heading — higher
  * specificity than .staxx-settings-group:first-child below, which this
