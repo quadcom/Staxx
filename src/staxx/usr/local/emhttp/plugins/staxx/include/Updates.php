@@ -1999,6 +1999,40 @@ function staxx_update_check(string $scope, bool $force, bool $progress = false):
       continue;
     }
 
+    // A locally-built or side-loaded image has no pulled digest to compare —
+    // saying "up to date" would be a lie. Phase 7 of PLAN_45 will read the
+    // build recipe's base image properly; for now just say so, honestly.
+    // It sits before the registry is asked because a built image's name
+    // usually has no repository behind it, so the ask would fail and hide
+    // this answer.
+    if (!empty($local['built'])) {
+      $existing['built'] = true;
+      $existing['error'] = 'built here — cannot be compared';
+      unset($existing['local'], $existing['fails'], $existing['failedSince']);
+      $images[$image] = $existing;
+      $result['built']++;
+      echo $image." — built here, not compared\n";
+
+      // Phase 7: a locally-built image cannot be compared against a
+      // registry itself, but the base its Dockerfile builds FROM can be —
+      // staxx_rebuild_due() lives in UpdateRun.php, which this file must
+      // never require (that would be circular), so it is only called when
+      // present. $rows is already this image's list of "<stack>::<service>"
+      // holders from staxx_update_images() above.
+      if (function_exists('staxx_rebuild_due')) {
+        foreach ($rows as $holder) {
+          [$hStack, $hService] = array_pad(explode('::', $holder, 2), 2, '');
+          if ($hStack === '' || $hService === '') continue;
+          $rebuildWhy = '';
+          $rebuilds[$holder] = [
+            'due' => staxx_rebuild_due($hStack, $hService, $rebuildWhy),
+            'why' => $rebuildWhy,
+          ];
+        }
+      }
+      continue;
+    }
+
     // repo:tag@sha256:<digest> names one exact build — the registry can only
     // ever answer with the digest already written in the reference, so
     // asking is guaranteed waste, and on a limited allowance that waste is
@@ -2177,37 +2211,6 @@ function staxx_update_check(string $scope, bool $force, bool $progress = false):
       $images[$image] = $existing;
       $result['failed']++;
       echo $image." — local image could not be read\n";
-      continue;
-    }
-
-    // A locally-built or side-loaded image has no pulled digest to compare —
-    // saying "up to date" would be a lie. Phase 7 of PLAN_45 will read the
-    // build recipe's base image properly; for now just say so, honestly.
-    if (!empty($local['built'])) {
-      $existing['built'] = true;
-      $existing['error'] = 'built here — cannot be compared';
-      unset($existing['local']);
-      $images[$image] = $existing;
-      $result['built']++;
-      echo $image." — built here, not compared\n";
-
-      // Phase 7: a locally-built image cannot be compared against a
-      // registry itself, but the base its Dockerfile builds FROM can be —
-      // staxx_rebuild_due() lives in UpdateRun.php, which this file must
-      // never require (that would be circular), so it is only called when
-      // present. $rows is already this image's list of "<stack>::<service>"
-      // holders from staxx_update_images() above.
-      if (function_exists('staxx_rebuild_due')) {
-        foreach ($rows as $holder) {
-          [$hStack, $hService] = array_pad(explode('::', $holder, 2), 2, '');
-          if ($hStack === '' || $hService === '') continue;
-          $rebuildWhy = '';
-          $rebuilds[$holder] = [
-            'due' => staxx_rebuild_due($hStack, $hService, $rebuildWhy),
-            'why' => $rebuildWhy,
-          ];
-        }
-      }
       continue;
     }
 
