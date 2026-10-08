@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- In the stack list, each figure sits inside its graph, so the columns no longer shift when a number changes, and a stack's ports sit under its network name instead of one per line.
 - An app built on your own server now shows as built here, instead of a "could not check" warning that never went away.
 - In Settings, Integrations, the Feedback board sits in its own box with a short explanation of what it is. resvg, the program that draws SVG app logos for emails, is credited on the About tab only.
 - In Settings, Integrations, Nginx Proxy Manager, Pi-hole, Allow insecure connections and Check the connection now sit together in one Proxy and DNS box, with Error explanations after it.

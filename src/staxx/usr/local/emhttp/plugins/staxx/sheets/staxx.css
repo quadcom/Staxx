@@ -168,6 +168,19 @@
  * file reads one of the three names below, so there is one place to retune
  * the feel of the whole page.
  */
+/* Unraid's page ships only the regular and bold faces of Clear Sans, so a
+   weight of 300 would fall back to regular. This is Intel's Clear Sans Light
+   (Apache 2.0, licence beside the file), trimmed to Latin. The URL cannot
+   carry filemtime() the way the asset links do because it lives inside the
+   stylesheet, and the font never changes. */
+@font-face {
+  font-family: "clear-sans";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("fonts/clear-sans-light.woff2") format("woff2");
+}
+
 .staxx-scaffold {
   --sm-motion: 140ms;
   --sm-motion-slow: 180ms;   /* the editor's width, which travels further */
@@ -2199,22 +2212,20 @@ div.title.staxx-has-titlebar {
   justify-content: center;
 }
 
-/* PLAN_144 Phase B: the shared rule above gives a blank cell only the
-   graph's own footprint (--staxx-graph-w + right padding) — narrower than a
-   populated cell, which also carries the left padding and .staxx-statv's
-   5.5rem before the graph even starts. Every stat track is max-content, so
-   for the ~100ms between fresh markup landing and the first stats tick, all
-   four tracks measure narrower, the 1fr Services track stretches to take up
-   the slack, and every column right of it jumps sideways and back once real
-   figures arrive. Giving the blank cell the full outer width a populated one
-   has — cell padding + .staxx-statv's 5.5rem + the graph's margin + the
-   graph + the right padding — stops the track ever changing size; the
-   matching padding-left keeps the dash centred over the graph slot exactly
-   where PLAN_121 put it. Change one, change both: this copies the 5.5rem
-   from .staxx-statv below and the 0.8rem margin from .staxx-spark. */
+/* PLAN_144 Phase B / PLAN_235: a populated cell's figure sits inside its
+   graph, so the cell is the graph plus 0.8rem of padding each side. The
+   shared rule above gives a blank cell only the graph plus the right padding.
+   Every stat track is max-content, so for the ~100ms between fresh markup
+   landing and the first stats tick all four tracks would measure narrower,
+   the 1fr Services track would stretch into the slack, and every column to
+   its right would jump sideways and back once real figures arrive. Giving
+   the blank cell the same outer width as a populated one (graph + 0.8rem
+   left + 0.8rem right) stops the track ever changing size; padding-left
+   0.8rem keeps the dash centred over the graph slot. Change one, change
+   both: the 0.8rem is the cell's side padding, as on .staxx-spark's cell. */
 .staxx-stacks .staxx-num.staxx-cell--blank {
-  width: calc(0.8rem + 5.5rem + 0.8rem + var(--staxx-graph-w) + 0.8rem);
-  padding-left: calc(0.8rem + 5.5rem + 0.8rem);
+  width: calc(var(--staxx-graph-w) + 1.6rem);
+  padding-left: 0.8rem;
 }
 
 .staxx-stacks [role="columnheader"].staxx-num::after,
@@ -2367,43 +2378,54 @@ div.title.staxx-has-titlebar {
 
 /* Several addresses stack rather than running on: a container on one of
    Unraid's br0.x networks has its own, and it should not be lost in a line.
-   Each one is itself a small flex row (PLAN_121 item 4): the label stays put,
-   vertically centred, with its ports beside it as their own left-aligned
-   column rather than a comma-joined string running across the cell — see
-   staxx_address_html() in StacksTable.php for the markup this reads. */
+   Each one is a small flex column: the network's name on top, its ports
+   wrapping underneath — see staxx_address_html() in StacksTable.php for the
+   markup this reads. */
 .staxx-addr {
   display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  white-space: nowrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  white-space: normal;
 }
 
 .staxx-addr + .staxx-addr {
-  margin-top: 0.2rem;
+  margin-top: 0.5rem;
 }
 
 /* What leads the entry: the network's name on a bridge, the address itself
    anywhere else. Either way it is the part that identifies WHERE, so it takes
    the foreground colour and the ports follow in the accent.
 
-   The colon between them is real text in the markup, folded into this same
-   span rather than sitting loose in .staxx-addr — a bare text node next to
-   this one would become its own flex item too, and .staxx-addr's gap would
-   float it away from the word it punctuates. See the note in
-   StacksTable.php. */
+   Light weight and a soft grey keep it quieter than the ports beneath it. */
 .staxx-addr-label {
-  color: var(--sm-fg);
+  font-weight: 300;
+  color: #c8c8c8;
 }
 
-/* One port per line rather than a comma-joined run — see
-   staxx_address_html(), which now writes one <span> per port instead of one
-   text node holding all of them. The join moves out of the text and into
-   this layout: there is no separator character between them any more, only
-   the line break. */
+/* The colon after the label stays in the text so a copied selection still
+   reads address:port, but it is its own span so the wide layout can hide it
+   visually (clipped, not display:none, which would drop it from the copy).
+   The card layout shows it again. */
+.staxx-addr-colon {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Ports wrap under the name, side by side — staxx_address_html() writes one
+   <span> per port with no separator character, so the spacing is the gap. */
 .staxx-addr-ports {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-direction: row;
+  flex-wrap: wrap;
+  column-gap: 0.8rem;
+  row-gap: 0;
   color: var(--sm-accent);
   font-family: ui-monospace, Consolas, monospace;
 }
@@ -12794,6 +12816,64 @@ dialog::backdrop {
     padding: 0.2rem 0.5rem;
     font-size: 1.2rem;
   }
+
+  /* PLAN_235: the stat figure sits inside its graph, on the graph's left
+     edge with its bottom on the graph's bottom, instead of beside it. Inside
+     this min-width query on purpose: the card layout below 130rem keeps its
+     own overlay (right-aligned, vertically centred, label + flexible graph),
+     and rules written at base level would also reach it and be overridden
+     only by out-specifying them. The cell is the positioning parent. */
+  .staxx-stacks .staxx-cell.staxx-num:not([role="columnheader"]) {
+    position: relative;
+  }
+
+  /* Cells with a graph. top: 50% + 1.6rem then translateY(-100%) puts the
+     figure's bottom edge on the graph's bottom: 1.6rem is half .staxx-spark's
+     3.2rem height, and right: 0.8rem is the cell's right padding, with the
+     width of the graph so left edges coincide — change one, change all three.
+     pointer-events: none lets hover reach the graph underneath. */
+  .staxx-stacks .staxx-cell.staxx-num:has(.staxx-spark):not([role="columnheader"]):not(.staxx-cell--blank) .staxx-statv {
+    position: absolute;
+    min-width: 0;
+    top: calc(50% + 1.6rem);
+    transform: translateY(-100%);
+    right: 0.8rem;
+    width: var(--staxx-graph-w);
+    box-sizing: border-box;
+    padding: 0 0.4rem 0.1rem;
+    text-align: left;
+    line-height: 1.15;
+    pointer-events: none;
+    z-index: 1;
+    text-shadow: 0 0 3px #000, 0 0 2px #000, 0 0 1px #000;
+  }
+
+  .staxx-stacks .staxx-cell.staxx-num .staxx-net {
+    align-items: flex-start;
+  }
+
+  /* The GPU badge's hover tip still has to work under the click-through
+     figure. */
+  .staxx-stacks .staxx-cell.staxx-num .staxx-gpu-badge {
+    pointer-events: auto;
+  }
+
+  /* Cells with no graph (folder totals, a stack's summary row) keep the
+     figure in flow, as wide as the graph and padded the same, so it lands on
+     the same left edge as the overlaid figures in the rows below it. */
+  .staxx-stacks .staxx-cell.staxx-num:not(:has(.staxx-spark)):not(.staxx-cell--blank):not([role="columnheader"]) .staxx-statv {
+    min-width: 0;
+    width: var(--staxx-graph-w);
+    box-sizing: border-box;
+    padding: 0 0.4rem;
+    text-align: left;
+  }
+
+  /* No placeholder to hold the graph's slot: the figure above already
+     occupies its width. */
+  .staxx-stacks .staxx-num:not(:has(.staxx-spark))::after {
+    display: none;
+  }
 }
 
 /* ---- Cards below desktop width (PLAN_128) --------------------------------
@@ -12991,12 +13071,31 @@ dialog::backdrop {
      drawn by CSS, since PLAN_121 took it out of the markup. */
   .staxx-stacks .staxx-addr {
     display: inline;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0;
+    white-space: normal;
+  }
+
+  .staxx-stacks .staxx-addr + .staxx-addr {
+    margin-top: 0;
+  }
+
+  /* The colon is hidden in the wide layout; here the address runs inline, so
+     it is shown again as plain text. */
+  .staxx-stacks .staxx-addr-colon {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
     white-space: normal;
   }
 
   .staxx-stacks .staxx-addr-ports {
     display: inline;
     flex-direction: row;
+    flex-wrap: nowrap;
   }
 
   .staxx-stacks .staxx-addr-ports > span + span::before {

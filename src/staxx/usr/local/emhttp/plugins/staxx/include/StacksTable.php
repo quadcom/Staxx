@@ -111,15 +111,17 @@ function staxx_address_html(array $addresses): string {
     // The colon is real text, not a CSS ::before. Generated content is not
     // included when a browser copies a selection, so a styled-in colon would
     // put "192.168.202.598083" on the clipboard — an address nobody can use.
-    // It lives inside the label span itself rather than loose in .staxx-addr
-    // — see the note there — which is why $name is rebuilt here rather than
-    // reused from above, whose copy has no ports to introduce.
+    // It sits in its own span right after the label: the wide layout hides it
+    // visually (clipped, not display:none, so it is still copied) and the
+    // card layout shows it. $name is not reused from above, whose copy has no
+    // ports to introduce.
     //
     // PLAN_121 item 4: one <span> per port, not one comma-joined text node —
-    // the ports stand in their own column beside the label (see staxx.css),
-    // so the join that used to be ", " in the text is now the layout itself.
+    // the ports wrap under the name in the wide layout (see staxx.css), so the
+    // join that used to be ", " in the text is now the layout itself.
     $out[] = '<span class="staxx-addr"'.$title.'>'
-           . '<span class="staxx-addr-label">'.htmlspecialchars($label).':</span>'
+           . '<span class="staxx-addr-label">'.htmlspecialchars($label).'</span>'
+           . '<span class="staxx-addr-colon">:</span>'
            . '<span class="staxx-addr-ports">'
            . implode('', array_map(
                function ($p) { return '<span>'.htmlspecialchars($p).'</span>'; },
