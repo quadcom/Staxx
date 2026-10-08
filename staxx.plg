@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.00_dev20261007">
+<!ENTITY version              "00.05.00_dev20261008">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "ce30b9d7edeacfe37372075021ae0f44">
-<!ENTITY packageSHA256        "df0d22f1a6aee1b9d03b4b063ca0b102f0e3dec41f8bea4a4189dd95073a1f8f">
+<!ENTITY packageMD5           "61510fe8addfe94eafd4ed7ea8013615">
+<!ENTITY packageSHA256        "f7cccc8b0314ff602f59af366093a3aa73649aba0d54317f7060592eedff7ee7">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,8 @@
 >
 
 <CHANGES>
-###00.05.00_dev20261007
+###00.05.00_dev20261008
+- An app built on your own server now shows as built here, instead of a "could not check" warning that never went away.
 - In Settings, Integrations, the Feedback board sits in its own box with a short explanation of what it is. resvg, the program that draws SVG app logos for emails, is credited on the About tab only.
 - In Settings, Integrations, Nginx Proxy Manager, Pi-hole, Allow insecure connections and Check the connection now sit together in one Proxy and DNS box, with Error explanations after it.
 - App logos drawn as SVG now show in emails instead of a letter, and large logos are shrunk to fit rather than left out. StaXX installs a small program, resvg, to draw them.
@@ -563,7 +564,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20261007-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261008-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
