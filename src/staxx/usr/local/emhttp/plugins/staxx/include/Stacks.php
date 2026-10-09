@@ -25,6 +25,8 @@ require_once '/usr/local/emhttp/plugins/staxx/include/BootCopy.php';
 // happened to pull Icons.php in first, so a server suite that requires only
 // this file still finds them.
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
+// Unraid's own labels, passed as one extra compose file on every start (PLAN_236).
+require_once '/usr/local/emhttp/plugins/staxx/include/Labels.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -2173,16 +2175,30 @@ function staxx_missing_external_networks(string $composeText, ?array $networks =
  * ~66ms `compose config` takes. A distinct filename suffix (.hash.json)
  * keeps this record from colliding with staxx_compose_meta()'s own.
  */
-function staxx_service_hashes(string $file): ?array {
+function staxx_service_hashes(string $file, bool $withLabels = false): ?array {
   static $cache = [];
 
   $files = staxx_compose_files($file);
   if ($files === []) return null;
-  $key = implode("\0", $files);
+  $suffix = '.hash.json';
+  $extra  = '';
+  if ($withLabels) {
+    // The hash a container gets once StaXX's labels are part of it (PLAN_236).
+    // The labels file's own content joins the cache key, so an edit to a WebUI
+    // or an icon is never answered from a stale record.
+    $labels = staxx_labels_file($file);
+    if ($labels === '') return staxx_service_hashes($file);   // no labels: same hash as without
+    $files[] = $labels;
+    $suffix  = '.hashl.json';
+    $extra   = md5((string)@file_get_contents($labels));
+  }
+  $key = implode("\0", $files).$extra;
   if (isset($cache[$key])) return $cache[$key];
 
-  $diskPath = STAXX_META_DIR.'/'.md5($files[0]).'.hash.json';
-  $metaKey  = staxx_meta_cache_key($files);
+  $diskPath = STAXX_META_DIR.'/'.md5($files[0]).$suffix;
+  // Without the labels file: it sits outside the stack and is covered by $extra.
+  $metaKey  = staxx_meta_cache_key($withLabels ? array_slice($files, 0, -1) : $files);
+  if ($metaKey !== null && $extra !== '') $metaKey = md5($metaKey.$extra);
 
   if ($metaKey !== null) {
     $stored = @json_decode((string)@file_get_contents($diskPath), true);
@@ -3051,6 +3067,11 @@ function staxx_restart_pending(array $s): array {
 
   $hashes = $s['file'] !== '' ? staxx_service_hashes($s['file']) : null;
   if ($hashes === null) return $memo[$key] = $empty;   // unknown, never a match
+  // Both fingerprints count as a match: a container made before StaXX wrote
+  // Unraid's labels carries the one without them, and must not light up as
+  // "restart to apply" for that alone. It picks the labels up at its next
+  // update or edit (PLAN_236, option B).
+  $hashesL = staxx_service_hashes($s['file'], true) ?? [];
 
   $services = [];
   $changed  = [];
@@ -3082,7 +3103,7 @@ function staxx_restart_pending(array $s): array {
     $liveHash = (string)($c['configHash'] ?? '');
     if ($fileHash === '' || $liveHash === '') {
       $services[$svc] = 'unknown';
-    } elseif ($fileHash !== $liveHash) {
+    } elseif ($fileHash !== $liveHash && ($hashesL[$svc] ?? '') !== $liveHash) {
       $changed[] = $svc;
       $services[$svc] = 'changed';
     } else {
@@ -5421,7 +5442,7 @@ function staxx_start_handover(string $rel, string &$error): string {
   }
 
   $script = staxx_handover_script(
-    $cmd, $files, $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
+    $cmd, staxx_run_files($file), $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
   );
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
@@ -5543,7 +5564,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
       if ($upCmd !== '' && $upFile !== '') {
         $upFiles = staxx_compose_files($upFile);
         $steps[] = 'cd '.escapeshellarg($dir).' 2>&1';
-        $steps[] = $upCmd.' '.staxx_compose_file_args($upFiles).' up -d --remove-orphans 2>&1';
+        $steps[] = $upCmd.' '.staxx_compose_file_args(staxx_run_files($upFile)).' up -d --remove-orphans 2>&1';
         $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $upFiles));
         $shownParts[] = 'compose '.$shownFiles.' up -d --remove-orphans';
       }
@@ -6514,7 +6535,7 @@ function staxx_start_takeover(string $rel, string &$error): string {
   // Built the same way staxx_start_job() builds its one 'up' step, so this is
   // not a new verb with its own prefix — just the one line the job runner
   // would already produce for `up`, run through the same detached machinery.
-  $fileArgs = staxx_compose_file_args($files);
+  $fileArgs = staxx_compose_file_args(staxx_run_files($file));
   $step     = $cmd.' '.$fileArgs.' up -d --remove-orphans 2>&1';
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
@@ -8489,8 +8510,12 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // this applies to.
   $profileFlags = staxx_profile_flags($name, $verb, $names, $file);
 
+  // A verb that creates containers carries Unraid's labels as the last -f on
+  // every one of its steps (so a pull + up pair stays one set of files). The
+  // line shown below leaves the generated file out: it is not the author's.
+  $runFiles = $startsSomething ? staxx_run_files($file) : $files;
   $invocations = array_map(
-    fn($step) => $cmd.' '.staxx_compose_file_args($files).$profileFlags.' '.$step.' 2>&1',
+    fn($step) => $cmd.' '.staxx_compose_file_args($runFiles).$profileFlags.' '.$step.' 2>&1',
     $steps
   );
   $chain = implode(' && ', $invocations);

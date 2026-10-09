@@ -569,7 +569,7 @@ function staxx_merge_restart_sources(array $rels, string $cmd): string {
   $failed = [];
   foreach ($rels as $rel) {
     $srcDir   = staxx_stack_dir($rel);
-    $srcFiles = staxx_compose_files(staxx_find_compose_file($srcDir));
+    $srcFiles = staxx_run_files(staxx_find_compose_file($srcDir));
     $startCmd = 'cd '.escapeshellarg($srcDir).' && '.$cmd.' '.staxx_compose_file_args($srcFiles)
               . ' up -d 2>&1';
     $code = 1;

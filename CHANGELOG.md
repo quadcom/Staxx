@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- Unraid's own Docker page and Dashboard now show each StaXX app's icon and a WebUI link, and call it "Compose" instead of "3rd Party". Each app picks this up the next time it is started or updated. Nothing is written into your compose file.
 - A web page address that names its own site, such as `http://app.example.com`, now lights the WebUI button. It used to stay grey unless the address carried a port number.
 - In the stack list, each figure sits inside its graph, so the columns no longer shift when a number changes, and a stack's ports sit under its network name instead of one per line.
 - The CPU column shows each stack's share of the whole processor, from 0 to 100%, and the graphs in the CPU, Memory, Network and GPU columns each have their own colour.
