@@ -2241,6 +2241,13 @@ div.title.staxx-has-titlebar {
   display: none;
 }
 
+/* The base .staxx-statv is a 5.5rem right-aligned box; centred in the slot,
+   that would leave the dash at the box's right end, off the graph's centre.
+   Shrinking the box to the dash puts the dash itself in the middle. */
+.staxx-stacks .staxx-num.staxx-cell--blank .staxx-statv {
+  min-width: 0;
+}
+
 /* The hairline between rows. A table drew this with `tbody tr + tr td`, and
  * the obvious translation is `.staxx-row + .staxx-row` — the same
  * adjacent-sibling selector .staxx-status and .staxx-projects use
