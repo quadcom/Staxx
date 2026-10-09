@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- A web page address that names its own site, such as `http://app.example.com`, now lights the WebUI button. It used to stay grey unless the address carried a port number.
 - In the stack list, each figure sits inside its graph, so the columns no longer shift when a number changes, and a stack's ports sit under its network name instead of one per line.
 - The CPU column shows each stack's share of the whole processor, from 0 to 100%, and the graphs in the CPU, Memory, Network and GPU columns each have their own colour.
 - An app built on your own server shows as built here, instead of a "could not check" warning that never went away.

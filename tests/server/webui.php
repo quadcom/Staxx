@@ -107,10 +107,9 @@ ok('a webui with https:// keeps the scheme',
 
 /* --------------------------------------------------------- no tokens ---- */
 
-// Behaviour change from before the literal-port rule: a webui with no
-// [PORT:…] token used to be honoured verbatim regardless of whether it named
-// a port. Now the address is the whole truth, so one with no port anywhere
-// resolves to '' — there is nothing for the button to open.
+// The address is the whole truth. One that names its own host opens as
+// written, port or not; one built on [IP] with no port anywhere resolves to
+// '' — it would only open this server's own webGUI.
 ok('a webui with a literal port and no tokens is returned verbatim',
    staxx_webui_url(svc('http://example.com:9000/admin', '', $port), $hostIp)
      === 'http://example.com:9000/admin');
@@ -142,6 +141,14 @@ ok('a path holding a colon and digits does not fool the port detection',
 
 ok('an address with no port anywhere => empty, even with a mapping to hand',
    staxx_webui_url(svc('http://[IP]/admin', '', $port), $hostIp) === '');
+
+// An address naming its own host needs no port: the scheme's default applies.
+ok('a domain address with no port is taken exactly as written',
+   staxx_webui_url(svc('http://app.example.com', '', $port), $hostIp) === 'http://app.example.com');
+ok('a domain address with a path and no port is taken exactly as written',
+   staxx_webui_url(svc('https://app.example.com/admin', '', $port), $hostIp) === 'https://app.example.com/admin');
+ok('[IP] with no port and nothing else is still refused',
+   staxx_webui_url(svc('http://[IP]/', '', $port), $hostIp) === '');
 
 /* ------------------------------------------- [PORT:…] token still works --- */
 

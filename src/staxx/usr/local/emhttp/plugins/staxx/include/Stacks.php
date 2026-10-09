@@ -2518,8 +2518,11 @@ function staxx_webui_literal_port(string $address): string {
  * so there the marker's own number is taken, matching what the compose
  * editor's Web page port field already shows for such a service.
  *
- * An address with no port anywhere — literal or token — has nothing for the
- * button to open, so it resolves to ''.
+ * An address that uses the `[IP]` placeholder and has no port anywhere —
+ * literal or token — has nothing for the button to open (`http://[IP]/` would
+ * only open this server's own webGUI), so it resolves to ''. An address that
+ * names its own host, such as `https://app.example.com/`, opens as written:
+ * the scheme's default port applies.
  *
  * The address itself: a running container's own address, but only on a
  * macvlan or ipvlan network, which is the only case where the container has
@@ -2551,7 +2554,8 @@ function staxx_webui_url(
   $address = ($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
            : ($fixedIp !== '' ? $fixedIp : $hostIp);
 
-  if (strpos($raw, '[IP]') !== false) {
+  $usesIp = strpos($raw, '[IP]') !== false;
+  if ($usesIp) {
     if ($address === '') return '';
     $raw = str_replace('[IP]', $address, $raw);
   }
@@ -2573,8 +2577,9 @@ function staxx_webui_url(
     if ($port === '' && $firstPort === [] && preg_match('/\[PORT:(\d+)\]/', $raw, $m)) $port = $m[1];
     if ($port === '') return '';
     $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
-  } elseif (staxx_webui_literal_port($raw) === '') {
-    // No token and no literal port either — nothing for the button to open.
+  } elseif ($usesIp && staxx_webui_literal_port($raw) === '') {
+    // [IP] with no token and no literal port — it would open the Unraid
+    // webGUI itself. An address naming its own host is left as written.
     return '';
   }
 
