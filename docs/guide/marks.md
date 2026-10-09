@@ -73,7 +73,7 @@ tell a live chip from a still one.
 
 The first chip on a stack or container row.
 
-![A folder row with four stack rows beneath it, each showing the app's logo, its name, a green "up" pill or a grey "stopped" one, the address it is reachable on, and columns of processor, memory and network figures](../images/guide/marks-row-states.png)
+![A folder row with four stack rows beneath it, each showing the app's logo, its name, a green running chip or a grey stop mark, the address it is reachable on with its ports underneath, and its processor, memory and network figures inside small graphs](../images/guide/marks-row-states.png)
 
 | Looks like | Means | What to do |
 |---|---|---|

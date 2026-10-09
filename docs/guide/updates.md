@@ -159,7 +159,7 @@ bars underneath show the download and the unpacking, each with a percentage and 
 total has been handled so far. Once the container starts, the panel slides away and the row
 underneath shows again, with its own controls back.
 
-![A stack row mid-update: over its Services and State columns sits a dark panel headed "Downloading the image · 8 of 23 layers done · a few seconds left", with a Download bar reading 79% · 32.2 MiB of 71.3 MiB and an Unpack bar reading 35% · 11.3 MiB of 71.3 MiB, the rows above and below unchanged](../images/guide/updates-pull-progress.png)
+![A stack row mid-update: over its Services, State and Address columns sits a dark panel headed "Downloading the image · 8 of 23 layers done · a few seconds left", with a Download bar reading 79% · 32.2 MiB of 71.3 MiB and an Unpack bar reading 35% · 11.3 MiB of 71.3 MiB, the rows above and below unchanged](../images/guide/updates-pull-progress.png)
 
 ## Pause and update all
 

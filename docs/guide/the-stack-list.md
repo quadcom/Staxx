@@ -67,18 +67,17 @@ At the right end of the title bar, next to "StaXX", small tags say how the last 
 The column titles sit directly above each folder's own stacks, not once at the top of the whole
 list. The loose stacks below the last folder get a row of titles of their own too.
 
-![The column headings, Stack, Services, State, Address, CPU, Memory, Network and GPU, above two stacks, one running and one stopped](../images/guide/the-stack-list-columns.png)
+![The column headings, Stack, Services, State, Address, CPU, Memory, Network and GPU, above three running stacks, NPM, homarr and buildbox, each with its address or network name above its ports and its figures inside small graphs](../images/guide/the-stack-list-columns.png)
 | Column | What it shows |
 |---|---|
 | Stack | The stack's name, its icon, and its state marks. |
 | Services | The service names inside it, or an error if the file will not read. |
 | State | Running or stopped, plus any update or restart mark. |
-| Address | Where the stack answers — an address, or a network name. |
-| CPU | The stack's share of the whole processor, from 0 to 100%, with a small graph. |
-| Memory | Memory use, with a small graph. |
-| Network | Network traffic, with a small graph. |
-| GPU | A coloured badge (Intel, AMD or NVIDIA\*) for a stack whose file asks for a graphics card, plus a use figure and small graph while it is running. The badge stays even when the stack is stopped. The column only appears when a stack on the page has one. |
-| Ports | The ports Docker is actually forwarding, plus the one a service's web page answers on. A stack with its own network address, or on host networking, shows none. |
+| Address | Where the stack answers: an address or a network name, with its ports underneath. The ports are the ones forwarded to the stack, plus the one a service's web page answers on. A stack with its own network address, or on host networking, shows none. |
+| CPU | The stack's share of the whole processor, from 0 to 100%, inside a small graph. |
+| Memory | Memory use, inside a small graph. |
+| Network | Network traffic, inside a small graph. |
+| GPU | A coloured badge (Intel, AMD or NVIDIA\*) for a stack whose file asks for a graphics card, plus a use figure inside a small graph while it is running. The badge stays even when the stack is stopped. The column only appears when a stack on the page has one. |
 
 \* NVIDIA is coming in a later update.
 
@@ -121,7 +120,7 @@ services as cards of their own.
 Two more parts are only on a stack holding more than one container. A cubes button left of the app
 picture opens and closes its container list. A line under the name counts its containers.
 
-![The buildbox stack opened with its cubes button: its own row with both app pictures, 2 containers under the name and a running chip, then one indented row each for buildbox and buildbox-web with their image, state and address, between the NPM, homarr and vaultwarden rows](../images/guide/the-stack-list-row-expanded.png)
+![The buildbox stack opened with its cubes button: its own row with its app pictures, 3 containers under the name and a running chip, then one indented row each for buildbox, buildbox-web and buildbox-win with their image, state and address, between the NPM and homarr rows above and vaultwarden below](../images/guide/the-stack-list-row-expanded.png)
 
 Each container gets its own row under the stack, with its image, state and address.
 
@@ -249,7 +248,7 @@ Click its picture to open the folder menu.
 
 ## Reordering the list
 
-![The StaXX page unlocked: the padlock in Unraid's top bar ringed and showing red, and a drag handle at the left of every folder row and of each stack row in the open Database folder](../images/guide/the-stack-list-unlocked.png)
+![The StaXX page unlocked: the padlock in Unraid's top bar ringed and showing red, and a drag handle at the left of every folder row and of each stack row in the open Services folder](../images/guide/the-stack-list-unlocked.png)
 
 The page opens locked. To change the order:
 
