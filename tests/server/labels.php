@@ -26,6 +26,7 @@ $root = '/tmp/staxx-labels-test';
 define('STAXX_LABELS_DIR', $root.'/labels');
 define('STAXX_UNRAID_ICON_DISK', $root.'/unraid-disk');
 define('STAXX_UNRAID_ICON_RAM', $root.'/unraid-ram');
+define('STAXX_UNRAID_DOCKER_INFO', $root.'/unraid-ram/docker.json');
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -104,10 +105,14 @@ $disk = STAXX_UNRAID_ICON_DISK; $ram = STAXX_UNRAID_ICON_RAM;
 foreach (['my.local-1', 'web-icon-neighbour', 'demo-web-1'] as $n) {
   file_put_contents("$disk/$n-icon.png", 'old'); file_put_contents("$ram/$n-icon.png", 'old');
 }
+file_put_contents(STAXX_UNRAID_DOCKER_INFO, json_encode(['demo-web-1' => ['icon' => '/q.png', 'url' => 'u'], 'other' => ['icon' => '/o.png']]));
 staxx_labels_file($demo, true);
 ok('a changed icon: exactly that container\'s two copies are removed',
    !is_file("$disk/my.local-1-icon.png") && !is_file("$ram/my.local-1-icon.png")
    && !is_file("$disk/demo-web-1-icon.png") && !is_file("$ram/demo-web-1-icon.png"));
+$noted = json_decode((string)file_get_contents(STAXX_UNRAID_DOCKER_INFO), true);
+ok('the icon note for that container is dropped, the rest of its entry and other containers kept',
+   !isset($noted['demo-web-1']['icon']) && ($noted['demo-web-1']['url'] ?? '') === 'u' && ($noted['other']['icon'] ?? '') === '/o.png');
 ok('a copy belonging to another container is left alone',
    is_file("$disk/web-icon-neighbour-icon.png") && is_file("$ram/web-icon-neighbour-icon.png"));
 $resvg = getenv('STAXX_RESVG_BIN') ?: '/usr/local/lib/staxx/resvg';

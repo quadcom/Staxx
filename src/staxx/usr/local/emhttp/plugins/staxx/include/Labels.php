@@ -27,6 +27,8 @@ if (!defined('STAXX_LABELS_DIR'))       define('STAXX_LABELS_DIR', '/tmp/staxx-l
 // Unraid keeps a downloaded icon here (kept) and a copy in RAM (lost at reboot).
 if (!defined('STAXX_UNRAID_ICON_DISK')) define('STAXX_UNRAID_ICON_DISK', '/var/lib/docker/unraid/images');
 if (!defined('STAXX_UNRAID_ICON_RAM'))  define('STAXX_UNRAID_ICON_RAM', '/usr/local/emhttp/state/plugins/dynamix.docker.manager/images');
+// Unraid's own note of each container's icon and link, also in RAM.
+if (!defined('STAXX_UNRAID_DOCKER_INFO')) define('STAXX_UNRAID_DOCKER_INFO', '/usr/local/emhttp/state/plugins/dynamix.docker.manager/docker.json');
 
 if (function_exists('staxx_labels_file')) return;
 
@@ -88,8 +90,16 @@ function staxx_labels_build(string $main): array {
  * so Unraid fetches the current one. Always done, not only on a change: the
  * running container's old label is not read here, and a refetch is cheap.
  * Exact paths from a charset-checked name, never a glob.
+ *
+ * Unraid also notes each container's icon in docker.json and only looks again
+ * when the noted file is missing (its weekly update check reloads them all).
+ * A container first seen without labels is noted as question.png, which
+ * exists, so that one key is dropped too and the next Docker page or
+ * Dashboard load fetches the icon. Written the way Unraid writes it.
  */
 function staxx_labels_refresh_icons(array $built): void {
+  $info    = is_file(STAXX_UNRAID_DOCKER_INFO) ? json_decode((string)@file_get_contents(STAXX_UNRAID_DOCKER_INFO), true) : null;
+  $changed = false;
   foreach ($built as $d) {
     $name = $d['container'];
     if (!isset($d['labels']['net.unraid.docker.icon']) || !preg_match('/^[A-Za-z0-9_.-]+$/', $name)) continue;
@@ -119,7 +129,9 @@ function staxx_labels_refresh_icons(array $built): void {
     }
     if (!$wrote) @unlink($disk);
     @unlink($ram);
+    if (is_array($info) && isset($info[$name]['icon'])) { unset($info[$name]['icon']); $changed = true; }
   }
+  if ($changed) staxx_atomic_write(STAXX_UNRAID_DOCKER_INFO, (string)json_encode($info, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
 
 /**
