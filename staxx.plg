@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "498da0f7ac6b9b9dc9b3492a52c778b0">
-<!ENTITY packageSHA256        "0963a9ac90e0e7b6c82d47d24a08dc9480cafe1192a2b5cf2de4095c1839d4c2">
+<!ENTITY packageMD5           "01aeeba6df73b91e84d42e8d0b3e4f19">
+<!ENTITY packageSHA256        "a1b88ad7bcf93cbaab27637ae7d1744c40a73d68de7efc6e6a61ba8c5a10c067">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -518,7 +518,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00_dev20261009-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
