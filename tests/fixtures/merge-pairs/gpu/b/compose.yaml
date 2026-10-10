@@ -1,0 +1,11 @@
+services:
+  ml:
+    image: example/gpu-ml:1
+    pull_policy: never
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: GPU-0
+  media:
+    image: example/gpu-media:1
+    pull_policy: never
+    devices: ["/dev/dri:/dev/dri"]

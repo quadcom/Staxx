@@ -1,0 +1,7 @@
+services:
+  svc:
+    image: alpine:3.20
+    volumes:
+      - data:/data
+volumes:
+  data: {}

@@ -1,0 +1,5 @@
+services:
+  web:
+    image: adminer:4
+    ports:
+      - "8094:8080"

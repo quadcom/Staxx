@@ -148,24 +148,39 @@ function staxx_detail_cache_path(string $image): string {
   return STAXX_DETAIL_DIR.'/'.sha1($image).'.json';
 }
 
+/** The shared holder both functions below read and write, by reference —
+ *  the simplest way for a write to be seen by a read straight after it in
+ *  the same request, without either function keeping its own copy. */
+function &staxx_detail_cache_memo(): array {
+  static $memo = [];
+  return $memo;
+}
+
 /** The gathered bundle for one image, or null when there is nothing cached
  *  or it has gone stale. Write-then-rename on the way in, same as every
- *  other cache under /tmp/staxx — a reader must never see half a file. */
+ *  other cache under /tmp/staxx — a reader must never see half a file.
+ *  Remembered per image for the request: one image's detail lookup asks
+ *  for this small file up to five times, and staxx_detail_cache_write()
+ *  keeps this same memo current, so a read straight after a write sees
+ *  exactly what was just written, as a disk read would. */
 function staxx_detail_cache_read(string $image): ?array {
+  $memo = &staxx_detail_cache_memo();
+  if (array_key_exists($image, $memo)) return $memo[$image];
+
   $path = staxx_detail_cache_path($image);
   $data = @json_decode((string)@file_get_contents($path), true);
-  if (!is_array($data) || !isset($data['at'])) return null;
-  if ((time() - (int)$data['at']) > STAXX_DETAIL_CACHE_TTL) return null;
-  return $data;
+  if (!is_array($data) || !isset($data['at']) || (time() - (int)$data['at']) > STAXX_DETAIL_CACHE_TTL) {
+    return $memo[$image] = null;
+  }
+  return $memo[$image] = $data;
 }
 
 function staxx_detail_cache_write(string $image, array $bundle): void {
   if (!is_dir(STAXX_DETAIL_DIR) && !@mkdir(STAXX_DETAIL_DIR, 0755, true)) return;
   $bundle['at'] = time();
-  $path = staxx_detail_cache_path($image);
-  $tmp  = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, json_encode($bundle)) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write(staxx_detail_cache_path($image), json_encode($bundle));
+  $memo = &staxx_detail_cache_memo();
+  $memo[$image] = $bundle;
 }
 
 /* ------------------------------------------------------------- one image -- */
@@ -348,10 +363,18 @@ function staxx_health_parse_published_test(string $raw): ?array {
  * no server at all. Matches services by repository path, not by name: a
  * published example almost never names its service the same as ours.
  *
+ * $unreadRaw is an out parameter (PLAN_163 part 2): set to the matching
+ * service's raw, unparsed `healthcheck.test` text only for the "declares
+ * one, but not in a shape read here" case, so a caller can count how often
+ * that happens without this function's own return value changing shape —
+ * every existing caller, and the test suite's direct calls against fixture
+ * text, still get a plain null exactly where they always have.
+ *
  * @return array{test:string[], interval:string, timeout:string,
  *               retries:int, start_period:string}|null
  */
-function staxx_health_published_extract(string $composeText, string $image): ?array {
+function staxx_health_published_extract(string $composeText, string $image, ?string &$unreadRaw = null): ?array {
+  $unreadRaw = null;
   // Belt and braces on top of the network side's own cap — this function is
   // also handed real fetched text directly, so it must refuse an oversized
   // one on its own rather than trust every caller to have checked first.
@@ -376,10 +399,21 @@ function staxx_health_published_extract(string $composeText, string $image): ?ar
     if ($svcImage === '' || strtolower(staxx_links_repo_path($svcImage)) !== $wantRepo) continue;
 
     $raw = $flat["services\0$svc\0healthcheck\0test"] ?? '';
-    if ($raw === '') return null;   // this is the matching service; it declares no check
+    if ($raw === '') {
+      // The flattener skips every sequence, so a `test:` written as a block
+      // list — the commonest shape this reader does not read — arrives here
+      // looking exactly like no check at all. The tally (PLAN_163 part 2)
+      // exists to count that shape, so look for it once in the raw text and
+      // hand its items over as the example; the answer is still null, since
+      // nothing is offered from it.
+      if (preg_match('/^([ \t]*)test:[ \t]*\n((?:\1[ \t]+-[ \t].*\n?)+)/m', $composeText, $mm)) {
+        $unreadRaw = trim(preg_replace('/\s*\n\s*-\s*/', ' ', "\n".$mm[2]));
+      }
+      return null;   // this is the matching service; it declares no check this reader can use
+    }
 
     $test = staxx_health_parse_published_test($raw);
-    if ($test === null) return null;   // declares one, but not in a shape read here
+    if ($test === null) { $unreadRaw = $raw; return null; }   // declares one, but not in a shape read here
 
     return [
       'test'         => $test,
@@ -403,7 +437,8 @@ function staxx_health_published_extract(string $composeText, string $image): ?ar
  * crawl of the repository looking for one. Only ever reads HEAD; there is no
  * write path here or anywhere near it.
  */
-function staxx_health_published_fetch(string $image): ?array {
+function staxx_health_published_fetch(string $image, ?string &$unreadRaw = null): ?array {
+  $unreadRaw = null;
   [$home] = staxx_watch_home($image);
   if ($home === '') return null;
 
@@ -420,7 +455,7 @@ function staxx_health_published_fetch(string $image): ?array {
     // Oversized (curl's own --max-filesize should already have aborted
     // this, but the check is cheap insurance) reads as nothing found too.
     if (strlen($resp['body']) > STAXX_HEALTH_PUBLISHED_MAX_BYTES) return null;
-    return staxx_health_published_extract($resp['body'], $image);
+    return staxx_health_published_extract($resp['body'], $image, $unreadRaw);
   }
 
   return null;
@@ -439,7 +474,15 @@ function staxx_health_published_check(string $image): ?array {
     return $cached['published_healthcheck'] ?? null;
   }
 
-  $result = staxx_health_published_fetch($image);
+  $unreadRaw = null;
+  $result = staxx_health_published_fetch($image, $unreadRaw);
+  // 2026-08-31 decision (PLAN_163 part 2): count how often a published
+  // example's own health check is discarded unread, so the narrow shape
+  // this reads can be widened from evidence rather than guesswork. Nothing
+  // about what is offered changes here — only that this one case is tallied.
+  if ($result === null && $unreadRaw !== null) {
+    staxx_health_turned_away_record('server', 'shape-not-read', $unreadRaw, $image);
+  }
 
   $bundle = staxx_detail_cache_read($image) ?? [];
   $bundle['published_checked']     = true;
@@ -447,6 +490,161 @@ function staxx_health_published_check(string $image): ?array {
   staxx_detail_cache_write($image, $bundle);
 
   return $result;
+}
+
+/* ---------------------------------------------------------------------------
+ * PLAN_163 part 2 — a tally, not a log, of published health checks StaXX
+ * turns away unread: how often it happens and what shapes they were, so the
+ * narrow acceptance rule (Detail.php above and health-offer.js's
+ * acceptPublishedCheck()) can be widened from evidence rather than guesswork.
+ * Adrian's own log-bloat concern, 2026-08-31: one entry per DISTINCT shape,
+ * counted up, never one row per sighting.
+ * ------------------------------------------------------------------------ */
+
+// A hard ceiling distinct shapes can never realistically reach — kept so the
+// file cannot grow without bound if something genuinely goes wrong. When it
+// is reached, the least-recently-seen entry (the smallest 'last') is dropped
+// to make room, on the theory that a shape not seen in a while is the one
+// least worth still holding.
+const STAXX_HEALTH_TURNED_AWAY_CAP = 200;
+const STAXX_HEALTH_TURNED_AWAY_EXAMPLE_MAX = 300;
+const STAXX_HEALTH_TURNED_AWAY_IMAGES_MAX  = 5;
+
+/**
+ * Where the tally lives: <store>/config/health-turned-away.json, or '' when
+ * no data store has been chosen. The env override is the same trick
+ * staxx_update_state_file() uses, so a server test can point this at /tmp
+ * without ever touching a real store.
+ */
+function staxx_health_turned_away_file(): string {
+  static $override = null;
+  if ($override === null) {
+    $env = getenv('STAXX_HEALTH_TURNED_AWAY_FILE');
+    $override = ($env !== false && $env !== '') ? $env : '';
+  }
+  if ($override !== '') return $override;
+
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/health-turned-away.json';
+}
+
+/** The tally, decoded and never anything but an array — a missing, unreadable
+ * or corrupt file reads as empty, the same as a fresh install.
+ */
+function staxx_health_turned_away_read(): array {
+  $file = staxx_health_turned_away_file();
+  $raw  = $file === '' ? false : @file_get_contents($file);
+  $data = $raw === false ? null : json_decode($raw, true);
+  return is_array($data) ? $data : [];
+}
+
+/**
+ * Write the tally, temp-then-rename, skipped when byte-identical to what is
+ * already there — same reasoning as staxx_update_state_save().
+ */
+function staxx_health_turned_away_write(array $data): bool {
+  $file = staxx_health_turned_away_file();
+  if ($file === '') return false;   // no store chosen yet — nothing to write into
+
+  $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+  if ($encoded === false) return false;
+
+  $current = @file_get_contents($file);
+  if ($current !== false && $current === $encoded) return true;
+
+  $dir = dirname($file);
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+
+  return staxx_atomic_write($file, $encoded, 0600);
+}
+
+/**
+ * The signature's third part: the first meaningful word of a refused test
+ * command, basenamed — "pg_isready" out of "pg_isready -U postgres" or out
+ * of "/usr/bin/pg_isready -U postgres", and out of the mode keyword itself
+ * ("CMD"/"CMD-SHELL") when the raw text still carries one, since that names
+ * nothing about the check. Brackets, quotes and commas are blanked first so
+ * a raw flow-list string ("[\"CMD-SHELL\", \"pg_isready...\"]") reads the
+ * same as the plain shell text health-offer.js sends.
+ */
+function staxx_health_turned_away_word(string $raw): string {
+  $flat = trim(preg_replace('/[\[\]"\',]/', ' ', $raw));
+  $words = preg_split('/\s+/', $flat);
+  $first = $words[0] ?? '';
+  if (($first === 'CMD' || $first === 'CMD-SHELL') && isset($words[1])) $first = $words[1];
+  return $first === '' ? '(empty)' : basename($first);
+}
+
+/**
+ * Record one sighting of a health check StaXX turned away unread. $where is
+ * 'server' (Detail.php's own published-example reader) or 'browser'
+ * (health-offer.js's acceptPublishedCheck(), via action.php's
+ * 'health-turned-away' case). Distinct shapes are keyed on where+reason+the
+ * signature word above, so the same command refused for the same reason from
+ * both sides still counts as one shape seen from two places — that they are
+ * kept apart at all is precisely what 'where' is for.
+ */
+function staxx_health_turned_away_record(string $where, string $reason, string $rawTest, string $image): void {
+  $data = staxx_health_turned_away_read();
+  $now  = date('c');
+
+  $example = str_replace(["\r", "\n"], ' ', $rawTest);
+  $example = substr($example, 0, STAXX_HEALTH_TURNED_AWAY_EXAMPLE_MAX);
+
+  $key = $where.'|'.$reason.'|'.staxx_health_turned_away_word($rawTest);
+
+  if (!isset($data[$key])) {
+    // A hard cap nobody expects to reach — see the constant's own comment —
+    // but if it ever is, the least-recently-seen entry makes room rather
+    // than refusing to record a genuinely new shape.
+    if (count($data) >= STAXX_HEALTH_TURNED_AWAY_CAP) {
+      uasort($data, fn($a, $b) => strcmp($a['last'] ?? '', $b['last'] ?? ''));
+      array_shift($data);
+    }
+    $data[$key] = [
+      'count'  => 0,
+      'first'  => $now,
+      'last'   => $now,
+      // Kept from the first sighting only, so it never churns — see the
+      // function header on why that matters for a shape somebody reviews by
+      // hand later.
+      'example' => $example,
+      'images' => [],
+    ];
+  }
+
+  $data[$key]['count']++;
+  $data[$key]['last'] = $now;
+  if (!in_array($image, $data[$key]['images'], true)
+      && count($data[$key]['images']) < STAXX_HEALTH_TURNED_AWAY_IMAGES_MAX) {
+    $data[$key]['images'][] = $image;
+  }
+
+  staxx_health_turned_away_write($data);
+}
+
+/**
+ * The self-test's one line: how many sightings, across how many distinct
+ * shapes, and since when — or null when the tally holds nothing (either
+ * because nothing has ever been turned away, or no store is chosen yet), so
+ * staxx_selftest() can say "none recorded" rather than a false "since never".
+ *
+ * @return array{sightings:int, shapes:int, first:string}|null
+ */
+function staxx_health_turned_away_summary(): ?array {
+  $data = staxx_health_turned_away_read();
+  if ($data === []) return null;
+
+  $sightings = 0;
+  $first = null;
+  foreach ($data as $entry) {
+    $sightings += (int)($entry['count'] ?? 0);
+    $entryFirst = (string)($entry['first'] ?? '');
+    if ($entryFirst !== '' && ($first === null || $entryFirst < $first)) $first = $entryFirst;
+  }
+  if ($sightings === 0 || $first === null) return null;
+
+  return ['sightings' => $sightings, 'shapes' => count($data), 'first' => $first];
 }
 
 /* ---------------------------------------------------------------- template -- */
@@ -476,15 +674,7 @@ function staxx_detail_template_match(string $image, string $dir = STAXX_IMPORT_T
   if (array_key_exists($key, $cache)) return $cache[$key];
 
   $found = null;
-  foreach ((array)@scandir($dir) as $file) {
-    // *.xml only — the folder also holds a .bak of whatever was last
-    // overwritten, and it would parse just as happily as a real template.
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $xml) {
     if (strtolower(staxx_links_repo_path((string)($xml->Repository ?? ''))) !== $repo) continue;
 
     $found = [
@@ -624,16 +814,12 @@ function staxx_detail_overview(
       "This is the image's own description label — its publisher wrote this in.", $current);
   }
 
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      $catOverview = staxx_detail_collapse(is_array($app) ? (string)($app['Overview'] ?? '') : '');
-      if (staxx_detail_schema_ok('overview', $catOverview)) {
-        return staxx_detail_answer($catOverview, 'catalog', 'claimed',
-          'The Community Applications catalogue describes the image this way.', $current);
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $catOverview = staxx_detail_collapse((string)($app['Overview'] ?? ''));
+    if (staxx_detail_schema_ok('overview', $catOverview)) {
+      return staxx_detail_answer($catOverview, 'catalog', 'claimed',
+        'The Community Applications catalogue describes the image this way.', $current);
     }
   }
 
@@ -658,20 +844,14 @@ function staxx_detail_overview(
 function staxx_detail_category(string $image, array $stackX, ?array $template): ?array {
   $current = trim((string)($stackX['category'] ?? ''));
 
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      if (is_array($app)) {
-        $list = is_array($app['CategoryList'] ?? null) ? $app['CategoryList'] : [];
-        $raw  = $list !== [] ? (string)$list[0] : (string)($app['Category'] ?? '');
-        $cat  = staxx_detail_normalise_category($raw);
-        if (staxx_detail_schema_ok('category', $cat)) {
-          return staxx_detail_answer($cat, 'catalog', 'claimed',
-            'The Community Applications catalogue files the image under this category.', $current);
-        }
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $list = is_array($app['CategoryList'] ?? null) ? $app['CategoryList'] : [];
+    $raw  = $list !== [] ? (string)$list[0] : (string)($app['Category'] ?? '');
+    $cat  = staxx_detail_normalise_category($raw);
+    if (staxx_detail_schema_ok('category', $cat)) {
+      return staxx_detail_answer($cat, 'catalog', 'claimed',
+        'The Community Applications catalogue files the image under this category.', $current);
     }
   }
 
@@ -701,19 +881,15 @@ function staxx_detail_author(
       "This is the image's own author/vendor label — its publisher wrote this in.", $current);
   }
 
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      // The catalogue feed has no dedicated author field for most entries;
-      // 'Repo' is the closest it carries (the maintaining account), so it is
-      // tried defensively rather than assumed present.
-      $catAuthor = trim(is_array($app) ? (string)($app['Author'] ?? $app['Repo'] ?? '') : '');
-      if (staxx_detail_schema_ok('author', $catAuthor)) {
-        return staxx_detail_answer($catAuthor, 'catalog', 'claimed',
-          'The Community Applications catalogue names this as the maintainer.', $current);
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    // The catalogue feed has no dedicated author field for most entries;
+    // 'Repo' is the closest it carries (the maintaining account), so it is
+    // tried defensively rather than assumed present.
+    $catAuthor = trim((string)($app['Author'] ?? $app['Repo'] ?? ''));
+    if (staxx_detail_schema_ok('author', $catAuthor)) {
+      return staxx_detail_answer($catAuthor, 'catalog', 'claimed',
+        'The Community Applications catalogue names this as the maintainer.', $current);
     }
   }
 
@@ -752,16 +928,12 @@ function staxx_detail_readme(
   // "where to ask for help" — so these two steps exist for a well-formed
   // future entry rather than anything seen in today's feed, and are
   // ordinarily no-ops.
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      $catReadme = staxx_links_url(is_array($app) ? (string)($app['Readme'] ?? '') : '');
-      if ($catReadme !== '') {
-        return staxx_detail_answer($catReadme, 'catalog', 'claimed',
-          'The Community Applications catalogue links to this as documentation.', $current);
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $catReadme = staxx_links_url((string)($app['Readme'] ?? ''));
+    if ($catReadme !== '') {
+      return staxx_detail_answer($catReadme, 'catalog', 'claimed',
+        'The Community Applications catalogue links to this as documentation.', $current);
     }
   }
   $tplReadme = staxx_links_url((string)($template['readme'] ?? ''));

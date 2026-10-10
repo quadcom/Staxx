@@ -11,18 +11,8 @@
  * first read, so STORE_ROOT has to be seeded into the config file BEFORE php
  * runs, not changed from inside this script:
  *
- *     pscp tests/server/paths.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzb1test-paths-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzb1test-paths-store\"" >> $CFG
- *       php /tmp/paths.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       diff -q /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/paths.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzb1test-paths-store /tmp/paths.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own folder, "zzb1test-paths", under /mnt/user/appdata — the

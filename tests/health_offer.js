@@ -18,14 +18,7 @@ var D = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/db-image
 var JSON_FILE = path.join(__dirname, '..', 'src/staxx/usr/local/emhttp/plugins/staxx/data/db-images.json');
 var TABLE = JSON.parse(fs.readFileSync(JSON_FILE, 'utf8'));
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 // Fills in every environment variable a recipe's command references, so a
 // round-trip test never fails on the "missing value" refusal by accident.
@@ -273,8 +266,47 @@ console.log('\nF. Published source order and refusals');
 })();
 
 /* =========================================================================
+ * G. PLAN_163 part 2 — a refusal reports itself once, for the tally
+ * ========================================================================= */
+
+console.log('\nG. A published refusal calls the report hook once');
+
+(function () {
+  var calls = [];
+  var real = H.reportTurnedAway;
+  H.reportTurnedAway = function (image, why, test) { calls.push({ image: image, why: why, test: test }); };
+
+  var refusedShape = {
+    test: ['CMD-SHELL', 'curl -fsS http://example.com/ -o /dev/null'],
+    interval: '30s', timeout: '5s', retries: 3, start_period: '30s'
+  };
+  H.chooseHealthCheck({
+    image: 'somebody/thing', fileCheck: false, ownCheck: false, dbEntry: null,
+    published: refusedShape, webPort: 8080, tools: { curl: true }
+  });
+
+  ok('the hook was called exactly once', calls.length === 1, JSON.stringify(calls));
+  ok('with the refusal reason', calls[0] && calls[0].why === 'shape-not-recognised');
+  ok('and the image it was refused for', calls[0] && calls[0].image === 'somebody/thing');
+
+  // An accepted published check must never report itself — only a refusal is
+  // a shape worth counting.
+  var accepted = {
+    test: ['CMD-SHELL', 'curl -fsS http://localhost:8080/ -o /dev/null'],
+    interval: '30s', timeout: '5s', retries: 3, start_period: '30s'
+  };
+  calls.length = 0;
+  H.chooseHealthCheck({
+    image: 'somebody/thing', fileCheck: false, ownCheck: false, dbEntry: null,
+    published: accepted, webPort: 8080, tools: { curl: true }
+  });
+  ok('an accepted published check reports nothing', calls.length === 0);
+
+  H.reportTurnedAway = real;
+})();
+
+/* =========================================================================
  * Summary
  * ========================================================================= */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

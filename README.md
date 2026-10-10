@@ -2,7 +2,7 @@
 
 <h3 align="center">Docker on Unraid, built on compose files</h3>
 
-> Version **[00.04.03](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
+> Version **[00.05.00](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
 
 ## Why this exists
 
@@ -76,7 +76,7 @@ whether StaXX does what you need.
 - **Health checks** can be worked out for you: where nothing is watching a running container, StaXX
   finds a real question to ask that image, tries it inside the container first, and tells you what
   the answer would actually prove — see
-  [letting StaXX work out a health check](docs/guide/marks.md#letting-staxx-work-out-a-health-check).
+  [letting StaXX work out a health check](docs/guide/marks.md#health-check-offer).
 - **One house layout** puts every file in the same order as it arrives, so your stacks all read the
   same way. Order only — nothing you wrote is rewritten, and comments stay with what they annotate;
   see [tidying a file](docs/guide/editing-a-stack.md#tidying-a-file-into-staxxs-layout).
@@ -141,7 +141,7 @@ before the array starts — see [where StaXX keeps its things](docs/guide/where-
 | `HEADER_MENU` | `false` | `true` gives StaXX its own button in the top bar instead of a tab under Docker. |
 | `TAKEOVER_DOCKER_TAB` | `false` | `true` replaces the Docker button entirely. No stock Unraid file is modified either way. |
 | `CATCH_INSTALLS` | `true` | What happens when something is installed from Unraid's own Apps page: `true` brings it in as a stack, `prompt` asks first, `false` leaves it to Unraid. |
-| `ICON_FETCH` | `true` | Fetch container logos. Only the icon's name is sent. |
+| `ICON_FETCH` | `true` | Whether StaXX finds an icon for a service that has none. |
 | `IMAGE_LOOKUP` | `true` | Read an image's documentation when adding it, for a fuller starting file. |
 | `WATCH_EXAMPLES` | `true` | Compare your file with the publisher's own example during an update check. |
 | `SHELL_ENABLED` | `true` | The root command line inside a container. `false` removes it everywhere. |
@@ -150,7 +150,8 @@ before the array starts — see [where StaXX keeps its things](docs/guide/where-
 | `UPDATE_WINDOW` + `_START` / `_END` | `true`, `03:00`–`05:00` | Only install automatically inside a quiet window. |
 | `UPDATE_NOTIFY` | `off` | Unraid notifications: `found`, or `applied` as well. |
 | `UPDATE_RETAIN` | `2` | How many previous builds of each image to keep for a rollback. |
-| `UPDATE_CLEANUP` | `off` | `weekly` removes images nothing uses and no history needs. |
+| `UPDATE_KEEP_IMAGES` | `yes` | `no` still remembers the version numbers but no longer keeps the image files on disk; a rollback downloads that version again, which only works while the source still has it. |
+| `STORAGE_ALERT_PERCENT` / `STORAGE_ALERT_DAYS` | `85` / `30` | When to show a notice pointing at Scan stored images: storage this full, or clutter sitting unused this many days. Nothing is ever removed on a schedule. |
 | `HUB_USER` / `HUB_TOKEN` | *(blank)* | A Docker Hub read-only token. Without one, checks are limited to roughly ten images an hour. |
 
 `CRYPT_MODE` decides whether the password-hashing helper stays running (`always`) or starts only
@@ -168,6 +169,24 @@ through a single endpoint. `src/staxx/` mirrors the install paths on the server;
 ## Licence
 
 GPL-2.0, matching `unraid/webgui`.
+
+## Credits
+
+StaXX uses work by these people and projects. Settings, About lists the same credits inside StaXX.
+
+- [hernandito's animated folder icons](https://github.com/hernandito/unRAID-Docker-Folder-Animated-Icons---Alternate-Colors):
+  offered in the Dashboard tile's icon picker, used with the author's permission. StaXX ships none
+  of these files; your server downloads the one you pick.
+- [ground7's animated icons](https://github.com/ground7/unraid-animated-svgs), MIT licence,
+  copyright 2020 Josiah Hutchinson.
+- [Dashboard Icons](https://github.com/homarr-labs/dashboard-icons) by homarr-labs, Apache-2.0.
+  The logos remain their owners' trademarks.
+- [Tabler Icons](https://github.com/tabler/tabler-icons) by Paweł Kuna, MIT licence.
+- [selfh.st icons](https://selfh.st/icons/), CC-BY-4.0, for the app icons on stacks and the
+  selfh.st logos tab in the Dashboard tile's icon picker.
+- [Docker Compose](https://github.com/docker/compose), Apache-2.0, Docker Inc., which StaXX
+  installs when a server has none.
+- [Community Applications](https://ca.unraid.net/), whose app feed and images the importer reads.
 
 ## Prior art
 

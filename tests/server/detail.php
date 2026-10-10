@@ -3,10 +3,14 @@
  * checked against the real installed Detail.php.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
- * pointed at /tmp/zzdetail-store and IMAGE_LOOKUP forced to "false", both set
- * in the real config file BEFORE php starts (staxx_cfg() memoises on first
- * read, so changing either from inside this script is already too late —
- * same reasoning tests/server/record.php gives for STORE_ROOT).
+ * pointed at /tmp/zzdetail-store, set in the flash pointer file BEFORE php
+ * starts (staxx_cfg() memoises on first read, so changing it from inside
+ * this script is already too late — same reasoning tests/server/record.php
+ * gives for STORE_ROOT). IMAGE_LOOKUP is not one of the three keys that file
+ * may hold (STAXX_FLASH_KEYS in Defines.php) — every other setting lives in
+ * the store's own config file — so this script seeds IMAGE_LOOKUP="false"
+ * into /tmp/zzdetail-store/config/staxx.cfg itself, before Defines.php's
+ * first require, the earliest point staxx_cfg() could be called.
  * Forcing IMAGE_LOOKUP off is deliberate, not incidental: with it off, every
  * network step in Detail.php (the registry chain, the Docker Hub request)
  * is skipped outright, so this suite never touches the network at all and
@@ -14,19 +18,8 @@
  * already have their own opt-in live suites (registry_live.php,
  * releasenotes_live.php); this file is not trying to re-prove those.
  *
- *     pscp tests/server/detail.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzdetail-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzdetail-store\"" >> $CFG
- *       sed -i "s#^IMAGE_LOOKUP=.*#IMAGE_LOOKUP=\"false\"#" $CFG
- *       grep -q "^IMAGE_LOOKUP=" $CFG || echo "IMAGE_LOOKUP=\"false\"" >> $CFG
- *       php /tmp/detail.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/detail.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzdetail-store /tmp/detail.php'
  *
  * Prints one line per case and exits non-zero on any failure.
  *
@@ -73,12 +66,19 @@
  * as published by the Free Software Foundation.
  */
 
+// IMAGE_LOOKUP is not a flash key (see this file's header) — seeded here,
+// into the scratch store's own config file, before Defines.php's first
+// require just below, the earliest staxx_cfg() could be called.
+@mkdir('/tmp/zzdetail-store/config', 0755, true);
+file_put_contents('/tmp/zzdetail-store/config/staxx.cfg', "IMAGE_LOOKUP=\"false\"\n");
+
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Watch.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php'; // staxx_service_icon()
 require_once '/usr/local/emhttp/plugins/staxx/include/Detail.php';
 
 if (staxx_stack_root() !== '/tmp/zzdetail-store/stacks') {
@@ -162,14 +162,16 @@ file_put_contents($caIndex, json_encode([
 /* --------------------------------------------- icon index fixture -- */
 
 // Both are now functions of the data store rather than flash constants
-// (PLAN_97 Phase 4) — the scratch STORE_ROOT set up above puts them under
-// /tmp/zzdetail-store/config, same as everywhere else in this fixture.
+// (PLAN_97 Phase 4) — the scratch STORE_ROOT set up above puts the icon
+// index directly under /tmp/zzdetail-store/config, same as everywhere else
+// in this fixture; it is a list of names, never a picture, so it is not
+// inside a stack's own .staxx folder.
 $iconIndexPath = staxx_icon_index_file();
 $iconIndexBak = '/tmp/zzdetail-icon-index.bak';
 $hadIconIndex = is_file($iconIndexPath);
 if ($hadIconIndex) copy($iconIndexPath, $iconIndexBak);
 
-if (!is_dir(staxx_icon_store_dir())) @mkdir(staxx_icon_store_dir(), 0755, true);
+if (!is_dir(staxx_config_root())) @mkdir(staxx_config_root(), 0755, true);
 file_put_contents($iconIndexPath, json_encode([
   'refs' => [
     'uniquewidgetzz' => 's',
@@ -201,6 +203,9 @@ register_shutdown_function(function () use (
   if ($hadCaApps) { copy($caAppsBak, $caApps); @unlink($caAppsBak); } else { @unlink($caApps); }
   if ($hadIconIndex) { copy($iconIndexBak, $iconIndexPath); @unlink($iconIndexBak); } else { @unlink($iconIndexPath); }
   @unlink($scratchState);
+  // The config file this script seeded IMAGE_LOOKUP into at the top — scratch,
+  // under /tmp, and belongs to nobody once this run is over.
+  @unlink('/tmp/zzdetail-store/config/staxx.cfg');
   echo "scratch stack root, CA cache and icon index restored\n";
 });
 

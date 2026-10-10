@@ -25,6 +25,8 @@ require_once '/usr/local/emhttp/plugins/staxx/include/BootCopy.php';
 // happened to pull Icons.php in first, so a server suite that requires only
 // this file still finds them.
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
+// Unraid's own labels, passed as one extra compose file on every start (PLAN_236).
+require_once '/usr/local/emhttp/plugins/staxx/include/Labels.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -137,6 +139,21 @@ function staxx_private_dir(string $dir): bool {
   if (!is_dir($dir) && !@mkdir($dir, 0700, true)) return false;
   @chmod($dir, 0700);
   return true;
+}
+
+/**
+ * A job the page's `job` poller can follow: its own log in STAXX_JOB_DIR
+ * whose first line is "$ <shown>", then $inner detached. Returns the job id,
+ * or '' with $error set.
+ */
+function staxx_spawn_job(string $shown, string $inner, string &$error): string {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) { $error = 'Could not create '.STAXX_JOB_DIR; return ''; }
+  $job = bin2hex(random_bytes(8));
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+  @file_put_contents($log, '$ '.$shown."\n\n");
+  @chmod($log, 0600);
+  staxx_detach($inner, $log);
+  return $job;
 }
 
 /* ------------------------------------------------------------------ paths -- */
@@ -293,8 +310,7 @@ function staxx_project_clashes(bool $reset = false): array {
 
   $projectOf = [];
   foreach (staxx_scan_stacks()['stacks'] as $found) {
-    $file = staxx_find_compose_file($found['dir']);
-    $projectOf[$found['rel']] = staxx_stack_project_guess($file, $found['leaf']);
+    $projectOf[$found['rel']] = staxx_stack_project_guess($found['file'], $found['leaf']);
   }
 
   $groups = [];
@@ -328,8 +344,7 @@ function staxx_name_free(string $leaf, string $ownPath = '', ?string &$error = n
   $guess = staxx_project_name($leaf);
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     if ($found['rel'] === $ownPath) continue;
-    $file = staxx_find_compose_file($found['dir']);
-    if (staxx_stack_project_guess($file, $found['leaf']) !== $guess) continue;
+    if (staxx_stack_project_guess($found['file'], $found['leaf']) !== $guess) continue;
 
     // Always written: every caller hands in a variable it has not set yet,
     // so testing it for null here would leave the refusal with no sentence.
@@ -443,6 +458,17 @@ function staxx_browse_dirs(string $path, string $purpose = ''): array {
         $why = 'a filesystem living in memory — anything here is lost at the next reboot';
       }
       if ($why !== '') $blocked[$entry] = $why;
+    }
+  }
+
+  /* The import window only reads a folder, so the placement rules do not apply;
+   * what cannot work is a share that lives on another computer, which the
+   * server will not read for stacks. Marked whatever the placement setting says. */
+  if ($purpose === 'import' && $real === $root) {
+    foreach ($dirs as $entry) {
+      if ($entry === 'remotes' || $entry === 'rootshare') {
+        $blocked[$entry] = 'on another computer on your network';
+      }
     }
   }
 
@@ -1013,16 +1039,55 @@ function staxx_create_refusal(string $name, bool $adopt): string {
 }
 
 /**
- * The main file plus its override, if one sits beside it — Docker's own
+ * The four filenames Compose's own loader recognises as an override, in the
+ * exact order it tries them: the first one it finds beside a main file is
+ * the one it pairs, independent of what the main file itself is called.
+ * Measured 2026-09-15 against Compose directly (PLAN_155 C5) — StaXX used to
+ * assume compose.yaml paired only with compose.override.*, never with a
+ * docker-compose.override.* sitting in the same folder; that was never true
+ * of Compose, which had already been pairing them, so a stack with an
+ * override under one of the other three names was being started with a
+ * different configuration by StaXX than by plain `docker compose up`.
+ */
+function staxx_override_names(): array {
+  return [
+    'compose.override.yml', 'compose.override.yaml',
+    'docker-compose.override.yml', 'docker-compose.override.yaml',
+  ];
+}
+
+/** Whether $file is one of the four names Compose would ever pair as an
+ * override, whatever the main file beside it is called. Used wherever a
+ * name has to be recognised as "an override" before it exists on disk —
+ * a first-ever save, or one still being typed and checked — where
+ * staxx_compose_files() has nothing written yet to answer from.
+ *
+ * Exact match, not case-insensitive: Compose on Linux matches these four
+ * names by byte comparison, so 'Compose.override.yml' is just another
+ * companion file to it and must be to us too (measured 2026-09-15).
+ */
+function staxx_is_override_name(string $file): bool {
+  foreach (staxx_override_names() as $name) {
+    if ($file === $name) return true;
+  }
+  return false;
+}
+
+/**
+ * The main file plus its override, if one sits beside it — Compose's own
  * pairing rule, not a scan of the folder. $main is a FILE PATH, not a
  * directory: staxx_find_compose_file() already answers "what is this
  * stack's one compose file", and this only ever widens that single answer
  * into a pair.
  *
- * Strict on purpose: compose.yaml pairs only with compose.override.*, never
- * with docker-compose.override.* sitting in the same folder. A looser match
- * — anything with "override" in its name — would run a file nobody
- * connected to this stack on purpose.
+ * The main file's own name plays no part in which override pairs with it —
+ * Compose picks its main file and its override independently, each from its
+ * own four-name list, and only warns if more than one candidate exists in
+ * either list. This follows the override list in the same order, so when
+ * two override files sit in the same folder the one Compose would use is
+ * the one paired here and the other is left where it lies (see
+ * staxx_stack_extras() and the self-test, which say so rather than staying
+ * silent about it).
  *
  * @return string[] [] for '', else [$main] or [$main, $override]
  */
@@ -1030,32 +1095,13 @@ function staxx_compose_files(string $main): array {
   if ($main === '') return [];
   $files = [$main];
 
-  $dot = strrpos($main, '.');
-  if ($dot !== false) {
-    $base = substr($main, 0, $dot);
-    foreach (['yaml', 'yml'] as $ext) {         // at most two is_file() calls
-      $candidate = $base.'.override.'.$ext;
-      if (is_file($candidate)) { $files[] = $candidate; break; }
-    }
+  $dir = dirname($main);
+  foreach (staxx_override_names() as $name) {   // Compose's own order — first found wins
+    $candidate = $dir.'/'.$name;
+    if (is_file($candidate)) { $files[] = $candidate; break; }
   }
 
   return $files;   // order matters: the override wins only because it comes second
-}
-
-/**
- * The override basename this stack's main file would pair with, whether or
- * not that override exists yet — same rule staxx_compose_files() itself
- * follows on the way in: same directory, same base name, same extension.
- * Used to check a first-ever override save, when staxx_compose_files() has
- * nothing on disk yet to report as $pair[1].
- */
-function staxx_expected_override_basename(string $main): string {
-  if ($main === '') return '';
-  $dot = strrpos($main, '.');
-  if ($dot === false) return '';
-  $ext = substr($main, $dot + 1);
-  if (!in_array($ext, ['yaml', 'yml'], true)) return '';
-  return basename(substr($main, 0, $dot)).'.override.'.$ext;
 }
 
 /**
@@ -1094,8 +1140,12 @@ function staxx_compose_file_args(array $files): string {
  * re-derive it from is_dir() by hand. 'ok' => true with empty arrays is the
  * genuinely different case: the root was read and there is nothing in it.
  *
- * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string}>,
+ * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string, file:string}>,
  *               folders: string[], ok: bool, error: string}
+ *
+ * `file` is the compose file found in `dir`, or '' for a folder member that
+ * has none; like the rest of the scan it is fixed for the request until
+ * staxx_scan_stacks_reset().
  */
 function staxx_scan_stacks(bool $reset = false): array {
   static $cache = null;
@@ -1132,8 +1182,9 @@ function staxx_scan_stacks(bool $reset = false): array {
     // may act on. A linked stack must never reach that code as a stack.
     if (is_link($dir) || !is_dir($dir)) continue;
 
-    if (staxx_find_compose_file($dir) !== '') {
-      $out['stacks'][] = ['rel' => $entry, 'dir' => $dir, 'folder' => '', 'leaf' => $entry];
+    $file = staxx_find_compose_file($dir);
+    if ($file !== '') {
+      $out['stacks'][] = ['rel' => $entry, 'dir' => $dir, 'folder' => '', 'leaf' => $entry, 'file' => $file];
       continue;
     }
 
@@ -1149,7 +1200,8 @@ function staxx_scan_stacks(bool $reset = false): array {
       if (is_link($kidDir) || !is_dir($kidDir)) continue;
 
       $out['stacks'][] = [
-        'rel' => $entry.'/'.$kid, 'dir' => $kidDir, 'folder' => $entry, 'leaf' => $kid
+        'rel' => $entry.'/'.$kid, 'dir' => $kidDir, 'folder' => $entry, 'leaf' => $kid,
+        'file' => staxx_find_compose_file($kidDir)
       ];
     }
   }
@@ -1176,6 +1228,31 @@ function staxx_scan_stacks(bool $reset = false): array {
 function staxx_scan_stacks_reset(): void {
   staxx_scan_stacks(true);
   staxx_project_clashes(true); // grouped from the same scan; see its own comment
+  staxx_stack_compose_map(true);
+}
+
+/**
+ * Every stack's compose file, keyed by the stack's path under the root
+ * ("jellyfin", "Media/jellyfin"), '' for a stack folder that has none, in
+ * exactly the order the stack list shows them: leaf name, natural and
+ * case-insensitive, the full path breaking a tie. The cheap way to turn a
+ * stack's name into its file, or to walk every stack in display order,
+ * without building staxx_list_stacks()'s rows (which read every record and
+ * ask Docker). Built from the request-cached scan; cleared by the same reset.
+ *
+ * @return array<string,string> stack path => absolute compose file path, or ''
+ */
+function staxx_stack_compose_map(bool $reset = false): array {
+  static $map = null;
+  if ($reset) { $map = null; return []; }
+  if ($map !== null) return $map;
+  $map = [];
+  foreach (staxx_scan_stacks()['stacks'] as $found) $map[$found['rel']] = $found['file'];
+  uksort($map, function ($a, $b) {
+    $by = strnatcasecmp(staxx_path_leaf($a), staxx_path_leaf($b));
+    return $by !== 0 ? $by : strnatcasecmp($a, $b);
+  });
+  return $map;
 }
 
 /**
@@ -1215,19 +1292,6 @@ function staxx_compose_cmd(): string {
   // escape codes and --progress plain replaces the redrawn-in-place bar with
   // one line per step — the shape stacks.js scans for "Downloading image…".
   return escapeshellarg(staxx_docker_bin()).' compose --ansi never --progress plain';
-}
-
-/**
- * What compose itself thinks is running, keyed by compose file path.
- *
- * Asking compose is better than inspecting containers ourselves: it already
- * knows which config file produced which project, and it is the same answer
- * the command line would give.
- *
- * @return array<string, array{name:string, status:string}>
- */
-function staxx_compose_ls(): array {
-  return staxx_compose_state()['byFile'];
 }
 
 /**
@@ -1689,7 +1753,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 7;   // 7: each service gained a 'profiles' list (PLAN_69)
+const STAXX_META_VERSION = 9;   // 9: a profiled service's own fields are read too (PLAN_178 F5)
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1736,9 +1800,15 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
   $json = json_encode(['key' => $key, 'meta' => $meta]);
   if ($json === false) return;
 
-  $tmp = $path.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $json) === false) return;
-  @rename($tmp, $path);
+  staxx_atomic_write($path, $json);
+}
+
+/** The blank shape a service's meta starts from before anything is read
+ *  from the compose file, keys in the order every cached copy expects. */
+function staxx_meta_blank_service(): array {
+  return ['image' => '', 'container_name' => '', 'x' => [],
+          'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+          'networks' => [], 'healthcheck' => false, 'profiles' => [], 'build' => false];
 }
 
 /**
@@ -1762,7 +1832,8 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
  *                                            firstPort:array{target?:string,published?:string,count?:int},
- *                                            netMode:string, networks:string[], healthcheck:bool}>}
+ *                                            netMode:string, networks:string[], healthcheck:bool,
+ *                                            build:bool}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = false): array {
   static $cache = [];
@@ -1799,9 +1870,34 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   $cmd  = staxx_compose_cmd();
   $yaml = '';
 
+  // PLAN_178 F5 — `config` with no profile active drops every profiled
+  // service from its own output (see the profiles pass below, which found
+  // this on 2026-09-11 for the profiles: field itself). That silently took
+  // a retired stack's icon, image and ports with it too: a merge marks each
+  // source service "retired" so plain `compose up` starts nothing, and that
+  // is a profile like any other. Passing every profile the file(s) declare
+  // keeps `config` from hiding a service just because nothing switched its
+  // profile on — a service still not running has always been read from what
+  // the file declares, never from what is currently active.
+  // Read once, before the config call: staxx_service_profiles() is run
+  // over each file's raw text here and again for the rawProfiles pass
+  // below, so both share this one read and parse per file.
+  $perFile = array_map(fn($f) => staxx_service_profiles((string)@file_get_contents($f)), $files);
+
+  $declaredProfileNames = [];
+  foreach ($perFile as $profilesByService) {
+    foreach ($profilesByService as $profiles) {
+      foreach ($profiles as $p) $declaredProfileNames[$p] = true;
+    }
+  }
+  $profileArgs = implode(' ', array_map(
+    fn($p) => '--profile '.escapeshellarg($p), array_keys($declaredProfileNames)
+  ));
+
   if ($cmd !== '') {
     $code = 1;
-    $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files).' config 2>&1', 15, $code);
+    $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files)
+                      .($profileArgs !== '' ? ' '.$profileArgs : '').' config 2>&1', 15, $code);
     if ($code !== 0) {
       // Compose is installed and it rejected the file. Report that rather than
       // falling through to the rough read below — guessing at a broken file
@@ -1835,13 +1931,18 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       $meta['x'][$parts[1].'.'.$parts[2]] = $value;
       continue;
     }
+    // PLAN_154 — `update.notify` can itself be an object (`{found, installed,
+    // failed}`) rather than a plain boolean, so one more level has to widen
+    // the same way, e.g. `update.notify.found`.
+    if ($parts[0] === 'x-unraid' && count($parts) === 4) {
+      $meta['x'][$parts[1].'.'.$parts[2].'.'.$parts[3]] = $value;
+      continue;
+    }
 
     if ($parts[0] !== 'services' || count($parts) < 3) continue;
     $service = $parts[1];
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+      $meta['services'][$service] = staxx_meta_blank_service();
     }
 
     // Which networks this service names, regardless of what else is nested
@@ -1872,6 +1973,10 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       // Same one-level widening as the stack-scope block above, e.g.
       // services.<name>.x-unraid.update.mode arrives as x['update.mode'].
       $meta['services'][$service]['x'][$parts[3].'.'.$parts[4]] = $value;
+    } elseif ($parts[2] === 'x-unraid' && count($parts) === 6) {
+      // PLAN_154 — the same second level of widening as the stack scope above,
+      // for a service's own `update.notify.<event>`.
+      $meta['services'][$service]['x'][$parts[3].'.'.$parts[4].'.'.$parts[5]] = $value;
     } elseif ($parts[2] === 'networks' && count($parts) === 5 && $parts[4] === 'ipv4_address') {
       // A service on more than one network with more than one fixed address
       // is not a case worth ranking — the first one found wins.
@@ -1888,6 +1993,14 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       // `healthcheck: {disable: true}` on its own is not that, the same
       // reading applied to an image's own ["NONE"].
       $meta['services'][$service]['healthcheck'] = true;
+    } elseif ($parts[2] === 'build') {
+      // PLAN_150 phase 6 — whether this service builds its own image, whether
+      // written as a bare path (`build: ./app`, count 3) or a mapping
+      // (`build: {context: ...}`, count >= 4). Riding along on this loop
+      // rather than a second read: the row mark needs to tell "no image and
+      // no build, so nothing here can ever update" apart from a build-only
+      // service, which genuinely can (it rebuilds when its base image moves).
+      $meta['services'][$service]['build'] = true;
     }
   }
 
@@ -1895,9 +2008,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // never sees at all (see staxx_first_ports()'s own comment for why).
   foreach (staxx_first_ports($yaml) as $service => $port) {
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+      $meta['services'][$service] = staxx_meta_blank_service();
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -1909,16 +2020,14 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
   // is exactly the one place a profile can never be found (measured on the
   // box, 2026-09-11 — a two-profile file rendered as one service).
   $rawProfiles = [];
-  foreach ($files as $srcFile) {
-    foreach (staxx_service_profiles((string)@file_get_contents($srcFile)) as $service => $profiles) {
+  foreach ($perFile as $profilesByService) {
+    foreach ($profilesByService as $service => $profiles) {
       $rawProfiles[$service] = array_values(array_unique(array_merge($rawProfiles[$service] ?? [], $profiles)));
     }
   }
   foreach ($rawProfiles as $service => $profiles) {
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+      $meta['services'][$service] = staxx_meta_blank_service();
     }
     $meta['services'][$service]['profiles'] = $profiles;
   }
@@ -2066,16 +2175,30 @@ function staxx_missing_external_networks(string $composeText, ?array $networks =
  * ~66ms `compose config` takes. A distinct filename suffix (.hash.json)
  * keeps this record from colliding with staxx_compose_meta()'s own.
  */
-function staxx_service_hashes(string $file): ?array {
+function staxx_service_hashes(string $file, bool $withLabels = false): ?array {
   static $cache = [];
 
   $files = staxx_compose_files($file);
   if ($files === []) return null;
-  $key = implode("\0", $files);
+  $suffix = '.hash.json';
+  $extra  = '';
+  if ($withLabels) {
+    // The hash a container gets once StaXX's labels are part of it (PLAN_236).
+    // The labels file's own content joins the cache key, so an edit to a WebUI
+    // or an icon is never answered from a stale record.
+    $labels = staxx_labels_file($file);
+    if ($labels === '') return staxx_service_hashes($file);   // no labels: same hash as without
+    $files[] = $labels;
+    $suffix  = '.hashl.json';
+    $extra   = md5((string)@file_get_contents($labels));
+  }
+  $key = implode("\0", $files).$extra;
   if (isset($cache[$key])) return $cache[$key];
 
-  $diskPath = STAXX_META_DIR.'/'.md5($files[0]).'.hash.json';
-  $metaKey  = staxx_meta_cache_key($files);
+  $diskPath = STAXX_META_DIR.'/'.md5($files[0]).$suffix;
+  // Without the labels file: it sits outside the stack and is covered by $extra.
+  $metaKey  = staxx_meta_cache_key($withLabels ? array_slice($files, 0, -1) : $files);
+  if ($metaKey !== null && $extra !== '') $metaKey = md5($metaKey.$extra);
 
   if ($metaKey !== null) {
     $stored = @json_decode((string)@file_get_contents($diskPath), true);
@@ -2139,10 +2262,11 @@ function staxx_compose_files_mtime(string $file): int {
 function staxx_list_stacks(): array {
   $stacks = [];
   $clashes = staxx_project_clashes();
+  $scan = array_column(staxx_scan_stacks()['stacks'], null, 'rel');
 
-  foreach (staxx_scan_stacks()['stacks'] as $found) {
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    $found  = $scan[$rel];
     $dir    = $found['dir'];
-    $file   = staxx_find_compose_file($dir);
     $clash  = $clashes[$found['rel']] ?? [];
     // Locked stacks report no state — same reasoning, and the same one-line
     // guard, as staxx_stack_states(); see its comment for why a green row on
@@ -2208,17 +2332,16 @@ function staxx_list_stacks(): array {
       // PLAN_69 — see the comment above where these are computed.
       'profiles'       => $declaredProfiles,
       'profilesActive' => $activeProfiles,
+      // PLAN_148 phase 4 — {host, at} once a merge has folded this stack
+      // into another, else null. Read straight from this stack's own
+      // record; see staxx_record_merged_into()'s own comment in Record.php.
+      // This is the whole of what the leftover row marker and its Remove
+      // button have to draw from.
+      'mergedInto' => staxx_record_merged_into($found['rel']),
     ];
   }
 
-  // Sorted by what the page shows, not by what is on disk, or the list reads as
-  // though it were in no order at all. The full path breaks a tie so two
-  // stacks sharing a leaf name (one in a folder, one without) keep a stable
-  // order between refreshes.
-  usort($stacks, function ($a, $b) {
-    $by = strnatcasecmp($a['leaf'], $b['leaf']);
-    return $by !== 0 ? $by : strnatcasecmp($a['name'], $b['name']);
-  });
+  // Already in display order: staxx_stack_compose_map() owns the sort.
   return $stacks;
 }
 
@@ -2267,12 +2390,16 @@ function staxx_container_index(): array {
       'service'    => $r['service'],
       'configHash' => $r['configHash'] ?? '',
       'health'     => $r['health'] ?? 'none',
+      // Carried raw so staxx_stack_containers() can tell a moved stack's own
+      // leftover container from a twin stack's, by checking whether the file
+      // this label names still exists.
+      'configFiles' => $r['configFiles'],
     ];
 
     $index['byProject'][$row['project']][] = $row;
 
     // A project can be built from several files ("a.yml,b.yml"); it is listed
-    // under each, the same way staxx_compose_ls() does it.
+    // under each, the same way staxx_compose_state()['byFile'] does it.
     foreach (explode(',', $r['configFiles']) as $file) {
       $file = trim($file);
       if ($file !== '') $index['byFile'][$file][] = $row;
@@ -2407,8 +2534,11 @@ function staxx_webui_literal_port(string $address): string {
  * so there the marker's own number is taken, matching what the compose
  * editor's Web page port field already shows for such a service.
  *
- * An address with no port anywhere — literal or token — has nothing for the
- * button to open, so it resolves to ''.
+ * An address that uses the `[IP]` placeholder and has no port anywhere —
+ * literal or token — has nothing for the button to open (`http://[IP]/` would
+ * only open this server's own webGUI), so it resolves to ''. An address that
+ * names its own host, such as `https://app.example.com/`, opens as written:
+ * the scheme's default port applies.
  *
  * The address itself: a running container's own address, but only on a
  * macvlan or ipvlan network, which is the only case where the container has
@@ -2440,7 +2570,8 @@ function staxx_webui_url(
   $address = ($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
            : ($fixedIp !== '' ? $fixedIp : $hostIp);
 
-  if (strpos($raw, '[IP]') !== false) {
+  $usesIp = strpos($raw, '[IP]') !== false;
+  if ($usesIp) {
     if ($address === '') return '';
     $raw = str_replace('[IP]', $address, $raw);
   }
@@ -2462,8 +2593,9 @@ function staxx_webui_url(
     if ($port === '' && $firstPort === [] && preg_match('/\[PORT:(\d+)\]/', $raw, $m)) $port = $m[1];
     if ($port === '') return '';
     $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
-  } elseif (staxx_webui_literal_port($raw) === '') {
-    // No token and no literal port either — nothing for the button to open.
+  } elseif ($usesIp && staxx_webui_literal_port($raw) === '') {
+    // [IP] with no token and no literal port — it would open the Unraid
+    // webGUI itself. An address naming its own host is left as written.
     return '';
   }
 
@@ -2616,27 +2748,10 @@ function staxx_webui_try(string $url, ?int &$code = null): bool {
  * @return array<string,string> network name => driver
  */
 function staxx_network_drivers(): array {
-  static $drivers = null;
-  if ($drivers !== null) return $drivers;
-
-  $drivers = [];
-  if (!staxx_docker_running()) return $drivers;
-
-  // `docker network ls` shares the formatter used by `docker ps`, which does
-  // translate \t. The trailing "end" guards against exec() trimming a line
-  // whose last field is empty — see staxx_container_net().
-  $out = staxx_sh(
-    escapeshellarg(staxx_docker_bin()).' network ls --format '
-    .escapeshellarg('{{.Name}}\t{{.Driver}}\tend'), 15
-  );
-
-  foreach (explode("\n", $out) as $line) {
-    $c = explode("\t", $line);
-    if (count($c) < 2 || $c[0] === '') continue;
-    $drivers[$c[0]] = $c[1];
-  }
-
-  return $drivers;
+  // staxx_docker_networks() already runs and remembers the same
+  // `docker network ls`; a repeated name keeps the last driver seen either
+  // way, so array_column() gives the same map this used to build itself.
+  return array_column(staxx_docker_networks(), 'driver', 'name');
 }
 
 /**
@@ -2680,57 +2795,14 @@ function staxx_container_net(): array {
   $net = [];
   if (!staxx_docker_running()) return $net;
 
-  // A REAL tab, not the two characters \t.
-  //
-  // `docker ps --format` translates \t into a tab; `docker inspect --format`
-  // does NOT, and prints it literally. The two commands do not agree, and the
-  // difference is silent — every line comes back as one field, every row is
-  // discarded for being too short, and the answer is simply an empty list with
-  // no error anywhere. Written this way it cannot be got wrong by eye.
-  $tab = "\t";
-
-  // Every map is reached with `index`, never with dotted notation.
-  //
-  // `.Config.ExposedPorts` looks equivalent to `index .Config "ExposedPorts"`
-  // and is not. Docker omits that key entirely for a container that exposes no
-  // ports, and dotted access to a key that is ABSENT — as opposed to empty —
-  // fails the whole record with "map has no entry for key". On this server that
-  // silently dropped seven containers out of seventy-nine, including every
-  // host-network one. `index` returns nothing for a missing key instead.
-  //
-  // Ranging over the result is then safe either way: `range` over nothing
-  // produces nothing, where `len` would raise its own error on nil.
-  //
-  // The trailing "end" is not decoration. PHP's exec() TRIMS TRAILING
-  // WHITESPACE from every line it collects, and a container with neither
-  // published nor exposed ports ends its record with two empty fields — so the
-  // two tabs holding them open are trimmed away and the row arrives with three
-  // fields instead of five. It is then discarded for being malformed. That is
-  // what silently lost the same seven containers a second time, after the
-  // template itself had been fixed. A field that is never empty at the end
-  // means there is no trailing whitespace to lose.
-  $fmt = '{{.Id}}'.$tab.'{{.HostConfig.NetworkMode}}'.$tab
-       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$v.IPAddress}},{{end}}'.$tab
-       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}'.$tab
-       . '{{range $p, $v := index .Config "ExposedPorts"}}{{$p}},{{end}}'.$tab.'end';
-
-  // Piped rather than two round trips. One container on this server is in a
-  // broken state and makes inspect print an error and exit non-zero; the other
-  // containers are still reported, so the output is used regardless of the exit
-  // code and stderr is discarded.
-  $docker = escapeshellarg(staxx_docker_bin());
-  $out    = staxx_sh(
-    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
-  );
-
   $hostIp = staxx_host_ip();
 
-  foreach (explode("\n", $out) as $line) {
-    $c = explode("\t", $line);
-    if (count($c) < 5) continue;
-
+  // The first five of staxx_docker_inspect_rows()'s ten fields are this
+  // function's own template, unchanged — see that function's docblock for
+  // the traps (the real tab, `index` over dotted access, the trailing
+  // "end" field) recorded there rather than twice.
+  foreach (staxx_docker_inspect_rows() as $c) {
     [$id, $mode, $ips, $bindings, $exposed] = $c;
-    if ($id === '') continue;
 
     // ---- ports forwarded from this server ----
     $byIp = [];
@@ -2852,7 +2924,10 @@ function staxx_container_net(): array {
  *
  * Its compose file is asked for first, because that ties a container to THIS
  * folder rather than to a name that another stack could also be using. The
- * project name is the fallback for a stack whose file has moved.
+ * project name is the fallback for a stack whose file has moved. A sibling
+ * container that compose has not recreated since the move still carries the
+ * OLD path in its own label, so the file match is topped up with any same-
+ * project container whose label names no file that still exists on disk.
  *
  * @param array $s one entry from staxx_list_stacks()
  */
@@ -2880,6 +2955,32 @@ function staxx_stack_containers(array $s): array {
 
   if ($s['file'] !== '' && isset($index['byFile'][$s['file']])) {
     $result = $index['byFile'][$s['file']];
+
+    // A relocated store or a stack filed into a folder changes the path this
+    // stack is matched on, but a container compose has not recreated since
+    // still carries the OLD path in its own label — it vanishes from the row
+    // the moment ANY sibling service recreates and starts matching here first,
+    // even though it is still running. Compose itself treats it as part of
+    // the project (it will relabel it on its next recreate), so top the file
+    // match up with same-project containers not already found this way. Only
+    // ones whose label names NO file that still exists: a container whose
+    // label names a file that DOES exist may belong to a twin stack using the
+    // same project name elsewhere, and that clash is exactly what matching on
+    // the file first, rather than the project, is here to guard against.
+    $project = $result[0]['project'] ?? '';
+    $seen    = array_column($result, null, 'id');
+    foreach (($index['byProject'][$project] ?? []) as $row) {
+      if (isset($seen[$row['id']])) continue;
+      $stale = true;
+      foreach (explode(',', $row['configFiles']) as $file) {
+        $file = trim($file);
+        if ($file !== '' && file_exists($file)) { $stale = false; break; }
+      }
+      if ($stale) $result[] = $row;
+    }
+    usort($result, fn($a, $b) => strnatcasecmp($a['service'].'/'.$a['name'],
+                                                $b['service'].'/'.$b['name']));
+
     if ($key !== null) $memo[$key] = $result;
     return $result;
   }
@@ -2896,60 +2997,43 @@ function staxx_stack_containers(array $s): array {
 }
 
 /**
- * PLAN_107 — rolls a stack's containers up into one health word, considering
- * only the ones actually running: a stopped container's stale health means
+ * PLAN_107 — rolls a stack's containers up into one health word, a running
+ * count and a checked count, and the names of anything running and
+ * unhealthy, all from one pass over the containers rather than three
+ * separate loops each caller ran over the same list. Considers only
+ * containers actually running: a stopped container's stale health means
  * nothing, and is already covered by the ordinary running/stopped colour.
- * Unhealthy outranks starting outranks healthy, so one bad container is never
- * hidden behind another that is still coming up.
+ * Unhealthy outranks starting outranks healthy, so one bad container is
+ * never hidden behind another that is still coming up. A stack row shows
+ * one "checked" figure for the lot, so without it "says it is working"
+ * would quietly speak for containers nothing has ever asked — the exact
+ * overclaim PLAN_107 exists to stop. The unhealthy names are what the
+ * tooltip on a sick stack row shows, service name if there is one, else the
+ * container name.
  *
  * Computed only where the caller already has the containers in hand — never
  * from staxx_stack_states(), which is deliberately one `compose ls` and no
  * file reads (see its own docblock).
- */
-function staxx_stack_health(array $containers): string {
-  $any = ['unhealthy' => false, 'starting' => false, 'healthy' => false];
-  foreach ($containers as $c) {
-    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
-    $h = $c['health'] ?? 'none';
-    if (isset($any[$h])) $any[$h] = true;
-  }
-  if ($any['unhealthy']) return 'unhealthy';
-  if ($any['starting'])  return 'starting';
-  if ($any['healthy'])   return 'healthy';
-  return 'none';
-}
-
-/**
- * How many of a stack's running containers check themselves, out of how many
- * are running at all. A stack row shows one pill for the lot, so without this
- * "says it is working" would quietly speak for containers nothing has ever
- * asked — which is the exact overclaim PLAN_107 exists to stop.
  *
- * @return array{running:int, checked:int}
+ * @return array{health:string, unhealthy:string[], running:int, checked:int}
  */
-function staxx_stack_health_counts(array $containers): array {
+function staxx_stack_health_summary(array $containers): array {
+  $any     = ['unhealthy' => false, 'starting' => false, 'healthy' => false];
   $running = 0;
   $checked = 0;
+  $unhealthy = [];
   foreach ($containers as $c) {
     if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
     $running++;
-    if (($c['health'] ?? 'none') !== 'none') $checked++;
+    $h = $c['health'] ?? 'none';
+    if ($h !== 'none') $checked++;
+    if (isset($any[$h])) $any[$h] = true;
+    if ($h === 'unhealthy') $unhealthy[] = (string)(($c['service'] ?? '') !== '' ? $c['service'] : ($c['name'] ?? ''));
   }
-  return ['running' => $running, 'checked' => $checked];
-}
 
-/**
- * The service names — or container names, for one with no service label —
- * that are running and unhealthy. What the tooltip on a sick stack row names.
- */
-function staxx_unhealthy_services(array $containers): array {
-  $out = [];
-  foreach ($containers as $c) {
-    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
-    if (($c['health'] ?? 'none') !== 'unhealthy') continue;
-    $out[] = (string)(($c['service'] ?? '') !== '' ? $c['service'] : ($c['name'] ?? ''));
-  }
-  return $out;
+  $health = $any['unhealthy'] ? 'unhealthy' : ($any['starting'] ? 'starting' : ($any['healthy'] ? 'healthy' : 'none'));
+
+  return ['health' => $health, 'unhealthy' => $unhealthy, 'running' => $running, 'checked' => $checked];
 }
 
 /**
@@ -2983,6 +3067,11 @@ function staxx_restart_pending(array $s): array {
 
   $hashes = $s['file'] !== '' ? staxx_service_hashes($s['file']) : null;
   if ($hashes === null) return $memo[$key] = $empty;   // unknown, never a match
+  // Both fingerprints count as a match: a container made before StaXX wrote
+  // Unraid's labels carries the one without them, and must not light up as
+  // "restart to apply" for that alone. It picks the labels up at its next
+  // update or edit (PLAN_236, option B).
+  $hashesL = staxx_service_hashes($s['file'], true) ?? [];
 
   $services = [];
   $changed  = [];
@@ -3014,7 +3103,7 @@ function staxx_restart_pending(array $s): array {
     $liveHash = (string)($c['configHash'] ?? '');
     if ($fileHash === '' || $liveHash === '') {
       $services[$svc] = 'unknown';
-    } elseif ($fileHash !== $liveHash) {
+    } elseif ($fileHash !== $liveHash && ($hashesL[$svc] ?? '') !== $liveHash) {
       $changed[] = $svc;
       $services[$svc] = 'changed';
     } else {
@@ -3061,9 +3150,10 @@ function staxx_can_run(): bool {
 function staxx_stack_states(): array {
   $out     = [];
   $clashes = staxx_project_clashes();
+  $scan = array_column(staxx_scan_stacks()['stacks'], null, 'rel');
 
-  foreach (staxx_scan_stacks()['stacks'] as $found) {
-    $file  = staxx_find_compose_file($found['dir']);
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    $found = $scan[$rel];
     $clash = $clashes[$found['rel']] ?? [];
     // A locked stack is reported as having no state at all, and deliberately.
     // staxx_state_for() falls back to matching on the project name, which
@@ -3206,9 +3296,12 @@ function staxx_validate_compose(string $yaml, string &$error, string $dir = '', 
   // Judge this on the exit code, not on whether anything was printed. Compose
   // writes deprecation notices and other warnings to stderr for files that are
   // perfectly valid; treating any output as failure would reject them.
-  $lines = [];
-  $code  = 1;
-  @exec('timeout -k 2 20 '.$cmd.' '.$projectFlag.$fileArgs.'config -q </dev/null 2>&1', $lines, $code);
+  // The trailing 2>&1 is inside the command staxx_sh() runs, so compose's own
+  // warnings survive; staxx_sh() otherwise discards stderr with its outer
+  // 2>/dev/null, and its timeout still exits 124, which is tested below.
+  $code = 1;
+  $out  = staxx_sh($cmd.' '.$projectFlag.$fileArgs.'config -q 2>&1', 20, $code);
+  $lines = $out === '' ? [] : explode("\n", $out);
 
   @unlink($tmpfile);
   @rmdir($tmpdir);
@@ -3272,8 +3365,19 @@ function staxx_selftest(): array {
   // Pure PHP, like everything else here — no external command, so this stays
   // instant and checkable from the server with no browser.
   $awaitingReview = 0;
+  // PLAN_155 C5 — a folder holding more than one of the four override names
+  // is not refused (Compose itself just warns and picks one), but StaXX runs
+  // exactly the one Compose would and must say which one it ignored rather
+  // than leave the other sitting there looking live.
+  $ignoredOverrides = [];
   foreach ($scan['stacks'] as $found) {
     if (staxx_review_file($found['dir']) !== '') $awaitingReview++;
+    $present = array_values(array_filter(staxx_override_names(),
+      fn($name) => is_file($found['dir'].'/'.$name)));
+    if (count($present) > 1) {
+      $ignoredOverrides[] = $found['rel'].': using '.$present[0].', ignoring '
+                          . implode(', ', array_slice($present, 1));
+    }
   }
 
   // PLAN_61 stage 4 — reads the update-check state file staxx_updates_moved_
@@ -3287,10 +3391,12 @@ function staxx_selftest(): array {
         ? 'none — every catalogued image is still pulling from where its template currently publishes'
         : implode("\n  ", $movedLines));
 
-  /* PLAN (this session): are the compose files in anybody's backup? Nothing
-   * backs them up by default — the Appdata Backup plugin works from each
-   * container's volume mappings, and a plugin's own store is not one — so a
-   * store nobody has named is a store that quietly is not covered.
+  /* Is the data store in anybody's backup? Nothing backs it up by default —
+   * the Appdata Backup plugin works from each container's volume mappings,
+   * and a plugin's own store is not one — so a store nobody has named is a
+   * store that quietly is not covered. staxx_backup_owned_paths() names the
+   * one folder that matters (the whole store: stacks, archives and config
+   * together), so this reads and reports on a single path, not several.
    *
    * Guarded like the update-check line above, because this file is loadable on
    * its own (see the troubleshooting one-liner in stacks.js) and Backup.php is
@@ -3301,7 +3407,7 @@ function staxx_selftest(): array {
   if (function_exists('staxx_backup_coverage')) {
     if (!staxx_backup_plugin_installed()) {
       $backupReport = 'the Appdata Backup plugin is not installed, so there is nothing to check '
-                    . 'against — back these folders up some other way: '
+                    . 'against — back this folder up some other way: '
                     . implode(', ', staxx_backup_owned_paths());
     } else {
       $cov = staxx_backup_coverage();
@@ -3318,7 +3424,7 @@ function staxx_selftest(): array {
       } else {
         $backupReport = 'NOT listed in the Appdata Backup plugin, under extra files: '
                       . implode(', ', $cov['missing'])
-                      . ' — add them there, or these compose files are in no backup';
+                      . ' — add it there, or StaXX\'s settings and compose files are in no backup';
       }
     }
   }
@@ -3338,10 +3444,7 @@ function staxx_selftest(): array {
   // itself, so this reply cannot hang. Anything needing docker or compose is a
   // probe instead — see staxx_probes() — run one at a time so a command
   // that never returns can be identified rather than just suspected.
-  $composePath = '';
-  foreach (staxx_compose_paths() as $path) {
-    if (is_file($path) && is_executable($path)) { $composePath = $path; break; }
-  }
+  $composePath = staxx_compose_found_path();
 
   $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
 
@@ -3401,35 +3504,235 @@ function staxx_selftest(): array {
       . '(a project only found by asking Docker counts as "do not" here, since this check never does)'
     : 'none — Compose Manager is not installed';
 
+  // PLAN_152 Phase 1c — facts Adrian asked to see that were never in the
+  // report before, above all the version, since "what am I even running?" is
+  // the first question anyone asks. Every one of these is a file read or a
+  // PHP builtin, same rule as everything else here: no external command, so
+  // this stays instant and answers even when the box is sick.
+  $manifest = staxx_manifest_facts();
+  $noManifest = 'development copy, not installed from a manifest';
+  $staxxVersion  = $manifest['version'] !== '' ? $manifest['version'] : $noManifest;
+  $updateChannel = $manifest['branch'] !== ''
+    ? $manifest['branch'].' ('.($manifest['branch'] === 'main' ? 'stable' : 'development').')'
+    : $noManifest;
+
+  $varIni = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
+  $unraidVersion = (string)($varIni['version'] ?? '') !== '' ? (string)$varIni['version'] : 'unknown';
+
+  $storeRoot = staxx_store_root();
+  if ($storeRoot === '') {
+    $storeLocation = 'no data store chosen yet';
+  } elseif (preg_match('#^/mnt/user/#', $storeRoot)) {
+    $storeLocation = $storeRoot." — goes through Unraid's combined-share layer";
+  } elseif (preg_match('#^/mnt/[^/]+/#', $storeRoot)) {
+    $storeLocation = $storeRoot.' — a cache pool directly, not the combined-share layer';
+  } else {
+    $storeLocation = $storeRoot;
+  }
+
+  $flashFree = @disk_free_space('/boot');
+  $flashFreeMiB = $flashFree !== false ? $flashFree / 1048576 : null;
+  $flashFreeBad = $flashFreeMiB !== null && $flashFreeMiB < 32;
+  $flashFreeDetail = $flashFreeMiB !== null ? round($flashFreeMiB).' MiB free on the flash drive' : 'unknown';
+
+  // PLAN_136 — the marker ensure-compose leaves beside the copy it installed.
+  // Its absence just means whatever answered the compose probe was already
+  // on this server; that is not a fault, so it is never a verdict.
+  $composeMarker = '/usr/local/lib/docker/cli-plugins/docker-compose.staxx';
+  $composeSelfInstalled = is_file($composeMarker)
+    ? 'yes — StaXX installed its own copy'
+    : 'no — using what was already on this server';
+
+  $clockDetail = date('Y-m-d H:i:s').' ('.date_default_timezone_get().')';
+
+  // Same two marker files the .page Cond expressions test — see
+  // STAXX_MARKER_HEADER_MENU / STAXX_MARKER_TAKEOVER_DOCKER_TAB in
+  // Defines.php — reported as which page results, not which marker is set.
+  $pageDetail = (is_file(STAXX_MARKER_HEADER_MENU) || is_file(STAXX_MARKER_TAKEOVER_DOCKER_TAB))
+    ? 'its own button in the top navigation bar'
+    : 'a tab under Docker, alongside the stock Docker Containers tab';
+
+  // Updates.php requires this file, so this file cannot require it back —
+  // and the standalone `php -r 'require Stacks.php; print_r(staxx_selftest());'`
+  // route loads this file alone. Same guard, and the same reason, as the
+  // moved-registry report above: report the fact when it is reachable, say
+  // so plainly when it is not, and never fatal in the one place a person
+  // reaches for when the webGUI itself is the broken thing.
+  $updateState   = function_exists('staxx_update_state') ? staxx_update_state() : null;
+  $updatesPaused = $updateState !== null && !empty($updateState['paused']);
+  $checkedTs     = (int)($updateState['checked'] ?? 0);
+  $updatesDetail = $updateState === null
+    ? 'unknown — the update layer is not loaded in this context'
+    : ($updatesPaused ? 'paused' : 'running normally')
+      . ' — last checked ' . ($checkedTs > 0 ? date('Y-m-d H:i:s', $checkedTs) : 'never');
+
+  // PLAN_163 part 2 — same guard as the update-state line above: this file
+  // is loadable on its own (see the troubleshooting one-liner at the top of
+  // stacks.js) and Detail.php is then not necessarily loaded.
+  $turnedAway = function_exists('staxx_health_turned_away_summary') ? staxx_health_turned_away_summary() : null;
+  $turnedAwayDetail = $turnedAway === null
+    ? 'none recorded'
+    : 'Published health checks turned away since '.$turnedAway['first'].': '
+      . $turnedAway['sightings'].' sightings, '.$turnedAway['shapes'].' shapes.';
+
+  // Deliberately absent from every entry below: the server's own name or
+  // address, and anything about the Docker Hub token beyond whether one is
+  // signed in. This report is built to be pasted somewhere public.
+  $movedBad = $movedLines !== null && $movedLines !== [];
+  $reviewBad = $seen && $awaitingReview > 0;
+
+  $entry = static fn(string $detail, string $state = 'plain'): array
+    => ['detail' => $detail, 'state' => $state];
+
   return [
-    'endpoint reachable'  => 'yes — you are reading its reply',
-    'php version'         => PHP_VERSION,
-    'php interface'       => PHP_SAPI,
-    'running as'          => (function_exists('posix_getpwuid') && function_exists('posix_geteuid'))
+    'endpoint reachable'  => $entry('yes — you are reading its reply'),
+    'StaXX version'       => $entry($staxxVersion),
+    'update channel'      => $entry($updateChannel),
+    'Unraid version'      => $entry($unraidVersion),
+    'where the store lives' => $entry($storeLocation),
+    'flash free space'    => $entry($flashFreeDetail, $flashFreeBad ? 'bad' : 'plain'),
+    'compose installed by StaXX' => $entry($composeSelfInstalled),
+    'server clock'        => $entry($clockDetail),
+    'which page is live'  => $entry($pageDetail),
+    'updates paused'      => $entry($updatesDetail, $updatesPaused ? 'bad' : 'plain'),
+    'php version'         => $entry(PHP_VERSION),
+    'php interface'       => $entry(PHP_SAPI),
+    'running as'          => $entry((function_exists('posix_getpwuid') && function_exists('posix_geteuid'))
                                ? (posix_getpwuid(posix_geteuid())['name'] ?? '?')
-                               : get_current_user(),
-    'max execution time'  => (string)ini_get('max_execution_time').' s',
-    'stack folder'        => $root,
-    'folder exists'       => is_dir($root) ? 'yes' : 'NO',
-    'folder writable'     => $canWrite ? 'yes' : 'NO — '.$writeErr,
-    'free space'          => is_dir($root) && ($free = @disk_free_space($root)) !== false
+                               : get_current_user()),
+    'max execution time'  => $entry((string)ini_get('max_execution_time').' s'),
+    'stack folder'        => $entry($root),
+    'folder exists'       => $entry(is_dir($root) ? 'yes' : 'NO', is_dir($root) ? 'good' : 'bad'),
+    'folder writable'     => $entry($canWrite ? 'yes' : 'NO — '.$writeErr, $canWrite ? 'good' : 'bad'),
+    'free space'          => $entry(is_dir($root) && ($free = @disk_free_space($root)) !== false
                                ? round($free / 1048576).' MB'
-                               : 'unknown',
-    'stacks found'        => $seen ? (string)$dirs : 'UNKNOWN — '.$scan['error'],
-    'folders found'       => $seen ? (string)$folds : 'UNKNOWN — '.$scan['error'],
-    'stacks awaiting review' => $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
-    'images pulling from a registry their template has left' => $movedReport,
-    'unraid templates on disk'  => $templatesReport,
-    'compose manager projects on disk' => $projectsReport,
-    'containers matching neither' => 'needs docker — see the Import panel, not this list',
-    'dockerd pid file'    => is_file('/var/run/dockerd.pid') ? 'present' : 'MISSING',
-    'compose on disk'     => $composePath !== '' ? $composePath : 'not found in known locations',
-    'docker on disk'      => staxx_docker_bin(),
-    'timeout command'     => is_file('/usr/bin/timeout') ? '/usr/bin/timeout' : 'NOT FOUND',
-    'exec() available'    => function_exists('exec') && !in_array('exec', $disabled, true)
+                               : 'unknown'),
+    'stacks found'        => $entry($seen ? (string)$dirs : 'UNKNOWN — '.$scan['error']),
+    'folders found'       => $entry($seen ? (string)$folds : 'UNKNOWN — '.$scan['error']),
+    'stacks awaiting review' => $entry(
+                               $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
+                               $reviewBad ? 'bad' : 'plain'),
+    'stacks with more than one override file' => $entry(
+                               $ignoredOverrides === [] ? 'none' : implode("\n  ", $ignoredOverrides),
+                               $ignoredOverrides === [] ? 'plain' : 'bad'),
+    'images pulling from a registry their template has left' => $entry($movedReport, $movedBad ? 'bad' : 'plain'),
+    'unraid templates on disk'  => $entry($templatesReport),
+    'compose manager projects on disk' => $entry($projectsReport),
+    'containers matching neither' => $entry('needs docker — see the Import panel, not this list'),
+    'dockerd pid file'    => $entry(is_file('/var/run/dockerd.pid') ? 'present' : 'MISSING',
+                               is_file('/var/run/dockerd.pid') ? 'good' : 'bad'),
+    'compose on disk'     => $entry($composePath !== '' ? $composePath : 'not found in known locations'),
+    'docker on disk'      => $entry(staxx_docker_bin()),
+    'timeout command'     => $entry(is_file('/usr/bin/timeout') ? '/usr/bin/timeout' : 'NOT FOUND',
+                               is_file('/usr/bin/timeout') ? 'good' : 'bad'),
+    'exec() available'    => $entry(function_exists('exec') && !in_array('exec', $disabled, true)
                                ? 'yes' : 'NO — nothing can be run',
-    'job folder'          => STAXX_JOB_DIR,
-    'compose files in a backup' => $backupReport,
+                               (function_exists('exec') && !in_array('exec', $disabled, true)) ? 'good' : 'bad'),
+    'job folder'          => $entry(STAXX_JOB_DIR),
+    'data store in a backup' => $entry($backupReport),
+    'published health checks turned away' => $entry($turnedAwayDetail),
+  ];
+}
+
+/**
+ * StaXX's own version and update channel, read from the installed manifest
+ * rather than the repository's copy — a dev-deployed box has no manifest at
+ * all (see the fallback in staxx_selftest()), so both come back '' rather
+ * than a guess when the entities cannot be found.
+ *
+ * A regex rather than an XML parser: the file is a DTD-style manifest with
+ * custom `<!ENTITY>` declarations, which is more trouble than it is worth to
+ * parse properly for two plain strings that only ever look like this.
+ *
+ * @return array{version:string, branch:string}
+ */
+function staxx_manifest_facts(): array {
+  $raw = @file_get_contents('/boot/config/plugins/staxx.plg');
+  if ($raw === false) return ['version' => '', 'branch' => ''];
+
+  $version = '';
+  $branch  = '';
+  if (preg_match('/<!ENTITY\s+version\s+"([^"]*)"/', $raw, $m)) $version = $m[1];
+  if (preg_match('/<!ENTITY\s+branch\s+"([^"]*)"/', $raw, $m))  $branch  = $m[1];
+  return ['version' => $version, 'branch' => $branch];
+}
+
+/**
+ * PLAN_152 Phase 2b — what the settings tab's Environment section shows,
+ * read fresh every time it is asked for rather than carried over from
+ * page-load markup (which would be stale the moment the page had been open
+ * a while). Runs `docker`/`compose`, unlike staxx_selftest(), which is why
+ * it is its own endpoint and never folded into `ping` — see action.php.
+ *
+ * @return array{
+ *   rows: list<array{label:string, ok:bool, detail:string}>,
+ *   projects: array<string, string[]>,
+ *   dockerVersion: string,
+ *   composeVersion: string,
+ * }
+ */
+function staxx_environment(): array {
+  $compose       = staxx_compose();
+  $dockerRunning = staxx_docker_running();
+  $projects      = staxx_containers_by_project();
+  $root          = staxx_stack_root();
+  $stackCount    = count(array_filter(array_keys($projects), fn($p) => $p !== ''));
+
+  // Same command shape as the 'daemon' probe in staxx_probes() — the client
+  // version alone ('docker --version') answers even with the daemon down,
+  // which the self-test's own probe already tells you; this wants the
+  // daemon's own version, since that is what "which Docker is this" means.
+  $dockerVersion = $dockerRunning
+    ? trim(staxx_sh(escapeshellarg(staxx_docker_bin()).' info --format "{{.ServerVersion}}"', 8))
+    : '';
+
+  $rows = [
+    [
+      'label'  => 'Docker service',
+      'ok'     => $dockerRunning,
+      'detail' => $dockerRunning ? 'Running' : 'Not running',
+    ],
+    [
+      'label'  => 'Compose available',
+      'ok'     => $compose['available'],
+      'detail' => $compose['available']
+        ? sprintf(
+            $compose['form'] === 'standalone'
+              ? 'v%s — standalone `docker-compose` command'
+              : 'v%s — `docker compose` CLI plugin',
+            $compose['version'] ?: '?'
+          )
+        : 'Not found. Unraid does not ship compose — install the Docker Compose '
+          . 'Manager plugin from Community Applications, then reload this page.',
+    ],
+    [
+      'label'  => 'Compose location',
+      'ok'     => $compose['path'] !== '',
+      'detail' => $compose['path'] !== ''
+        ? $compose['path']
+        : ($compose['available']
+            ? 'Runs, but not in any known location — please report where it lives.'
+            : 'Nothing to locate.'),
+    ],
+    [
+      'label'  => 'Stack folder',
+      'ok'     => is_dir($root),
+      'detail' => is_dir($root) ? $root : sprintf('%s does not exist yet', $root),
+    ],
+    [
+      'label'  => 'Compose project labels',
+      'ok'     => $stackCount > 0,
+      'detail' => $stackCount > 0
+        ? sprintf('%d compose stack(s) detected via com.docker.compose.project', $stackCount)
+        : 'No compose-managed containers found yet.',
+    ],
+  ];
+
+  return [
+    'rows'           => $rows,
+    'projects'       => $projects,
+    'dockerVersion'  => $dockerVersion !== '' ? $dockerVersion : 'unknown',
+    'composeVersion' => $compose['version'] !== '' ? $compose['version'] : 'unknown',
   ];
 }
 
@@ -3517,12 +3820,14 @@ function staxx_run_probe(string $key): array {
  * the whole promise of the project and it is enforced here by simply not
  * touching the string.
  */
-function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$note = null): bool {
+function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$note = null,
+                          bool $keepRefused = false, string &$needsFix = '', bool &$composeRefused = false): bool {
   $error = '';
+  $composeRefused = false; // true only when compose itself refused the file (PLAN_212)
+  $needsFix = '';
 
   if (!staxx_valid_path($name)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return false;
   }
   // A stack may sit one folder down, but the folder has to be there already —
@@ -3556,10 +3861,22 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   // omitted for it.
   $warnings = null;
   if (!staxx_validate_compose($yaml, $error, $dir, $warnings, '', $after)) {
-    if ($after !== '') {
-      $error .= "\n\nThis stack has an override file, and the two are checked together.";
+    // PLAN_212 — an arriving file compose refuses is kept and flagged, not
+    // turned away (the author's work is never lost). Only compose's own
+    // verdict counts: an empty file, a timeout or a scratch-folder failure
+    // is still a refusal to save. Explaining it also queues an unknown shape
+    // for the automatic report.
+    $own = (bool)preg_match('/^(The compose file is empty|Compose took too long|Could not create)/', $error);
+    if ($keepRefused && !$own) {
+      $needsFix = staxx_compose_explain($error, true)['shape'];
+      $error = '';
+    } else {
+      $composeRefused = !$own;
+      if ($after !== '') {
+        $error .= "\n\nThis stack has an override file, and the two are checked together.";
+      }
+      return false;
     }
-    return false;
   }
 
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
@@ -3591,21 +3908,14 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   // written is checked against what was asked for before the file is put in
   // place. A reader — compose, or the next open of this stack — never sees a
   // half-written file either way.
-  $tmp = $file.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $yaml);
-  if ($written === false || $written !== strlen($yaml)) {
-    @unlink($tmp);
-    $error = 'Could not write '.$file;
-    return false;
-  }
+  //
   // Owner-only: a compose file can hold every password the containers it
   // describes were given. This is moot on /boot — that filesystem takes its
   // mode from how it is mounted, whatever chmod says — but it matters the
   // moment the data store is pointed at an array share, which the setting invites.
-  @chmod($tmp, 0600);
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $yaml, 0600, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file
+                                  : 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
   // Keep the file as it now stands too — not only as it stood before. The
@@ -3621,6 +3931,9 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
     if ($note !== null && $note === '') $note = $recordNote2;
     error_log('StaXX: history not kept for '.$name.': '.$recordNote2);
   }
+
+  // The flag goes in only now the record folder exists and the file is down.
+  if ($needsFix !== '') staxx_record_set_needs_fix($dir, $needsFix);
 
   // The boot-drive shelf copy (PLAN_103). Same reasoning as the history
   // capture above: the save has already succeeded by this point, and a
@@ -3654,10 +3967,11 @@ function staxx_stack_extras(string $rel, string &$error): ?array {
     return null;
   }
 
-  // Derived from what is actually paired to this stack, not a flat list of
-  // every name compose could ever read — otherwise a folder holding
-  // compose.yaml plus an unrelated docker-compose.override.yml would treat
-  // that unrelated file as though it belonged to the stack too.
+  // Derived from what is actually paired to this stack (staxx_compose_files(),
+  // Compose's own four-name order — PLAN_155 C5), not a flat list of every
+  // name compose could ever read: if two override files sit in this folder,
+  // only the one Compose would use counts as part of the stack; the other is
+  // a genuinely unrelated file and stays offered as an extra to archive.
   $composeNames = array_map('basename', staxx_compose_files(staxx_find_compose_file($dir)));
 
   $out = [];
@@ -3727,6 +4041,43 @@ function staxx_share_perms(string $path, bool $isDir): void {
 }
 
 /**
+ * PLAN_181 Part B — the (repository, digest) pairs a stack's own version
+ * history holds, read while its folder still exists. The history lives in
+ * the stack's own ".staxx" folder (staxx_record_read()), which the archive
+ * step zips up and then deletes, so this has to be called BEFORE that
+ * happens — both for the archive confirmation's dry run (asked before
+ * anything is touched) and again, from the same values, for the real
+ * removal once the archive has actually succeeded.
+ *
+ * function_exists() guards staxx_update_local_repo(): Stacks.php does not
+ * require UpdateRun.php (that file requires this one, so the other
+ * direction would be circular) — every caller that can reach an archive at
+ * all goes through action.php, which requires both, but this stays honest
+ * about the dependency rather than assuming it.
+ */
+function staxx_archive_stack_history_pairs(string $name): array {
+  if (!staxx_valid_path($name) || !function_exists('staxx_update_local_repo')) return [];
+
+  $file = staxx_find_compose_file(staxx_stack_dir($name));
+  if ($file === '') return [];
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return [];
+
+  $images = staxx_record_read($name)['images'] ?? [];
+  $pairs  = [];
+  foreach ($images as $service => $list) {
+    $ref = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($ref === '') continue;
+    $repo = staxx_update_local_repo($ref);
+    foreach ((array)$list as $entry) {
+      $digest = (string)($entry['digest'] ?? '');
+      if ($digest !== '') $pairs[] = ['repo' => $repo, 'digest' => $digest];
+    }
+  }
+  return $pairs;
+}
+
+/**
  * Archive a stack's directory and take it out of the stacks tree.
  *
  * Removing a stack used to delete its folder outright, refusing outright if
@@ -3787,10 +4138,7 @@ function staxx_archive_stack(
   // that container is stranded with nothing left to say what it was called or
   // how to put it back — so the answer has to come first.
   if (staxx_handover_file($dir) !== '') {
-    $error = 'This stack has just taken over from another container, and that '
-           . 'container is set aside waiting for you to say whether the new one '
-           . 'works. Answer that first — nothing can be removed until it is '
-           . 'either cleared away or put back.';
+    $error = staxx_handover_pending_notice($dir);
     return false;
   }
 
@@ -3798,6 +4146,13 @@ function staxx_archive_stack(
   // user says yes, but nothing below this point may run before that "yes" —
   // see the docblock above.
   if (!$confirmed) return false;
+
+  // PLAN_181 Part B — this stack's own version history, read now while its
+  // ".staxx" folder still exists (the zip-and-delete below takes it with the
+  // rest of the folder). Used after a successful archive to remove whatever
+  // roll-back copies only this stack still needed; see the note near the end
+  // of this function for why removal happens there and not here.
+  $historyPairs = staxx_archive_stack_history_pairs($name);
 
   // Where the zip goes. Nothing has been touched yet, so a folder that
   // cannot be created or written refuses the whole thing up front.
@@ -3969,6 +4324,46 @@ function staxx_archive_stack(
 
   staxx_scan_stacks_reset(); // the stack's directory is gone; see the function's own comment
   $archive = $final;
+
+  // PLAN_181 Part B (decision 2, 2026-09-25) — the roll-back copies this
+  // stack's own history held, now that it is the one thing that could ever
+  // need them. staxx_archive_removable_images() re-checks against every
+  // OTHER current stack's keep-set and against what is actually running, so
+  // an image a sibling stack still names or still keeps for its own
+  // roll-back is never touched. A removal failure here must never fail the
+  // archive that already succeeded — it is reported in $note, appended to
+  // whatever the "down" step above already put there, never returned as an
+  // error. function_exists() guards the same way as the pairs read above.
+  if ($historyPairs && function_exists('staxx_archive_removable_images')) {
+    $rows = staxx_archive_removable_images($historyPairs, $name);
+    if ($rows) {
+      ob_start();
+      staxx_images_do_remove($rows); // never docker rmi -f — see that function
+      $log = (string)ob_get_clean();
+
+      $removed = 0;
+      if (preg_match('/^Removed (\d+) image/m', $log, $m)) $removed = (int)$m[1];
+      $stayed = [];
+      foreach (explode("\n", $log) as $line) {
+        if (strncmp($line, 'Kept ', 5) === 0) $stayed[] = trim(substr($line, 5));
+      }
+
+      $imagesNote = '';
+      if ($removed > 0) {
+        $bytes = 0;
+        foreach ($rows as $row) $bytes += (int)$row['size'];
+        $imagesNote = 'Its saved earlier versions ('.$removed.' image'.($removed === 1 ? '' : 's')
+                    . ', '.staxx_images_human_bytes($bytes).') were removed too.';
+      }
+      if ($stayed) {
+        $imagesNote .= ($imagesNote !== '' ? ' ' : '')
+          . (count($stayed) === 1 ? 'One saved version could not be removed: ' : count($stayed).' saved versions could not be removed: ')
+          . implode('; ', $stayed);
+      }
+      if ($imagesNote !== '') $note = trim($note.' '.$imagesNote);
+    }
+  }
+
   return true;
 }
 
@@ -4098,6 +4493,20 @@ function staxx_review_locked(string $rel): bool {
   return staxx_review_file(staxx_stack_dir($rel)) !== '';
 }
 
+/**
+ * The rel of the new stack this one was retired into by a merge (PLAN_155),
+ * or '' when it was not. A merge locks its sources with the very same
+ * NEEDS-REVIEW.md file an import uses, so staxx_review_locked() reads TRUE
+ * for a retired stack too — every refusal built on that check must ask this
+ * FIRST, since the merge mark is the true reason and "imported and not
+ * reviewed" would be the wrong story to tell about a stack that was never
+ * imported at all.
+ */
+function staxx_retired_into(string $rel): string {
+  $mark = staxx_record_merged_into($rel);
+  return (string)($mark['host'] ?? '');
+}
+
 /* ------------------------------------------------------------ handover ----
  *
  * An imported stack can ask for a container name an existing, hand-made
@@ -4143,6 +4552,20 @@ define('STAXX_AUTOUPDATE_FILE', ($staxx_autoupdate_env !== false && $staxx_autou
   ? $staxx_autoupdate_env
   : '/boot/config/plugins/ca.update.applications/DockerUpdateSettings.json');
 
+/* PLAN_211 — the Compose Manager add-on's settings folder and the folder its
+ * plugin code lives in. The add-on counts as uninstalled when neither its
+ * .plg (beside the settings folder) nor the plugin folder exists. Both are
+ * overridable by env so tests/server/leftovers.php can point them at /tmp. */
+$staxx_cm_env = getenv('STAXX_COMPOSE_MANAGER_DIR');
+define('STAXX_COMPOSE_MANAGER_DIR', ($staxx_cm_env !== false && $staxx_cm_env !== '')
+  ? $staxx_cm_env
+  : '/boot/config/plugins/compose.manager');
+
+$staxx_cm_plugin_env = getenv('STAXX_COMPOSE_MANAGER_PLUGIN_DIR');
+define('STAXX_COMPOSE_MANAGER_PLUGIN_DIR', ($staxx_cm_plugin_env !== false && $staxx_cm_plugin_env !== '')
+  ? $staxx_cm_plugin_env
+  : '/usr/local/emhttp/plugins/compose.manager');
+
 /** Where a held template lives once a handover or the §5 sweep has moved it
  * out of Unraid's reach — beside icons/ and updates.json, not a constant
  * because it depends on the store root, which is only known at runtime. */
@@ -4166,16 +4589,7 @@ function staxx_unraid_template_for(string $containerName): array {
   if (!is_dir($dir)) return ['path' => '', 'count' => 0];
 
   $matches = [];
-  foreach ((array)@scandir($dir) as $file) {
-    // Matches staxx_import_templates()'s own filter — the folder also holds
-    // a .bak of whatever was last overwritten, which parses just as happily
-    // as a real template.
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $path => $xml) {
     if (trim((string)($xml->Name ?? '')) === $containerName) $matches[] = $path;
   }
 
@@ -4200,17 +4614,14 @@ function staxx_autoupdate_read(): ?array {
 }
 
 /** Write $data back to STAXX_AUTOUPDATE_FILE, atomically — same write-to-
- * temp-then-rename shape staxx_autostart_write() already uses. */
+ * temp-then-rename shape staxx_autostart_store() already uses. */
 function staxx_autoupdate_write(array $data): bool {
   $dir = dirname(STAXX_AUTOUPDATE_FILE);
   if (!is_dir($dir)) return false;
   $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
 
-  $tmp = $dir.'/.'.basename(STAXX_AUTOUPDATE_FILE).'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $json) === false) return false;
-  if (!@rename($tmp, STAXX_AUTOUPDATE_FILE)) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(STAXX_AUTOUPDATE_FILE, $json);
 }
 
 /**
@@ -4283,6 +4694,10 @@ function staxx_handover_unraid_hold(array $targets, array &$notes) {
 
       $dest = $dir.'/'.basename($found['path']);
       if (!@rename($found['path'], $dest)) return false;
+      // The folder just changed under a name a later scan in this same
+      // request must not still see — staxx_unraid_templates_at_risk() runs
+      // straight after a handover, in the same review-note build.
+      staxx_unraid_template_xml('', true);
 
       $template = $found['path'];
       $held     = $dest;
@@ -4322,6 +4737,9 @@ function staxx_handover_unraid_release(array $unraid): array {
       $sentences[] = 'Its Unraid template is still in StaXX\'s own folder, because '
                    . 'another file has appeared at its old location since.';
     } elseif (@rename($held, $template)) {
+      // Put back into the folder every scanner reads — a later scan in this
+      // same request must see it there again.
+      staxx_unraid_template_xml('', true);
       $sentences[] = 'Its Unraid template is back where it was.';
     } else {
       $sentences[] = 'Its Unraid template could not be moved back, and is still in '
@@ -4612,6 +5030,22 @@ function staxx_handover_is_setaside(string $name): bool {
   return (bool)preg_match('/-before-staxx(-\d+)?$/', $name);
 }
 
+/**
+ * The restart policy Docker holds for $original right now, read fresh at
+ * handover time so either undo path can put it back exactly rather than
+ * guessing. An empty or failed read records 'no' — what Docker itself treats
+ * a missing policy as — since a hand-made container carrying 'always' is
+ * the one case this exists to close: left alone, it would restart itself the
+ * next time the daemon starts, straight into a port clash with the stack
+ * that took its name over (PLAN_159 §2).
+ */
+function staxx_handover_restart_policy(string $original): string {
+  $docker = escapeshellarg(staxx_docker_bin());
+  $format = escapeshellarg('{{.HostConfig.RestartPolicy.Name}}');
+  $policy = trim(staxx_sh($docker.' inspect --format '.$format.' '.escapeshellarg($original), 10));
+  return $policy !== '' ? $policy : 'no';
+}
+
 /** The handover state file actually present in $dir, by its real name, or ''. */
 function staxx_handover_file(string $dir): string {
   // Same per-directory memoisation and the same reasoning as
@@ -4639,8 +5073,12 @@ function staxx_handover_active(string $rel): bool {
  * Write the handover state file: prose for whoever opens it, then a short
  * list of Key-N: value lines a tiny reader parses back — the same trick the
  * review note uses. One target's original name, the name it was set aside
- * under, and whether it had been running form a numbered triplet, so more
- * than one clashing service is represented as plainly as one.
+ * under, whether it had been running and its restart policy form a numbered
+ * group, so more than one clashing service is represented as plainly as one.
+ *
+ * 'restart' defaults to 'no' when a caller omits it — every real caller
+ * supplies it, but the fixtures in tests/server/handover.php predate this
+ * field and this keeps them writing a valid file rather than a PHP notice.
  *
  * 'unraid', when present on a target, is PLAN_165 §2's record of what §1
  * moved out of Unraid's reach — written as one JSON object on its own
@@ -4650,7 +5088,7 @@ function staxx_handover_active(string $rel): bool {
  * written before this plan simply has none of either and reads exactly as
  * it always did.
  *
- * @param array<int,array{original:string,setaside:string,wasRunning:bool,unraid?:array}> $targets
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool,restart?:string,unraid?:array}> $targets
  * @param string[] $notes
  */
 function staxx_handover_write(string $dir, array $targets, string $when, array $notes = []): bool {
@@ -4682,6 +5120,7 @@ function staxx_handover_write(string $dir, array $targets, string $when, array $
     $body .= "Original-$n: {$t['original']}\n";
     $body .= "SetAside-$n: {$t['setaside']}\n";
     $body .= 'WasRunning-'.$n.': '.($t['wasRunning'] ? 'yes' : 'no')."\n";
+    $body .= 'Restart-'.$n.': '.($t['restart'] ?? 'no')."\n";
     if (isset($t['unraid'])) {
       $body .= 'Unraid-'.$n.': '.json_encode($t['unraid'], JSON_UNESCAPED_SLASHES)."\n";
     }
@@ -4696,7 +5135,7 @@ function staxx_handover_write(string $dir, array $targets, string $when, array $
  * none. One regex over the lines is enough: every field line is a bare word
  * immediately followed by ":", which none of the prose above it ever is.
  *
- * @return array{targets:array<int,array{original:string,setaside:string,wasRunning:bool}>, when:string}|null
+ * @return array{targets:array<int,array{original:string,setaside:string,wasRunning:bool,restart:string}>, when:string}|null
  */
 function staxx_handover_read(string $dir): ?array {
   $name = staxx_handover_file($dir);
@@ -4734,11 +5173,69 @@ function staxx_handover_read(string $dir): ?array {
       'original'   => $original,
       'setaside'   => $fields['SetAside'][$idx] ?? '',
       'wasRunning' => ($fields['WasRunning'][$idx] ?? '') === 'yes',
+      // Absent on a file written before PLAN_159 §2 — 'no' is what Docker
+      // itself treats a missing policy as, so an old file reads exactly as
+      // it always behaved rather than as a policy it never actually had.
+      'restart'    => $fields['Restart'][$idx] ?? 'no',
       'unraid'     => $unraid,
     ];
   }
 
   return ['targets' => $targets, 'when' => $fields['When'][0] ?? ''];
+}
+
+/**
+ * Which of a pending handover's set-aside containers are running again right
+ * now — a hand start from the Docker page, or an appdata-backup "start what
+ * I stopped" that ran across the rename, can both do that without StaXX ever
+ * being asked (PLAN_159 §2). Shared by the archive refusal below and the
+ * "does it work?" dialog's own check (action.php's handover-check), so the
+ * two can never disagree about what is actually running. $psRows is
+ * staxx_docker_ps_raw()'s own shape, injectable so this can be tested with
+ * no Docker in the room.
+ *
+ * @param array<int,array{name:string,state:string}>|null $psRows
+ * @return string[] the set-aside names (not the originals) found running
+ */
+function staxx_handover_running_again(string $dir, ?array $psRows = null): array {
+  $state = staxx_handover_read($dir);
+  if ($state === null) return [];
+
+  if ($psRows === null) $psRows = staxx_docker_ps_raw();
+
+  $running = [];
+  foreach ($state['targets'] as $t) {
+    foreach ($psRows as $row) {
+      if (($row['name'] ?? '') === $t['setaside'] && ($row['state'] ?? '') === 'running') {
+        $running[] = $t['setaside'];
+        break;
+      }
+    }
+  }
+  return $running;
+}
+
+/**
+ * The sentence shown while a handover is waiting for its answer, extended
+ * (PLAN_159 §2) with one sentence per set-aside staxx_handover_running_again()
+ * finds running. $psRows is passed straight through to it, injectable for
+ * the same reason.
+ *
+ * @param array<int,array{name:string,state:string}>|null $psRows
+ */
+function staxx_handover_pending_notice(string $dir, ?array $psRows = null): string {
+  $base = 'This stack has just taken over from another container, and that '
+        . 'container is set aside waiting for you to say whether the new one '
+        . 'works. Answer that first — nothing can be removed until it is '
+        . 'either cleared away or put back.';
+
+  foreach (staxx_handover_running_again($dir, $psRows) as $name) {
+    $base .= ' The old container "'.$name.'" is running again beside the new '
+           . 'stack; switch it off from the Docker page before answering, or the two '
+           . 'will fight over the same ports.';
+  }
+
+  return $base;
 }
 
 /**
@@ -4752,7 +5249,7 @@ function staxx_handover_read(string $dir): ?array {
  *
  * @param string[] $files main compose file, plus its override if it has one —
  *                         see staxx_compose_files()
- * @param array<int,array{original:string,setaside:string,wasRunning:bool}> $targets
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool,restart:string}> $targets
  */
 function staxx_handover_script(
   string $composeCmd, array $files, string $dir, array $targets,
@@ -4774,10 +5271,16 @@ function staxx_handover_script(
   $undo[] = '  cd '.escapeshellarg($dir).' 2>/dev/null && '
           . $composeCmd.' '.$fileArgs.' down 2>/dev/null || true';
   foreach ($targets as $t) {
-    $orig  = escapeshellarg($t['original']);
-    $aside = escapeshellarg($t['setaside']);
+    $orig    = escapeshellarg($t['original']);
+    $aside   = escapeshellarg($t['setaside']);
+    $restart = escapeshellarg($t['restart']);
     $undo[] = '  '.$docker.' rename '.$aside.' '.$orig.' 2>/dev/null || true';
     if ($t['wasRunning']) {
+      // Before the start, not after — the container must come up under its
+      // own recorded policy rather than the 'no' this handover set on the
+      // set-aside a moment ago, or a restart racing the daemon could still
+      // catch it the wrong way round.
+      $undo[] = '  '.$docker.' update --restart='.$restart.' '.$orig.' 2>/dev/null || true';
       $undo[] = '  '.$docker.' start '.$orig.' 2>/dev/null || true';
     }
   }
@@ -4816,6 +5319,12 @@ function staxx_handover_script(
     $aside = escapeshellarg($t['setaside']);
     $steps[] = $docker.' rename '.$orig.' '.$aside.' 2>&1 || fail '
              . escapeshellarg('Could not set '.$t['original'].' aside.');
+    // A set-aside must never come back on its own. The rename already
+    // succeeded and the stack is about to come up, so a failure here must
+    // not fail the whole handover — it only means the set-aside keeps
+    // whatever policy it already had (harmless for the common template
+    // case, which is already 'no').
+    $steps[] = $docker.' update --restart=no '.$aside.' 2>&1 || true';
   }
   $steps[] = 'cd '.escapeshellarg($dir).' 2>&1 || fail '
            . escapeshellarg('Could not reach the stack folder.');
@@ -4900,6 +5409,9 @@ function staxx_start_handover(string $rel, string &$error): string {
       'original'   => $t['name'],
       'setaside'   => staxx_handover_setaside_name($t['name'], array_keys($containers)),
       'wasRunning' => $t['running'],
+      // Recorded now, while $t['name'] is still the original container, so
+      // either undo path can put it back exactly rather than assuming 'no'.
+      'restart'    => staxx_handover_restart_policy($t['name']),
     ];
   }
 
@@ -4918,43 +5430,20 @@ function staxx_start_handover(string $rel, string &$error): string {
 
   // Nothing has been written up to this point — every refusal above had to
   // come first, not just happen to.
-  // Every abort below this point has to hand the template back: the hold has
-  // already happened, and leaving it moved would take an app off Unraid's
-  // update list for a takeover that never started.
-  $undoHold = function () use ($unraidRecords) {
-    foreach ($unraidRecords as $record) {
-      if (is_array($record)) staxx_handover_unraid_release($record);
-    }
-  };
-
   if (!staxx_handover_write($dir, $setasides, gmdate('c'), $unraidNotes)) {
-    $undoHold();
     $error = 'Could not write the handover note, so nothing was started.';
     return '';
   }
 
   if ($reviewPath !== '' && !@rename($reviewPath, $heldPath)) {
     @unlink($dir.'/'.STAXX_HANDOVER_FILE);
-    $undoHold();
     $error = 'Could not set the review note aside, so nothing was started.';
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    // Put both files back — nothing should look started when nothing was.
-    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
-    @unlink($dir.'/'.STAXX_HANDOVER_FILE);
-    $undoHold();
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
   $script = staxx_handover_script(
-    $cmd, $files, $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
+    $cmd, staxx_run_files($file), $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
   );
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   $shown = implode(' && ', array_merge(
@@ -4962,10 +5451,14 @@ function staxx_start_handover(string $rel, string &$error): string {
     array_map(fn($t) => 'docker rename '.$t['original'].' '.$t['setaside'], $setasides),
     ['compose '.$shownFiles.' up -d --remove-orphans']
   ));
-  @file_put_contents($log, '$ '.$shown."\n\n");
-  @chmod($log, 0600);
 
-  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+  $job = staxx_spawn_job($shown, $script, $error);
+  if ($job === '') {
+    // Put both files back — nothing should look started when nothing was.
+    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
+    @unlink($dir.'/'.STAXX_HANDOVER_FILE);
+    return '';
+  }
 
   return $job;
 }
@@ -5071,7 +5564,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
       if ($upCmd !== '' && $upFile !== '') {
         $upFiles = staxx_compose_files($upFile);
         $steps[] = 'cd '.escapeshellarg($dir).' 2>&1';
-        $steps[] = $upCmd.' '.staxx_compose_file_args($upFiles).' up -d --remove-orphans 2>&1';
+        $steps[] = $upCmd.' '.staxx_compose_file_args(staxx_run_files($upFile)).' up -d --remove-orphans 2>&1';
         $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $upFiles));
         $shownParts[] = 'compose '.$shownFiles.' up -d --remove-orphans';
       }
@@ -5133,6 +5626,11 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
     foreach ($state['targets'] as $t) {
       $steps[] = $docker.' rename '.escapeshellarg($t['setaside']).' '.escapeshellarg($t['original']).' 2>&1';
       if ($t['wasRunning']) {
+        // Put its own recorded policy back before it is asked to start, not
+        // after — same ordering as staxx_handover_script()'s undo(), and
+        // for the same reason: it must come up under its own policy, not
+        // the 'no' the handover set on the set-aside a moment ago.
+        $steps[] = $docker.' update --restart='.escapeshellarg($t['restart']).' '.escapeshellarg($t['original']).' 2>&1';
         $steps[] = $docker.' start '.escapeshellarg($t['original']).' 2>&1';
       }
     }
@@ -5157,18 +5655,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
     $shown = implode(' && ', $shownParts);
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-  @file_put_contents($log, '$ '.$shown."\n\n");
-  @chmod($log, 0600);
-  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
-
-  return $job;
+  return staxx_spawn_job($shown, $script, $error);
 }
 
 /* -------------------------------------------------- PLAN_165 §5 sweep -----
@@ -5189,12 +5676,12 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error, bool $
  */
 function staxx_unraid_named_containers(): array {
   $map = [];
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['file'] === '') continue;
-    foreach (staxx_compose_meta($s['file'])['services'] as $info) {
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($file === '') continue;
+    foreach (staxx_compose_meta($file)['services'] as $info) {
       $name = trim((string)($info['container_name'] ?? ''));
       if ($name === '' || isset($map[$name])) continue;
-      $map[$name] = $s['name'];
+      $map[$name] = $rel;
     }
   }
   return $map;
@@ -5218,19 +5705,14 @@ function staxx_unraid_templates_at_risk(?array $containers = null): array {
   $dir = STAXX_UNRAID_TEMPLATES_DIR;
   if (!is_dir($dir)) return [];
 
+  $named = staxx_unraid_named_containers();
+  if ($named === []) return [];
   if ($containers === null) $containers = staxx_docker_container_names();
-  $named      = staxx_unraid_named_containers();
   $autoupdate = staxx_autoupdate_read();
   $onAutoupdate = is_array($autoupdate) ? array_keys($autoupdate['containers'] ?? []) : [];
 
   $rows = [];
-  foreach ((array)@scandir($dir) as $file) {
-    if (!preg_match('/\.xml$/i', $file)) continue;
-    $path = $dir.'/'.$file;
-    if (!is_file($path)) continue;
-
-    $xml = @simplexml_load_file($path);
-    if ($xml === false) continue;
+  foreach (staxx_unraid_template_xml($dir) as $path => $xml) {
     $name = trim((string)($xml->Name ?? ''));
     if ($name === '' || !isset($named[$name])) continue;
 
@@ -5287,6 +5769,10 @@ function staxx_unraid_templates_reclaim(array $names, string &$error, ?array $co
       $error = 'Could not move '.basename($r['template']).'.';
       continue;
     }
+    // A later at_risk() scan in this same request — including the one
+    // tests/server/unraid_templates.php runs straight after this — must
+    // see the folder as it now is.
+    staxx_unraid_template_xml('', true);
     staxx_autoupdate_entry_remove($r['name']);
     $moved[] = $r['name'];
   }
@@ -5328,6 +5814,628 @@ function staxx_unraid_templates_mark_asked(): bool {
   $path = $root.'/unraid-templates.asked';
   if (@file_put_contents($path, '') === false) return false;
   @chmod($path, 0644);
+  return true;
+}
+
+/* ---------------------------------------------------------- leftovers ----
+ *
+ * PLAN_211 — clearing out what Unraid Docker and Compose Manager left behind:
+ * templates whose container is gone, templates for a plain container the
+ * person no longer wants (the container goes too), and the Compose Manager
+ * settings folder once the add-on is uninstalled. Nothing is deleted: each
+ * clear lands in <store>/archives/leftovers/<stamp>/ with a manifest, and can
+ * be put back (a removed container cannot; its template comes back and
+ * Unraid's Docker tab makes it again). Templates for a container a StaXX
+ * stack declares are not listed here — "Move them into StaXX" owns those.
+ *
+ * PLAN_220 — when Docker refuses to remove a damaged app, the page offers to
+ * restart Docker and try again (staxx_leftovers_restart_job()). The paths and
+ * the wait are constants a suite can define first, so tests/server/leftovers.php
+ * drives a stub instead of the real /etc/rc.d/rc.docker.
+ */
+if (!defined('STAXX_RC_DOCKER'))   define('STAXX_RC_DOCKER', '/etc/rc.d/rc.docker');
+if (!defined('STAXX_DOCKERD_PID')) define('STAXX_DOCKERD_PID', '/var/run/dockerd.pid');
+if (!defined('STAXX_DOCKER_WAIT')) define('STAXX_DOCKER_WAIT', 120); // seconds to wait for `docker info` after the start
+if (!defined('STAXX_RESTART_LOCK')) define('STAXX_RESTART_LOCK', STAXX_JOB_DIR.'/docker-restart.lock');
+
+/** Sets in <archives>/leftovers are named by this shape and no other. */
+function staxx_leftovers_stamp_ok(string $stamp): bool {
+  return (bool)preg_match('/^\d{8}-\d{6}$/', $stamp);
+}
+
+function staxx_leftovers_root(): string {
+  $a = staxx_archive_root();
+  return $a === '' ? '' : $a.'/leftovers';
+}
+
+/**
+ * One read of every container, with the two labels this needs. null when
+ * Docker cannot be asked: the caller then lists nothing, because "no
+ * containers" would make every template look orphaned.
+ *
+ * @return ?array<int,array{id:string,name:string,state:string,image:string,project:string,workdir:string}>
+ */
+function staxx_leftovers_containers(): ?array {
+  if (!staxx_docker_running()) return null;
+  $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Image}}\t'
+       . '{{.Label "com.docker.compose.project"}}\t'
+       . '{{.Label "com.docker.compose.project.working_dir"}}\tend';
+  $code = 1;
+  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15, $code);
+  if ($code !== 0) return null;
+
+  $rows = [];
+  foreach (explode("\n", $out) as $line) {
+    if (trim($line) === '') continue;
+    $c = explode("\t", $line);
+    if (count($c) < 6) continue;
+    $rows[] = ['id' => $c[0], 'name' => $c[1], 'state' => $c[2], 'image' => $c[3],
+               'project' => $c[4], 'workdir' => $c[5]];
+  }
+  return $rows;
+}
+
+/**
+ * Containers run from inside the Compose Manager folder, counted per project.
+ * Judged by the working_dir label, never the project name: an imported
+ * project keeps its name while running from StaXX's own folder.
+ *
+ * @return array<string,int>
+ */
+function staxx_leftovers_cm_usage(array $rows): array {
+  $dir = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+  $use = [];
+  foreach ($rows as $r) {
+    $wd = rtrim((string)$r['workdir'], '/');
+    if ($wd === '' || strpos($wd.'/', $dir.'/') !== 0) continue;
+    $parts = explode('/', ltrim(substr($wd, strlen($dir)), '/'));
+    $proj  = ($parts[0] === 'projects' && isset($parts[1])) ? $parts[1]
+           : ((string)$r['project'] !== '' ? $r['project'] : 'compose.manager');
+    $use[$proj] = ($use[$proj] ?? 0) + 1;
+  }
+  return $use;
+}
+
+/** Is the add-on gone while its settings folder is still there? */
+function staxx_leftovers_cm_orphaned(): bool {
+  $dir = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+  return is_dir($dir) && !is_file($dir.'.plg') && !is_dir(STAXX_COMPOSE_MANAGER_PLUGIN_DIR);
+}
+
+function staxx_leftovers_manifest(string $stamp): ?array {
+  if (!staxx_leftovers_stamp_ok($stamp) || staxx_leftovers_root() === '') return null;
+  $raw = @file_get_contents(staxx_leftovers_root().'/'.$stamp.'/manifest.json');
+  $m = $raw === false ? null : json_decode($raw, true);
+  return is_array($m) && is_array($m['items'] ?? null) ? $m : null;
+}
+
+function staxx_leftovers_manifest_save(string $stamp, array $m): bool {
+  return staxx_atomic_write(staxx_leftovers_root().'/'.$stamp.'/manifest.json',
+    json_encode($m, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+/** Can this kept item be put back right now? */
+function staxx_leftovers_item_back(string $stamp, array $it): bool {
+  if (!empty($it['restored'])) return false;
+  $set = staxx_leftovers_root().'/'.$stamp;
+  if (($it['kind'] ?? '') === 'compose-manager') {
+    return is_dir($set.'/compose.manager') && !file_exists(rtrim(STAXX_COMPOSE_MANAGER_DIR, '/'));
+  }
+  $file = basename((string)($it['file'] ?? ''));
+  return $file !== '' && is_file($set.'/templates/'.$file) && !file_exists(STAXX_UNRAID_TEMPLATES_DIR.'/'.$file);
+}
+
+/** @return array<int,array{stamp:string,items:array}> newest first */
+function staxx_leftovers_kept(): array {
+  $root = staxx_leftovers_root();
+  if ($root === '') return [];
+  $stamps = [];
+  foreach (glob($root.'/*', GLOB_ONLYDIR) ?: [] as $d) {
+    if (staxx_leftovers_stamp_ok(basename($d))) $stamps[] = basename($d);
+  }
+  rsort($stamps);
+
+  $kept = [];
+  foreach ($stamps as $stamp) {
+    $m = staxx_leftovers_manifest($stamp);
+    if ($m === null) continue;
+    $items = [];
+    foreach ($m['items'] as $it) {
+      $items[] = ['kind' => (string)($it['kind'] ?? ''), 'name' => (string)($it['name'] ?? ''),
+                  'back' => staxx_leftovers_item_back($stamp, $it)];
+    }
+    $kept[] = ['stamp' => $stamp, 'items' => $items];
+  }
+  return $kept;
+}
+
+/**
+ * Which of these full container ids can Docker not describe? One
+ * `docker inspect` over all of them prints each healthy id on its own line
+ * and an error naming the full id for a damaged one. Empty input never
+ * reaches Docker.
+ *
+ * @param string[] $ids full 64-character ids
+ * @return string[] the damaged ids
+ */
+function staxx_leftovers_damaged(array $ids): array {
+  $ids = array_values(array_filter($ids, fn($i) => preg_match('/^[0-9a-f]{64}$/', (string)$i)));
+  if (!$ids) return [];
+  $code = 0;
+  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' inspect --format '.escapeshellarg('{{.Id}}').' '
+                  . implode(' ', array_map('escapeshellarg', $ids)).' 2>&1', 20, $code);
+  return staxx_leftovers_damaged_parse($ids, (string)$out);
+}
+
+/**
+ * Pure half of staxx_leftovers_damaged(): damaged means the id is not echoed
+ * back as a whole line AND an output line containing "Error" names it. An id
+ * that is merely missing with no error (Docker vanishing mid-call) is not
+ * called damaged.
+ *
+ * @param string[] $ids
+ * @return string[]
+ */
+function staxx_leftovers_damaged_parse(array $ids, string $out): array {
+  $lines = array_map('trim', explode("\n", $out));
+  $bad = [];
+  foreach ($ids as $id) {
+    if (in_array($id, $lines, true)) continue;
+    foreach ($lines as $l) {
+      if (strpos($l, 'Error') !== false && strpos($l, $id) !== false) { $bad[] = $id; break; }
+    }
+  }
+  return $bad;
+}
+
+/**
+ * Names of the containers that are running now and will stay stopped after a
+ * Docker restart: rc.docker only starts what Unraid's start-up list names, so
+ * anything else that is running is not coming back by itself. A damaged app is
+ * left out: the restart is meant to remove it.
+ *
+ * @param array<int,array> $rows       a Docker read, as staxx_leftovers_containers() returns
+ * @param string[]         $listed     container names on the start-up list
+ * @param string[]         $damagedIds ids Docker cannot describe
+ * @return string[] sorted names
+ */
+function staxx_leftovers_stay_stopped(array $rows, array $listed, array $damagedIds): array {
+  $listed = array_flip($listed);
+  $bad    = array_flip($damagedIds);
+  $names  = [];
+  foreach ($rows as $r) {
+    if ($r['state'] === 'running' && !isset($listed[$r['name']]) && !isset($bad[$r['id']])) $names[] = $r['name'];
+  }
+  sort($names, SORT_NATURAL | SORT_FLAG_CASE);
+  return $names;
+}
+
+/**
+ * What can be cleared right now, built fresh from the template folder and one
+ * read of Docker ($rows is that read, $damaged the ids Docker cannot describe;
+ * both injectable for the suite). A template's container carries `damaged`;
+ * a damaged container with no template and no compose project goes in the
+ * `damaged` key. The reply shape is the contract with leftovers.js.
+ */
+function staxx_leftovers(?array $rows = null, ?array $damaged = null): array {
+  $out = ['templates' => [], 'composeManager' => null, 'damaged' => [], 'kept' => staxx_leftovers_kept(),
+          'stayStopped' => []];
+  if ($rows === null) $rows = staxx_leftovers_containers();
+  if ($rows === null) return $out;
+  if ($damaged === null) {
+    $damaged = staxx_leftovers_damaged(array_column(array_filter($rows, fn($r) => $r['project'] === ''), 'id'));
+  }
+  $bad = array_flip($damaged);
+  if ($damaged) {
+    // The "will stay stopped" names for the restart offer; only worth reading
+    // the start-up list when there is a damaged app to offer it for.
+    require_once __DIR__.'/Autostart.php';
+    $out['stayStopped'] = staxx_leftovers_stay_stopped($rows, array_column(staxx_autostart_read()['lines'], 'name'), $damaged);
+  }
+  $named = []; // containers some template names: not "Damaged apps" rows
+
+  $byName = [];
+  $shape  = [];
+  foreach ($rows as $r) {
+    $byName[$r['name']] = $r;
+    $shape[$r['name']]  = ['id' => $r['id'], 'running' => $r['state'] === 'running', 'project' => $r['project']];
+  }
+
+  // A template naming a container a StaXX stack declares belongs to the
+  // "Move them into StaXX" section, whatever state that container is in.
+  $atRisk = [];
+  foreach (staxx_unraid_templates_at_risk($shape) as $r) $atRisk[$r['template']] = true;
+
+  if (is_dir(STAXX_UNRAID_TEMPLATES_DIR)) {
+    foreach (staxx_unraid_template_xml(STAXX_UNRAID_TEMPLATES_DIR) as $path => $xml) {
+      $name = trim((string)($xml->Name ?? ''));
+      if ($name === '') continue;
+      $named[$name] = true; // at-risk or not, a template names it
+      if (isset($atRisk[$path])) continue;
+      $c = $byName[$name] ?? null;
+      if ($c !== null && $c['project'] !== '') continue; // a compose container: not Unraid's to clear
+      $out['templates'][] = [
+        'file'      => basename($path),
+        'name'      => $name,
+        'container' => $c === null ? null : ['id' => $c['id'], 'state' => $c['state'], 'image' => $c['image'],
+                                             'damaged' => isset($bad[$c['id']])],
+      ];
+    }
+    usort($out['templates'], fn($a, $b) => strcasecmp($a['name'], $b['name']));
+  }
+
+  foreach ($rows as $r) {
+    if ($r['project'] === '' && isset($bad[$r['id']]) && !isset($named[$r['name']])) {
+      $out['damaged'][] = ['id' => $r['id'], 'name' => $r['name'], 'state' => $r['state'], 'image' => $r['image']];
+    }
+  }
+
+  if (staxx_leftovers_cm_orphaned()) {
+    $dir = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+    $use = staxx_leftovers_cm_usage($rows);
+    $projects = [];
+    foreach (glob($dir.'/projects/*', GLOB_ONLYDIR) ?: [] as $p) {
+      $n = basename($p);
+      $projects[] = ['name' => $n, 'containers' => $use[$n] ?? 0];
+      unset($use[$n]);
+    }
+    foreach ($use as $n => $k) $projects[] = ['name' => (string)$n, 'containers' => $k];
+
+    $blocked = [];
+    foreach ($projects as $p) if ($p['containers'] > 0) $blocked[] = $p['name'];
+
+    $du = staxx_sh('du -sb '.escapeshellarg($dir), 15);
+    $out['composeManager'] = ['size' => (int)$du, 'projects' => $projects, 'blockedBy' => $blocked];
+  }
+  return $out;
+}
+
+/**
+ * Starts the clear as a detached job (stopping a running container can take
+ * seconds each). The caller's files are only names: each must be on a fresh
+ * staxx_leftovers() list or it is dropped. Returns the job id, or '' with
+ * $error set.
+ *
+ * @param string[] $files template file names
+ * @param ?array   $rows  a Docker read, injectable for the suite as in staxx_leftovers()
+ * @param string[] $damagedIds ids of template-less damaged containers; each is
+ *                 kept only when it is on the fresh list's `damaged` key
+ * @param ?array   $damaged the damaged ids for that fresh list, injectable for the suite
+ */
+function staxx_leftovers_clear_job(array $files, bool $composeManager, string &$error, ?array $rows = null,
+                                   array $damagedIds = [], ?array $damaged = null): string {
+  $error = '';
+  if (staxx_leftovers_root() === '') {
+    $error = 'No data store has been chosen yet, so there is nowhere to keep a copy.';
+    return '';
+  }
+  $list = staxx_leftovers($rows, $damaged);
+
+  $byFile = [];
+  foreach ($list['templates'] as $t) $byFile[$t['file']] = $t;
+  $items = [];
+  foreach ($files as $f) {
+    $f = (string)$f;
+    if (!isset($byFile[$f]) || isset($items[$f])) continue;
+    $t = $byFile[$f];
+    $items[$f] = ['kind' => $t['container'] === null ? 'template' : 'container', 'name' => $t['name'], 'file' => $f]
+               + ($t['container'] === null ? [] : ['id' => $t['container']['id'], 'damaged' => !empty($t['container']['damaged'])]);
+  }
+
+  $byId = [];
+  foreach ($list['damaged'] as $d) $byId[$d['id']] = $d;
+  foreach ($damagedIds as $id) {
+    $id = (string)$id;
+    if (!isset($byId[$id]) || isset($items['damaged:'.$id])) continue;
+    $items['damaged:'.$id] = ['kind' => 'damaged', 'name' => $byId[$id]['name'], 'id' => $id];
+  }
+
+  $cm = $list['composeManager'];
+  if ($composeManager && $cm !== null) {
+    if ($cm['blockedBy']) {
+      $error = 'Can\'t remove this yet: the project "'.$cm['blockedBy'][0].'" still has a container. '
+             . 'Bring it into StaXX first, then come back.';
+      return '';
+    }
+    $items['compose-manager'] = ['kind' => 'compose-manager', 'name' => 'compose.manager'];
+  }
+
+  if (!$items) {
+    $error = 'None of the selected items could be cleared — this list may be out of date. Reload the list and try again.';
+    return '';
+  }
+
+  $stamp = date('Ymd-His');
+  for ($i = 1; is_dir(staxx_leftovers_root().'/'.$stamp); $i++) $stamp = date('Ymd-His', time() + $i);
+
+  // Plain data through var_export(), the same pattern staxx_images_remove_job()
+  // uses: nothing the caller typed reaches a shell argument.
+  $php = staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; '
+    .'exit(staxx_leftovers_do_clear('.var_export(array_values($items), true).', '.var_export($stamp, true).') ? 0 : 1);'
+  );
+  return staxx_spawn_job('clearing out leftovers', $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"', $error);
+}
+
+/**
+ * The plain-listing row for this id, only when its name still matches and it
+ * carries no compose project. The last-moment check for a damaged container,
+ * which `docker inspect` cannot describe.
+ */
+function staxx_leftovers_unlabelled_row(string $id, string $name): ?array {
+  foreach (staxx_leftovers_containers() ?? [] as $r) {
+    if ($r['id'] === $id) return ($r['name'] === $name && $r['project'] === '') ? $r : null;
+  }
+  return null;
+}
+
+/**
+ * The job body. Per item, in this order so a failure leaves the more
+ * recoverable state: container (docker inspect saved, then rm -f — never -v,
+ * never the image), then the template moved into the set and its Auto Update
+ * entry dropped; or the whole Compose Manager folder moved with mv (it crosses
+ * from the flash drive to the cache pool, which a folder rename() cannot).
+ * A damaged container (inspect fails) keeps its listing row instead of the
+ * inspect output; if Docker refuses to remove it the template is still
+ * cleared. A 'damaged' item is such a container with no template at all.
+ * The manifest is rewritten after every item. $retry is the pass that follows a
+ * Docker restart: it words the damaged-app lines for that and points nowhere else.
+ */
+function staxx_leftovers_do_clear(array $items, string $stamp, bool $retry = false): bool {
+  if (!staxx_leftovers_stamp_ok($stamp) || staxx_leftovers_root() === '') return false;
+  $set = staxx_leftovers_root().'/'.$stamp;
+  if (!is_dir($set) && !@mkdir($set, 0755, true) && !is_dir($set)) { echo "Could not create $set.\n"; return false; }
+
+  $docker = escapeshellarg(staxx_docker_bin());
+  $m  = ['stamp' => $stamp, 'items' => []];
+  $ok = true;
+
+  foreach ($items as $it) {
+    $kind = (string)$it['kind'];
+    $name = (string)$it['name'];
+
+    if ($kind === 'compose-manager') {
+      $src  = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+      $rows = staxx_leftovers_containers();
+      if ($rows === null || !staxx_leftovers_cm_orphaned() || staxx_leftovers_cm_usage($rows)) {
+        echo "Left Compose Manager's folder alone: it is in use, or Docker could not be asked.\n";
+        $ok = false; continue;
+      }
+      echo "Moving Compose Manager's settings folder...\n";
+      staxx_sh('mv -- '.escapeshellarg($src).' '.escapeshellarg($set.'/compose.manager').' 2>&1', 120);
+      if (is_dir($src) || !is_dir($set.'/compose.manager')) {
+        echo "Could not move Compose Manager's folder.\n";
+        $ok = false; continue;
+      }
+      $m['items'][] = ['kind' => 'compose-manager', 'name' => 'compose.manager'];
+      staxx_leftovers_manifest_save($stamp, $m);
+      continue;
+    }
+
+    // A damaged app has no template: only the container goes.
+    if ($kind === 'damaged') {
+      $id = (string)($it['id'] ?? '');
+      if (!preg_match('/^[0-9a-f]{64}$/', $id)) { echo "Skipped $name: not a container id.\n"; $ok = false; continue; }
+      echo $retry ? "Trying $name again…\n" : "Removing the damaged app \"$name\"...\n";
+      if (staxx_leftovers_unlabelled_row($id, $name) === null) {
+        echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
+        $ok = false; continue;
+      }
+      $code = 1;
+      staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
+      if ($code !== 0) {
+        // After a Docker restart there is no third thing to try from the page.
+        echo $retry
+          ? "Docker still would not remove $name. Restart the server, then clear it here from Damaged apps.\n"
+          : "Docker would not remove the damaged app \"$name\".\n";
+        $ok = false; continue;
+      }
+      $m['items'][] = ['kind' => 'damaged', 'name' => $name, 'id' => $id];
+      staxx_leftovers_manifest_save($stamp, $m);
+      echo $retry ? "Removed the damaged app $name.\n" : "Removed the damaged app \"$name\".\n";
+      continue;
+    }
+
+    $file = basename((string)$it['file']);
+    $src  = STAXX_UNRAID_TEMPLATES_DIR.'/'.$file;
+    if (!is_file($src)) { echo "Skipped $file: it is no longer there.\n"; $ok = false; continue; }
+
+    if ($kind === 'container') {
+      $id = (string)($it['id'] ?? '');
+      if (!preg_match('/^[0-9a-f]{64}$/', $id)) { echo "Skipped $name: not a container id.\n"; $ok = false; continue; }
+      echo "Removing the app \"$name\" (stopping it first if it is running)...\n";
+
+      $code = 1;
+      $json = staxx_sh($docker.' inspect '.escapeshellarg($id), 20, $code);
+      $info = $code === 0 ? json_decode($json, true) : null;
+      $damaged = !empty($it['damaged']);
+      if (!is_array($info)) {
+        // Inspect fails on a damaged container, so fall back to the plain
+        // listing: same id, same name, still no compose project.
+        $row = staxx_leftovers_unlabelled_row($id, $name);
+        if ($row === null) {
+          echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
+          $ok = false; continue;
+        }
+        $damaged = true;
+        $json = json_encode($row + ['damaged' => true], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+      } elseif (($info[0]['Name'] ?? '') !== '/'.$name
+          || (($info[0]['Config']['Labels']['com.docker.compose.project'] ?? '') !== '')) {
+        // Re-checked at the last moment: same name, still no compose project.
+        echo "Left \"$name\" alone: it has changed since the list was drawn.\n";
+        $ok = false; continue;
+      }
+      @mkdir($set.'/containers', 0755, true);
+      if (@file_put_contents($set.'/containers/'.$file.'.json', $json) === false) {
+        echo "Left \"$name\" alone: its settings could not be saved first.\n";
+        $ok = false; continue;
+      }
+      staxx_sh($docker.' rm -f '.escapeshellarg($id).' 2>&1', 60, $code);
+      if ($code !== 0) {
+        if (!$damaged) { echo "Docker would not remove \"$name\".\n"; $ok = false; continue; }
+        // Forced: the template is still cleared; the container waits under "Damaged apps".
+        echo "Docker would not remove the damaged app \"$name\". Its template is cleared.\n";
+      }
+    }
+
+    @mkdir($set.'/templates', 0755, true);
+    if (!@rename($src, $set.'/templates/'.$file)) { echo "Could not move the template $file.\n"; $ok = false; continue; }
+    staxx_unraid_template_xml('', true);
+    $entry = staxx_autoupdate_entry_remove($name);
+    $m['items'][] = ['kind' => $kind, 'name' => $name, 'file' => $file, 'autoupdate' => $entry];
+    staxx_leftovers_manifest_save($stamp, $m);
+    echo "Cleared $name; a copy is kept.\n";
+  }
+  return $ok;
+}
+
+/**
+ * PLAN_220 — restarts Docker as a detached job, then tries the damaged-app
+ * removal again. The page's window stays usable while the daemon is down (the
+ * webGUI does not run in Docker). Returns the job id, or '' with $error set.
+ *
+ * The ids are only names for the server to look up: each must be on a fresh
+ * staxx_leftovers() `damaged` list or it is dropped, and nothing is stopped if
+ * none survive. One restart at a time, by a lock folder the job removes when it
+ * ends (taken over when older than 15 minutes, which outlasts the longest
+ * possible run). The job never reaches rc.docker through anything the caller
+ * typed.
+ *
+ * @param string[] $damagedIds container ids from the page's Damaged apps rows
+ * @param ?array   $rows       a Docker read, injectable for the suite
+ * @param ?array   $damaged    the damaged ids for that read, injectable for the suite
+ */
+function staxx_leftovers_restart_job(array $damagedIds, string &$error, ?array $rows = null, ?array $damaged = null): string {
+  $error = '';
+  if (staxx_leftovers_root() === '') {
+    $error = 'No data store has been chosen yet, so there is nowhere to keep a copy.';
+    return '';
+  }
+  $byId = [];
+  foreach (staxx_leftovers($rows, $damaged)['damaged'] as $d) $byId[$d['id']] = $d;
+  $items = [];
+  foreach ($damagedIds as $id) {
+    $id = (string)$id;
+    if (!isset($byId[$id]) || isset($items[$id])) continue;
+    $items[$id] = ['kind' => 'damaged', 'name' => $byId[$id]['name'], 'id' => $id];
+  }
+  if (!$items) {
+    $error = 'None of the selected apps could be found in the damaged list — it may be out of date. Reload the list and try again.';
+    return '';
+  }
+
+  if (!staxx_private_dir(dirname(STAXX_RESTART_LOCK))) { $error = 'Could not create '.dirname(STAXX_RESTART_LOCK); return ''; }
+  if (!staxx_mkdir_lock_stale(STAXX_RESTART_LOCK, 900)) {
+    $error = 'Docker is already being restarted from another window.';
+    return '';
+  }
+
+  $stamp = date('Ymd-His');
+  for ($i = 1; is_dir(staxx_leftovers_root().'/'.$stamp); $i++) $stamp = date('Ymd-His', time() + $i);
+
+  $php = staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; '
+    .'exit(staxx_leftovers_do_restart('.var_export(array_values($items), true).', '.var_export($stamp, true).') ? 0 : 1);'
+  );
+  $job = staxx_spawn_job('restarting Docker', $php.' 2>&1; rc=$?; rmdir '.escapeshellarg(STAXX_RESTART_LOCK)
+                        .' 2>/dev/null; echo "'.STAXX_JOB_END.' $rc"', $error);
+  if ($job === '') @rmdir(STAXX_RESTART_LOCK);
+  return $job;
+}
+
+/**
+ * Whether Docker answers: the daemon's pid file is there and `docker info`
+ * succeeds (the pid file alone shows up a moment before the socket does).
+ */
+function staxx_leftovers_docker_answers(): bool {
+  if (!is_file(STAXX_DOCKERD_PID)) return false;
+  $code = 1;
+  staxx_sh(escapeshellarg(staxx_docker_bin()).' info 2>&1', 10, $code);
+  return $code === 0;
+}
+
+/**
+ * The job body for staxx_leftovers_restart_job(): stop Docker, start it, wait
+ * for it to answer, then try the removal again. Nothing is left half-done: if
+ * Docker does not stop the start is not attempted, and if it does not come
+ * back the removal is not attempted. Everything it says goes to the job log.
+ */
+function staxx_leftovers_do_restart(array $items, string $stamp): bool {
+  echo "Stopping Docker…\n";
+  staxx_sh(escapeshellarg(STAXX_RC_DOCKER).' stop 2>&1', 300);
+  for ($i = 0; $i < 10 && is_file(STAXX_DOCKERD_PID); $i++) sleep(1);
+  if (is_file(STAXX_DOCKERD_PID)) {
+    echo "Docker did not stop, so it was left as it was. Open Settings → Docker and check that Enable Docker is set to Yes.\n";
+    return false;
+  }
+
+  echo "Starting Docker…\n";
+  staxx_sh(escapeshellarg(STAXX_RC_DOCKER).' start 2>&1', 300);
+  $deadline = time() + (int)STAXX_DOCKER_WAIT;
+  while (!staxx_leftovers_docker_answers()) {
+    if (time() >= $deadline) {
+      echo "Docker did not start again. Open Settings → Docker and set Enable Docker to Yes.\n";
+      return false;
+    }
+    sleep(1);
+  }
+
+  return staxx_leftovers_do_clear($items, $stamp, true);
+}
+
+/**
+ * Put one kept item back. A container item restores its template only.
+ * Refuses to overwrite anything that has appeared at the original place.
+ * Original places are recomputed from the constants, never read from disk.
+ */
+function staxx_leftovers_restore(string $stamp, string $kind, string $name, string &$error): bool {
+  $error = '';
+  $m = staxx_leftovers_manifest($stamp);
+  $idx = null;
+  foreach (($m['items'] ?? []) as $i => $it) {
+    if (($it['kind'] ?? '') === $kind && ($it['name'] ?? '') === $name) { $idx = $i; break; }
+  }
+  if ($idx === null) { $error = 'That kept copy is no longer listed. Reload the list and try again.'; return false; }
+  $it  = $m['items'][$idx];
+  $set = staxx_leftovers_root().'/'.$stamp;
+
+  if (!staxx_leftovers_item_back($stamp, $it)) {
+    $error = $kind === 'compose-manager'
+      ? 'Compose Manager\'s folder cannot be put back: something is already at its old place.'
+      : 'That template cannot be put back: another file is already at its old place.';
+    return false;
+  }
+
+  if ($kind === 'compose-manager') {
+    $dest = rtrim(STAXX_COMPOSE_MANAGER_DIR, '/');
+    @mkdir(dirname($dest), 0755, true);
+    staxx_sh('mv -- '.escapeshellarg($set.'/compose.manager').' '.escapeshellarg($dest).' 2>&1', 120);
+    if (!is_dir($dest) || is_dir($set.'/compose.manager')) { $error = 'Could not move the folder back.'; return false; }
+  } else {
+    $file = basename((string)$it['file']);
+    if (!@rename($set.'/templates/'.$file, STAXX_UNRAID_TEMPLATES_DIR.'/'.$file)) {
+      $error = 'Could not move the template back.';
+      return false;
+    }
+    staxx_unraid_template_xml('', true);
+    if (is_array($it['autoupdate'] ?? null)) staxx_autoupdate_entry_restore($name, $it['autoupdate']);
+  }
+
+  $m['items'][$idx]['restored'] = true;
+  staxx_leftovers_manifest_save($stamp, $m);
+  return true;
+}
+
+/** Delete one kept set for good. */
+function staxx_leftovers_forget(string $stamp, string &$error): bool {
+  $error = '';
+  $dir = staxx_leftovers_root().'/'.$stamp;
+  if (!staxx_leftovers_stamp_ok($stamp) || !is_dir($dir)) {
+    $error = 'That kept copy is no longer listed. Reload the list and try again.';
+    return false;
+  }
+  staxx_sh('rm -rf -- '.escapeshellarg($dir), 60);
+  if (is_dir($dir)) { $error = 'Could not delete that kept copy.'; return false; }
   return true;
 }
 
@@ -5424,24 +6532,14 @@ function staxx_start_takeover(string $rel, string &$error): string {
     return '';
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
   // Built the same way staxx_start_job() builds its one 'up' step, so this is
   // not a new verb with its own prefix — just the one line the job runner
   // would already produce for `up`, run through the same detached machinery.
-  $fileArgs = staxx_compose_file_args($files);
+  $fileArgs = staxx_compose_file_args(staxx_run_files($file));
   $step     = $cmd.' '.$fileArgs.' up -d --remove-orphans 2>&1';
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
-  @file_put_contents($log, '$ compose '.$shownFiles." up -d --remove-orphans\n\n");
-  @chmod($log, 0600);
+  $shown      = 'compose '.$shownFiles.' up -d --remove-orphans';
 
   // $? is captured into $ec straight after the one real step, before the
   // rollback's own commands get a chance to overwrite it — the same reason
@@ -5457,7 +6555,11 @@ function staxx_start_takeover(string $rel, string &$error): string {
           . $restoreNote
           . 'echo "'.STAXX_JOB_END.' $ec"';
 
-  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+  $job = staxx_spawn_job($shown, $script, $error);
+  if ($job === '') {
+    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
+    return '';
+  }
 
   return $job;
 }
@@ -6483,8 +7585,7 @@ function staxx_bundle_write(array $bundle, string $rel, string &$error): bool {
   $error = '';
 
   if (!staxx_valid_path($rel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return false;
   }
   $refusal = staxx_create_refusal($rel, false);
@@ -6568,27 +7669,16 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
   // way back before this. Anything else in the folder is a companion file
   // and is not this stack's compose history.
   $mainPath = staxx_find_compose_file(dirname($path));
-  if ($mainPath !== ''
-      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+  if ($mainPath !== '' && staxx_is_override_name($file)) {
     $recordNote = '';
     if (!staxx_record_capture($rel, $file, $recordNote) && $recordNote !== '') {
       error_log('StaXX: history not kept for '.$rel.'/'.$file.': '.$recordNote);
     }
   }
 
-  // Pid-suffixed, not a fixed name: two concurrent saves of the same
-  // companion file would otherwise share one temp file, and whichever
-  // rename() lost the race would report an error for content that had
-  // already landed under the other save's name.
-  $tmp = $path.'.'.getmypid().'.staxx-tmp';
-  if (@file_put_contents($tmp, $body) === false) {
-    $error = 'Could not write '.$tmp;
-    return false;
-  }
-  @chmod($tmp, 0644);
-  if (!@rename($tmp, $path)) {
-    @unlink($tmp);
-    $error = 'Could not save "'.$file.'" — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($path, $body, 0644, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$path
+                                  : 'Could not save "'.$file.'" — the temporary file could not be put in place.';
     return false;
   }
 
@@ -6596,9 +7686,7 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
   // nothing else: the compose file, its override, and — since PLAN_129 — its
   // .env, without which a file full of ${PLACEHOLDERS} defines nothing. Any
   // other companion (a certificate, a script) never belongs on the shelf.
-  if ($file === '.env'
-      || ($mainPath !== ''
-          && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0)) {
+  if ($file === '.env' || ($mainPath !== '' && staxx_is_override_name($file))) {
     $bootNote = '';
     if (!staxx_boot_copy_stack($rel, $bootNote) && $bootNote !== '') {
       error_log('StaXX: boot copy not written for '.$rel.': '.$bootNote);
@@ -6621,8 +7709,7 @@ function staxx_delete_file(string $rel, string $file, string &$error): bool {
   // it one. The variable keeps its old name; it means "part of the definition".
   $mainPath = staxx_find_compose_file(dirname($path));
   $isOverride = $file === '.env'
-             || ($mainPath !== ''
-                 && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0);
+             || ($mainPath !== '' && staxx_is_override_name($file));
 
   if (is_link($path)) {
     if (!@unlink($path)) { $error = 'Could not delete "'.$file.'".'; return false; }
@@ -6700,8 +7787,7 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
 
   if (!staxx_valid_path($rel)) { $error = 'Invalid stack name.'; return ''; }
   if (!staxx_valid_name($newLeaf)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    $error = STAXX_NAME_RULE;
     return '';
   }
 
@@ -6880,6 +7966,14 @@ function staxx_job_verbs(): array {
                    'svc'  => ['pull', 'up -d'],                                      'label' => 'Update'],
     'rebuild'  => ['args' => ['build --pull', 'up -d --remove-orphans'],
                    'svc'  => ['build --pull', 'up -d'],                              'label' => 'Rebuild'],
+    // PLAN_181 Part C — a roll-back whose target version is not on disk any
+    // more (UPDATE_KEEP_IMAGES set to "no"). Service scope only: rollback
+    // always names the services it is pointing back at, never the whole
+    // stack. An explicit `pull` ahead of the recreate, rather than trusting
+    // `up`'s own default "pull if missing" policy, so a registry that no
+    // longer has this exact digest fails on the step named for it in the
+    // job's own log, before anything is recreated.
+    'rollback-pull' => ['svc' => ['pull', 'up -d --force-recreate'],                  'label' => 'Roll back'],
   ];
 }
 
@@ -7010,6 +8104,211 @@ function staxx_placeholders(string $file): array {
   return array_keys($found);
 }
 
+/** The retired or review-lock refusal for acting on $stack, or '' when
+ *  neither applies. $purpose ends the review sentence ("starting it"). */
+function staxx_stack_locked(string $stack, string $purpose): string {
+  $retiredInto = staxx_retired_into($stack);
+  if ($retiredInto !== '') {
+    return 'This stack was retired into "'.$retiredInto.'" and cannot be started. Remove it '
+         . 'from its row once the new stack is confirmed working, or delete NEEDS-REVIEW.md '
+         . 'and the "retired" profile lines to bring it back.';
+  }
+  if (staxx_review_locked($stack)) {
+    return 'This stack was imported and has not been reviewed yet. Open it, read '
+         . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+         . ' before '.$purpose.'.';
+  }
+  return '';
+}
+
+/** Every check a per-stack command shares, in the order they refuse: a
+ *  valid name, the $off refusal when a setting has the feature switched
+ *  off, the retired and review locks, compose and Docker present, a compose
+ *  file, and $service a member of it ('' skips that). Returns the compose
+ *  file, or '' with $error set. */
+function staxx_stack_gate(string $stack, string $purpose, string $service, string &$error, string $off = ''): string {
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  if ($off !== '') { $error = $off; return ''; }
+  $error = staxx_stack_locked($stack, $purpose);
+  if ($error !== '') return '';
+  if (staxx_compose_cmd() === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+  $file = staxx_find_compose_file(staxx_stack_dir($stack));
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  if ($service !== '' && !isset(staxx_compose_meta($file)['services'][$service])) {
+    $error = 'No service called "'.$service.'" in this stack.';
+    return '';
+  }
+  return $file;
+}
+
+/* ------------------------------------------------ host-network port clashes -- */
+
+/**
+ * Which of a stack's services (limited to $only when given) say
+ * `network_mode: host`. Such a service has no `ports:` for StaXX or Docker's
+ * own check to read — the app picks its port inside itself — so a clash only
+ * shows once it has started and exited.
+ *
+ * @param  string[] $only
+ * @return string[]
+ */
+function staxx_hostport_services(string $file, array $only = []): array {
+  $found = [];
+  foreach (staxx_compose_meta($file)['services'] as $svc => $meta) {
+    if (($meta['netMode'] ?? '') !== 'host') continue;
+    if ($only && !in_array((string)$svc, $only, true)) continue;
+    $found[] = (string)$svc;
+  }
+  return $found;
+}
+
+/**
+ * The port a log line says it could not open, or 0 when no line in $log
+ * reports an address already in use with a port beside it. Covers nginx
+ * (`bind() to 0.0.0.0:80 failed (98: Address in use)`), Go (`listen tcp
+ * :8080: bind: address already in use`) and Node (`EADDRINUSE: address already
+ * in use :::3000`). The port is the `:digits` nearest the phrase, because a
+ * timestamp's `12:34` sits on the same line and must never win.
+ */
+function staxx_hostport_log_port(string $log): int {
+  foreach (preg_split('/\R/', $log) as $line) {
+    if (!preg_match('/address (?:already )?in use/i', $line, $m, PREG_OFFSET_CAPTURE)) continue;
+    $from = $m[0][1];
+    $to   = $from + strlen($m[0][0]);
+    if (!preg_match_all('/:(\d{1,5})(?!\d)/', $line, $all, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) continue;
+    $best = 0;
+    $gap  = PHP_INT_MAX;
+    foreach ($all as $c) {
+      $port = (int)$c[1][0];
+      if ($port < 1 || $port > 65535) continue;
+      $s = $c[0][1];
+      $e = $s + strlen($c[0][0]);
+      $d = $e <= $from ? $from - $e : ($s >= $to ? $s - $to : 0);
+      if ($d < $gap) { $gap = $d; $best = $port; }
+    }
+    if ($best > 0) return $best;
+  }
+  return 0;
+}
+
+/**
+ * One sentence saying who holds $port. $ss (`ss -ltnpH` output for that port),
+ * $cgroup (that process's /proc/<pid>/cgroup text) and $dockerName (the
+ * container's name) are read from the server when null; a suite hands them
+ * in so no real port is needed.
+ */
+function staxx_hostport_owner(int $port, ?string $ss = null, ?string $cgroup = null, ?string $dockerName = null): string {
+  if ($ss === null) {
+    $ss = staxx_sh('ss -ltnpH '.escapeshellarg('( sport = :'.$port.' )'), 5);
+  }
+  if (!preg_match('/users:\(\("([^"]+)",pid=(\d+)/', $ss, $m)) {
+    return 'Port '.$port.' was in use when it started.';
+  }
+  $proc = preg_replace('/[^A-Za-z0-9._-]/', '', $m[1]);
+  if ($cgroup === null) $cgroup = (string)@file_get_contents('/proc/'.(int)$m[2].'/cgroup');
+
+  // Checked first: a container's own nginx is not Unraid's web page.
+  if (preg_match('/[0-9a-f]{64}/', $cgroup, $c)) {
+    $who = $dockerName;
+    if ($who === null) {
+      $who = trim(staxx_sh(escapeshellarg(staxx_docker_bin()).' inspect -f '
+                           .escapeshellarg('{{.Name}}').' '.escapeshellarg($c[0]), 5));
+    }
+    $who = ltrim($who, '/');
+    if ($who === '') $who = substr($c[0], 0, 12);
+    return 'Port '.$port.' is already used by the app '.$who.'.';
+  }
+  if ($proc === 'nginx' || $proc === 'emhttpd') {
+    return 'Port '.$port.' is already used by Unraid\'s own web page.';
+  }
+  return 'Port '.$port.' is already used by '.($proc !== '' ? $proc : 'another program').' on the server.';
+}
+
+/**
+ * After a start: for each of this stack's host-network containers (limited to
+ * the services in $only when given) that has exited or is restarting, read
+ * its recent log and print one plain sentence per port clash, into the job
+ * log. Returns how many clashes were found; the job turns that into a failed
+ * exit. $rows, $ss and $cgroup are injectable for the suite: $rows is a list
+ * of ['name', 'service', 'mode', 'state', 'log'].
+ *
+ * @param  string[] $only
+ * @param  ?array   $rows
+ */
+function staxx_hostport_check(string $name, array $only = [], ?array $rows = null, ?string $ss = null, ?string $cgroup = null): int {
+  if ($rows === null) {
+    $rows = [];
+    $file = staxx_find_compose_file(staxx_stack_dir($name));
+    $project = staxx_stack_project_guess($file, staxx_path_leaf($name));
+    if ($project === '') return 0;
+    $docker = escapeshellarg(staxx_docker_bin());
+    $ids = preg_split('/\s+/', trim(staxx_sh($docker.' ps -aq --filter '
+             .escapeshellarg('label=com.docker.compose.project='.$project), 10)), -1, PREG_SPLIT_NO_EMPTY);
+    $ids = array_values(array_filter($ids, fn($i) => preg_match('/^[0-9a-f]{12,64}$/', $i)));
+    if (!$ids) return 0;
+    // A real tab between the fields: `docker inspect --format` must never be
+    // given the two characters \t (see staxx_appwatch_snapshot()'s comment).
+    $fmt = implode("\t", ['{{.Name}}', '{{index .Config.Labels "com.docker.compose.service"}}',
+                          '{{.HostConfig.NetworkMode}}', '{{.State.Status}}', '{{.Id}}']);
+    $out = staxx_sh($docker.' inspect --format '.escapeshellarg($fmt).' '
+                    .implode(' ', array_map('escapeshellarg', $ids)), 15);
+    foreach (explode("\n", $out) as $line) {
+      $f = explode("\t", $line);
+      if (count($f) < 5) continue;
+      $rows[] = ['name' => ltrim($f[0], '/'), 'service' => $f[1], 'mode' => $f[2],
+                 'state' => $f[3], 'id' => $f[4], 'log' => null];
+    }
+  }
+
+  $found = 0;
+  foreach ($rows as $r) {
+    if (($r['mode'] ?? '') !== 'host') continue;
+    if (!in_array($r['state'] ?? '', ['exited', 'restarting'], true)) continue;
+    if ($only && !in_array((string)($r['service'] ?? ''), $only, true)) continue;
+    // --since keeps a restarted container's older failures from an earlier
+    // start from being read as this one's.
+    $log = $r['log'] ?? staxx_sh(escapeshellarg(staxx_docker_bin()).' logs --tail 50 --since 2m '
+                                 .escapeshellarg((string)$r['id']).' 2>&1', 10);
+    $port = staxx_hostport_log_port($log);
+    if ($port === 0) continue;
+    echo $r['name'].' stopped straight away: it could not open port '.$port.'. '
+       . staxx_hostport_owner($port, $ss, $cgroup)
+       . " Change the port this app listens on, then start it again.\n";
+    $found++;
+  }
+  return $found;
+}
+
+/**
+ * The shell command that runs the check above for one stack, as its own
+ * `php -r`, built the way staxx_leftovers_restart_job() builds its own: every
+ * value goes through var_export, never spliced raw.
+ *
+ * @param string[] $only
+ */
+function staxx_hostport_step(string $name, array $only): string {
+  return staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; '
+    .'exit(staxx_hostport_check('.var_export($name, true).', '.var_export(array_values($only), true).') > 0 ? 1 : 0);'
+  ).' 2>&1';
+}
+
+/**
+ * The detached shell command for a job: enter $dir, run $chain, report the
+ * chain's exit code. With a $check (a host-network stack that starts
+ * something) and a chain that succeeded, it waits five seconds for a bad port
+ * to make the app exit, runs the check, and reports 1 when the check found a
+ * clash. A chain that failed keeps its own code, and a check that merely
+ * crashed (not exit 1) never fails a start that worked.
+ */
+function staxx_job_inner(string $dir, string $chain, string $check = ''): string {
+  $head = 'cd '.escapeshellarg($dir).' && '.$chain;
+  if ($check === '') return $head.'; echo "'.STAXX_JOB_END.' $?"';
+  return $head.'; rc=$?; if [ "$rc" -eq 0 ]; then sleep 5; '.$check
+       .'; [ "$?" -ne 1 ] || rc=1; fi; echo "'.STAXX_JOB_END.' $rc"';
+}
+
 /**
  * Start a compose command in the background and return a job id.
  *
@@ -7039,12 +8338,8 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // split below, so a locked stack is refused for the right reason — and at
   // every scope, whole-stack or single-service — even when compose or docker
   // also happen to be unavailable.
-  if (staxx_review_locked($name)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before starting it.';
-    return '';
-  }
+  $error = staxx_stack_locked($name, 'starting it');
+  if ($error !== '') return '';
 
   // A container Docker knows under a name this stack pins, and belonging to
   // no compose project, is a template's own container: compose cannot create
@@ -7190,14 +8485,6 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
     $steps  = array_map(fn($step) => $step.' '.$quoted, $steps);
   }
 
-  if (!staxx_private_dir(STAXX_JOB_DIR)) {
-    $error = 'Could not create '.STAXX_JOB_DIR;
-    return '';
-  }
-
-  $job = bin2hex(random_bytes(8));
-  $log = STAXX_JOB_DIR.'/'.$job.'.log';
-
   // Each step becomes its own `compose -f <file> <step>` invocation, and the
   // chain below is what actually runs — `restart` is `up -d` and `restart`
   // back to back in the same shell command, not two separate jobs. Two things
@@ -7223,15 +8510,21 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // this applies to.
   $profileFlags = staxx_profile_flags($name, $verb, $names, $file);
 
+  // A verb that creates containers carries Unraid's labels as the last -f on
+  // every one of its steps (so a pull + up pair stays one set of files). The
+  // line shown below leaves the generated file out: it is not the author's.
+  $runFiles = $startsSomething ? staxx_run_files($file) : $files;
   $invocations = array_map(
-    fn($step) => $cmd.' '.staxx_compose_file_args($files).$profileFlags.' '.$step.' 2>&1',
+    fn($step) => $cmd.' '.staxx_compose_file_args($runFiles).$profileFlags.' '.$step.' 2>&1',
     $steps
   );
   $chain = implode(' && ', $invocations);
 
-  $inner = 'cd '.escapeshellarg($dir).' && '
-         . $chain
-         . '; echo "'.STAXX_JOB_END.' $?"';
+  // A host-network service has no `ports:` for anything to check beforehand,
+  // so after a start the job looks once at whether it stopped on a taken port.
+  // Nothing about it is in $shown: the line shown is what compose ran.
+  $hostSvcs = $startsSomething ? staxx_hostport_services($file, $names) : [];
+  $inner = staxx_job_inner($dir, $chain, $hostSvcs ? staxx_hostport_step($name, $hostSvcs) : '');
 
   // The log's first line is what the output panel shows above the command's
   // own output, so it has to say what actually ran — service name included,
@@ -7243,8 +8536,6 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // `$ compose -f compose.yaml pull 'demo-cache' && compose -f compose.yaml up -d 'demo-cache'`.
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   $shown = implode(' && ', array_map(fn($step) => 'compose '.$shownFiles.$profileFlags.' '.$step, $steps));
-  @file_put_contents($log, '$ '.$shown."\n\n");
-  @chmod($log, 0600);
 
   // PLAN_103 addendum, Phase 2: a verb that puts this compose file into use
   // is the common case the shelf copy needs never be behind for — refreshing
@@ -7259,16 +8550,7 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
     }
   }
 
-  // setsid detaches the command into its own session, and stdin/stdout/stderr
-  // are all redirected away from this request. Without that, the background
-  // command inherits the web server's connection and PHP waits for it to
-  // finish — which is exactly what "run it in the background" was meant to
-  // avoid, and what leaves a worker stuck when the command never ends.
-  @exec(
-    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
-  );
-
-  return $job;
+  return staxx_spawn_job($shown, $inner, $error);
 }
 
 /**
@@ -7373,38 +8655,20 @@ function staxx_prune_jobs(): void {
 function staxx_log_start(string $stack, string $service, string &$error): string {
   $error = '';
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  // staxx_stack_gate() covers the valid-name check, the retired and review
+  // locks, compose and Docker being present, the compose file and $service
+  // being one of its actual services, in that order.
+  $file = staxx_stack_gate($stack, 'viewing its logs', $service, $error);
+  if ($file === '') return '';
 
-  // Checked before anything about the environment or the service, exactly as
-  // staxx_start_job() orders it: a locked stack is refused for the right
-  // reason even when compose or docker also happen to be unavailable.
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before viewing its logs.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $cmd   = staxx_compose_cmd();
+  $dir   = staxx_stack_dir($stack);
   $files = staxx_compose_files($file);
 
   $tail = 'logs --follow --tail 200 --timestamps';
   if ($service !== '') {
-    // Membership against the compose file's own services, the same rule and
-    // the same reason staxx_start_job() checks a service name against —
-    // a regex on shape would accept a name this stack does not have.
-    // escapeshellarg() on top of that, belt and braces, same as there.
-    $services = staxx_compose_meta($file)['services'];
-    if (!isset($services[$service])) {
-      $error = 'No service called "'.$service.'" in this stack.';
-      return '';
-    }
+    // escapeshellarg() belt and braces on top of staxx_stack_gate()'s
+    // membership check, same as staxx_start_job().
     $tail .= ' --no-log-prefix '.escapeshellarg($service);
   }
 
@@ -7449,9 +8713,7 @@ function staxx_log_start(string $stack, string $service, string &$error): string
   // MEANT to keep running for as long as somebody is watching — so its
   // lifetime is governed by the heartbeat above and staxx_log_reap() below,
   // never by a fixed clock. Do not "fix" this by adding a timeout.
-  @exec(
-    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
-  );
+  staxx_detach($inner, $log);
 
   return $id;
 }
@@ -7593,31 +8855,17 @@ function staxx_log_reap(): void {
 function staxx_log_download(string $stack, string $service, string &$error): string {
   $error = '';
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  // staxx_stack_gate() covers the valid-name check, the retired and review
+  // locks, compose and Docker being present, the compose file and $service
+  // being one of its actual services, in that order.
+  $file = staxx_stack_gate($stack, 'viewing its logs', $service, $error);
+  if ($file === '') return '';
 
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before viewing its logs.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $cmd   = staxx_compose_cmd();
   $files = staxx_compose_files($file);
 
   $args = 'logs --tail 2000 --timestamps';
   if ($service !== '') {
-    $services = staxx_compose_meta($file)['services'];
-    if (!isset($services[$service])) {
-      $error = 'No service called "'.$service.'" in this stack.';
-      return '';
-    }
     $args .= ' --no-log-prefix '.escapeshellarg($service);
   }
 
@@ -7666,7 +8914,7 @@ function staxx_log_download(string $stack, string $service, string &$error): str
  * is found afterwards by asking the process table for whoever has this
  * session's socket path on its command line, the same "trust what the
  * process actually says, not what a wrapper claims" pattern
- * staxx_exec_resolve_container() uses for the container name.
+ * staxx_service_container() uses for the container name.
  *
  * Two files per session, under STAXX_EXEC_DIR/<id>/ — half the log
  * follower's shape, because there is no output to buffer or input to relay
@@ -7691,8 +8939,18 @@ function staxx_log_download(string $stack, string $service, string &$error): str
  * belongs to it. This is the difference between an allowlist and a hope: the
  * client sends a stack path and a service name, and nothing else it sends is
  * ever capable of naming a container.
+ *
+ * $runningOnly true is for a shell or file-manager session, which needs a
+ * running container or nothing; false is for a caller such as the pin
+ * resolver that wants whatever build a service's own container last ran,
+ * running or not, and so refuses only when the stack has never been started
+ * at all. Reads staxx_docker_ps_raw()
+ * — already remembered for the request — instead of running its own
+ * `docker ps -a`; a scaled service, or one restarted while an old exited
+ * copy still lingers, can list more than one match for the same project and
+ * service, so every row is checked before giving up, in Docker's own order.
  */
-function staxx_exec_resolve_container(string $file, string $leaf, string $service, string &$error): string {
+function staxx_service_container(string $file, string $leaf, string $service, bool $runningOnly, string &$error): string {
   $state   = staxx_state_for($file, $leaf);
   $project = $state['name'] ?? '';
   if ($project === '') {
@@ -7700,29 +8958,18 @@ function staxx_exec_resolve_container(string $file, string $leaf, string $servic
     return '';
   }
 
-  // `.Label "key"` looks up one label by name — the same trick
-  // staxx_containers_by_project() uses, because the obvious-looking
-  // `index .Labels "key"` fails the whole command instead of the one lookup.
-  $fmt = '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t'
-       . '{{.Label "com.docker.compose.service"}}\t{{.State}}';
-  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10);
-
-  // A scaled service, or one restarted while an old exited copy still
-  // lingers, can list more than one match for the same project and service —
-  // an exited leftover must never hide a sibling that is actually running, so
-  // every line is checked before giving up.
-  $foundStopped = false;
-  foreach (explode("\n", trim($out)) as $line) {
-    if ($line === '') continue;
-    [$cname, $proj, $svc, $state2] = array_pad(explode("\t", $line, 4), 4, '');
-    if ($proj !== $project || $svc !== $service) continue;
-    if ($state2 !== 'running') { $foundStopped = true; continue; }
-    return $cname;
+  $stopped = '';
+  foreach (staxx_docker_ps_raw() as $row) {
+    if ($row['project'] !== $project || $row['service'] !== $service) continue;
+    if ($row['state'] === 'running') return $row['name'];
+    if ($stopped === '') $stopped = $row['name'];   // the first Docker lists, its own default order
   }
 
-  $error = $foundStopped
+  if (!$runningOnly && $stopped !== '') return $stopped;
+
+  $error = $runningOnly && $stopped !== ''
     ? 'That container is not running, so there is nothing to open a shell into.'
-    : 'No running container for service "'.$service.'" in this stack.';
+    : 'No '.($runningOnly ? 'running ' : '').'container for service "'.$service.'" in this stack.';
   return '';
 }
 
@@ -7737,40 +8984,22 @@ function staxx_exec_resolve_container(string $file, string $leaf, string $servic
  * actually being available; the service being a real member of this stack's
  * own compose file, the same membership rule every other verb checks a
  * service name against; and finally a container that is both resolved
- * server-side (see staxx_exec_resolve_container()) and actually running.
+ * server-side (see staxx_service_container()) and actually running.
  */
 function staxx_exec_start(string $stack, string $service, string &$error): string {
   $error = '';
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  // staxx_stack_gate() covers the valid-name check, the shell-enabled
+  // switch, the retired and review locks, compose and Docker being present,
+  // the compose file and $service being one of its actual services, in
+  // that order.
+  $file = staxx_stack_gate(
+    $stack, 'opening a shell', $service, $error,
+    staxx_cfg_bool('SHELL_ENABLED') ? '' : 'Shell access to containers is turned off in Settings.'
+  );
+  if ($file === '') return '';
 
-  if (!staxx_cfg_bool('SHELL_ENABLED')) {
-    $error = 'Shell access to containers is turned off in Settings.';
-    return '';
-  }
-
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before opening a shell.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
-
-  $services = staxx_compose_meta($file)['services'];
-  if (!isset($services[$service])) {
-    $error = 'No service called "'.$service.'" in this stack.';
-    return '';
-  }
-
-  $container = staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
+  $container = staxx_service_container($file, staxx_path_leaf($stack), $service, true, $error);
   if ($container === '') return ''; // $error already set
 
   // A crashed browser cannot leave a session running forever: every action
@@ -7915,7 +9144,7 @@ function staxx_exec_kill(string $id): void {
 function staxx_exec_stop(string $id): void {
   if (!preg_match('/^[0-9a-f]{16}$/', $id)) return;
   staxx_exec_kill($id);
-  @exec('rm -rf '.escapeshellarg(STAXX_EXEC_DIR.'/'.$id));
+  staxx_rmtree(STAXX_EXEC_DIR.'/'.$id, realpath(STAXX_EXEC_DIR) ?: STAXX_EXEC_DIR);
 }
 
 /**
@@ -7932,19 +9161,18 @@ function staxx_exec_reap(): void {
     if (time() - $seen > STAXX_LOG_STALE) {
       $sessDir = dirname($hb);
       staxx_exec_kill(basename($sessDir));
-      @exec('rm -rf '.escapeshellarg($sessDir));
+      staxx_rmtree($sessDir, realpath(STAXX_EXEC_DIR) ?: STAXX_EXEC_DIR);
     }
   }
 }
 
 /* ============================================================= container files ===
  *
- * A file manager for the inside of a running container, gated by the SAME
- * SHELL_ENABLED switch as the shell above — not a switch of its own, because
- * it is the same capability wearing a different hat: both let the browser
- * reach into whatever is inside a container. Being honest about that is why
- * one switch covers both rather than two that would always be flipped
- * together.
+ * A file manager for the inside of a running container, gated by its own
+ * switch — FILES_ENABLED (PLAN_188 part C), checked through
+ * staxx_files_enabled() (Defines.php) so it follows SHELL_ENABLED until
+ * someone saves a value of its own. The shell above keeps SHELL_ENABLED;
+ * turning one off no longer turns off the other.
  *
  * Listings and the small operations (rename, delete, mkdir) go through
  * `docker exec`, one short-lived command at a time. File *contents* go
@@ -8194,43 +9422,27 @@ function staxx_health_trial(string $container, $test, string &$why): bool {
 
 /**
  * Resolve the running container behind one service of one stack, gated by
- * the same order staxx_exec_start() uses for the shell: valid stack path,
- * the SHELL_ENABLED switch, the review lock, compose and Docker present, the
- * service actually named in the compose file, then a container that both
- * resolves and is running. Every staxx_cfile_*() function below calls this
- * first, so all of them share one place these refusals are enforced.
+ * the same order staxx_exec_start() uses for the shell, but its own switch:
+ * valid stack path, the FILES_ENABLED switch (staxx_files_enabled()), the
+ * review lock, compose and Docker present, the service actually named in the
+ * compose file, then a container that both resolves and is running. Every
+ * staxx_cfile_*() function below calls this first, so all of them share one
+ * place these refusals are enforced.
  */
 function staxx_cfile_container(string $stack, string $service, string &$error): string {
   $error = '';
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
 
-  if (!staxx_cfg_bool('SHELL_ENABLED')) {
-    $error = 'Container file access is turned off in Settings, under the same switch as the shell.';
-    return '';
-  }
+  // staxx_stack_gate() covers the valid-name check, the files-enabled
+  // switch, the retired and review locks, compose and Docker being present,
+  // the compose file and $service being one of its actual services, in
+  // that order.
+  $file = staxx_stack_gate(
+    $stack, 'browsing files inside a container', $service, $error,
+    staxx_files_enabled() ? '' : 'Container file access is turned off in Settings.'
+  );
+  if ($file === '') return '';
 
-  if (staxx_review_locked($stack)) {
-    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
-           . ' before browsing files inside a container.';
-    return '';
-  }
-
-  $cmd = staxx_compose_cmd();
-  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
-  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
-
-  $dir  = staxx_stack_dir($stack);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
-
-  $services = staxx_compose_meta($file)['services'];
-  if (!isset($services[$service])) {
-    $error = 'No service called "'.$service.'" in this stack.';
-    return '';
-  }
-
-  return staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
+  return staxx_service_container($file, staxx_path_leaf($stack), $service, true, $error);
 }
 
 /**
@@ -8551,12 +9763,12 @@ function staxx_cfile_home(string $stack, string $service, string &$error): strin
  *
  * The one line above the panes (restart count and health), and the "show
  * the environment" one-press job. Both share staxx_cfile_container()'s gate
- * — the same SHELL_ENABLED switch, review lock and service-membership rule
- * the shell and file manager already stand behind — because this is that
- * same reach into a running container answering two more small questions,
- * not a capability of its own. The third D6 job, "fix ownership", never
- * reaches here at all: it only builds a command string client-side and
- * leaves it unrun in the shell, so there is nothing for the server to do.
+ * — FILES_ENABLED, the review lock and service-membership rule the file
+ * manager already stands behind — because this is that same reach into a
+ * running container answering two more small questions, not a capability of
+ * its own. The third D6 job, "fix ownership", never reaches here at all: it
+ * only builds a command string client-side and leaves it unrun in the
+ * shell, so there is nothing for the server to do.
  */
 
 /**

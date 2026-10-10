@@ -10,16 +10,13 @@
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
  * blank, so without seeding it there is no stack root to test against at
- * all — this run needs it pointed at /tmp instead, the CALLER sets that and
- * puts the config back, same as override.php:
+ * all — this run needs it pointed at /tmp instead, through the shared
+ * wrapper that sets it and restores it on every exit path, same as
+ * override.php. The scratch store's "stacks" folder has to exist before the
+ * wrapper's own check runs, so it is made first:
  *
- *     CFG=/boot/config/plugins/staxx/staxx.cfg
- *     cp $CFG /tmp/cfg.bak
- *     sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/b1-takeover"#' $CFG
- *     mkdir -p /tmp/b1-takeover/stacks
- *     php /tmp/takeover.php; RC=$?
- *     cp /tmp/cfg.bak $CFG
- *     exit $RC
+ *     pscp tests/server/run-with-store.sh tests/server/takeover.php root@<box>:/tmp/
+ *     plink … 'mkdir -p /tmp/b1-takeover/stacks && bash /tmp/run-with-store.sh /tmp/b1-takeover /tmp/takeover.php'
  *
  * Prints one line per case and exits non-zero on any failure.
  */

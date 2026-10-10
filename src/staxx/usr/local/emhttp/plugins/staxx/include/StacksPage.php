@@ -26,6 +26,9 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // header for why there is now one copy read by both sides.
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';   // staxx_import_taken_facts(), for the first clash check
+require_once '/usr/local/emhttp/plugins/staxx/include/Images.php';   // staxx_storage_alert_state(), for the notice below (PLAN_181 Part D)
+require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';   // staxx_backup_partial_notice(), for the notice below (PLAN_186)
+require_once '/usr/local/emhttp/plugins/staxx/include/Notify.php';   // staxx_notify_opt(), for the message timings below (PLAN_227)
 
 // PLAN_97 Phase 1: nothing below this point may run with an unchosen data
 // store — staxx_list_stacks(), staxx_autostart_sync() and staxx_folder_layout()
@@ -46,14 +49,11 @@ if (!staxx_store_ready()) {
   // paragraph is what stays visible if first-run.js fails to load at all; the
   // script's job (Phase 2) is to turn it into the full explaining screen and,
   // once dismissed, leave exactly this behind as the one-time reopen offer.
-  $noStoreCss   = STAXX_ROOT.'/sheets/staxx.css';
-  $firstRunCss  = STAXX_ROOT.'/sheets/first-run.css';
-  $firstRunJs   = STAXX_ROOT.'/javascript/first-run.js';
   $vars = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
   $csrf = (string)($vars['csrf_token'] ?? '');
   ?>
-  <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/staxx.css?v=<?= is_file($noStoreCss) ? filemtime($noStoreCss) : '0' ?>">
-  <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/first-run.css?v=<?= is_file($firstRunCss) ? filemtime($firstRunCss) : '0' ?>">
+  <link rel="stylesheet" href="<?= staxx_asset('sheets/staxx.css') ?>">
+  <link rel="stylesheet" href="<?= staxx_asset('sheets/first-run.css') ?>">
   <div class="staxx-scaffold unapi"
        data-csrf="<?= htmlspecialchars($csrf) ?>"
        data-endpoint="/plugins/<?= STAXX_PLUGIN ?>/include/action.php">
@@ -69,7 +69,7 @@ if (!staxx_store_ready()) {
       </div>
     </div>
   </div>
-  <script src="/plugins/<?= STAXX_PLUGIN ?>/javascript/first-run.js?v=<?= is_file($firstRunJs) ? filemtime($firstRunJs) : '0' ?>"></script>
+  <script src="<?= staxx_asset('javascript/first-run.js') ?>"></script>
   <?
   return;
 }
@@ -109,44 +109,106 @@ $serverTimeZone = staxx_ident_timezone();
 // broken deploy is reported rather than silently matching nothing.
 $dbImagesTable = staxx_db_images_table();
 
-// Both assets carry the file's modification time in the URL. Without it an
-// edited stylesheet or script sits in the browser cache and the page appears
-// not to have changed at all — which costs a great deal of time to diagnose,
-// because it looks exactly like a change that did not work.
+// PLAN_150 Phase 4b: the server-wide update defaults every editor's "Follows
+// your setting" note needs, handed over the same way as data-taken and
+// data-server-timezone above — read once here rather than fetched per
+// service, since every container's Updates fieldset needs the same answer.
+// Read through staxx_update_settings() rather than off the config keys, so
+// this cannot drift from what the update engine itself acts on — that
+// function is where an out-of-range delay falls back, and where the retired
+// off/notify spelling and the retired three-way notification choice are both
+// folded into the shapes everything downstream uses.
+$updateSet = staxx_update_settings();
+$updateSettingsForJs = [
+  'mode'   => $updateSet['mode'],                                     // 'manual' | 'auto'
+  'delay'  => $updateSet['delay'],
+  'quiet'  => $updateSet['window'],
+  'notify' => ['found'     => $updateSet['notifyFound'],
+               'installed' => $updateSet['notifyInstalled'],
+               'failed'    => $updateSet['notifyFailed'],
+               // PLAN_205 item 4/5 — the weekly "still pinned" reminder's own
+               // global answer, read the browser needs for the same "Follows
+               // your setting" fallback the other three already get.
+               'pinned'    => $updateSet['notifyPinned']],
+  // PLAN_227 — when each message is sent, so the editor's Default line can say
+  // so. Read through staxx_notify_opt(), the same reader that routes the
+  // messages, so the line cannot drift from what actually happens.
+  'when'   => ['found'     => staxx_notify_opt('UPDATE_NOTIFY_FOUND_WHEN') === 'summary' ? 'summary' : 'now',
+               'installed' => staxx_notify_opt('UPDATE_NOTIFY_INSTALLED_WHEN') === 'now' ? 'now' : 'summary',
+               'failed'    => staxx_notify_opt('UPDATE_NOTIFY_FAILED_WHEN') === 'summary' ? 'summary' : 'now'],
+];
+
+// Every tag below carries its file's modification time in the URL, via
+// staxx_asset() — without it an edited stylesheet or script sits in the
+// browser cache and the page appears not to have changed at all, which costs
+// a great deal of time to diagnose because it looks exactly like a change
+// that did not work.
 $assets  = '/plugins/'.STAXX_PLUGIN;
-$jsFile  = STAXX_ROOT.'/javascript/stacks.js';
-$modelFile = STAXX_ROOT.'/javascript/compose-model.js';
-$caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
-$imageFile = STAXX_ROOT.'/javascript/image-import.js';
-$scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
-$dbImagesFile = STAXX_ROOT.'/javascript/db-images.js';
-// PLAN_108 stage 5: the health-check chooser. Reads window.StaxxDbImages, so
-// it must load after db-images.js — see the script tag order below.
-$healthOfferFile = STAXX_ROOT.'/javascript/health-offer.js';
-// The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
-// separate agent in parallel with this file, so neither is guaranteed to exist
-// yet at any given moment. Guarded the same way the three scripts above are:
-// a missing file costs a 404 in the console, not a broken page.
-$manageJsFile  = STAXX_ROOT.'/javascript/manage.js';
-$manageCssFile = STAXX_ROOT.'/sheets/manage.css';
+$jsTag   = staxx_asset('javascript/stacks.js');
 // PLAN_165 §5/§6 — the Unraid-templates settings section and the first-load
 // window. Kept out of stacks.js on purpose: it only ever reads the page's
 // own data-csrf/data-endpoint scaffold and injects itself into the settings
 // dialog once that dialog's own markup appears, so a bad edit here costs
 // only this one section, not the whole page's behaviour.
+// $…File below is kept, rather than folded into staxx_asset(), because it is
+// also used further down to decide whether to emit the <script> tag at all —
+// several of these may still be mid-build and genuinely absent.
 $unraidTemplatesFile = STAXX_ROOT.'/javascript/unraid-templates.js';
-$cssFile = STAXX_ROOT.'/sheets/staxx.css';
-$jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsFile) : '0');
-$unraidTemplatesTag = $assets.'/javascript/unraid-templates.js?v='.(is_file($unraidTemplatesFile) ? filemtime($unraidTemplatesFile) : '0');
-$modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
-$caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
-$imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
-$scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
-$dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? filemtime($dbImagesFile) : '0');
-$healthOfferTag = $assets.'/javascript/health-offer.js?v='.(is_file($healthOfferFile) ? filemtime($healthOfferFile) : '0');
-$manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
-$manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
-$cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
+$unraidTemplatesTag = staxx_asset('javascript/unraid-templates.js');
+// PLAN_211 — the clear-out section, same standalone shape as the one above.
+$leftoversFile = STAXX_ROOT.'/javascript/leftovers.js';
+$leftoversTag = staxx_asset('javascript/leftovers.js');
+// PLAN_213 — the bug button, same standalone shape.
+$feedbackFile = STAXX_ROOT.'/javascript/feedback.js';
+$feedbackTag = staxx_asset('javascript/feedback.js');
+$modelFile = STAXX_ROOT.'/javascript/compose-model.js';
+$modelTag = staxx_asset('javascript/compose-model.js');
+// PLAN_148 — the merge wizard's own two halves: the reading pass (phase 2,
+// built separately) and the write pass (phase 4, ditto). Both read
+// window.StaxxYaml, so they must load after compose-model.js; stacks.js
+// reads window.StaxxMergeExamine and window.StaxxMergeWrite, so this must
+// load before it. Conditional for the same reason as the scripts below —
+// either can genuinely be mid-build when this page renders.
+$mergeExamineFile = STAXX_ROOT.'/javascript/merge-examine.js';
+$mergeExamineTag = staxx_asset('javascript/merge-examine.js');
+$mergeWriteFile   = STAXX_ROOT.'/javascript/merge-write.js';
+$mergeWriteTag   = staxx_asset('javascript/merge-write.js');
+// PLAN_155 phase E — step 5's own text-writing half (depends_on,
+// healthcheck, x-unraid.update), kept separate from merge-write.js because
+// it never feeds back into buildMergedText(); see that file's own header.
+// PLAN_155 C15 added a second reason this must load after merge-write.js:
+// its depends_on writer reads window.StaxxMergeWrite directly, for the
+// same "join a shared network" check the address-rewire pass uses.
+$mergeSuggestFile = STAXX_ROOT.'/javascript/merge-suggest.js';
+$mergeSuggestTag = staxx_asset('javascript/merge-suggest.js');
+$caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
+$caTag   = staxx_asset('javascript/ca-convert.js');
+$imageFile = STAXX_ROOT.'/javascript/image-import.js';
+$imageTag = staxx_asset('javascript/image-import.js');
+$scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
+$scaffoldTag = staxx_asset('javascript/meta-scaffold.js');
+$dbImagesFile = STAXX_ROOT.'/javascript/db-images.js';
+$dbImagesTag = staxx_asset('javascript/db-images.js');
+// PLAN_108 stage 5: the health-check chooser. Reads window.StaxxDbImages, so
+// it must load after db-images.js — see the script tag order below.
+$healthOfferFile = STAXX_ROOT.'/javascript/health-offer.js';
+$healthOfferTag = staxx_asset('javascript/health-offer.js');
+// The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
+// separate agent in parallel with this file, so neither is guaranteed to exist
+// yet at any given moment. Guarded the same way the three scripts above are:
+// a missing file costs a 404 in the console, not a broken page.
+$manageJsFile  = STAXX_ROOT.'/javascript/manage.js';
+$manageJsTag  = staxx_asset('javascript/manage.js');
+$manageCssTag = staxx_asset('sheets/manage.css');
+// PLAN_183 — the Dashboard tile editor's own script and stylesheet, built by
+// a separate agent in parallel with this file (same reasoning as the Manage
+// tab above): a bad edit there costs the editor window, not the rest of the
+// page. It must load before stacks.js, which reads window.staxxDashEditor to
+// act on the #dashboard-editor/#row=/#logs= address markers.
+$dashEditorFile = STAXX_ROOT.'/javascript/dash-editor.js';
+$dashEditorTag = staxx_asset('javascript/dash-editor.js');
+$dashEditorCssTag = staxx_asset('sheets/dash-editor.css');
+$cssTag  = staxx_asset('sheets/staxx.css');
 
 // Password managers ignore autocomplete="off" — that attribute only speaks to
 // the browser's own autofill. They read the words around a box instead, and a
@@ -157,31 +219,27 @@ $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFil
 $nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
         . 'data-bwignore data-form-type="other" data-protonpass-ignore="true"';
 
-if (!function_exists('staxx_status_row')):
-function staxx_status_row(string $label, bool $ok, string $detail): void {
-  $icon = $ok ? 'fa-check green-text' : 'fa-times-circle red-text';
-  echo '<div class="staxx-row" role="row">';
-  echo   '<span class="staxx-cell" role="cell"><i class="fa ', $icon, '"></i> ', htmlspecialchars($label), '</span>';
-  echo   '<span class="staxx-cell" role="cell">', htmlspecialchars($detail), '</span>';
-  echo '</div>';
-}
-endif;
 ?>
 
 <link rel="stylesheet" href="<?= $cssTag ?>">
 <!-- The Manage tab's own stylesheet, kept separate on purpose so it cannot
-     collide with anything below — see the comment on $manageCssFile above. A
-     missing file 404s quietly; nothing here depends on it loading. -->
+     collide with anything below — see the comment on the Manage tab's script,
+     further down, for why it may not exist yet. A missing file 404s quietly;
+     nothing here depends on it loading. -->
 <link rel="stylesheet" href="<?= $manageCssTag ?>">
+<!-- The Dashboard tile editor's own stylesheet (PLAN_183) — kept separate for
+     the same reason as manage.css above. A missing file 404s quietly. -->
+<link rel="stylesheet" href="<?= $dashEditorCssTag ?>">
 <!-- PLAN_103 addendum: the first-run dialog's own stylesheet, now needed
      here too — the recovery cards open the very same dialog rather than a
      second picker. See first-run.js's own gate for why it is safe to load
      unconditionally on this page as well as the true first-run screen. -->
 <?
-$firstRunCssFile = STAXX_ROOT.'/sheets/first-run.css';
-$firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
+// $firstRunJsFile is kept, rather than folded into staxx_asset() here, because
+// the script tag further down is conditional on this same file existing.
+$firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
 ?>
-<link rel="stylesheet" href="<?= $assets ?>/sheets/first-run.css?v=<?= is_file($firstRunCssFile) ? filemtime($firstRunCssFile) : '0' ?>">
+<link rel="stylesheet" href="<?= staxx_asset('sheets/first-run.css') ?>">
 
 <!-- `unapi` is Unraid's own opt-out marker, not a styling class. Its only
      appearances in webGui/styles are inside :not(.unapi *) guards on 88 rules
@@ -207,13 +265,26 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
      data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
      data-server-timezone="<?= htmlspecialchars($serverTimeZone) ?>"
+     <?php /* PLAN_188 part C: the Manage tab's Shell and Files panes need to
+        know whether either is switched off, to lay themselves out — the same
+        "baked in at page load, not asked of the server per open" channel
+        data-store-reachable above uses. Saving either setting forces a reload
+        (staxx_settings_save()'s own $reload list), so this can never go
+        stale under an open tab the way data-store-reachable's own comment
+        above worries about for the store dropping out mid-visit. */ ?>
+     data-shell-enabled="<?= staxx_cfg_bool('SHELL_ENABLED') ? '1' : '0' ?>"
+     data-files-enabled="<?= staxx_files_enabled() ? '1' : '0' ?>"
+     <?php /* PLAN_176: whether the editor's Proxy and DNS group and its DNS row
+        appear. Only the yes/no crosses to the browser, never the address. */ ?>
+     data-npm-configured="<?= trim((string)(staxx_cfg()['NPM_URL'] ?? '')) !== '' ? '1' : '0' ?>"
+     data-pihole-configured="<?= trim((string)(staxx_cfg()['PIHOLE_URL'] ?? '')) !== '' ? '1' : '0' ?>"
      <?php /* PLAN_165 §5/§6 — rendered here rather than waited for on a
         refresh, for exactly the reason the clash facts below are: refreshState()
         only ever runs after something has been started or stopped, so a fresh
         page load never makes one and the pill and the first-load window would
-        never appear at all (measured 2026-09-18). Both values cost ~8ms here,
-        because the scan reuses the stack list and container names this render
-        has already read. */ ?>
+        never appear at all (measured 2026-09-18). Both values cost little: the
+        lookup behind them reads the folder scan this render has already done,
+        and the template folder is only read when a stack names a container. */ ?>
      data-unraid-templates="<?= staxx_unraid_templates_movable_count() ?>"
      data-unraid-templates-asked="<?= staxx_unraid_templates_asked() ? '1' : '0' ?>"
      <?php /* PLAN_65/73 — the ports, paths and host listeners already in use,
@@ -222,7 +293,8 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         refresh, which a fresh page load never makes on its own, so a port 443
         clash was invisible until something else redrew the table (2026-09-11). */ ?>
      data-taken="<?= htmlspecialchars(json_encode(staxx_import_taken_facts()), ENT_QUOTES) ?>"
-     <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>>
+     <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>
+     data-update-settings="<?= htmlspecialchars(json_encode($updateSettingsForJs), ENT_QUOTES) ?>">
 
   <!-- Only conditions that need acting on get a banner here. The standing
        "this is alpha" notice is gone: a banner shown on every visit stops
@@ -304,6 +376,68 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     </div>
   <? endif; ?>
 
+  <?
+  // PLAN_181 Part D — replaces the removed weekly image cleanup (Adrian,
+  // 2026-09-25: nothing is removed on a schedule any more; a full image
+  // store is instead pointed at the Scan stored images window). Refreshed
+  // daily by scripts/update-check storage; staxx_storage_alert_state()
+  // never touches Docker itself, so this notice costs nothing on the page
+  // whether or not the alert is on.
+  //
+  // Deliberately excluded from the generic sticky-notice lift a few lines
+  // above this one (see stacks.js's stickyBlocks loop and its :not()
+  // selector) rather than folded into it: that lift marks every notice
+  // `sticky: true`, which the ticker never lets a person dismiss — right
+  // for "Docker is not running" (it should keep coming back on its own),
+  // wrong here, where Adrian's own build note asks for a dismissal that
+  // persists "until the clutter set changes". So this block is picked up
+  // by its own small script instead, keyed on data-hash, which is exactly
+  // what changes when the clutter does.
+  $storageAlert = staxx_storage_alert_state();
+  if ($storageAlert['alert']):
+    $clutterText = _('Docker\'s image storage has').' '.htmlspecialchars(staxx_images_human_bytes((int)$storageAlert['clutterBytes'])).' '._('of clutter.');
+    if ((float)$storageAlert['percent'] >= (float)(staxx_cfg()['STORAGE_ALERT_PERCENT'] ?? 85)) {
+      $whyText = _('It is').' '.htmlspecialchars((string)round($storageAlert['percent'])).'% '._('full.');
+    } else {
+      $whyText = _('Some of it has been unused for').' '.htmlspecialchars((string)$storageAlert['oldestDays']).' '._('days.');
+    }
+  ?>
+    <div class="staxx-notice" data-notice-kind="warn" id="staxx-storage-alert-notice"
+         data-hash="<?= htmlspecialchars($storageAlert['hash'], ENT_QUOTES) ?>">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= $clutterText ?></strong>
+        <?= $whyText ?>
+        <button type="button" id="staxx-storage-alert-review" class="staxx-link-btn"><?= _('Review stored images') ?></button>
+      </div>
+    </div>
+  <? endif; ?>
+
+  <?
+  // PLAN_186: somebody set the backup plugin up the old way — naming stacks
+  // and/or archives separately, which is what the dialog used to ask for,
+  // rather than the whole store it asks for now — is told here rather than
+  // only if they happen to open the backup dialog. Ordinary .staxx-notice,
+  // collected by the same loop that lifts the Docker Hub notice above
+  // (data-notice-kind="warn", no id, no sticky hash): unlike the storage
+  // alert just above, it needs no special dismissal — it stops rendering,
+  // and so stops appearing, the moment the list covers the store.
+  if (staxx_backup_partial_notice()):
+    $partialStorePath = htmlspecialchars(staxx_store_root());
+    $partialBody = _('The Appdata Backup plugin lists some of StaXX\'s folders but not')
+                 . ' <code>' . $partialStorePath . '</code> '
+                 . _('as a whole. Add that folder to its list of extra files so your StaXX settings are backed up too.');
+  ?>
+    <div class="staxx-notice" data-notice-kind="warn">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('Your backup is missing part of StaXX.') ?></strong>
+        <?= $partialBody ?>
+        <button type="button" class="staxx-link-btn" id="staxx-backup-partial-review"><?= _('Check your backup') ?></button>
+      </div>
+    </div>
+  <? endif; ?>
+
   <!-- Said by the page itself rather than by a dialog, for cases with no
        dialog to say it in: an install caught on Unraid's Add Container page
        that StaXX then could not convert, or (Phase F) a container that
@@ -358,8 +492,16 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <div class="staxx-search-drop" id="staxx-find-drop" hidden></div>
     </div>
     <div class="staxx-buttons staxx-buttons--inline">
+      <!-- PLAN_168 — opens the legend (#staxx-legend, built by script). Icon
+           only, ordinary toolbar chrome (same border/background/height as its
+           neighbours), so it sits with the buttons rather than reading as a
+           stray link. -->
+      <button type="button" class="staxx-btn staxx-legend-btn" id="staxx-legend-btn"
+              title="<?= _('What the marks mean') ?>" aria-label="<?= _('What the marks mean') ?>">
+        <i class="fa fa-th-list" aria-hidden="true"></i>
+      </button>
       <!-- PLAN_78 — toggles selection mode; the marks it puts on every row
-           and folder header, and the bar of verbs at the foot of the list,
+           and folder header, and the bar of verbs directly below this row,
            are both painted entirely by stacks.js. -->
       <button type="button" class="staxx-btn" id="staxx-select-btn">
         <i class="fa fa-check-square-o"></i> <?= _('Select') ?>
@@ -367,20 +509,16 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-btn" id="staxx-settings-btn">
         <i class="fa fa-cog"></i> <?= _('Settings') ?>
       </button>
-      <button type="button" class="staxx-btn" id="staxx-diagnose">
-        <i class="fa fa-stethoscope"></i> <?= _('Self-test') ?>
-      </button>
-      <button type="button" class="staxx-btn" id="staxx-add-folder">
-        <i class="fa fa-folder"></i> <?= _('New folder') ?>
-      </button>
-      <button type="button" class="staxx-btn" id="staxx-apps">
-        <i class="fa fa-th"></i> <?= _('Apps') ?>
-      </button>
-      <button type="button" class="staxx-btn" id="staxx-import">
-        <i class="fa fa-download"></i> <?= _('Import') ?>
-      </button>
-      <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add">
-        <i class="fa fa-plus"></i> <?= _('Add stack') ?>
+      <!-- PLAN_173 — one door in for everything that ends in a stack: a
+           blank one, one from Apps, an import, a new folder to hold one, or
+           a merge of several into one. Routed through the page's own
+           #staxx-menu (buildAddMenu() in stacks.js) rather than a menu of
+           its own, so it inherits that menu's viewport-safe placement and
+           its sticky hover behaviour rather than reimplementing either. -->
+      <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add-btn"
+              data-menu="add" data-label="<?= _('Add') ?>"
+              aria-haspopup="menu" aria-expanded="false">
+        <i class="fa fa-plus"></i> <?= _('Add') ?> <i class="fa fa-caret-down" aria-hidden="true"></i>
       </button>
       <button type="button" class="staxx-btn" id="staxx-check-updates">
         <i class="fa fa-refresh"></i> <?= _('Check for updates') ?>
@@ -397,18 +535,18 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     </div>
   </div>
 
+  <!-- PLAN_78 — the bar of verbs for whatever is chosen in selection mode.
+       It sits directly under the button row because the button that switches
+       the mode on is in that row; at the foot of the list it was a screen or
+       more away from the control that produced it. Hidden and empty unless
+       selection mode is on with at least one stack chosen, and painted
+       entirely by paintSelectBar() in stacks.js. -->
+  <div class="staxx-selectbar" id="staxx-select-bar" hidden></div>
+
   <!-- PLAN_45 phase 4-8. Hidden until update-queue-start begins one, and
        painted entirely by paintUpdateQueue() in stacks.js — a queue's own
        progress is polled from the browser, not part of the page's render. -->
   <div class="staxx-updatequeue" id="staxx-update-queue" hidden></div>
-
-  <!-- A quiet status line, empty and hidden until something needs it — see
-       setPushStatus() in stacks.js, the live-feed-degraded notice. Used to
-       also carry the whole-machine GPU card and a staleness line (PLAN_114
-       moved a stack's GPU badge onto its own row instead, where it survives
-       the stack being stopped, and dropped the strip's age line — a stale
-       snapshot now just blanks the row like a stopped one, see applyStats()). -->
-  <div class="staxx-strip" id="staxx-strip" hidden></div>
 
   <!-- The table is always here, even with nothing in it.
        The browser replaces this table's body in place rather than reloading
@@ -429,12 +567,6 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <div class="staxx-body" id="staxx-rows" role="rowgroup"><?= staxx_render_rows($rows, $canRun, staxx_store_reachable()) ?></div>
     </div>
   </div>
-
-  <!-- PLAN_78 — the bar of verbs for whatever is chosen in selection mode.
-       Hidden and empty outside that mode; painted entirely by
-       paintSelectBar() in stacks.js, the same way #staxx-update-queue above
-       is painted by its own script rather than carrying markup here. -->
-  <div class="staxx-selectbar" id="staxx-select-bar" hidden></div>
 
   <!-- One menu, reused by every row, and attached to the page rather than to a
        table cell. A menu nested inside the scrolling table container would be
@@ -739,23 +871,33 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
         </div>
         <!-- Always visible now, not only when there is more than one tab —
              it also carries the New file and Add a file controls, and
-             hiding the strip would hide those with it. Filled by script
-             (renderTabs() in stacks.js) with one button per file in the
-             stack's own folder; the compose file's own tab is pinned first
-             and cannot be closed — everything else in the folder follows it
-             alphabetically. -->
+             hiding the strip would hide those with it. #staxx-tabs is filled
+             by script (renderTabs() in stacks.js) with one entry per file in
+             the stack's own folder; the compose file's own tab is pinned
+             first and cannot be closed — everything else in the folder
+             follows it alphabetically.
+
+             PLAN_172: New file/Add a file sit at the LEFT of the strip,
+             before #staxx-tabs, as plain siblings rather than inside it —
+             renderTabs() rewrites #staxx-tabs wholesale on every file-list
+             change, so anything reparented into it is destroyed on the next
+             redraw. Each file tab draws its own chevron now (see
+             renderTabs()); the one chevron that used to sit here beside the
+             first tab, acting on whichever file was open, is gone. -->
         <div class="staxx-tabstrip">
+          <div class="staxx-filebtns">
+            <button type="button" class="staxx-filebtn" id="staxx-file-new"
+                    title="<?= _('Add a new, empty file to this stack') ?>"
+                    aria-label="<?= _('New file') ?>">
+              <i class="fa fa-plus" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="staxx-filebtn" id="staxx-file-add"
+                    title="<?= _('Upload a file from this computer') ?>"
+                    aria-label="<?= _('Upload a file from this computer') ?>">
+              <i class="fa fa-upload" aria-hidden="true"></i>
+            </button>
+          </div>
           <div class="staxx-tabs" id="staxx-tabs" role="tablist" aria-label="<?= _('Files in this stack') ?>"></div>
-          <button type="button" class="staxx-chevron" id="staxx-file-new"
-                  title="<?= _('Add a new, empty file to this stack') ?>"
-                  aria-label="<?= _('New file') ?>">
-            <i class="fa fa-plus" aria-hidden="true"></i>
-          </button>
-          <button type="button" class="staxx-chevron" id="staxx-file-add"
-                  title="<?= _('Add a file from this computer') ?>"
-                  aria-label="<?= _('Add a file from this computer') ?>">
-            <i class="fa fa-upload" aria-hidden="true"></i>
-          </button>
           <!-- Never shown itself. Both buttons above click it open, and so
                does Replace… on the binary panel further down — for that one
                it is switched to single-file for the one pick, because a
@@ -763,7 +905,8 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
                what the chosen file is called (see stacks.js). -->
           <input type="file" id="staxx-file-input" multiple hidden>
         </div>
-        <!-- The active tab's menu (Rename / Delete / Download). Not
+        <!-- The file menu (Rename / Delete / Download) for whichever tab's
+             own chevron last opened it — not necessarily the open tab. Not
              #staxx-menu — that one lives outside this dialog, and a
              <dialog> opened with showModal() paints in the top layer above
              anything outside it. A plain sibling of the strip rather than
@@ -927,9 +1070,16 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
            PHP. Hidden by default; nothing shows in it above desktop width. -->
       <div class="staxx-notestrip" id="staxx-notestrip" hidden></div>
 
-      <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
-      <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
-              title="<?= _('Not now') ?>" hidden>&times;</button>
+      <!-- The bar and its "Not now" cross share one row: as plain siblings in
+           this block-flow footer the cross landed on a line of its own, which
+           read as an empty notice band with a close button and nothing in it
+           (2026-09-18). The row is empty markup whenever both are hidden, so
+           it costs no height then. -->
+      <div class="staxx-noterow">
+        <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
+        <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
+                title="<?= _('Not now') ?>" hidden>&times;</button>
+      </div>
 
       <!-- Same shape and job as #staxx-missing above, but for a volume's
            HOST side rather than a file inside the stack: clicking it asks the
@@ -974,6 +1124,60 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
           <button type="button" class="staxx-btn" id="staxx-undo" disabled><?= _('Undo') ?></button>
           <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-save"><?= _('Save') ?></button>
           <button type="button" class="staxx-btn" id="staxx-save-start" <?= $canRun ? '' : 'disabled' ?>><?= _('Save and start') ?></button>
+        </div>
+      </div>
+    </div>
+
+  </dialog>
+
+  <!-- ------------------------------------------------------ merge wizard --
+
+       PLAN_155 — merging stacks: the rebuild. Built to the editor dialog's
+       own measurements — .staxx-modal already carries the width/height
+       rules and the 990px full-screen step (see staxx.css's own comment on
+       why that threshold is written in pixels), so this reuses them rather
+       than inventing a second set; only the internal three-band layout
+       (head, panes, foot) is its own. Everything inside is built and torn
+       down by stacks.js — there is nothing here for PHP to render per
+       stack, because the whole point is to compare two or more files
+       nobody has picked yet.
+
+       Six steps now share one dialog: a merge no longer folds one stack
+       into a host, it writes a brand new third stack from two or more
+       sources. Exactly one of the six panes below is ever unhidden — step 6
+       is the confirm screen: the stack editor's own form and YAML view of
+       the merged file, side by side with what pressing Merge will do. -->
+  <dialog class="staxx-modal staxx-merge-modal" id="staxx-merge-modal" aria-labelledby="staxx-merge-title">
+
+    <div class="staxx-modal-head staxx-merge-head">
+      <h3 class="staxx-modal-title" id="staxx-merge-title"><?= _('Merge Stacks') ?></h3>
+      <div class="staxx-merge-steps" id="staxx-merge-steps" role="list" aria-label="<?= _('Merge steps') ?>"></div>
+      <!-- The picked tally used to sit under the last row of tiles, where a long
+           stack list hid it below the fold; it lives in the head instead so it is
+           in view the whole time you are picking (Adrian, 2026-09-18). -->
+      <p class="staxx-merge-picked" id="staxx-merge-picked" aria-live="polite" hidden></p>
+    </div>
+
+    <div class="staxx-merge-panes" id="staxx-merge-panes">
+      <div class="staxx-merge-step1" id="staxx-merge-step1" hidden>
+        <input type="search" class="staxx-merge-search-input" id="staxx-merge-search-input"
+               placeholder="<?= _('Search stacks…') ?>">
+        <div class="staxx-merge-step1-tiles" id="staxx-merge-step1-tiles"></div>
+      </div>
+      <div class="staxx-merge-step2" id="staxx-merge-step2" hidden></div>
+      <div class="staxx-merge-step3" id="staxx-merge-step3" hidden></div>
+      <div class="staxx-merge-step4" id="staxx-merge-step4" hidden></div>
+      <div class="staxx-merge-step5" id="staxx-merge-step5" hidden></div>
+      <div class="staxx-merge-step6" id="staxx-merge-step6" hidden></div>
+    </div>
+
+    <div class="staxx-modal-foot staxx-merge-foot">
+      <div class="staxx-error" id="staxx-merge-error" hidden></div>
+      <div class="staxx-modal-actions">
+        <button type="button" class="staxx-btn" id="staxx-merge-cancel"><?= _('Cancel') ?></button>
+        <div class="staxx-merge-foot-right">
+          <button type="button" class="staxx-btn" id="staxx-merge-back"><?= _('Back') ?></button>
+          <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-merge-next"><?= _('Next') ?></button>
         </div>
       </div>
     </div>
@@ -1243,9 +1447,9 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
     <div class="staxx-import-head">
       <h3 class="staxx-import-title" id="staxx-import-title"><?= _('Import') ?></h3>
       <p class="staxx-import-hint">
-        <?= _('Unraid templates and Compose Manager projects can be ticked and imported below; each one is written as a new stack that starts out locked, so nothing runs and no existing container is touched until you choose to take it over later.') ?>
-        <?= _('A Compose Manager project is copied exactly as you wrote it, and the project it came from is left where it is.') ?>
-        <?= _('Containers belonging to neither are shown for reference only — importing those is not built yet.') ?>
+        <?= _('Unraid templates, Compose Manager projects and compose projects from other tools can be ticked and imported below; each one is written as a new stack that starts out locked, so nothing runs and no existing container is touched until you choose to take it over later.') ?>
+        <?= _('A compose project is copied exactly as you wrote it, and the project it came from is left where it is.') ?>
+        <?= _('Containers started by hand, belonging to none of these, are shown for reference only.') ?>
       </p>
     </div>
 
@@ -1409,7 +1613,9 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="storage"><?= _('Storage') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="icons"><?= _('Icons and images') ?></button>
       <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="updates"><?= _('Updates') ?></button>
-      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Registries and security') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Integrations') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="selftest"><?= _('Self-test') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="about"><?= _('About') ?></button>
     </div>
 
     <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
@@ -1469,7 +1675,7 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
   <dialog class="staxx-settings" id="staxx-backup-dlg" aria-labelledby="staxx-backup-title">
 
     <div class="staxx-settings-head">
-      <h3 class="staxx-settings-title" id="staxx-backup-title"><?= _('Add these folders to your backup') ?></h3>
+      <h3 class="staxx-settings-title" id="staxx-backup-title"><?= _('Is StaXX in your backup?') ?></h3>
     </div>
 
     <div class="staxx-settings-body" id="staxx-backup-body"></div>
@@ -1483,15 +1689,40 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   </dialog>
 
+  <!-- --------------------------------------------------------- images -- -->
+
+  <!-- PLAN_180 Part 1 — "Scan stored images", opened from the Storage tab of
+       Settings. Same recipe as .staxx-backup-dlg: a head, a body the script
+       fills in (the grouped list, or the job's own log once removal has
+       started), and a foot whose buttons change meaning between the two —
+       see renderImagesList()/openImagesDialog() in stacks.js. -->
+  <dialog class="staxx-settings staxx-settings--fit" id="staxx-images-dlg" aria-labelledby="staxx-images-title">
+
+    <div class="staxx-settings-head">
+      <h3 class="staxx-settings-title" id="staxx-images-title"><?= _('Scan stored images') ?></h3>
+    </div>
+
+    <div class="staxx-settings-body" id="staxx-images-body"></div>
+
+    <div class="staxx-settings-foot">
+      <p class="staxx-settings-msg" id="staxx-images-msg" role="status" aria-live="polite"></p>
+      <div class="staxx-buttons staxx-buttons--inline">
+        <button type="button" class="staxx-btn" id="staxx-images-cancel"><?= _('Cancel') ?></button>
+        <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-images-remove" disabled></button>
+      </div>
+    </div>
+
+  </dialog>
+
   <!-- ------------------------------------------------------------- log -- -->
 
   <!-- The ninth dialog: a job's output on demand — a failed command, Logs,
        the self-test. It never opens on its own; every call site in stacks.js
        chooses to open it. A <dialog> cannot scroll the page behind it, which
        is the whole reason the old page-bottom panel this replaced is gone —
-       Adrian's word for that panel was "annoying". Same recipe as
-       .staxx-settings: own class, own :not([open]), ::backdrop and
-       @starting-style. -->
+       Adrian's word for that panel was "annoying". Own class, like
+       .staxx-settings; its open and close fade is the shared one in
+       staxx.css under "Every dialog". -->
   <dialog class="staxx-logdlg" id="staxx-log-dlg" aria-labelledby="staxx-log-title">
 
     <div class="staxx-logdlg-head">
@@ -1506,101 +1737,32 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 
   </dialog>
 
-  <!-- ---------------------------------------------------- environment -- -->
+  <!-- ------------------------------------------------------------ legend -- -->
 
-  <details class="staxx-details">
-    <summary><?= _('Environment') ?></summary>
+  <!-- PLAN_168 — what every chip on the page means. Opened from the toolbar
+       button above and from the row menu's "What do these marks mean?" item,
+       which used to send the reader to docs/guide/marks.md on GitHub; this
+       replaces that trip entirely, chips still visible on the page behind it.
+       Own class, like .staxx-logdlg; its open and close fade is the shared
+       one in staxx.css under "Every dialog". The body is built by renderLegend() in stacks.js,
+       from the page's own chip classes and data-mark names — never
+       hand-written lookalike markup, which is the exact drift this replaces. -->
+  <dialog class="staxx-legend" id="staxx-legend" aria-labelledby="staxx-legend-title">
 
-    <div class="staxx-status" role="table">
-      <div class="staxx-row staxx-head-row" role="row">
-        <span class="staxx-cell" role="columnheader"><?= _('Check') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('Result') ?></span>
+    <div class="staxx-legend-head">
+      <div>
+        <h3 class="staxx-legend-title" id="staxx-legend-title"><?= _('What the marks mean') ?></h3>
+        <p class="staxx-legend-sub"><?= _('Colour says how much it wants from you · the mark says what it is about · movement says it is live.') ?></p>
       </div>
-      <?
-        staxx_status_row(
-          _('Docker service'),
-          $dockerRunning,
-          $dockerRunning ? _('Running') : _('Not running')
-        );
-
-        // Reported as two rows: whether compose runs at all, and where it was
-        // found. They can disagree — compose can work while sitting somewhere
-        // this plugin does not know to look — and that difference is worth
-        // seeing rather than hiding behind a single tick.
-        staxx_status_row(
-          _('Compose available'),
-          $compose['available'],
-          $compose['available']
-            ? sprintf(
-                $compose['form'] === 'standalone'
-                  ? _('v%s — standalone `docker-compose` command')
-                  : _('v%s — `docker compose` CLI plugin'),
-                $compose['version'] ?: '?'
-              )
-            // Says how to get it rather than promising an installer this
-            // plugin does not have. Unraid ships no compose of its own, and
-            // Compose Manager is how it reaches nearly every box that has it.
-            : _('Not found. Unraid does not ship compose — install the Docker Compose '
-              . 'Manager plugin from Community Applications, then reload this page.')
-        );
-
-        staxx_status_row(
-          _('Compose location'),
-          $compose['path'] !== '',
-          $compose['path'] !== ''
-            ? $compose['path']
-            : ($compose['available']
-                ? _('Runs, but not in any known location — please report where it lives.')
-                : _('Nothing to locate.'))
-        );
-
-        staxx_status_row(
-          _('Stack folder'),
-          is_dir($root),
-          is_dir($root) ? $root : sprintf(_('%s does not exist yet'), $root)
-        );
-
-        staxx_status_row(
-          _('Compose project labels'),
-          $stackCount > 0,
-          $stackCount > 0
-            ? sprintf(_('%d compose stack(s) detected via com.docker.compose.project'), $stackCount)
-            : _('No compose-managed containers found yet.')
-        );
-      ?>
+      <button type="button" class="staxx-legend-close" id="staxx-legend-close"
+              title="<?= _('Close') ?>" aria-label="<?= _('Close') ?>">
+        <i class="fa fa-times" aria-hidden="true"></i>
+      </button>
     </div>
 
-    <? if ($projects): ?>
-      <h3><?= _('Containers by stack') ?></h3>
-      <p class="staxx-hint">
-        <?= _('Grouping comes from the com.docker.compose.project label — stacks group themselves, with no folders to configure.') ?>
-      </p>
+    <div class="staxx-legend-body" id="staxx-legend-body"></div>
 
-      <div class="staxx-projects" role="table">
-        <? foreach ($projects as $project => $containers): ?>
-          <div class="staxx-row" role="row">
-            <span class="staxx-cell staxx-project" role="cell">
-              <? if ($project === ''): ?>
-                <i class="fa fa-cube"></i> <em><?= _('Not compose-managed') ?></em>
-              <? else: ?>
-                <i class="fa fa-cubes"></i> <?= htmlspecialchars($project) ?>
-              <? endif; ?>
-            </span>
-            <span class="staxx-cell" role="cell"><?= htmlspecialchars(implode(', ', $containers)) ?></span>
-          </div>
-        <? endforeach; ?>
-      </div>
-
-      <? if ($unmanagedCount): ?>
-        <p class="staxx-hint">
-          <?= sprintf(
-                _('%d container(s) carry no compose project label. These were created by Unraid templates or by hand, and are what an import path would need to adopt.'),
-                $unmanagedCount
-              ) ?>
-        </p>
-      <? endif; ?>
-    <? endif; ?>
-  </details>
+  </dialog>
 
 </div>
 
@@ -1652,6 +1814,19 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
 <? if (is_file($healthOfferFile)): ?>
 <script src="<?= $healthOfferTag ?>"></script>
 <? endif; ?>
+<!-- PLAN_148 — merge-examine.js (phase 2) works out what a merge must
+     decide; merge-write.js (phase 4) turns that into real file text. Both
+     read window.StaxxYaml, so they load after compose-model.js and before
+     stacks.js, which reads window.StaxxMergeExamine and window.StaxxMergeWrite. -->
+<? if (is_file($mergeExamineFile)): ?>
+<script src="<?= $mergeExamineTag ?>"></script>
+<? endif; ?>
+<? if (is_file($mergeWriteFile)): ?>
+<script src="<?= $mergeWriteTag ?>"></script>
+<? endif; ?>
+<? if (is_file($mergeSuggestFile)): ?>
+<script src="<?= $mergeSuggestTag ?>"></script>
+<? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of
      the page. It sets window.StaxxManage, which stacks.js reads with a null
@@ -1667,8 +1842,19 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      see first-run.js's own gate for why it does nothing else on load here.
      Must come before stacks.js, which reads that global. -->
 <? if (is_file($firstRunJsFile)): ?>
-<script src="<?= $assets ?>/javascript/first-run.js?v=<?= filemtime($firstRunJsFile) ?>"></script>
+<script src="<?= staxx_asset('javascript/first-run.js') ?>"></script>
 <? endif; ?>
+<!-- PLAN_183 — the Dashboard tile editor, a separate file for the same
+     reason as the Manage tab above. Must come before stacks.js: it defines
+     window.staxxDashEditor, which stacks.js calls when the address carries
+     #dashboard-editor. Conditional because it may not exist yet while it is
+     still being written; a missing src would only be a 404. -->
+<? if (is_file($dashEditorFile)): ?>
+<script src="<?= $dashEditorTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_212 — the problem window stacks.js opens for a file Compose refuses
+     and for the form's help marks; it only draws, so it loads ahead of it. -->
+<script src="<?= staxx_asset('javascript/problem-window.js') ?>"></script>
 <script src="<?= $jsTag ?>"></script>
 <!-- PLAN_165 §5/§6 — see the comment on $unraidTemplatesFile above. Loaded
      after stacks.js only by convention (nothing here reads a stacks.js
@@ -1676,4 +1862,10 @@ $firstRunJsFile   = STAXX_ROOT.'/javascript/first-run.js';
      is, above. -->
 <? if (is_file($unraidTemplatesFile)): ?>
 <script src="<?= $unraidTemplatesTag ?>"></script>
+<? endif; ?>
+<? if (is_file($leftoversFile)): ?>
+<script src="<?= $leftoversTag ?>"></script>
+<? endif; ?>
+<? if (is_file($feedbackFile)): ?>
+<script src="<?= $feedbackTag ?>"></script>
 <? endif; ?>

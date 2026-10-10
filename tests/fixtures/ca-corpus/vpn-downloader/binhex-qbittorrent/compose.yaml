@@ -1,0 +1,58 @@
+# Filled in for you — check these before starting:
+# - The path "Path: /data" had no value; used
+#   /mnt/user/appdata/binhex-qbittorrent/data as a placeholder — check it before
+#   starting the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/templates/qbittorrent.xml"
+    name: "binhex-qbittorrent"
+  category: Downloaders
+  project: https://www.qbittorrent.org/
+  support: https://forums.unraid.net/topic/192161-support-binhex-qbittorrent/
+  readme: https://github.com/binhex/documentation
+  author: Binhex's Repository
+  overview: |
+    qBittorrent is a bittorrent client programmed in C++ / Qt that uses libtorrent
+    (sometimes called libtorrent-rasterbar) by Arvid Norberg. It aims to be a good
+    alternative to all other bittorrent clients out there. qBittorrent is fast,
+    stable and provides unicode support as well as many features.
+
+services:
+  binhex-qbittorrent:
+    image: ghcr.io/binhex/arch-qbittorrent
+    container_name: binhex-qbittorrent
+    restart: unless-stopped
+    privileged: true
+    network_mode: "container:binhex-official-gluetun"
+    # ports:
+    #   - "8080:8080"        # This is the port for the Web UI for the application. -!R
+    #   - "58946:58946"      # This is the TCP incoming port when VPN_ENABLED is set to 'no'.
+    #   - "58946:58946/udp"  # This is the UDP incoming port when VPN_ENABLED is set to 'no'.
+    volumes:
+      - /mnt/user/appdata/qbittorrent:/config            # This is the container path to your configuration files, e.g. databases, configuration files, logs etc. -!R
+      - /mnt/user/appdata/binhex-qbittorrent/data:/data  # This is the container path to your downloaded files or user created content. -!R
+    environment:
+      GLUETUN_INCOMING_PORT: "no"                       # Specify whether to attempt to identify and configure the applications listening port when connected to the gluetun network.
+      GLUETUN_CONTROL_SERVER_PORT: "8000"               # Specify the port for the gluetun HTTP Control Server.
+      GLUETUN_CONTROL_SERVER_USERNAME: "controlserver"  # Specify the username for the gluetun HTTP Control Server
+      GLUETUN_CONTROL_SERVER_PASSWORD: "controlserver"  # Specify the password for the gluetun HTTP Control Server -!S
+      QBITTORRENT_WEBUI_USER: "admin"                   # Specify the WebUI username for qBittorrent. Leave as 'admin' unless you changed it.
+      QBITTORRENT_WEBUI_PASSWORD: ""                    # Specify the WebUI password for qBittorrent. If left empty, a random password will be auto-generated and logged once. IMPORTANT: If you change the password here… -!S
+      WEBUI_PORT: "8080"                                # Specify the port the application will listen on - IMPORTANT: If you change this value then you will also need to delete and re-create the port mapping to match.
+      DEBUG: "no"                                       # Specify whether you want to enable debug logging, useful when diagnosing gluetune related issues. -!R
+      ENABLE_HEALTHCHECK: "yes"                         # Enable or disable healthchecks.
+      HEALTHCHECK_COMMAND: ""                           # The command or script to execute, if not specified then the script healthcheck.sh will be used (process, dns and https checking).
+      HEALTHCHECK_ACTION: ""                            # The action to execute if the healthcheck command returns a non zero exit code, if not specified the action will be 'exit 1', if you want the container to exit…
+      HEALTHCHECK_HOSTNAME: "google.com"                # The hostname used when performing HTTPS and DNS healthchecking.
+      PUID: "99"                                        # User ID for the running container. -!R
+      PGID: "100"                                       # Group ID for the running container. -!R
+      UMASK: "000"                                      # UMASK for the running container. -!R
+    x-unraid:
+      icon: https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/images/qbittorrent-icon.png
+      webui: "http://[IP]:8080"
+      project: https://www.qbittorrent.org/
+      support: https://forums.unraid.net/topic/192161-support-binhex-qbittorrent/

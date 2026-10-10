@@ -12,17 +12,8 @@
  * stack under that store's stacks folder, so the real stacks on the box are
  * never read or touched. The caller sets STORE_ROOT and puts the config back:
  *
- *     pscp tests/server/links_match.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/lk70-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/lk70-store\"" >> $CFG
- *       php /tmp/links_match.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/links_match.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/lk70-store /tmp/links_match.php'
  *
  * Prints one line per case and exits non-zero on any failure. The negative
  * cases matter more than the positive ones — a matcher that says yes when

@@ -90,7 +90,7 @@ services:
     ports:
       - "8096:8096"    # the page you open -!R   ← per-setting notes live here
     x-unraid:          # service-level: describes one container
-      icon: jellyfin
+      icon: ./.staxx/jellyfin.png
       overview: |
         Free software media system…
 ```
@@ -227,19 +227,43 @@ service that no longer exists is ignored too, never quietly deleted.
 ```yaml
 x-unraid:
   update:
-    mode: auto      # off | notify | auto
+    mode: auto      # manual | auto (off and notify are the older spelling of manual)
+    notify:         # mention this in update messages; omit any event to inherit
+      found: true
+      installed: true
+      failed: true
     delay: 6        # hours to wait before applying; omit to inherit
 ```
 
 Says how this stack should be kept up to date, overriding the plugin's global setting for it alone.
-`mode: off` means never apply an update on its own — it is still shown as found. `notify` shows an
-update without ever applying it. `auto` applies it once `delay` hours have passed since it was
-first seen. Leaving `update` out entirely means "use the global setting", and leaving `delay` out
-while setting `mode` means "use the global delay with this mode".
+`mode: manual` means never apply an update on its own — it is still shown as found. `mode: auto`
+applies it once `delay` hours have passed since it was first seen; `delay: 0` means as soon as it is
+found. Leaving `update` out entirely means "use the global setting", and leaving `delay` out while
+setting `mode` means "use the global delay with this mode".
 
-A **service** can carry the same block (see below) to override this for one container in the stack.
-The order a value is looked up in is: the service's own `update` block, then the stack's, then the
-plugin's global setting — the first one that actually sets the key wins.
+**`off` and `notify` are the older spelling of `manual`, and are still accepted for good** — a file
+written before this pair existed keeps working exactly as it did, with no need to change it.
+
+`notify` says whether this stack (or service) is named in an update message — a found update, one
+installed, one that failed — independent of whether it updates itself. It is an object with three
+optional switches, one per kind of message: `found`, `installed`, `failed`. Leaving one out means
+"use the server's own switch for that kind of message" — not the stack's own setting and not the
+plugin's global `mode`/`delay` fallback described below, because that "first level that sets
+anything wins for everything" rule stops at the door of this key. Each of the three switches
+resolves on its own: a container can ask to be named on failure and say nothing about the other two,
+and still get the server's own answer for those.
+
+**A plain `true` or `false` is still accepted, for good** — the older spelling, from before the three
+were separate. It sets all three switches to that one value in one go; there is no plan to ever stop
+reading it, so a file need never be rewritten just to keep working.
+
+A **service** can carry the same block (see below) to override `mode` and `delay` for one container
+in the stack. The order a value is looked up in for those two is: the service's own `update` block,
+then the stack's, then the plugin's global setting — and **the first level that sets `mode` or
+`delay` wins for both**. Whatever that level leaves unsaid comes from the plugin's global setting,
+not from the level below it. `notify` is not part of that handoff: a service's own `notify` block
+(or boolean) only ever decides the events it actually names, whatever the stack around it says about
+`mode` or `delay`.
 
 ### `imported`
 
@@ -302,7 +326,7 @@ the person's decision, made with a click, not something StaXX does on its own.
 services:
   jellyfin:
     x-unraid:
-      icon: jellyfin               # see "Icons" below
+      icon: ./.staxx/jellyfin.png   # see "Icons" below
       overview: |                  # markdown
         …
       project: https://jellyfin.org
@@ -310,7 +334,9 @@ services:
       webui: "http://[IP]:[PORT:8096]/"
       display: basic               # basic | advanced — reserved; see below
       update:
-        mode: notify                # off | notify | auto; overrides the stack's own setting
+        mode: manual                # manual | auto; overrides the stack's own mode and delay
+        notify:                     # each event overrides the server's own switch for this container alone
+          failed: true
         delay: 12                   # hours; omit to inherit
 ```
 
@@ -325,9 +351,15 @@ fallback when a service does not set its own. A service-level pair exists becaus
 belongs to one image, and a stack can hold several: a media server and its database sit in the
 same file but come from different projects, so one stack-level link cannot speak for both.
 
-`update` means the same thing here as it does at stack level (see [Update](#update) above), and
-wins over it: a database sidecar that should never auto-update while the rest of the stack does
-can say `mode: off` here without touching the stack's own setting.
+`update` means the same thing here as it does at stack level (see [Update](#update) above). A
+service that sets `mode` or `delay` here takes over both from the stack: a database sidecar that
+should never auto-update while the rest of the stack does can say `mode: manual` here without
+touching the stack's own setting. Remember that handoff replaces the stack's rather than adding to
+it — a service saying only `delay: 12` falls back to the *global* mode, not the stack's, so write
+out anything of the stack's you meant to keep. `notify` does not take part in that handoff: each
+event a service's own `notify` names is decided right there, and any event it leaves unset follows
+the server's own switch for that event — never the stack's `notify`, and never the rest of the
+service's own `update` block.
 
 `webui` uses Unraid's existing `[IP]` substitution for the address, and states the port plainly:
 
@@ -388,39 +420,59 @@ Do not read this as a precedent for keeping a second copy of ordinary compose se
 leaves nothing else standing: the network list has to leave the file the moment a mode is chosen,
 and this is the only place left for it to go.
 
+### `expose`
+
+```yaml
+services:
+  sonarr:
+    x-unraid:
+      expose:
+        domain: sonarr.home.lan        # present = an NPM proxy host for this service
+        certificate: "*.home.lan"      # NPM certificate nice_name; absent = plain http
+        websockets: false               # absent = true; NPM's own "Websockets Support"
+        enabled: false                  # absent = true; false = proxy host switched off in NPM
+        dns: true                       # Pi-hole A record for domain, pointed at NPM's address
+```
+
+Asks StaXX to keep a [Nginx Proxy Manager](https://nginxproxymanager.com/) entry — and, if you also
+run [Pi-hole](https://pi-hole.net/), a matching local DNS name — pointed at this service, so the
+address you type in a browser does not have to be `http://server:port`. Only `domain` is required;
+every other key is optional.
+
+- `domain` — the address a browser would be typed to reach this service. Writing this is what asks
+  for the proxy entry in the first place; there is no separate on/off key for the entry itself.
+- `certificate` — a Nginx Proxy Manager certificate, named by its own *nice name* rather than its
+  numeric id, because the id means nothing outside that one NPM and the file has to stay portable.
+  Absent means the proxy host answers on plain `http`.
+- `websockets` — Nginx Proxy Manager's own "Websockets Support" switch. **Absent means on** — the
+  same as most apps want, and the same as a host StaXX finds already there keeps meaning, so
+  adopting an existing entry changes nothing. Only `false` is ever written; turning this back on
+  removes the line rather than writing `true`.
+- `enabled` — whether the proxy host itself is switched on in Nginx Proxy Manager. **Absent means
+  on**, for the same reason `websockets` is, and is written the same way: only `false` ever appears
+  in the file. Switching this off does not touch a Pi-hole name written alongside it.
+- `dns` — whether StaXX also keeps a Pi-hole A record for `domain`, pointed at Nginx Proxy
+  Manager's own address rather than at this container directly. Unlike `websockets`/`enabled`,
+  absent here simply means no DNS name — there is no separate default to fall back to.
+
+Where the proxy should actually point is answered the same way `webui` (above) already answers it:
+the host-facing side of the service's first port on a bridge network, or the container's own side
+on host networking or macvlan/ipvlan, where nothing is published.
+
+`expose` reaches Nginx Proxy Manager and Pi-hole through server-wide settings (their address, and
+the account StaXX signs in with) rather than anything written per-service — a stack's own compose
+file never carries a password for either.
+
 ---
 
 ## Icons
 
-`icon:` is a service-level key only — a stack has no picture of its own to state, only the pictures
-of the containers inside it (see below). It takes four forms, told apart by their shape, so there is
-no extra key saying which kind it is:
+The app or service icon is stored in the `.staxx` folder beside the compose file, one for each
+service the compose file declares. A stack's icon is a tiled composite of the icons of all its
+services; when the compose file declares only one service, the stack's icon is that service's icon.
 
-| Written like this | What it means |
-|---|---|
-| `jellyfin` | A name from the [selfh.st icon collection](https://selfh.st/icons/) — about 2,900 logos of self-hosted software. This is usually the shortest thing to write. |
-| `./icon.png` | A file sitting in the stack's own directory, next to the compose file. |
-| `https://example.org/icon.png` | Any address on the web. |
-| `fa-database` | A [Font Awesome](https://fontawesome.com/v4/icons/) glyph — the same form Unraid's own XML templates accept, kept working so a converted template does not lose the icon it already had. |
-
-**Leaving it out is the normal case.** With no `icon:`, one is worked out from the container's image
-name: `lscr.io/linuxserver/jellyfin:latest` finds the Jellyfin logo on its own. Roughly three
-containers in four match something. The rest show a coloured tile with their initials — the colour
-comes from the name, so the same container is always the same colour, and nothing shuffles about
-between page loads.
-
-The matching is deliberately strict. It will not guess at a near-miss, because **a wrong icon is
-worse than no icon**: no icon reads as "not recognised", while the wrong logo on a container reads
-as a bug in the page. When a name would fit more than one entry — `node` begins six of them — none
-is chosen.
-
-**A stack has no `icon:` at all.** Its tile is always built from the icons of the containers inside
-it, shrunk and tiled together, up to four; beyond that the fourth cell counts what did not fit. A
-single-service stack simply shows that one container's icon, which is why the tiling is not obvious
-until a stack holds more than one.
-
-Downloaded icons are cached on the flash device and never fetched twice. The whole thing can be
-turned off under **Settings → StaXX**, in which case icons already saved keep working.
+`icon:` is a service-level key only — a stack has no `icon:` of its own to state. It is a path to the
+picture in `.staxx`, for example `./.staxx/jellyfin.png`.
 
 ---
 
@@ -562,9 +614,7 @@ container that cannot see its hardware.
 variable is a password is wrong in both directions, and guessing that a box is required blocks a save
 the user has no way to resolve.
 
-**Icons** — matched from the container's image name against the selfh.st collection, then from the
-service name, then the stack name; a coloured tile of initials when nothing matches. See
-[Icons](#icons) above for why the matching refuses to guess.
+**Icons** — see [Icons](#icons) above.
 
 ---
 

@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.04.03">
+<!ENTITY version              "00.05.00">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "61bfd0e1564b8cfc838257b377603dd1">
-<!ENTITY packageSHA256        "28713b9eb7b260038cf6b6f034247da0773f799b515b8bd81a35fd132df20830">
+<!ENTITY packageMD5           "498da0f7ac6b9b9dc9b3492a52c778b0">
+<!ENTITY packageSHA256        "0963a9ac90e0e7b6c82d47d24a08dc9480cafe1192a2b5cf2de4095c1839d4c2">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,102 @@
 >
 
 <CHANGES>
+###00.05.00
+- Unraid's own Docker page and Dashboard now show each StaXX app's icon and a WebUI link, and call it "Compose" instead of "3rd Party". Each app picks this up the next time it is started or updated. Nothing is written into your compose file.
+- A web page address that names its own site, such as `http://app.example.com`, now lights the WebUI button. It used to stay grey unless the address carried a port number.
+- In the stack list, each figure sits inside its graph, so the columns no longer shift when a number changes, and a stack's ports sit under its network name instead of one per line.
+- The CPU column shows each stack's share of the whole processor, from 0 to 100%, and the graphs in the CPU, Memory, Network and GPU columns each have their own colour.
+- An app built on your own server shows as built here, instead of a "could not check" warning that never went away.
+- Settings has a new Integrations tab (it used to be called Registries and security). Enter the address and login for Nginx Proxy Manager and Pi-hole and test that StaXX can reach them. Those two sit in one Proxy and DNS box with Allow insecure connections and Check the connection now. The Feedback board has its own box with a short explanation, and Error explanations come after.
+- Integrations also has a switch, Send Docker errors StaXX cannot explain, on by default. With it on, StaXX sends Docker's message, with names, paths and addresses taken out, the first time it meets one it has no explanation for, so one can be written. New explanations reach StaXX once a day.
+- StaXX advanced email notifications, off until you turn it on, sends StaXX's own email, with app icons and colours, to the address set in Unraid's notification settings. The notification bell and any other services set up in Unraid still get every message. App logos drawn as SVG show in emails instead of a letter, and large logos shrink to fit. Email sections have clear headings, and phone notifications are short: a title and one line. Use icons turns the emoji in messages on or off, and Send a test message shows the result right away.
+- Settings, Updates, Notifications lets you choose, for each kind of message, Straight away, In the summary, or Off. The summary is daily or weekly at a time you pick, and nothing is sent on a day with nothing to report. It also carries the weekly list of pinned apps, anything the self-test found wrong, and how much space old images take when that is 1 GB or more. Updates is a plain Manual or Automatic choice. Quiet hours, picked in half-hour steps, hold messages until the next one or the summary. Failures are always sent straight away.
+- On a server that already runs StaXX, installed-update messages now wait for the daily summary, unless you had them switched on, in which case they still come straight away. The weekly reminder about pinned apps now arrives inside the summary instead of as a message of its own.
+- Update messages say much more. Each app shows its old and new version, its size on disk after the update, a mark when the first number of the version changes, and the first lines of its release notes with a link to the rest. A failed update says why in plain words, such as a download limit reached or a tag that no longer exists. Every message links to StaXX's Updates view.
+- StaXX tells you when an app keeps restarting, fails its health check, or stops by itself, and when Docker itself stops answering for five minutes and again when it is back. It stays quiet when a backup or a script stops apps: a stopped app is not reported as failing its health check, and an app something told to stop is not reported as stopping by itself.
+- StaXX says when it cannot see the ports of apps on the server's own network. When one of them cannot start because its port is taken, it says which port and what is using it, and that start is shown as failed.
+- Each container has its own Notifications box under Updates, in the editor, on the row menu and in the merge wizard, with New image found, Image installed, Installation failed and Still pinned, each on or off. The Default line under them says when each message is sent. They start out matching the server's own answers. Leave them alone and the container keeps following the server; flip any one of the first three and the container decides all three for itself from then on. An app ticked on while Settings has that message off is sent straight away, and the editor says so. Files already carrying the old single yes or no keep working as they did.
+- A notice in the Notifications panel keeps its message on full-width lines, with its time and button underneath, however long the button's label.
+- When StaXX sits under Unraid's Docker menu, Unraid's padlock unlocks and locks StaXX's list and Docker Containers' list together.
+- The window listing a stack's services, opened from the cubes button on a card, is dark again, so the service names can be read.
+- The first copy History keeps of a compose file you added yourself is named "As StaXX first found it", shows when the file was last changed rather than when you opened it, and is kept for good like any named version.
+- A bug report can also carry StaXX's self-test, the same checks as Settings, Self-test, offered and ticked like the other files.
+- When Docker will not remove a damaged app in Settings, Storage, StaXX offers to restart Docker and try again, right in the window. It warns you first that every container stops for about a minute, and names any running container that will not come back on its own.
+- Adding a setting from the editor's form always keeps the file valid: a name holding a colon and a space is written in quotes, and a setting written on one line in curly brackets is left alone instead of being broken.
+- Import finds compose stacks run by other tools, such as Dockge, Portainer, Arcane, Dockhand and Komodo, and lists them under Compose projects from other tools. StaXX reads where each one's files are from its containers, including files a tool keeps inside its own container, and copies them into a new stack the way it copies a Compose Manager project. For a stack with no containers, type the folder that holds your stacks into Look in a folder at the foot of that group and press Look, or press the folder button to pick it. StaXX reads that folder and the folders directly inside it.
+- StaXX keeps a short record of what Import found and did the last five times you used it. When an import fails, Report this problem opens a bug report with the record attached. As with the other files, private details are replaced and you can preview it before it is sent.
+- A file Docker Compose refuses is saved when it arrives, whether from an Unraid template, a Compose Manager project (which can now be ticked and imported), Apps, a paste, an upload or the image importer. Its row turns a soft red with a red wrench in the State column, and Open and fix (in the import window) or the wrench takes you straight to the problem. A freshly imported stack still waiting for your review has a soft orange row.
+- When Docker Compose finds a problem in the editor, a floating window explains it: Docker's own message, what it means in plain English, how to fix it, and a link to Docker's page. Drag it anywhere, roll it up, or close it; the red "fix needed" button at the top of the editor brings it back. The faulty line is marked red, and Show me jumps to it. For a setting whose name is only a number, Fix it for me shows the change first, makes it when you agree, and Undo takes it back. The small "i" marks beside the editor's settings open their help in the same window.
+- Dropping a picture, or its address from another tab, onto a service's icon in the editor changes the icon straight away, on the stack list too, without pressing Save. The icon glows while it can be dropped and turns red for a moment with a short reason if it cannot. A dropped file has to be under 512 KB, and it is kept under the container's own name and replaces the one dropped before.
+- A small speech-bubble button sits in the bottom right corner of every StaXX screen, the editor and Settings included. Press it to report a bug, request a feature or suggest an improvement; each goes to its own section of StaXX's feedback board. Give it a title, say what you want to tell us, and paste screenshots straight into the text with Ctrl+V. The report window floats over the page, so you can drag it aside, or roll it up to the top of the screen while you take a screenshot. Reports go under your own feedback-board account, signed in with Google or GitHub; connect once and StaXX remembers it, and disconnect any time in Settings, Integrations. Each report carries your StaXX and Unraid versions and the screen you were on, and nothing else about your server. Once sent, the window shows what went out and a link to your report on the board.
+- A report can also carry details that help fix the problem: the compose file of the stack you were editing, what happened the last time it started or updated, its recent container logs, errors the page ran into, and the versions in use. Passwords, keys, email addresses, network addresses and the names of computers on your network are replaced before anything leaves your server. Preview each file first, hide anything else you want kept private, and click a hidden part to put it back. A file holding a number that may be an address or a version number is marked Check this file, and the report waits until you have previewed and approved it. These files are private: only you and the StaXX team can see them, and they are deleted after 90 days.
+- Check for updates counts through the images as it checks them, instead of only spinning. Button text across StaXX is a little larger, to match the text around it.
+- Settings, Storage lists what Unraid Docker and Compose Manager left behind, just above the archives: templates for apps that no longer exist, apps still set up in Unraid's Docker tab that you no longer use, and Compose Manager's settings folder once the add-on is removed. Tick what should go and StaXX clears it, keeping a copy you can put back. An app whose container Docker can no longer read is marked Damaged in red and can still be cleared.
+- Importing an Unraid template that sets the same variable or label twice works: StaXX keeps the last value, as Unraid does, and notes the one it left out at the top of the new file. A setting named only by a number, such as 8075, no longer produces a compose file that Docker Compose refuses, and the name is kept exactly as the template had it.
+- A withdrawn tag or an image that moved to another registry shows an amber chip, since it needs you to change the image line. An image not downloaded yet stays blue.
+- StaXX has its own tile on Unraid's Dashboard. Open Settings, General, Edit dashboard tile… to arrange it: drag stacks onto a grid of up to 8 columns, group them into folders, and give each folder an icon from five online icon sets, a plain built-in symbol, your own picture, or one that cycles through the icons of the stacks inside. On the Dashboard, click a folder to open it, right-click a stack or folder to start, stop or restart it, and click a stack for a small window with its CPU, memory and network graphs. The icon sets are hernandito's animated folder icons (used with his permission), ground7's animated icons (MIT), selfh.st icons (CC-BY-4.0), Dashboard Icons by homarr-labs (Apache-2.0) and Tabler Icons (MIT). A logo from selfh.st logos or Homarr apps switches to its light or dark version to suit your Unraid theme.
+- Folders on the Stacks page can have an icon too: choose Folder icon… from a folder's menu to pick one with the same picker, or Remove icon to go back to the plain folder.
+- Settings has a new About tab showing the installed StaXX version, which Docker Compose is running and whether StaXX installed it, and credits for the work StaXX uses, including resvg, the program that draws SVG logos for emails.
+- A stack's row menu and a container's row menu have Recreate, which rebuilds the containers from the file. The orange restart-pending chip's window has a Recreate now button that rebuilds only the services that no longer match. While Unraid's padlock is locked, the stack menu no longer offers moving the stack into a folder.
+- The Image box in the editor's form lists tags the same way the pin window does: the usual choices on top, with other rolling tags, version numbers and the images already on this server folded below. You can still type any value of your own.
+- The copy of each stack kept on the flash drive is rewritten only when its files have actually changed, so the dates it shows mean a real change and the flash drive is written to less often.
+- StaXX reminds you once a week which containers are still pinned to an exact build, so a pin is not forgotten. It is on by default: turn it off for everything in Settings, Updates, Notifications (Still pinned), or for one service with its "Remind me it is still pinned" tick in the editor, the row menu or Select, Notifications…. The first reminder comes a week after you install this version, and pins made before it count from the day you install it. Notification ticks save for a pinned service from the row menu and from Select, Notifications…, the same as in the editor, while a pinned service's update choice is left alone everywhere.
+- In the editor, Escape on the Sections list closes just the list, like the other small panels, and leaves the editor open.
+- In the marks legend, every sample chip shows the same explanation as the real one on hover, and pressing one opens an example of the window the real chip opens. A stack's menu has a legend you can open without leaving the page, explaining every mark and colour used on the stack list, and a button of its own at the top of the list, beside Select, opens it too.
+- StaXX's windows fade in and out the same way for everyone. A fade moves nothing, so it is kept even when your system asks for less motion; real movement, such as sliding or spinning, still stops.
+- On the Manage tab, Download all saves the container's whole log as a file. The handles between the log, shell and files panes no longer stay stuck to the mouse after a quick drag across the shell.
+- The Save and Cancel buttons at the bottom of StaXX's windows always sit on the right, instead of jumping across when a message appears.
+- When an app you install from Unraid's Apps page opens straight in StaXX's editor, it says so if StaXX already runs an app by that name. When you install from Community Applications or Unraid's Add Container page, StaXX warns you that it already runs that app even when your stack sits inside a folder or its name differs only in capital letters.
+- A change the editor saves by itself, such as pinning a service or changing its update choice, shows on the stack list straight away, without reloading the page.
+- A stack moved into a folder always lands at the bottom of that folder.
+- Merge stacks, on the Add menu, joins two or more stacks into one new stack, the way an application and its database usually arrive when converted from separate templates. It needs a window at least 990px wide. A window walks you through picking the stacks (each a card with its icon, name, folder, state, image, ports and live figures, with long names wrapping in full and the count picked kept at the top beside the step names), naming the new stack and choosing its folder and icon, reviewing the changes, joining the settings files and sorting out companion files that clash, and four boxes for Dependencies, Health checks, Updates and Notifications. A service whose image already declares its own health check says so there and needs nothing added. Storage Docker manages is carried over by name, so a database keeps its data without anything being copied. Nothing is written until the last step, which shows the new stack's form and file beside a plain list of what will happen, and Docker validated, with the Docker logo, once Docker has checked the merged file, or Docker's own message if it found a problem.
+- The merge window's review step shows one source file at a time beside the merged file, with numbered tabs to step between them. A changed line's number is painted in its source's colour and sits on the line that changed. Hover it for the reason, then answer Approved or Decline; a declined line keeps its mark with a red ring, so you can change your mind. Next stays off until every change has an answer, and a count at the foot walks you to the ones still waiting. Answering moves you to the next open change, and clicking a changed line in either pane lines the two files up on it and opens its card. Anything the finished file drops is shown struck through. Declining a port clash leaves both ports as written, and its card says the new stack will not start until one changes. A click beside the window does not close it; leave with Cancel or Escape, and Cancel asks before throwing a merge away.
+- In the merge window, step 4 shows each stack's files as a folder tree, opens each decision on hover, and draws the new stack's folder as it will be, with a colour dot saying where each file came from. Step 5 explains what to do, lets you remove a wrongly drawn line with a click, and keeps its place when you toggle a check. The joined settings step says what to do, pointing anywhere on a highlighted line opens its question, and the code follows the health-check box you are editing.
+- A merge ends with two switches, both off to start, for stopping the original stacks and starting the new one (starting forces stopping, since the two cannot run side by side). The switches no longer move under the mouse. The originals are retired, not deleted: they stay on disk, greyed out and unable to start, still showing their services' icons (as does any service held back by a profile), each with a one-press Remove once you have checked the new stack works. Retiring them takes their containers down, so a fixed container name is free for the new stack. A container set aside by a handover cannot be brought back by Docker on its own: its restart setting is switched off while it waits, and put back exactly as it was if you choose to keep the old one. If it is running again anyway, the "Does it work?" question says so and tells you to switch it off from the Docker page before answering.
+- A merge reads each stack the way Compose runs it. An address kept in the settings file and referenced from the compose file is found and rewired, and a line written as `export NAME=value` is read the way Docker Compose reads it. A main file plus an override file is merged as the pair it is, with every line from the second file marked. Any block an author keeps at the top of a file, such as shared logging settings and anchors, travels with the stack, as do comments at the top of a file or at the end of an app's section and a note at the top of any stack's file. A path that reaches outside the stack's own folder is re-pointed from the new folder. Storage that already had its own name is not named twice, port ranges, ports tied to one address and IPv6 addresses are read correctly, and links to other files are updated when the stack moves. An app that shares another container's network, like a download app riding on a VPN container, joins it by service name inside the merged stack, with a card saying so. A stack with a line StaXX cannot read, or one running from a file the wizard cannot see (an extra compose file passed on the command line or a settings file that is not its own), is refused by name, with the file named and the fix stated, instead of merged with those settings dropped.
+- A merge handles clashes and wiring carefully. A published port stays open when the merged apps reach each other directly, since something outside the merge may still use it; the merge asks, and tells you if another stack on your server connects to that port. A clash of published ports is shown and settled: a single port inside another app's port range, such as 19101 against 19100-19102, moves to a free one like two clashing single ports, and a service that only runs under a profile, in either spelling, gives way so a live web page keeps its address. When a port moves, the service's own web-address line moves with it. Two services that now need to talk are put on a shared network, and every address rewired to a sibling service is recorded as a confirmed link, so the editor stops asking whether the two are related. Two apps using the same proxy name are noticed and one is renamed so both keep working. A renamed setting is followed into a compose line that gives it a default, such as ${TAG:-1.25}, so each app keeps its own value.
+- A merged stack's own details (description, category, link) are gathered from every source, marked with where each came from, and a value you decline is kept in the merge summary instead of under a spare key in the file. Merge cards name a stack's details in plain words. A comment above a changed line is struck only when it names the old value, and any sanitise marks on it are kept. A service whose health check is switched off is described that way on the suggestions step. Two merge windows pressing Merge at the same moment no longer both go through; the second is told to wait and try again.
+- The user guide reads as a manual: every page teaches a feature step by step, with close-ups of the controls it points at. It covers the Add menu, the legend button, choosing a data store the first time, the merge cards and the two reasons Merge can be refused, Scan stored images, the Update all progress line, setting updates for several stacks from Select, and a file's own menu in the editor. It also has a worked example of a merge: joining the three Tube Archivist apps from Community Applications into one stack, with a picture of every step and the answer to give on each card.
+- When a project's own published example carries a health check StaXX does not recognise, a small tally is kept in the data store, so the rule for what is accepted can be widened from evidence. Nothing about what is offered changes.
+- The **name clash** pill's tooltip names the other stack. It used to stop after "Shares the name".
+- A row no longer keeps saying **Updating…** after a pull or update has finished when the list was redrawn while it ran.
+- The update queue's progress line disappears as soon as nothing is running or waiting, instead of sitting there with a finished tally and a Stop button that had nothing to stop.
+- Roll back is offered again. A row's menu decides whether to show **Roll back…** from where StaXX now keeps its image history, so an update recorded since that move can be undone from the menu. A stack with a single service, which has no container row of its own, gets the item on the stack's own menu.
+- Clicking a service's icon opens the editor in the same split view as clicking the stack's own icon, scrolled to that service, instead of the form on its own.
+- A stack's untouched containers no longer read as "not created yet" after one of its services is updated, when the store had been moved or the stack filed into a folder. They were running all along, and the row now says so.
+- Chips on stack and folder rows speak one language: the colour says how much it wants from you (green working, grey at rest, blue worth knowing, amber wants you, red broken) and a small mark says what it is about, such as a play mark for running or a cloud for an update ready, with only a count or a version as text. On a narrower window they shrink to the mark alone, and everything they used to spell out is in the tooltip. A stack that is up to date, built here or never checked shows no update chip. The chips summarising the whole list along the top carry the same marks, keep plain words and their own colours, and the one warning that Unraid templates are still on flash wears red and a warning triangle, because one left there can rebuild the old container and push a stack's own out days later. A chip with nothing to say no longer sits in the top bar as an empty coloured circle, such as the templates chip with none left to move.
+- A container that checks its own health looks different from one that nothing checks: the green chip breathes slowly while its check passes. The arrows on a chip turn while a command you asked for is actually running.
+- A row no longer shows a red mark when the page lost track of a job, usually because you closed the tab while something was running. It shows what the container is really doing. Reloading the page, or opening a second tab, while something is starting, stopping or updating no longer leaves the row stuck on "Starting…": it picks the job back up and shows how it turned out, and if StaXX loses track of a job the row says so and offers the log.
+- The note saying when updates were last checked is a quiet grey, including when a check has never run or did not finish. The red "report unavailable" chip is gone: when that report cannot be built, the top of the list says nothing about it.
+- The space to the left of the search box is always there, saying "Nothing needs your attention" when there is nothing to report and carrying the newest notice when there is. Pressing it opens the full list. The warning that live updates are not connected appears there too, instead of as a bar across the top of the list.
+- The column headings on the stack list line up with what sits under them, and the arrow that opens and closes a folder no longer shows a tooltip that said "Expand" whether the folder was open or not.
+- Every section of the stack editor can be folded away with the arrow beside its heading. StaXX remembers which kinds you folded, in this browser.
+- The stack editor has a Proxy and DNS section you can add to any app from the Sections menu once Nginx Proxy Manager is set up: a domain name, a certificate, WebSockets and a Pi-hole switch. When you save, StaXX shows what it will change in Nginx Proxy Manager and Pi-hole and does it when you press Apply. An entry you already made for that name can be taken over as it is.
+- A small DNS mark beside a service's name on the stack list shows green when its proxy and Pi-hole entries match, red when they have drifted (click it to fix), and grey when switched off. Hover it for the domain and each entry's state. Removing a stack asks what to do with its proxy entry and Pi-hole name: switch off, delete or keep.
+- Adding a file to a stack is easier to find: the two controls are larger, orange, and at the left-hand end of the file row. Every file carries its own menu arrow beside its name, so renaming, downloading or deleting acts on the file you are pointing at.
+- Five buttons at the top of the list became one. Add opens a short menu holding a blank stack, Apps, Import, New folder and Merge.
+- The Select tool has Updates… and Notifications… buttons that open a small window under the button row with the same controls the editor has, and apply your answer to every chosen stack at once. Choose a stack or two and a row of buttons (Start, Stop, Restart, Check for updates, Update) slides open directly beneath the Select button, and slides away when nothing is chosen. A filled button's label stays visible when you hover it.
+- With the .env tab open, clicking a setting that uses one of its variables lights up the line in .env that defines it, the same way the compose file's lines light up.
+- The stack's menu no longer runs off the edge of the window: the explanation under "Take over and start" wraps instead of stretching the menu.
+- The editor's footer no longer shows what looked like an empty notice with a close cross. That cross is the "Not now" beside the bar offering to look up a stack's details, and it sits on the bar's own line. That bar also stopped ending in "create it".
+- Removing old images automatically is gone. If your server had "Remove old images automatically" set to weekly, that no longer happens and the setting is not read any more. In its place, a notice appears when Docker's stored images are getting full of clutter, with a link to Scan stored images so you can look and decide for yourself. Two new settings on the Storage tab control when it appears: how full storage has to be, and how many days a clutter image can sit before it is mentioned on its age alone.
+- Scan stored images, on the Storage tab of StaXX's settings, leads with a capacity bar showing how much of Docker's storage is in use, kept for rolling back an update, genuine clutter or still free. The list underneath shows only clutter, each with its size, for you to tick and remove; anything a stopped stack still needs, or that was built on your server, is left unticked. Versions kept for rolling back sit in their own section below, folded away by default and named by the stack they belong to. Figures count what removing an image actually frees, since apps built from the same base share most of their files. A leftover from rebuilding an app locally is named "an earlier build of" that app, nameless leftovers are found, and old releases of linuxserver apps such as Plex are found, with their space freed even when they still have a version label. A container Docker cannot read shows what StaXX can still work out about it (when it was set up, whether it ever ran, its image, data folder and size, network address and whether a running container now holds it, and its database name and version where readable) and offers a red "Remove this broken container" button, with a confirmation first, that clears Docker's broken record without touching its data folder.
+- Rolling back an update to a linuxserver app such as Plex works. It used to say the old version was no longer on the server even when it was.
+- The Storage tab has a "Keep the images" switch beside Scan stored images. Switched off, StaXX still remembers which versions of an image you have run, but no longer keeps their files on disk, so a roll-back downloads that version again, and says so before anything is changed if the source no longer has it.
+- Removing (archiving) a stack also removes any roll-back copies of its images that no other stack still needs, and says so before you confirm. A roll-back copy kept for a stack that no longer exists is no longer protected for ever.
+- The settings panel is shorter and easier to scan: the image settings on the Storage tab share one Unused image management box in two columns, Copies on the flash drive shows its two settings side by side, every setting's control comes before its explanation, and the Self-test tab scrolls as one page.
+- Checking your backup (from the Storage tab, or the self-test's backup line) asks about your whole StaXX folder at once, settings included. If your backup plugin's list names only the stacks and archives folders inside it, a notice on the stack list tells you to add the whole folder instead.
+- Each service's icon is kept in its stack's `.staxx` folder, right beside the compose file: one picture per service, and a stack with several services shows all of their icons tiled together. Existing stacks have their icons put there automatically the first time StaXX notices, and the change is saved into each stack's own history like any other edit.
+- A service can be pinned to the exact build it is running. Pinned is the first of the update choices on a container's menu and in the editor's Updates box. StaXX writes that build's fingerprint on the image line, in whichever file sets the image, with the old value kept in a comment beside it, and a pinned service is never checked for updates, nor touched by bulk updates. The thumbtack beside a stack with a pinned service is big and white. To release a pin, pick a tag from the list that opens (the usual choices on top, with other rolling tags and version numbers folded away below): from the menu the new tag is downloaded and the container recreated straight away; from the Versions tab it goes into the image field for you to save. Nothing already written reads differently: a pin is the same shape a roll-back has always written.
+- Each container in the editor has its own Updates box, with a "When" choice (Default, Manual or Automatic, with Immediate or Delayed once Automatic is picked) and a "Notify me" choice (Default, No or Yes), each explaining in plain words what it does. Changing either takes effect straight away rather than waiting for Save. The same choices are on a container's right-click menu and on a stack's, where one press sets every container in it; a stack whose containers disagree shows no tick until you set one. A pinned container shows why it cannot be changed, with a one-click way to unpin it; a container built here from a recipe, or one with no image at all, says so. A container that updates itself shows a small green mark beside its name in the stack list.
+- A stack still carrying the old spelling of the update setting is tidied up to the new one automatically the next time StaXX is installed or updated, with a note in the editor on a stack that was changed and nothing else about it altered. This runs once, keeps a copy of every file it touched, and reports which stacks it changed in a single notification.
+- Clearing a network's fixed address or hardware address in the editor removes it from the compose file, instead of it coming back when the editor is reopened or the stack restarts.
+- On a phone, a stack's menu no longer closes when you scroll the page to reach its lower items.
+- The container file manager has its own switch in Settings, Container files, beside Container shells in a box now called Container access. Until you change it, it follows your shell setting, so if you had shells switched off the file manager stays off too. On the Manage tab a tool that is switched off is no longer shown: the other takes its space, and with both off the log fills the whole tab.
+- When a start, update, rebuild or roll-back fails while the stack list is redrawing, its red failure marker appears on the row straight away instead of waiting for the next refresh.
+- The Self-test button and the Environment panel at the bottom of the page are gone. Both live in Settings, on their own last tab, and run the moment you open it, fresh every time, with a Copy button that puts the whole report on the clipboard as plain text ready to paste into a forum post.
+- Dismissing a note about what the author's published example does differently stays dismissed. It used to come back after the next update check, and changing the setting's value no longer brings it back either. Only the difference itself going away does.
+
 ###00.04.03
 - If something outside StaXX rebuilds a container while a takeover is still waiting on your answer, StaXX now compares that container with what the stack's own file asks for. If they match, it clears it away and carries on with your answer. If they do not, it shows you what differs and offers to use the stack's version, instead of sending you to Unraid's Docker page.
 ###00.04.02
@@ -67,18 +163,6 @@
 - In the editor's side-by-side view you can now drag the divider between the form and the compose file to change the split, it remembers where you put it, and a double-click puts it back in the middle; and on a window narrower than a desktop the editor no longer shrinks to half width when you switch to the form.
 - The update-check activity table on the settings page now fits a narrow window instead of running wider than the panel; and a note that applies to more than one registry is now written once underneath the table, with a mark beside the registries it belongs to, instead of being repeated in a squeezed column.
 
-###00.04.00_dev20260913
-- A link to an outside site clicked from inside the stack editor now asks Unraid's "external link" question where you can see it, over the editor instead of underneath it, and remembers "always allow" the same way Unraid does.
-- An icon you point at by web address is now downloaded once and kept with the stack, and the file is updated to point at that copy with the original address kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
-- A stack whose compose file spells Docker Hub out by name, as `docker.io/user/app`, no longer shows "not installed" while it is plainly running. StaXX now treats that spelling as the same registry Docker does, so the image it pulled is recognised as its own.
-- A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
-- The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.
-- The editor's clash warning now also notices a port the server itself is already using, such as the web interface on 80 and 443, and says what is holding it when it can.
-- You can now choose any set of stacks across folders and start, stop, restart, check or update them together, each reporting on its own row; and find a stack by typing part of its name, service, container or image into the toolbar's search box (press `/` to jump to it).
-- Removing a stack now lists the folders and volumes it used and says plainly that they are left in place.
-- If the data store is ever lost, StaXX now offers to bring every stack back from the copies it keeps on the flash drive; and those copies now stay current when a stack is changed outside StaXX, either on an hourly schedule or live, chosen on the settings page.
-- Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
-- A stack can now join a network that another stack created. The editor's network dropdown lists those networks, marked with the stack that made them, and Start no longer refuses a stack whose external network exists but was made by Compose.
 ###00.03.00
 - The copy of a container that "Take over and start" sets aside is no longer offered in the Import window or reported as a container found outside any stack. It is your way back if the new stack fails, not something to bring in again.
 - A stack that points at a network your server no longer has (most often because Unraid renamed it when bridging was switched on) is now refused before Start, Restart, Update, Recreate or Rebuild download anything, with the network's name and the nearest one the server does have. The stack editor shows the same message under the network and offers a one-press **Use br0.2**-style button that renames it everywhere in the file, as one undoable edit. Pull images is not refused.
@@ -406,53 +490,9 @@
 <![CDATA[
 set -euo pipefail
 
-# Carry a pre-rename install across. The app was called stack.manager until
-# 2026-08-18 and kept its settings, folder layout and stacks under that name.
-# mv rather than cp: two config folders that both look valid is worse than one,
-# and flash writes are the thing worth being stingy with on Unraid. The
-# "new does not exist" guard is what makes a second install a no-op instead of
-# a clobber. STACK_ROOT holds an absolute path, so it has to be rewritten or it
-# points at a folder that no longer exists — and that folder is where the
-# user's stacks are.
-if [[ -d "/boot/config/plugins/stack.manager" && ! -d "/boot/config/plugins/staxx" ]]; then
-  mv "/boot/config/plugins/stack.manager" "/boot/config/plugins/staxx"
-  if [[ -f "/boot/config/plugins/staxx/stack.manager.cfg" ]]; then
-    mv "/boot/config/plugins/staxx/stack.manager.cfg" "/boot/config/plugins/staxx/staxx.cfg"
-  fi
-  sed -i 's#/boot/config/plugins/stack\.manager#/boot/config/plugins/staxx#g' \
-    "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
-fi
-rm -rf "/usr/local/emhttp/plugins/stack.manager"   # stale tree; rebuilt at boot anyway
-rm -rf "/tmp/stack.manager"                        # a cache, regenerates
-
-mkdir -p "/boot/config/plugins/staxx"
-
-# First install only — never overwrite a config the user has edited. New keys
-# added in later versions are picked up from default.cfg at read time.
-if [[ ! -f "/boot/config/plugins/staxx/staxx.cfg" ]]; then
-  cp "/usr/local/emhttp/plugins/staxx/default.cfg" \
-     "/boot/config/plugins/staxx/staxx.cfg"
-fi
-
-# Unconditional (not just on first install): the file holds a Docker Hub access
-# token, so it must not be readable by any other login on the box.
-chmod 0600 "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
-
-chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
-
-# Non-fatal on purpose: this is the one call in this block that must not trip
-# set -e. A settings script hiccup here is recoverable at the next settings
-# save or reboot, and should not be reported as a failed plugin install.
-/usr/local/emhttp/plugins/staxx/scripts/apply_settings \
-  || echo "warning: settings could not be applied yet; they will be applied on the next settings save or reboot."
-
-# Unraid does not ship Docker Compose. This installs StaXX's own copy only if
-# nothing already answers `docker compose` — Compose Manager, a future Unraid
-# release, or the user's own install are all left alone. This whole block
-# re-runs at every boot, which is what puts a flash-cached copy back after the
-# RAM root is rebuilt. Non-fatal: the settings page's self-test says why if it
-# could not be done.
-bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose || true
+# Both install routes run this same script, so neither can drift from the
+# other — see scripts/postinstall for what it does and why.
+bash /usr/local/emhttp/plugins/staxx/scripts/postinstall
 
 echo ""
 echo "-----------------------------------------------------------"
@@ -478,7 +518,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.04.03-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.00_dev20261009-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
@@ -492,13 +532,18 @@ find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null 
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 <![CDATA[
-# Checked before the plugin folder is deleted below, since the script that
-# knows how to undo it lives inside that folder. Removes only a compose StaXX
-# itself installed — one Compose Manager or the user put there is left alone.
+# Checked before scripts/uninstall runs below, since that script's own
+# ensure-compose --remove call is what actually removes the marker — reading
+# it afterwards would always say "not ours". Only the fact recorded here for
+# the banner at the end; the removal itself is both routes' shared script.
 compose_marker="/usr/local/lib/docker/cli-plugins/docker-compose.staxx"
 compose_was_ours=0
 [[ -f "${compose_marker}" ]] && compose_was_ours=1
-bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose --remove 2>/dev/null || true
+
+# Both install routes run this same script, so neither can drift from the
+# other — see scripts/uninstall for what it does and why. Run before the
+# plugin folder is deleted below, since the script lives inside it.
+bash /usr/local/emhttp/plugins/staxx/scripts/uninstall
 
 # Globbed against /var/log/packages, not the current directory — which is
 # unspecified for a plugin script, so an unquoted glob here found nothing to
@@ -511,21 +556,6 @@ removepkg /var/log/packages/staxx-* 2>/dev/null || true
 removepkg /var/log/packages/stack.manager-* >/dev/null 2>&1 || true
 rm -rf "/usr/local/emhttp/plugins/staxx"
 rm -f  "/boot/config/plugins/staxx/"*.txz
-
-# Unraid's cron builder concatenates every *.cron file under a plugin's own folder
-# on the flash drive into root's crontab, so leaving ours behind keeps the server
-# scheduling passes whose scripts have just been deleted.
-rm -f "/boot/config/plugins/staxx/staxx.cron"
-if [[ -x /usr/local/sbin/update_cron ]]; then /usr/local/sbin/update_cron || true; fi
-
-# Only ever undo a sign-in this plugin performed — never an administrator's own
-# Docker Hub session from outside StaXX.
-if [[ -f "/boot/config/plugins/staxx/hub_login" ]]; then
-  docker logout >/dev/null 2>&1 || true
-  rm -f "/boot/config/plugins/staxx/hub_login"
-fi
-
-rm -rf "/tmp/staxx"   # job logs, stats snapshots, icon cache — all regenerate
 
 echo ""
 echo "-----------------------------------------------------------"

@@ -7,17 +7,8 @@
  * pass the permission case near the end for the wrong reason; the caller sets
  * it and puts the config back:
  *
- *     pscp tests/server/files.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b1-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b1-store\"" >> $CFG
- *       php /tmp/files.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/files.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b1-store /tmp/files.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzb1test" and a handful of "zz…" siblings, under
@@ -111,7 +102,7 @@ ok('fingerprint is empty for a stack with no compose file',
 
 ok('writes a text file', staxx_write_file($rel, '.env', "A=1\r\nB=2\r\n", true, $err), $err);
 ok('keeps CRLF',         file_get_contents($dir.'/.env') === "A=1\r\nB=2\r\n");
-ok('leaves no temp file', count(glob($dir.'/.env.*.staxx-tmp')) === 0);
+ok('leaves no temp file', count(glob($dir.'/..env.*.tmp')) === 0);
 
 ok('writes an LF file', staxx_write_file($rel, 'lf.env', "C=3\nD=4\n", true, $err), $err);
 ok('keeps LF, invents no CR', file_get_contents($dir.'/lf.env') === "C=3\nD=4\n");
@@ -130,7 +121,7 @@ ok('refuses over the cap',
    !staxx_write_file($rel, 'big.bin', str_repeat('x', STAXX_FILE_MAX + 1), false, $err), $err);
 ok('accepts exactly the cap',
    staxx_write_file($rel, 'big.bin', str_repeat('x', STAXX_FILE_MAX), false, $err), $err);
-ok('leaves no temp file after a refusal', count(glob($dir.'/big.bin.*.staxx-tmp')) === 0);
+ok('leaves no temp file after a refusal', count(glob($dir.'/.big.bin.*.tmp')) === 0);
 
 /* ------------------------------------------------------------- reading -- */
 
@@ -378,9 +369,12 @@ ok('a missing root says it could not look', $scanMissing['ok'] === false);
 ok('...never as an empty list standing for a fact', $scanMissing['stacks'] === [] && $scanMissing['error'] !== '');
 ok('staxx_stacks_visible() agrees', staxx_stacks_visible() === false);
 
+// PLAN_152 Phase 1b: each entry is now ['detail' => ..., 'state' => ...],
+// not a bare string — read the detail through that shape.
 $selfMissing = staxx_selftest();
 ok('self-test refuses to report zero stacks it could not count',
-   strpos((string)$selfMissing['stacks found'], 'UNKNOWN') === 0, (string)$selfMissing['stacks found']);
+   strpos((string)$selfMissing['stacks found']['detail'], 'UNKNOWN') === 0,
+   (string)$selfMissing['stacks found']['detail']);
 
 // While the root is still missing: staxx_watch_report() must say the same
 // thing rather than "nothing found", and the six-hourly prune in

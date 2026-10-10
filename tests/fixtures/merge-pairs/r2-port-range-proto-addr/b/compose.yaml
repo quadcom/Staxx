@@ -1,0 +1,6 @@
+services:
+  svc2:
+    image: alpine:3.20
+    ports:
+      - "19101:8080"
+      - "19200:53/tcp"

@@ -1,0 +1,6 @@
+x-shared: &shared-logging
+  driver: json-file
+services:
+  db:
+    image: mariadb:11
+    logging: *shared-logging

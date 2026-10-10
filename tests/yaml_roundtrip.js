@@ -30,14 +30,7 @@ var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-
 // move too, and fixing it is a separate change.
 var VOCAB_SNAPSHOT = require('./vocab-snapshot.js');
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function firstDiff(a, b) {
   var A = a.split('\n'), B = b.split('\n');
@@ -717,6 +710,15 @@ FILES.forEach(function (file) {
   });
 })();
 
+// Renaming an environment variable to a number-shaped name writes it quoted,
+// because compose refuses a number as a key.
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    environment:\n      FOO: bar\n');
+  Y.setPart(doc, Y.buildForm(doc), 'a/env#0/FOO', 'name', '8075');
+  ok('a variable renamed to 8075 is written as a quoted key',
+     Y.serialise(doc).indexOf("      '8075': bar") >= 0, Y.serialise(doc));
+})();
+
 /* ---- the keys that start empty ------------------------------------------ */
 
 // cap_add, cap_drop and profiles render as a suggestion box, and a browser only
@@ -1279,16 +1281,23 @@ console.log('\nJ. The always-present Container settings');
   // deploy:/logging:/build: at all, healthcheck.test counts as two of them
   // (PLAN_8 phase 4 — the mode and the command, see harvestHealthTest()), and
   // build (PLAN_21) added its three scalars (context, dockerfile, target) at
-  // the end of the fixed pass.
+  // the end of the fixed pass. PLAN_176 then added the Proxy and DNS group's
+  // own five (domain, certificate, websockets, dns, enabled), straight after
+  // those sixteen — harvestExpose() offers all five whether or not the file
+  // has an expose: block, the same promise the sixteen ahead of them make.
   var src = 'services:\n  a:\n    image: alpine\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields three fixed fields, a web page port, and sixteen blank leaves',
-     svcFields.length === 20 &&
+  ok('a service with no other settings yields three fixed fields, a web page port, ' +
+     'two update-policy rows (When and PLAN_155\'s single Notifications row), sixteen blank leaves ' +
+     'and five blank expose fields',
+     svcFields.length === 27 &&
      svcFields.slice(0, 3).every(function (f) { return f.fixed; }) &&
      svcFields[3].target === 'x-unraid.webui' && svcFields[3].absent && !svcFields[3].path &&
-     svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
+     svcFields[4].target === 'x-unraid.update.mode' && svcFields[4].absent && !svcFields[4].path &&
+     svcFields[5].target === 'x-unraid.update.notify' && svcFields[5].absent && !svcFields[5].path &&
+     svcFields.slice(6).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
 
   var before = form.fields.length;
@@ -1515,9 +1524,13 @@ var FIXTURE_10_ADVANCED = [
   // place of the single locked block earlier phases left it as. PLAN_51
   // then added the web page port as a fourth Container field, straight
   // after restart — web has no x-unraid: block at all, so it reads back
-  // blank, the same as an absent Container row. So the count is
-  // twenty-seven, not the ten keys the original file has at the top of
-  // web:. Pinning f.id rather than binder/target is deliberate — a list
+  // blank, the same as an absent Container row. PLAN_150 phase 4a adds the
+  // When row straight after that, also blank, and PLAN_155's single
+  // Notifications row follows it — web sets no x-unraid.update: either, so
+  // both read back blank. So the count is twenty-nine, not the ten keys the
+  // original file has at the top of web:.
+  // Pinning f.id
+  // rather than binder/target is deliberate — a list
   // field's id carries its list key and index
   // (web/list.networks#0/frontend_net), which is what stops the same name
   // colliding across two different list keys (see the ids-cannot-collide
@@ -1530,6 +1543,8 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/container_name',
     'web/setting/restart',
     'web/setting/x-unraid.webui',
+    'web/policy/x-unraid.update.mode',
+    'web/policy/x-unraid.update.notify',
     'web/setting/healthcheck.test.mode',
     'web/setting/healthcheck.test.command',
     'web/setting/healthcheck.interval',
@@ -1546,6 +1561,11 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/build.context',
     'web/setting/build.dockerfile',
     'web/setting/build.target',
+    'web/setting/x-unraid.expose.domain',
+    'web/setting/x-unraid.expose.certificate',
+    'web/setting/x-unraid.expose.websockets',
+    'web/setting/x-unraid.expose.dns',
+    'web/setting/x-unraid.expose.enabled',
     'web/port#0/80/tcp',
     'web/env#0/NGINX_PORT',
     'web/list.networks#0/frontend_net',
@@ -1554,7 +1574,7 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-seven fields, in file order',
+  ok('web yields exactly these thirty-four fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
@@ -8105,6 +8125,161 @@ console.log('\nAE. PLAN_34 Phase 3 — the three new Add paths');
      Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
 })();
 
+/* ---- 4b. clearing a fixed address or hardware address removes the line
+             (PLAN_203) — the form showed the box blank but the file kept the
+             value, so it came back on the next open. ------------------------ */
+
+(function () {
+  // Clearing one extra removes exactly its own line; the other stays.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('clearing the fixed IPv4 address reports success',
+     !!row && Y.setPart(doc, form, row.id, 'ipv4_address', ''));
+
+  var want = src.replace('        ipv4_address: 10.0.0.5\n', '');
+  ok('only the ipv4_address line is gone; the hardware address line stays',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // Clearing both extras leaves a bare "name:" — the same shape a fresh
+  // entry already offers blank boxes on — never an empty map key.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  Y.setPart(doc, form, row.id, 'ipv4_address', '');
+
+  var form2 = Y.buildForm(doc);
+  var row2 = form2.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('clearing the hardware address too reports success',
+     !!row2 && Y.setPart(doc, form2, row2.id, 'mac_address', ''));
+
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n      backend:\n';
+  ok('both extras gone leaves a bare "backend:" and nothing else moves',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The same clearing works after the entry has been renamed first — the
+  // report that opened this plan renamed the network before clearing the
+  // two boxes.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('renaming the entry reports success',
+     !!row && Y.setPart(doc, form, row.id, 'value', 'mybridge'));
+
+  var form2 = Y.buildForm(doc);
+  var row2 = form2.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('clearing the fixed IPv4 address after the rename reports success',
+     !!row2 && Y.setPart(doc, form2, row2.id, 'ipv4_address', ''));
+
+  var form3 = Y.buildForm(doc);
+  var row3 = form3.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('clearing the hardware address after the rename reports success',
+     !!row3 && Y.setPart(doc, form3, row3.id, 'mac_address', ''));
+
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n      mybridge:\n';
+  ok('the renamed entry ends up bare, with both stale addresses gone',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // A comment sitting on the line directly above the extra travels with it
+  // when the extra is cleared; a comment elsewhere in the service does not.
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        # fixed for the router',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    '    # leave this alone',
+    '    restart: unless-stopped',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('clearing the fixed IPv4 address reports success',
+     !!row && Y.setPart(doc, form, row.id, 'ipv4_address', ''));
+
+  var want = src
+    .replace('        # fixed for the router\n', '')
+    .replace('        ipv4_address: 10.0.0.5\n', '');
+  ok('the address\u2019s own comment goes with it; the unrelated comment below stays',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // An entry written as a flow map refuses the removal and leaves the file
+  // untouched — splicing lines out of one would break it. Built from a real
+  // field (with a real spot) taken from the block-map parse of the same
+  // file, then handed to setPart against the flow-map parse instead — the
+  // same "the structure moved since the form was read" shape as PLAN_66's
+  // stale-spot tests, here via a mismatched doc rather than an edited one.
+  var blockSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        ipv4_address: 10.0.0.5',
+    '        mac_address: 02:42:ac:11:00:02',
+    ''
+  ].join('\n');
+  var blockForm = Y.buildForm(Y.parse(blockSrc));
+  var blockRow = blockForm.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  var flowSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend: {',
+    '        ipv4_address: 10.0.0.5,',
+    '        mac_address: 02:42:ac:11:00:02 }',
+    ''
+  ].join('\n');
+  var flowDoc = Y.parse(flowSrc);
+
+  ok('clearing the address on a flow-style entry is refused',
+     !!blockRow && Y.setPart(flowDoc, blockForm, blockRow.id, 'ipv4_address', '') === false);
+  ok('the flow-style file is byte-identical after the refusal',
+     Y.serialise(flowDoc) === flowSrc, firstDiff(flowSrc, Y.serialise(flowDoc)));
+})();
+
 /* ---- 5. scope guard: ports and secrets gained no blank extras ---------- */
 
 (function () {
@@ -10525,9 +10700,649 @@ console.log('\nAR9-AR12. PLAN_106 — a broader check on a file that was already
   ok('every other line is byte-identical to before',
      beforeLines.filter(function (_, i) { return i !== 4; }).join('\n') ===
      afterLines.filter(function (_, i) { return i !== 4; }).join('\n'));
+
+  // A re-adopted line already carrying the note must not get it twice.
+  var again = Y.parse(after);
+  Y.replaceNested(again, null, 'a', ['x-unraid', 'icon'], './.staxx/unifi-voucher-site.png');
+  var noteOk = Y.appendNestedComment(again, null, 'a', ['x-unraid', 'icon'],
+                                      'was https://example.com/png/unifi-voucher-site.png');
+  var twice = Y.serialise(again).split('\n')[4];
+  ok('a note already on the line is not appended a second time',
+     noteOk && twice === afterLines[4], twice);
+})();
+
+/* =========================================================================
+ * AS. PLAN_150 phase 1 — placeholder retraction reaches a field nested one
+ *     level inside x-unraid (update.mode, update.delay), not just a direct
+ *     child. The scaffolded comment for such a field lives in the OUTER
+ *     x-unraid block's text (see removePlaceholder's `inner` note), so the
+ *     search has to look there rather than in the inner block the write
+ *     itself creates.
+ * ========================================================================= */
+console.log('\nAS. PLAN_150 phase 1 — nested placeholder retraction (update.mode/delay)');
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n' +
+            '      # update:\n' +
+            '      #   mode: notify          # off, notify or auto\n' +
+            '      #   delay: 24             # hours to wait before auto applies one\n';
+  var doc = Y.parse(src);
+
+  var at = Y.addNested(doc, null, 'a', ['x-unraid', 'update', 'mode'], 'notify');
+  ok('writing update.mode over the scaffolded block succeeds', at >= 0, at);
+  var out = Y.serialise(doc);
+  ok('the mode placeholder is gone', out.indexOf('#   mode:') < 0, out);
+  ok('the real update/mode pair is written',
+     /update:\s*\n\s*mode: notify/.test(out), out);
+  ok('there is no stale second "mode:" line',
+     (out.match(/mode:/g) || []).length === 1, out);
+  ok('the delay placeholder is untouched',
+     out.indexOf('#   delay: 24             # hours to wait before auto applies one') >= 0, out);
+  ok('the block header comment is untouched',
+     out.indexOf('# update:') >= 0, out);
+
+  var reparsed = Y.parse(out);
+  ok('the result re-parses clean', reparsed.warnings.length === 0 && !reparsed.unreadTail);
+
+  // Continuing on the same doc: writing update.delay next retracts its own
+  // placeholder too, leaving both real keys and no leftover comment lines.
+  var at2 = Y.addNested(doc, null, 'a', ['x-unraid', 'update', 'delay'], '24');
+  ok('writing update.delay afterwards also succeeds', at2 >= 0, at2);
+  var out2 = Y.serialise(doc);
+  ok('the delay placeholder is now gone too', out2.indexOf('#   delay:') < 0, out2);
+  ok('the real update/delay pair is written',
+     /update:\s*\n\s*mode: notify\s*\n\s*delay: 24/.test(out2), out2);
+  ok('no stale second "delay:" line', (out2.match(/delay:/g) || []).length === 1, out2);
+})();
+
+(function () {
+  // Regression: a direct child of x-unraid (path.length 2) must still
+  // retract exactly as before — the new `inner` parameter defaults falsy.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      # webui:              # e.g. http://[IP]:8096/\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'a', ['x-unraid', 'webui'], 'http://[IP]:8096/');
+  ok('a direct-child placeholder still retracts', at >= 0 && Y.serialise(doc).indexOf('# webui:') < 0,
+     Y.serialise(doc));
+})();
+
+(function () {
+  // No scaffolded comment at all: the nested write lands cleanly and there
+  // is nothing to remove.
+  var src = 'services:\n  a:\n    image: alpine\n    x-unraid:\n      version: 1\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'a', ['x-unraid', 'update', 'mode'], 'notify');
+  ok('a nested write with no placeholder present succeeds', at >= 0, at);
+  ok('the real pair is written',
+     Y.serialise(doc).indexOf('mode: notify') >= 0, Y.serialise(doc));
+})();
+
+(function () {
+  // A sealed (anchored) x-unraid block refuses the nested write outright,
+  // the same guard addNested already applies before it ever reaches
+  // placeholder retraction — no partial damage.
+  var src = 'services:\n    web:\n        image: nginx\n' +
+            '        x-unraid: &meta\n            name: Thing\n' +
+            '    api:\n        image: api:1.0\n        x-unraid: *meta\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'update', 'mode'], 'notify');
+  ok('an anchored x-unraid: block refuses the nested insert', at === -1, at);
+  ok('...and the file comes back byte-identical', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AT. PLAN_150 phase 4a / PLAN_155 — the per-container update-policy
+ *     fields: reading mode/notify at service and stack scope, writing every
+ *     one of the format table's transitions, and the refusals nothing here
+ *     may guess past (an unrecognised value, a sealed block, an unread
+ *     tail). Notify is now one field of three switches, all written
+ *     together, rather than PLAN_154's three independent Default/On/Off
+ *     rows.
+ * ========================================================================= */
+console.log('\nAT. PLAN_150 phase 4a / PLAN_155 — the per-container update-policy fields');
+
+// PLAN_155 — the single notify field every stack/service test below reads,
+// rather than repeating the lookup.
+function notifyField(form, service) {
+  return Y.fieldById(form, service + '/policy/x-unraid.update.notify');
+}
+
+(function () {
+  // No x-unraid anywhere at all — the When row and the Notifications row
+  // read as Default, following neither a stack block nor anything of
+  // their own.
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n');
+  var form = Y.buildForm(doc);
+  var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
+  var n = notifyField(form, 'a');
+
+  ok('mode reads as Default with no scope at all',
+     !!mode && mode.policy.choice === 'default' && mode.policy.scope === null &&
+     mode.policy.stackChoice === null && !mode.policy.unreadable,
+     mode && JSON.stringify(mode.policy));
+  ok('the Notifications row has no object of its own, and every event is Default with no scope',
+     !!n && !n.policy.hasOwn && !n.policy.unreadable &&
+     ['found', 'installed', 'failed'].every(function (ev) {
+       return n.policy.events[ev].choice === 'default' && n.policy.events[ev].scope === null &&
+              n.policy.events[ev].stackChoice === null;
+     }), n && JSON.stringify(n.policy));
+  ok('both rows title correctly', mode.title === 'When' && n.title === 'Notifications');
+})();
+
+(function () {
+  // A stack-level block only — the service says nothing of its own, so
+  // Default follows THIS STACK's setting, not the server's; the renderer
+  // needs stackChoice to say so. notify: true here is the older boolean
+  // spelling, read as all three events set to that one value.
+  var src = 'x-unraid:\n  update:\n    mode: auto\n    delay: 6\n    notify: true\n' +
+            'services:\n  a:\n    image: alpine\n';
+  var form = Y.buildForm(Y.parse(src));
+  var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
+  var n = notifyField(form, 'a');
+
+  ok('mode is Default, sourced from the stack block',
+     mode.policy.choice === 'default' && mode.policy.scope === 'stack' &&
+     mode.policy.stackChoice === 'auto', JSON.stringify(mode.policy));
+  ok('the row has no object of its own', !n.policy.hasOwn, JSON.stringify(n.policy));
+  ['found', 'installed', 'failed'].forEach(function (ev) {
+    ok(ev + ' is Default, sourced from the stack block\'s boolean',
+       n.policy.events[ev].choice === 'default' && n.policy.events[ev].scope === 'stack' &&
+       n.policy.events[ev].stackChoice === true, JSON.stringify(n.policy.events[ev]));
+  });
+})();
+
+(function () {
+  // A stack-level object form, only some events set — an event the stack
+  // itself leaves out is not "stack scope" for that event, since the stack
+  // has no opinion on it either (an unset event always falls through to the
+  // server, never borrows a scope from its neighbours).
+  var src = 'x-unraid:\n  update:\n    notify:\n      failed: true\n' +
+            'services:\n  a:\n    image: alpine\n';
+  var form = Y.buildForm(Y.parse(src));
+  var n = notifyField(form, 'a');
+
+  ok('failed is Default, sourced from the stack block',
+     n.policy.events.failed.choice === 'default' && n.policy.events.failed.scope === 'stack' &&
+     n.policy.events.failed.stackChoice === true, JSON.stringify(n.policy.events.failed));
+  ok('found has no stack opinion, so Default names no source',
+     n.policy.events.found.choice === 'default' && n.policy.events.found.scope === null &&
+     n.policy.events.found.stackChoice === null, JSON.stringify(n.policy.events.found));
+  ok('installed likewise',
+     n.policy.events.installed.choice === 'default' && n.policy.events.installed.scope === null &&
+     n.policy.events.installed.stackChoice === null, JSON.stringify(n.policy.events.installed));
+})();
+
+(function () {
+  // A service-level block only — the stack has nothing, so the service's
+  // own value is both the choice AND its source. Setting only `failed`
+  // leaves found/installed on Default, following the server rather than
+  // each other — but the row as a whole now has an object of its own, since
+  // the container states even one event itself.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        mode: manual\n        notify:\n          failed: false\n';
+  var form = Y.buildForm(Y.parse(src));
+  var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
+  var n = notifyField(form, 'a');
+
+  ok('mode reads the service\'s own Manual',
+     mode.policy.choice === 'manual' && mode.policy.scope === 'service' &&
+     mode.policy.stackChoice === null, JSON.stringify(mode.policy));
+  ok('the row has its own object', n.policy.hasOwn, JSON.stringify(n.policy));
+  ok('failed reads the service\'s own No',
+     n.policy.events.failed.choice === 'no' && n.policy.events.failed.scope === 'service',
+     JSON.stringify(n.policy.events.failed));
+  ok('found and installed stay Default — one event set does not answer for the others',
+     n.policy.events.found.choice === 'default' && n.policy.events.installed.choice === 'default',
+     JSON.stringify([n.policy.events.found, n.policy.events.installed]));
+})();
+
+(function () {
+  // Both scopes set something, and disagree — the service wins, but the
+  // stack's own value still rides along for the "Default = " note's sake.
+  var src = 'x-unraid:\n  update:\n    mode: manual\n    notify: false\n' +
+            'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        mode: auto\n        delay: 0\n        notify: true\n';
+  var form = Y.buildForm(Y.parse(src));
+  var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
+  var n = notifyField(form, 'a');
+
+  ok('the service\'s Automatic/Immediate wins over the stack\'s Manual',
+     mode.policy.choice === 'auto' && mode.policy.scope === 'service' &&
+     mode.policy.auto === 'immediate' && mode.policy.delay === 0 &&
+     mode.policy.stackChoice === 'manual', JSON.stringify(mode.policy));
+  ok('the row has its own object', n.policy.hasOwn, JSON.stringify(n.policy));
+  ['found', 'installed', 'failed'].forEach(function (ev) {
+    ok(ev + ': the service\'s Yes wins over the stack\'s No',
+       n.policy.events[ev].choice === 'yes' && n.policy.events[ev].scope === 'service' &&
+       n.policy.events[ev].stackChoice === false, JSON.stringify(n.policy.events[ev]));
+  });
+})();
+
+(function () {
+  // The whole When sequence on one file: Default -> Manual -> Automatic
+  // (Delayed) -> Automatic (Immediate) -> Automatic (Delayed) -> Default —
+  // proving the delay: 0 Immediate writes is gone the moment Delayed or
+  // Default is chosen again, and that nothing but the mode/delay lines
+  // themselves ever change.
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n');
+  var form = Y.buildForm(doc);
+  var id = 'a/policy/x-unraid.update.mode';
+
+  ok('Default -> Manual creates the block from nothing',
+     Y.setPart(doc, form, id, 'value', 'manual'));
+  var out1 = Y.serialise(doc);
+  ok('a real mode: manual line exists', /update:\s*\n\s*mode: manual/.test(out1), out1);
+
+  form = Y.buildForm(doc);
+  ok('Manual -> Automatic (Delayed) overwrites the same line',
+     Y.setPart(doc, form, id, 'value', 'auto'));
+  var out2 = Y.serialise(doc);
+  ok('mode now reads auto, still one line', /mode: auto/.test(out2) &&
+     (out2.match(/mode:/g) || []).length === 1, out2);
+  ok('no delay: line yet', out2.indexOf('delay:') < 0, out2);
+
+  form = Y.buildForm(doc);
+  ok('Automatic (Delayed) -> Automatic (Immediate) adds delay: 0',
+     Y.setPart(doc, form, id, 'value', 'auto-immediate'));
+  var out3 = Y.serialise(doc);
+  ok('delay: 0 is now written', /delay: 0/.test(out3), out3);
+
+  form = Y.buildForm(doc);
+  var immediateField = Y.fieldById(form, id);
+  ok('reading it back shows Immediate',
+     immediateField.policy.choice === 'auto' && immediateField.policy.auto === 'immediate' &&
+     immediateField.policy.delay === 0, JSON.stringify(immediateField.policy));
+
+  ok('Automatic (Immediate) -> Automatic (Delayed) drops delay: 0',
+     Y.setPart(doc, form, id, 'value', 'auto'));
+  var out4 = Y.serialise(doc);
+  ok('the delay: 0 line is gone', out4.indexOf('delay:') < 0, out4);
+  ok('mode: auto is still there, once', /mode: auto/.test(out4) &&
+     (out4.match(/mode:/g) || []).length === 1, out4);
+
+  form = Y.buildForm(doc);
+  ok('Automatic (Delayed) -> Default removes the mode line',
+     Y.setPart(doc, form, id, 'value', 'default'));
+  var out5 = Y.serialise(doc);
+  ok('no mode: line survives', out5.indexOf('mode:') < 0, out5);
+  ok('the now-empty update: block is gone too', out5.indexOf('update:') < 0, out5);
+
+  var reparsed = Y.parse(out5);
+  ok('the file re-parses clean throughout', reparsed.warnings.length === 0 && !reparsed.unreadTail);
+})();
+
+(function () {
+  // A hand-written delay that is not zero survives a mode change untouched
+  // — only a delay this control itself wrote as part of Immediate is ever
+  // touched by it.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        mode: manual\n        delay: 6\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('Manual -> Automatic (Delayed) succeeds',
+     Y.setPart(doc, form, 'a/policy/x-unraid.update.mode', 'value', 'auto'));
+  var out = Y.serialise(doc);
+  ok('the hand-written delay: 6 is untouched', out.indexOf('delay: 6') >= 0, out);
+  ok('only the mode line changed',
+     diffLines(src, out).length === 1, JSON.stringify(diffLines(src, out)));
+
+  var reread = Y.fieldById(Y.buildForm(Y.parse(out)), 'a/policy/x-unraid.update.mode');
+  ok('it now reads as Automatic, Delayed, naming its own 6 hours',
+     reread.policy.choice === 'auto' && reread.policy.auto === 'delayed' &&
+     reread.policy.delay === 6, JSON.stringify(reread.policy));
+})();
+
+(function () {
+  // A flip from nothing writes the full object, all three keys explicit,
+  // found/installed/failed in that order — there is no per-event Default
+  // any more (PLAN_155 supersedes PLAN_154's tri-state rows): a container's
+  // own object always states a complete answer, and touching any one switch
+  // writes all three together.
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n');
+  var form = Y.buildForm(doc);
+  var id = 'a/policy/x-unraid.update.notify';
+
+  ok('a flip writes the object form with all three keys, in order',
+     Y.setPart(doc, form, id, 'value', { found: false, installed: true, failed: true }));
+  var out1 = Y.serialise(doc);
+  ok('found, then installed, then failed, unquoted',
+     /notify:\s*\n\s*found: false\s*\n\s*installed: true\s*\n\s*failed: true(\s|$)/.test(out1), out1);
+
+  form = Y.buildForm(doc);
+  var reread = notifyField(form, 'a');
+  ok('reading it back shows the container\'s own answers, and hasOwn is true',
+     reread.policy.hasOwn && reread.policy.events.found.choice === 'no' &&
+     reread.policy.events.installed.choice === 'yes' && reread.policy.events.failed.choice === 'yes',
+     JSON.stringify(reread.policy));
+
+  ok('writing the same three answers again succeeds',
+     Y.setPart(doc, form, id, 'value', { found: false, installed: true, failed: true }));
+  ok('...and leaves the text unchanged', Y.serialise(doc) === out1, firstDiff(out1, Y.serialise(doc)));
+
+  form = Y.buildForm(doc);
+  ok('a second flip overwrites all three again',
+     Y.setPart(doc, form, id, 'value', { found: true, installed: true, failed: false }));
+  var out2 = Y.serialise(doc);
+  ok('all three now read the new answers, still one of each key',
+     /found: true/.test(out2) && /installed: true/.test(out2) && /failed: false/.test(out2) &&
+     (out2.match(/found:/g) || []).length === 1, out2);
+})();
+
+(function () {
+  // The older boolean spelling can't hold three independent answers, so a
+  // flip replaces it outright with the object form the first time the row
+  // is touched.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        notify: true\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('a flip replaces the boolean with the object form',
+     Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value',
+               { found: false, installed: true, failed: true }));
+  var out = Y.serialise(doc);
+  ok('all three are now explicit, and the old boolean is gone',
+     /found: false/.test(out) && /installed: true/.test(out) && /failed: true/.test(out) &&
+     out.indexOf('notify: true') < 0, out);
+})();
+
+(function () {
+  // A service-level notify: false (the older spelling) reads as all three
+  // off, exactly as before — the shape change on top of it does not touch
+  // how a boolean itself is read. The row has its own object, since this
+  // IS the service's own line, just written in the older spelling.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        notify: false\n';
+  var n = notifyField(Y.buildForm(Y.parse(src)), 'a');
+  ok('its own object, and all three read No',
+     n.policy.hasOwn && n.policy.events.found.choice === 'no' &&
+     n.policy.events.installed.choice === 'no' && n.policy.events.failed.choice === 'no',
+     JSON.stringify(n.policy));
+})();
+
+(function () {
+  // An unknown mode word and a non-boolean notify: read as though they were
+  // Default (falling through exactly as staxx_update_policy() does
+  // server-side), but flagged so a tick can never silently replace them —
+  // both writes are refused outright and the file is untouched.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        mode: sometimes\n        notify: maybe\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var mode = Y.fieldById(form, 'a/policy/x-unraid.update.mode');
+  var n = notifyField(form, 'a');
+
+  ok('the odd mode word reads as Default, flagged unreadable',
+     mode.policy.choice === 'default' && mode.policy.scope === null &&
+     mode.policy.unreadable && mode.policy.unreadable.raw === 'sometimes',
+     JSON.stringify(mode.policy));
+  ok('the odd notify value makes the whole row unreadable',
+     n.policy.unreadable && n.policy.unreadable.raw === 'maybe', JSON.stringify(n.policy));
+
+  ok('writing over the odd mode is refused',
+     !Y.setPart(doc, form, 'a/policy/x-unraid.update.mode', 'value', 'manual'));
+  ok('writing over the odd notify is refused',
+     !Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value',
+                { found: true, installed: true, failed: true }));
+  ok('the file is byte-identical either way', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A single event holding an unrecognised word inside the object form now
+  // makes the WHOLE row unreadable, not just that switch — a row of three
+  // two-state switches has no way to draw "the other two are fine, this one
+  // is a mystery word" without guessing what a flip of a readable one
+  // should do to the one that is not (PLAN_155 supersedes the old per-event
+  // isolation).
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      update:\n        notify:\n          found: maybe\n          failed: true\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var n = notifyField(form, 'a');
+
+  ok('the row is unreadable, naming the odd word',
+     n.policy.unreadable && n.policy.unreadable.raw === 'maybe', JSON.stringify(n.policy));
+
+  ok('writing over it is refused entirely',
+     !Y.setPart(doc, form, 'a/policy/x-unraid.update.notify', 'value',
+                { found: true, installed: true, failed: true }));
+  ok('the file is byte-identical', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A real write retracts the scaffolded commented placeholder — proven
+  // through setPart() itself, not just addNested() directly (see section
+  // AS above for that lower-level proof).
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n' +
+            '      # update:\n' +
+            '      #   mode: notify          # off, notify or auto\n' +
+            '      #   delay: 24             # hours to wait before auto applies one\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing mode over the scaffolded block succeeds',
+     Y.setPart(doc, form, 'a/policy/x-unraid.update.mode', 'value', 'auto'));
+  var out = Y.serialise(doc);
+  ok('the mode placeholder is gone', out.indexOf('#   mode:') < 0, out);
+  ok('the real mode line is written', /mode: auto/.test(out), out);
+  ok('the delay placeholder is untouched, since nothing here wrote delay',
+     out.indexOf('#   delay: 24             # hours to wait before auto applies one') >= 0, out);
+})();
+
+(function () {
+  // Clearing the only real key left under x-unraid: must not take the
+  // whole block down with it — a sibling field's own scaffolded comment
+  // (never touched by this write) lives in the same physical span, and
+  // outermostEmptied's key count cannot see a comment, so this is the one
+  // case removeKey's ordinary floor would over-collapse. Reproduces the
+  // exact shape the throwaway probe first caught this in.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n' +
+            '      # update:\n' +
+            '      #   mode: notify          # off, notify or auto\n' +
+            '      #   delay: 24             # hours to wait before auto applies one\n' +
+            '      #   notify: true          # mention it in update messages\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var id = 'a/policy/x-unraid.update.mode';
+
+  ok('Default -> Automatic (Immediate) succeeds', Y.setPart(doc, form, id, 'value', 'auto-immediate'));
+  form = Y.buildForm(doc);
+  ok('Automatic (Immediate) -> Default succeeds', Y.setPart(doc, form, id, 'value', 'default'));
+  var out = Y.serialise(doc);
+
+  ok('the x-unraid: block itself survives', out.indexOf('x-unraid:') >= 0, out);
+  ok('the untouched notify placeholder survives, comment and all',
+     out.indexOf('#   notify: true          # mention it in update messages') >= 0, out);
+  ok('no mode: or delay: line is left behind',
+     out.indexOf('mode:') < 0 && !/[^#]\s*delay:/.test(out), out);
+
+  var reparsed = Y.parse(out);
+  ok('the result re-parses clean', reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify(reparsed.warnings));
+})();
+
+(function () {
+  // The other half of the same rule: a block this control CREATED, holding
+  // nothing but the key it wrote, must not be left behind as a bare
+  // "x-unraid:" husk when that key goes away again. Emptiness is read off
+  // the block's physical extent, not its key count — a block holding only
+  // comments (the case just above) counts as occupied, which is why the two
+  // cases have to sit next to each other.
+  var src = 'services:\n  web:\n    image: alpine\n    x-unraid:\n      icon: ./a.png\n' +
+            '  helper:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ['web', 'helper'].forEach(function (svc) {
+    ok(svc + ': Default -> Automatic succeeds',
+       Y.setPart(doc, form, svc + '/policy/x-unraid.update.mode', 'value', 'auto'));
+    form = Y.buildForm(doc);
+  });
+  ok('the service with no metadata block gained one',
+     /helper:[\s\S]*x-unraid:[\s\S]*mode: auto/.test(Y.serialise(doc)), Y.serialise(doc));
+
+  ['web', 'helper'].forEach(function (svc) {
+    ok(svc + ': Automatic -> Default succeeds',
+       Y.setPart(doc, form, svc + '/policy/x-unraid.update.mode', 'value', 'default'));
+    form = Y.buildForm(doc);
+  });
+  var back = Y.serialise(doc);
+  ok('the block this control created is gone again, husk and all',
+     back.indexOf('helper:\n    image: alpine\n') >= 0, back);
+  ok('the block that already held an icon keeps it',
+     back.indexOf('icon: ./a.png') >= 0, back);
+  ok('and the whole file is byte-identical to where it started', back === src,
+     firstDiff(src, back));
+})();
+
+(function () {
+  // Which scope a Default row says it follows. The resolution rule is that
+  // the first scope declaring ANY of the three keys answers for all three,
+  // filling what it left unsaid from the server-wide setting — so a service
+  // stating only notify has taken the stack out of the picture for mode too,
+  // and the When row must stop naming the stack. Getting this backwards puts
+  // a value on screen that nothing actually uses.
+  function policyOf(src, svc, field) {
+    var doc = Y.parse(src), form = Y.buildForm(doc);
+    var f = form.fields.filter(function (x) {
+      return x.service === svc && x.policy && x.policy.field === field;
+    })[0];
+    return f ? f.policy : null;
+  }
+
+  var stackOnly = 'x-unraid:\n  update:\n    mode: auto\nservices:\n  a:\n    image: x\n';
+  ok('a silent service follows the stack for When',
+     policyOf(stackOnly, 'a', 'mode').scope === 'stack');
+
+  var notifyOnly = 'x-unraid:\n  update:\n    mode: auto\n' +
+                   'services:\n  a:\n    image: x\n    x-unraid:\n      update:\n        notify: false\n';
+  ok('a service stating only notify no longer claims to follow the stack for When',
+     policyOf(notifyOnly, 'a', 'mode').scope === null);
+  ok('...and its Failed switch reads as its own',
+     policyOf(notifyOnly, 'a', 'notify').events.failed.scope === 'service');
+})();
+
+(function () {
+  // An anchored (sealed) x-unraid: block refuses the write outright — no
+  // partial damage, file comes back byte-identical.
+  var src = 'services:\n' +
+            '    web:\n        image: nginx\n        x-unraid: &meta\n            name: Thing\n' +
+            '    api:\n        image: api:1.0\n        x-unraid: *meta\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing mode into a sealed x-unraid: block is refused',
+     !Y.setPart(doc, form, 'web/policy/x-unraid.update.mode', 'value', 'manual'));
+  ok('...and notify likewise',
+     !Y.setPart(doc, form, 'web/policy/x-unraid.update.notify', 'value',
+                { found: true, installed: true, failed: true }));
+  ok('the file comes back byte-identical', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A file with an unread tail refuses the structural write — the same
+  // rule every other splice-based writer here follows.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      other: 1\n' +
+            '} not yaml {\n';
+  var doc = Y.parse(src);
+  if (doc.unreadTail) {
+    var form = Y.buildForm(doc);
+    ok('writing mode with an unread tail present is refused',
+       !Y.setPart(doc, form, 'a/policy/x-unraid.update.mode', 'value', 'manual'));
+    ok('the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+  } else {
+    ok('(skipped: this file did not produce an unread tail to test against)', true);
+  }
+})();
+
+/* ---- insertChild: a new key under a parent (owed by PLAN_209) ------------ */
+
+console.log('\nIC. insertChild writes one new key under a parent');
+(function () {
+  function run(src, pathKeys, key, value, before, bare) {
+    var doc = Y.parse(src), pr = doc.root.pairs[pathKeys[0]];
+    for (var i = 1; i < pathKeys.length; i++) pr = pr.value.pairs[pathKeys[i]];
+    var at = Y.insertChild(doc, pr, key, value, before, bare);
+    return { at: at, out: Y.serialise(doc), doc: doc };
+  }
+  function reparses(out) { var d = Y.parse(out); return !d.unreadTail && Y.serialise(d) === out; }
+  var base = 'services:\n  a:\n    image: x\n    restart: no\n';
+
+  // lands last, at the siblings' column, rest of file byte-identical
+  var r = run(base, ['services', 'a'], 'tty', 'true');
+  ok('appends after the last sibling, same indent',
+     r.out === base + '    tty: \'true\'\n', JSON.stringify(r.out));
+  ok('...and returns the new line number', r.at === 4, r.at);
+  ok('...and the result re-parses', reparses(r.out));
+  r = run(base, ['services', 'a'], 'tty', 'true', null, true);
+  ok('bare writes a real boolean unquoted', r.out === base + '    tty: true\n', JSON.stringify(r.out));
+  r = run(base, ['services', 'a'], 'tty', null);
+  ok('a null value writes a bare "key:" line', r.out === base + '    tty:\n', JSON.stringify(r.out));
+
+  // a parent that nests by four keeps its own step
+  r = run('services:\n  a:\n    environment:\n        A: b\n', ['services', 'a', 'environment'], 'B', 'x');
+  ok('matches a four-space nesting habit',
+     r.out === 'services:\n  a:\n    environment:\n        A: b\n        B: x\n', JSON.stringify(r.out));
+
+  // before: only the true last key is skipped over (documented quirk, PLAN_67)
+  var xu = base + '    x-unraid:\n      k: 1\n';
+  r = run(xu, ['services', 'a'], 'tty', 'true', 'x-unraid');
+  ok('before: the named last key stays last',
+     r.out === base + '    tty: \'true\'\n    x-unraid:\n      k: 1\n', JSON.stringify(r.out));
+  r = run(xu, ['services', 'a'], 'tty', 'true', 'restart');
+  ok('before: a key that is not last is ignored and the line still appends at the end',
+     r.out === xu + '    tty: \'true\'\n', JSON.stringify(r.out));
+
+  // empty parent
+  r = run('services:\n  a:\n    environment:\n', ['services', 'a', 'environment'], 'B', 'x');
+  ok('under a parent with nothing yet: two columns in',
+     r.out === 'services:\n  a:\n    environment:\n      B: x\n', JSON.stringify(r.out));
+  ok('...and it re-parses', reparses(r.out));
+
+  // comments and blank lines
+  var cm = 'services:\n  a:\n    image: x\n    # note\n\n    restart: no\n\n  b:\n    image: y\n';
+  r = run(cm, ['services', 'a'], 'tty', 'true');
+  ok('comment and blank lines around the insertion point survive',
+     r.out.indexOf('    # note\n\n    restart: no\n') >= 0 && r.out.indexOf('\n  b:\n    image: y\n') > 0, JSON.stringify(r.out));
+  ok('the new key follows the file\'s blank-line habit and the next service is untouched',
+     r.out === 'services:\n  a:\n    image: x\n    # note\n\n    restart: no\n\n    tty: \'true\'\n\n  b:\n    image: y\n',
+     JSON.stringify(r.out));
+  ok('...and it re-parses', reparses(r.out));
+  r = run('services:\n  a:\n    image: x\n    # trailing note\n', ['services', 'a'], 'tty', 'true');
+  ok('a trailing comment is kept', r.out.indexOf('    # trailing note\n') >= 0 && r.out.indexOf("tty: 'true'") > 0, JSON.stringify(r.out));
+
+  // quoting of the key
+  var env = 'services:\n  a:\n    environment:\n      A: b\n';
+  r = run(env, ['services', 'a', 'environment'], '8075', 'x');
+  ok('a digits-only key is quoted so it stays a string (PLAN_209)',
+     r.out === env + "      '8075': x\n", JSON.stringify(r.out));
+  ok('...and it reads back as the string key "8075"', (function () {
+       var d = Y.parse(r.out); return !!d.root.pairs.services.value.pairs.a.value.pairs.environment.value.pairs['8075'];
+     })());
+  r = run(env, ['services', 'a', 'environment'], '-1', '1');
+  ok('a negative-number key is quoted', r.out === env + "      '-1': 1\n", JSON.stringify(r.out));
+  r = run(env, ['services', 'a', 'environment'], '.5', '1');
+  ok('a decimal key is quoted', r.out === env + "      '.5': 1\n", JSON.stringify(r.out));
+  r = run(env, ['services', 'a', 'environment'], 'A1', '1');
+  ok('an ordinary key is left plain', r.out === env + '      A1: 1\n', JSON.stringify(r.out));
+  r = run(env, ['services', 'a', 'environment'], 'x: y', '1');
+  ok('a key containing ": " is quoted',
+     r.out === env + "      'x: y': 1\n", JSON.stringify(r.out));
+
+  // refusals
+  r = run(base, ['services', 'a'], 'image', 'again');
+  ok('a key that already exists is refused (-1), file untouched', r.at === -1 && r.out === base);
+  r = run(base, ['services', 'a'], 'k', 'a\nb');
+  ok('a value with a line break is refused (-1), file untouched', r.at === -1 && r.out === base);
+  r = run('services:\n  a:\n    image: x\n} not yaml {\n', ['services', 'a'], 'tty', 'true');
+  ok('a document with an unread tail is refused (-1), file untouched',
+     r.at === -1 && r.out === 'services:\n  a:\n    image: x\n} not yaml {\n', JSON.stringify(r.out));
+
+  // flow style: a flow parent cannot take a child line, so it is refused
+  ['{}', '{A: b}'].forEach(function (flow) {
+    var src = 'services:\n  a:\n    environment: ' + flow + '\n';
+    r = run(src, ['services', 'a', 'environment'], 'B', 'x');
+    ok('a flow-style parent ' + flow + ' is refused and left untouched',
+       r.at === -1 && r.out === src, JSON.stringify(r.out));
+  });
 })();
 
 /* ---- result ------------------------------------------------------------- */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
-process.exit(fail ? 1 : 0);
+check.done();

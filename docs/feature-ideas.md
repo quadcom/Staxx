@@ -71,7 +71,7 @@ suggests.
 
 `PLAN_27` unwraps CA's `[a href='…']` tags rather than turning them into real links — about twenty
 occurrences, judged not worth the URL-safety plumbing on its own. If markdown links are being built
-anyway, both routes can share the same scheme guard that already sits beside the icon handling in
+anyway, both routes can share the same scheme guard already used elsewhere in
 `stacks.js`, and doing them together costs almost nothing extra.
 
 ---

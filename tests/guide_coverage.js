@@ -159,6 +159,35 @@ console.log('\n1. Index in sync');
     problem('the bullet list has been hand-edited away from what the builder would '
             + 'write — run the index builder to put it back');
   }
+
+  // The breadcrumb line under each page's marker is generated too, so a page
+  // whose line is missing or differs is stale rather than hand-written.
+  var trails;
+  try {
+    trails = builder.expectedTrails(builder.collectPages(GUIDE_DIR));
+  } catch (e) {
+    problem('the index builder could not work out the breadcrumb trails — '
+            + (e && e.message ? e.message : String(e)));
+    return;
+  }
+  var stale = 0;
+  pages.forEach(function (name) {
+    var lines = (read(path.join(GUIDE_DIR, name)) || '').split('\n');
+    var at = -1, i;
+    for (i = 0; i < lines.length; i++) {
+      if (/^<!--\s*index:/i.test(lines[i])) { at = i; break; }
+    }
+    var j = at + 1;
+    while (at >= 0 && j < lines.length && lines[j].trim() === '') j++;
+    var got = (at >= 0 && j < lines.length && lines[j].indexOf('[StaXX guide](README.md)') === 0)
+      ? lines[j].replace(/\s+$/, '') : null;
+    if (got !== trails[name]) {
+      stale++;
+      problem(name + ' has a missing or out-of-date breadcrumb line — run '
+              + 'node tools/build-guide-index.js');
+    }
+  });
+  if (!stale) note('every guide page carries its breadcrumb line');
 })();
 
 /* =========================================================================
@@ -184,10 +213,28 @@ console.log('\n2. Links resolve');
     var body = read(path.join(GUIDE_DIR, name));
     if (body === null) return;
 
+    // A picture parked inside an HTML comment is not on the page. Found on the
+    // merge page 2026-09-17: four finished image lines wrapped in "picture still
+    // to be taken" comments passed this check for two days while the published
+    // page showed nothing. So a commented-out image reference is a PROBLEM in
+    // its own right, and comments are stripped before the live references are
+    // read.
+    var cre = /<!--[\s\S]*?-->/g, cm;
+    while ((cm = cre.exec(body)) !== null) {
+      var hidden = /!\[[^\]\n]*\]\(\s*([^)\s]+)/.exec(cm[0]);
+      if (hidden) {
+        broken++;
+        problem(name + ' hides a picture inside a comment: ' + hidden[1]
+          + (fs.existsSync(path.resolve(GUIDE_DIR, hidden[1].split('#')[0]))
+             ? ' — the file exists, so uncomment the line' : ''));
+      }
+    }
+    var live = body.replace(cre, '');
+
     // Inline links and image references alike; an optional "title" is allowed
     // after the target because markdown permits it.
     var re = /!?\[[^\]\n]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g, m;
-    while ((m = re.exec(body)) !== null) {
+    while ((m = re.exec(live)) !== null) {
       var target = m[1];
 
       // Somewhere else entirely, or a jump within this same page.

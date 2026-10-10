@@ -38,7 +38,8 @@
     data.append('action', action);
     Object.keys(fields || {}).forEach(function (key) {
       var value = fields[key];
-      if (Array.isArray(value)) value.forEach(function (v) { data.append(key, v); });
+      // PHP only builds an array from repeated keys ending in [].
+      if (Array.isArray(value)) value.forEach(function (v) { data.append(key + '[]', v); });
       else data.append(key, value);
     });
 

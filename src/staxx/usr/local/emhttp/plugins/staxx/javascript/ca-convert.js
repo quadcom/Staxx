@@ -84,6 +84,33 @@
     return escapeDollars(s);
   }
 
+  // The record escapeDollarsTracked() pushed since `before` (the list's length
+  // ahead of the call), or null when the value had no dollar. Lets a dropped
+  // duplicate take its record with it.
+  function escapeSince(dollarsEscaped, before) {
+    return dollarsEscaped.length > before ? dollarsEscaped[before] : null;
+  }
+
+  // Drops the earlier entry when a key repeats (last one wins, as Docker does)
+  // and says so. Values in the note are as written to the file.
+  function keepLastByKey(list, kind, notes, dollarsEscaped) {
+    var lastAt = {};
+    list.forEach(function (e, i) { lastAt[e.key] = i; });
+    var out = [];
+    list.forEach(function (e, i) {
+      if (lastAt[e.key] === i) { out.push(e); return; }
+      var kept = list[lastAt[e.key]];
+      if (e.esc) {
+        var at = dollarsEscaped.indexOf(e.esc);
+        if (at >= 0) dollarsEscaped.splice(at, 1);
+      }
+      notes.push('The ' + kind + ' "' + e.key + '" was set more than once in this template. Kept the last value, "' +
+        kept.value + '", which is the one Unraid uses; the earlier value, "' +
+        e.value + '", was left out.');
+    });
+    return out;
+  }
+
   var UNSAFE_LEAD = /^[\s\-?:,\[\]{}#&*!|>'"%@`]/;
   var YAML_KEYWORD = /^(true|false|yes|no|on|off|null|~)$/i;
   var LOOKS_NUMERIC = /^[-+]?[0-9]+(\.[0-9]+)?$/;
@@ -118,14 +145,12 @@
     // compose-model.js's own parser, which never folds it to a boolean, but
     // a real YAML 1.1 loader downstream would — so it is quoted the same as
     // any other keyword, matching scalarOut()'s own rule for values.
-    if (k !== '' && !YAML_KEYWORD.test(k) && !/[:#"'\s]/.test(k) && !UNSAFE_LEAD.test(k.charAt(0))) return k;
+    // Anything starting with a digit (after an optional sign or dot), or
+    // .inf/.nan, is read as a number and compose refuses a non-string key
+    // (found with an Unraid template naming a variable 8075).
+    if (k !== '' && !YAML_KEYWORD.test(k) && !/[:#"'\s]/.test(k) && !UNSAFE_LEAD.test(k.charAt(0)) &&
+        !/^[-+]?(\.?\d|\.(inf|nan)$)/i.test(k)) return k;
     return dq(k);
-  }
-
-  function repeat(ch, n) {
-    var s = '';
-    while (n-- > 0) s += ch;
-    return s;
   }
 
   // "align the # to (longest content line in that block + 2 spaces), capped
@@ -145,7 +170,7 @@
       if (!it.comment) { out.push(it.content); continue; }
       var pad = col - it.content.length;
       if (pad < 2) pad = 2;
-      out.push(it.content + repeat(' ', pad) + '# ' + it.comment);
+      out.push(it.content + ' '.repeat(pad) + '# ' + it.comment);
     }
     return out;
   }
@@ -772,11 +797,15 @@
       } else if (type === 'Variable') {
         // Emitted even when empty: the form shows it with its description,
         // which is the whole point of importing the metadata.
+        var nEsc = dollarsEscaped.length;
         var venv = escapeDollarsTracked(val, target, dollarsEscaped, noEscape);
-        environment.push({ content: '      ' + keyOut(target) + ': ' + dq(venv), comment: comment });
+        environment.push({ content: '      ' + keyOut(target) + ': ' + dq(venv), comment: comment,
+          key: target, value: venv, esc: escapeSince(dollarsEscaped, nEsc) });
       } else if (type === 'Label') {
+        var nEsc = dollarsEscaped.length;
         var vlbl = escapeDollarsTracked(val, target, dollarsEscaped, noEscape);
-        labels.push({ content: '      ' + keyOut(target) + ': ' + dq(vlbl), comment: comment });
+        labels.push({ content: '      ' + keyOut(target) + ': ' + dq(vlbl), comment: comment,
+          key: target, value: vlbl, esc: escapeSince(dollarsEscaped, nEsc) });
       } else {
         warnings.push('The setting "' + label + '" has the unrecognised type "' + type + '" and was skipped.');
       }
@@ -905,13 +934,22 @@
       return { content: '      - ' + scalarOut(v), comment: '' };
     }));
     var environment = cfg.environment.concat(extra.environment.map(function (kv) {
+      var nEsc = dollarsEscaped.length;
       var v = escapeDollarsTracked(kv.value, kv.key, dollarsEscaped, noEscape);
-      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '' };
+      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '',
+        key: kv.key, value: v, esc: escapeSince(dollarsEscaped, nEsc) };
     }));
     var labels = cfg.labels.concat(extra.labels.map(function (kv) {
+      var nEsc = dollarsEscaped.length;
       var v = escapeDollarsTracked(kv.value, kv.key, dollarsEscaped, noEscape);
-      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '' };
+      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '',
+        key: kv.key, value: v, esc: escapeSince(dollarsEscaped, nEsc) };
     }));
+    // A mapping cannot repeat a key, and Docker keeps the last -e/--label it
+    // is given, so the converter does the same rather than write a file that
+    // will not parse.
+    environment = keepLastByKey(environment, 'variable', notes, dollarsEscaped);
+    labels = keepLastByKey(labels, 'label', notes, dollarsEscaped);
 
     /* ---- the service body -------------------------------------------- */
 
@@ -1122,7 +1160,6 @@
   var API = {
     convert: convert,
     normaliseName: normaliseName,
-    parseExtraParams: parseExtraParams,
     // Those below are string helpers with no CA-specific knowledge in them at
     // all — image-import.js reuses them rather than keeping a second copy of
     // the quoting rules, which is where the anchor and trailing-colon bugs
@@ -1133,7 +1170,6 @@
     scalarOut: scalarOut,
     escapeDollars: escapeDollars,
     wrapText: wrapText,
-    warningCommentLines: warningCommentLines,
     findingsCommentLines: findingsCommentLines,
     importedMetaLines: importedMetaLines
   };

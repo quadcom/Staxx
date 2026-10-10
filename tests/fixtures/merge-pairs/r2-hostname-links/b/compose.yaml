@@ -1,0 +1,10 @@
+services:
+  web:
+    image: httpd:2.4
+  caller:
+    image: alpine:3.20
+    hostname: web
+    links:
+      - web:webalias
+    external_links:
+      - web:extweb

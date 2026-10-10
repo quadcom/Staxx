@@ -13,17 +13,8 @@
  * not on the box's real store. The CALLER sets it and puts the config back,
  * the same way tests/server/files.php does:
  *
- *     pscp tests/server/review.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzc1-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzc1-store\"" >> $CFG
- *       php /tmp/review.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/review.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzc1-store /tmp/review.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, all named "zzc1…", under the scratch stacks folder.

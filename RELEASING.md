@@ -155,6 +155,10 @@ if they disagree, but doing them in this order means it never has to.
 8. **Bring the stamped manifest back to `dev`.** The build commits the new checksums to `main` only.
    `git cherry-pick -x <the "Stamp staxx.plg" commit>` — it touches only the version, the two
    checksums and the package name, never the branch entity, so it is safe to carry across.
+   **Skip this step if a dev build has been published since the release**: `dev`'s manifest then
+   already carries its *own* checksums for its *own* package, and main's would overwrite them with
+   values that match nothing on the dev channel. Found cutting the 00.04.01 hotfix on 2026-09-17,
+   an hour after a dev build had stamped `dev`.
 
 9. **Set dev's manifest, and its readme line, to the *next* version you are heading towards**, and
    push. Both `<!ENTITY version>` and `README.md`'s version line move together — see the gotcha
@@ -196,6 +200,14 @@ does not name the branch it is running on. But between the merge and noticing, m
 served exactly as committed. Put both back in the merge commit.
 
 ---
+
+## Files that reach `main` between releases
+
+`staxx.xml`, `ca_profile.xml` and `compose-errors.json` are committed on `main` directly and
+cherry-picked onto `dev` (see `notes/delivery.md`). So at a stable release `dev` already holds every
+such commit and the merge brings nothing new for them. If `compose-errors.json` conflicts anyway, keep
+the copy whose `version` date is later, and run `node tests/compose_errors.js` before committing the
+merge.
 
 ## The gotcha after a stable release
 
@@ -289,3 +301,30 @@ Two consequences that cannot be fixed from here, only known about:
 - A **development user is never offered the stable release**, because `00.02.00` sorts below
   `00.02.00_dev20260831`. Switching to stable means pasting main's address, which installs it
   outright. That is the right shape for a channel switch, and it is deliberate.
+
+## The sort gate, belt and braces
+
+Belt and braces on top of that: `publish.yml` also refuses to publish a version that does not sort
+above the newest release already out on that channel, under `LC_ALL=C` — a locale-aware comparison
+can reorder punctuation, and this has to be the byte comparison `strcmp` actually performs. The
+padding should make that gate unreachable; it is there for the day something else is got wrong.
+
+## What only a real manifest install proves
+
+*Moved here from `CLAUDE.md` on 2026-09-17; it was written there on 2026-09-04.*
+
+**What the deploy route cannot prove**, and so is worth an occasional real install: the package step
+itself. Both routes now run the same `scripts/postinstall` and `scripts/uninstall` — the legacy
+`stack.manager` → `staxx` settings migration, the update-setting tidy-up, the Hub sign-out and the
+rest install and remove identically either way. What only a genuine plugin install exercises is
+`upgradepkg` and `removepkg`, the older-package cleanup, and the Plugin Manager's own handling of the
+manifest. `dev-install.sh` writing the registration marker is dev-only bookkeeping around the same
+shared scripts, not a second copy of what they do.
+
+**Measured 2026-09-04, both paths clean on Adrian's box** — but one trap: `dev-install.sh` writes an
+empty *file* at `/var/log/plugins/staxx.plg` as its registration marker, where Unraid keeps a
+*symlink* to the real manifest. `plugin remove` reads that entry with `readlink`, gets nothing, and
+reports "removed" having run none of the removal script. So on a dev-deployed box a manifest
+install-and-remove test must first replace the marker with `ln -s /boot/config/plugins/staxx.plg`;
+a real user's box never has the marker. Removal also signs Docker out of Hub; `apply_settings`
+signs it back in on the next install, which is the intended shape.

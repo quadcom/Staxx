@@ -1,0 +1,5 @@
+services:
+  site:
+    image: nginx:alpine  # Ce service sert la page d'accueil 🚀
+    x-unraid:
+      description: "Sert des pages en français — café, naïve, façade"

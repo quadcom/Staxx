@@ -269,16 +269,11 @@
     return body;
   }
 
-  function readmeServicesMap(doc) {
-    var pair = doc.root && doc.root.pairs ? doc.root.pairs['services'] : null;
-    return (pair && pair.value && pair.value.kind === 'map') ? pair.value : null;
-  }
-
   // Accept a block only if at least one of its services' image has the same
   // canonical repository path as the reference being imported — a block
   // that never mentions the image is somebody's unrelated example.
   function blockMatchesImage(doc, image) {
-    var svcMap = readmeServicesMap(doc);
+    var svcMap = CM.servicesMap(doc);
     if (!svcMap) return false;
     var target = canonicalRepo(image);
     for (var i = 0; i < svcMap.keys.length; i++) {
@@ -499,7 +494,7 @@
     var doc1;
     try { doc1 = CM.parse(trimmed.join('\n') + '\n'); } catch (e) { return null; }
     if (!doc1.root || doc1.root.kind !== 'map') return null;
-    if (!readmeServicesMap(doc1)) return null;
+    if (!CM.servicesMap(doc1)) return null;
     if (!blockMatchesImage(doc1, image)) return null;
 
     var corrected = correctBlock(trimmed, opts);
@@ -523,7 +518,7 @@
       }
     }
 
-    var svcMap = readmeServicesMap(doc1);
+    var svcMap = CM.servicesMap(doc1);
     var names = svcMap ? svcMap.keys.slice() : [];
     if (names.length > 1) {
       notes = notes.concat(['This documentation example sets up more than one service together — ' +

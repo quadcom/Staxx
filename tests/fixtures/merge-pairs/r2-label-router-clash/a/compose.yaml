@@ -1,0 +1,6 @@
+services:
+  site:
+    image: nginx:alpine
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`site.local`)"

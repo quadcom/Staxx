@@ -1,0 +1,2 @@
+The incoming stack's own config, present only so the folder is real; the
+examiner never reads what is inside it.

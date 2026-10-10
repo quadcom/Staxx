@@ -1,0 +1,6 @@
+services:
+  svc:
+    image: alpine:3.20
+    profiles:
+      - debug
+      - extra

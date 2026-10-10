@@ -1,0 +1,6 @@
+services:
+  vpn:
+    image: qmcgaw/gluetun:latest
+  sidecar:
+    image: alpine:3.20
+    network_mode: "service:vpn"

@@ -1,0 +1,5 @@
+services:
+  idle:
+    image: alpine:3.20
+    healthcheck:
+      disable: true

@@ -1,0 +1,16 @@
+# t155-admin — Adminer, pointed at the walkthrough database through its published port.
+x-unraid:
+  version: 1
+  overview: Walkthrough fixture (PLAN_156). Adminer; the port and theme come from the override file.
+  category: Tools:Utilities
+
+services:
+  web:
+    image: adminer:4
+    environment:
+      # host:port in one value — the second wiring shape the merge has to rewrite.
+      ADMINER_DEFAULT_SERVER: ${DB_HOST}:${DB_PORT}
+      TZ: ${TZ}
+    x-unraid:
+      icon: ./.staxx/icon.png
+      webui: "http://[IP]:18081/"

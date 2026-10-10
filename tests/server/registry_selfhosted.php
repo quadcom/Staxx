@@ -34,12 +34,13 @@
  *       ROOT=$(sed -n "s/^STORE_ROOT=\"\(.*\)\"/\1/p" /boot/config/plugins/staxx/staxx.cfg)
  *       CFG=$ROOT/config/staxx.cfg
  *       cp $CFG /tmp/staxx-cfg.bak
+ *       grep "^REGISTRY_TRUST=" $CFG
  *       grep -q "^REGISTRY_TRUST=" $CFG \
  *         && sed -i "s#^REGISTRY_TRUST=.*#REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"#" $CFG \
  *         || echo "REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"" >> $CFG
  *       STAXX_SELFHOSTED=1 STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json php /tmp/registry_selfhosted.php; RC=$?
  *       cp /tmp/staxx-cfg.bak $CFG
- *       diff -q /tmp/staxx-cfg.bak $CFG && echo CONFIG_IDENTICAL
+ *       grep "^REGISTRY_TRUST=" $CFG
  *       exit $RC
  *     '
  *
@@ -537,6 +538,14 @@ function check_open_style(string $label, string $host, string $image, string $re
   $row['shape'] = manifest_shape($host, $repo, $tag, $token);
   spend(1);
 
+  // PLAN_192 item 1: staxx_registry_tags() against a throwaway registry that
+  // actually holds a pushed tag, open or password-protected but reachable
+  // either way (the auth-refused case is check_auth_style()'s below).
+  spend(1);
+  $tagList = staxx_registry_tags($image);
+  ok("$label: staxx_registry_tags() lists the pushed tag",
+     in_array($tag, $tagList, true), json_encode($tagList));
+
   return $row;
 }
 
@@ -580,6 +589,13 @@ function check_auth_style(string $host, string $image, string $repo, string $tag
   ok('auth registry: the refusal is remembered per host, not re-probed every pass',
      staxx_update_host_blocked($host));
   $row['remembered'] = staxx_update_host_blocked($host) ? 'yes' : 'FAILED';
+
+  // PLAN_192 item 1: with no credentials for this host, staxx_registry_tags()
+  // must come back empty rather than guess or crash.
+  spend(1);
+  $tagList = staxx_registry_tags($image);
+  ok('auth registry: staxx_registry_tags() returns no list without credentials',
+     $tagList === [], json_encode($tagList));
 
   return $row;
 }

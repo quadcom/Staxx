@@ -38,28 +38,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
-
-      - name: Install schema test dependencies
-        run: pip install pyyaml jsonschema
-
       # A broken build reaching the server is worse than no build at all, so
       # every suite that runs without PHP gates here. stacks.js is one big
       # IIFE — a single typo kills the whole page's behaviour silently.
-      - name: Check
-        run: |
-          for f in "$SRC"/javascript/*.js; do node --check "$f"; done
-          # Every suite the branch has, not a list — the set differs between
-          # branches, and a list that names a suite one of them lacks fails the
-          # gate before it has built anything.
-          for t in tests/*.js; do echo "==> $t"; node "$t"; done
-          python tests/validate_schema.py
+      - uses: ./.github/actions/check
 
       # The manifest's branch entity decides which branch an installed plugin
       # polls for updates, so it is per-branch content, exactly like the

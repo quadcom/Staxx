@@ -1,0 +1,45 @@
+# Filled in for you — check these before starting:
+# - This container is set to use the network "immich". That network must already
+#   exist on this server or Compose will refuse to start the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-machine-learning.xml"
+    name: "immich-machine-learning"
+  category: Tools:Utilities
+  project: https://immich.app/
+  support: https://github.com/immich-app/immich/discussions
+  author: sgraaf's Repository
+  overview: |
+    Machine-learning service for Immich (face recognition, smart search, etc).
+    This is the "immich-machine-learning" service from the official Immich
+    docker-compose.yml. It must be on the same custom Docker network ("immich") as
+    the Immich server, which reaches it at http://immich-machine-learning:3003 via
+    the IMMICH_MACHINE_LEARNING_URL setting. It exposes port 3003 only on the
+    internal network (no host port published). For hardware-accelerated inference,
+    switch the repository tag to one of: release-armnn, release-cuda,
+    release-rocm, release-openvino, release-rknn, and add the relevant device(s) -
+    see https://docs.immich.app/features/ml-hardware-acceleration.
+
+services:
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: immich-machine-learning
+    restart: unless-stopped
+    networks:
+      - immich
+    volumes:
+      - /mnt/user/appdata/immich/model-cache:/cache  # Stores downloaded ML models so they are not re-downloaded on every restart. Equivalent to the named volume 'model-cache' in the compose file. -!R
+    environment:
+      TZ: "Europe/Amsterdam"  # Optional timezone, e.g. Europe/Amsterdam or Etc/UTC.
+    x-unraid:
+      icon: https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-machine-learning.png
+      project: https://immich.app/
+      support: https://github.com/immich-app/immich/discussions
+
+networks:
+  immich:
+    external: true

@@ -1,0 +1,38 @@
+# Filled in for you — check these before starting:
+# - This container is set to use the network "immich". That network must already
+#   exist on this server or Compose will refuse to start the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-redis.xml"
+    name: "immich-redis"
+  category: Tools:Utilities
+  project: https://valkey.io/
+  support: https://github.com/immich-app/immich/discussions
+  author: sgraaf's Repository
+  overview: |
+    Valkey (Redis-compatible) cache/queue for Immich. This is the "redis" service
+    from the official Immich `docker-compose.yml`. It must be on the same custom
+    Docker network ("immich") as the Immich server so the server can reach it by
+    the container name `immich-redis`. No configuration is required; it has no
+    published ports because it is only used internally by the Immich server over
+    the shared network.
+
+services:
+  immich-redis:
+    image: docker.io/valkey/valkey:9
+    container_name: immich-redis
+    restart: unless-stopped
+    networks:
+      - immich
+    x-unraid:
+      icon: https://raw.githubusercontent.com/sgraaf/Unraid-Docker-Templates/main/immich/immich-redis.png
+      project: https://valkey.io/
+      support: https://github.com/immich-app/immich/discussions
+
+networks:
+  immich:
+    external: true

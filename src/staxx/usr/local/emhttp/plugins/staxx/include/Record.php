@@ -74,6 +74,21 @@ function staxx_record_valid_entry($entry): bool {
 }
 
 /**
+ * Is a decoded "mergedInto" fact shaped the way one must be — the note a
+ * stack's own record carries once it has been folded into another (PLAN_148
+ * phase 4), so the row it still has can draw a marker and offer to remove
+ * it? Same treatment as "images" below: additive, optional, and its own
+ * shape checked independently so a hand-edited or missing value here can
+ * never take "versions" or "images" down with it.
+ */
+function staxx_record_valid_merged_into($m): bool {
+  if (!is_array($m)) return false;
+  if (!is_string($m['host'] ?? null) || $m['host'] === '') return false;
+  if (!is_int($m['at'] ?? null) || $m['at'] < 0) return false;
+  return true;
+}
+
+/**
  * Is "versions" itself shaped the way it must be — a plain list where every
  * entry passes staxx_record_valid_entry()? Split out of staxx_record_read()
  * so it can be checked independently of "images" (PLAN_82): a hand-edited
@@ -125,27 +140,16 @@ function staxx_record_read(string $rel): array {
     && staxx_image_history_valid_map($data['images'] ?? null)
     ? $data['images'] : [];
 
-  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images];
-}
+  // PLAN_148 phase 4 — additive and independent of both fields above, on
+  // exactly the same terms: a hand-edited or missing "mergedInto" degrades
+  // to null (never merged) rather than invalidating "versions" or "images".
+  $mergedInto = staxx_record_valid_merged_into($data['mergedInto'] ?? null)
+    ? $data['mergedInto'] : null;
 
-/**
- * Write one file into the record directory atomically — a temporary name in
- * the same directory, then rename() over the target — so a reader never sees
- * a half-written index or a truncated history file. Returns false on any
- * failure and cleans up its own temporary file; never throws or warns.
- */
-function staxx_record_atomic_write(string $path, string $data): bool {
-  $tmp = $path.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $data);
-  if ($written === false || $written !== strlen($data)) {
-    @unlink($tmp);
-    return false;
-  }
-  if (!@rename($tmp, $path)) {
-    @unlink($tmp);
-    return false;
-  }
-  return true;
+  // PLAN_212 — added only; a record without the key reads as fine.
+  $needsFix = is_string($data['needsFix'] ?? null) ? $data['needsFix'] : '';
+
+  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images, 'mergedInto' => $mergedInto, 'needsFix' => $needsFix];
 }
 
 /**
@@ -163,12 +167,24 @@ function staxx_record_write_index(string $rel, array $record): bool {
   if (!array_key_exists('images', $record)) {
     $record['images'] = staxx_record_read($rel)['images'] ?? [];
   }
+  // Same carry-forward-unless-given rule as "images" just above, so a plain
+  // history save (which knows nothing about a merge) can never accidentally
+  // clear a mark this stack already carries.
+  if (!array_key_exists('mergedInto', $record)) {
+    $record['mergedInto'] = staxx_record_read($rel)['mergedInto'] ?? null;
+  }
+  // Same again for PLAN_212's "needsFix": only its own setter changes it.
+  if (!array_key_exists('needsFix', $record)) {
+    $record['needsFix'] = staxx_record_read($rel)['needsFix'] ?? '';
+  }
   $out = ['v' => 1, 'next' => $record['next'], 'versions' => $record['versions']];
   if ($record['images']) $out['images'] = $record['images'];
+  if ($record['mergedInto'] !== null) $out['mergedInto'] = $record['mergedInto'];
+  if ($record['needsFix'] !== '') $out['needsFix'] = $record['needsFix'];
 
   $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
-  return staxx_record_atomic_write(staxx_record_dir($rel).'/record.json', $json."\n");
+  return staxx_atomic_write(staxx_record_dir($rel).'/record.json', $json."\n");
 }
 
 /**
@@ -185,8 +201,12 @@ function staxx_record_write_index(string $rel, array $record): bool {
  * kept — a capture failure must never block the save that triggered it. On
  * failure $note carries one plain sentence for the person; the caller shows
  * it as a warning after saving, not as a refusal to save.
+ *
+ * $name and $at are only passed by staxx_record_seed(), to label the first
+ * copy and date it by the file's own mtime; every ordinary save leaves them
+ * at '' and "now".
  */
-function staxx_record_capture(string $rel, string $file, string &$note): bool {
+function staxx_record_capture(string $rel, string $file, string &$note, string $name = '', ?int $at = null): bool {
   $note = '';
 
   // A basename, never a path. Handed a full path this would look for a file
@@ -236,18 +256,18 @@ function staxx_record_capture(string $rel, string $file, string &$note): bool {
   }
 
   $n = $next;
-  if (!staxx_record_atomic_write(staxx_record_history_path($rel, $n), $bytes)) {
+  if (!staxx_atomic_write(staxx_record_history_path($rel, $n), $bytes)) {
     $note = 'The previous version could not be kept, so this save cannot be undone from the history.';
     return false;
   }
 
   $versions[] = [
     'n'    => $n,
-    'at'   => time(),
+    'at'   => $at ?? time(),
     'size' => strlen($bytes),
     'hash' => $hash,
     'file' => $file,
-    'name' => '',
+    'name' => $name,
   ];
 
   $ok = staxx_record_write_index($rel, ['v' => 1, 'next' => $n + 1, 'versions' => $versions]);
@@ -275,6 +295,11 @@ function staxx_record_capture(string $rel, string $file, string &$note): bool {
  * history directory — that function already reads the file fresh off disk,
  * hashes it, and skips a capture that duplicates the newest kept version, so
  * there is nothing left for this to do but check the history is empty first.
+ *
+ * The copy is named and dated by the file's own mtime: left unnamed and
+ * stamped now, it listed as "1 minute ago" like a save although nothing was
+ * saved (found 2026-10-05, PLAN_228). Being named means it is never pruned —
+ * accepted, it is the file as the author left it.
  */
 function staxx_record_seed(string $rel, string &$note): bool {
   $note = '';
@@ -283,7 +308,9 @@ function staxx_record_seed(string $rel, string &$note): bool {
   $file = staxx_find_compose_file(staxx_stack_dir($rel));
   if ($file === '') return true; // no compose file to seed from
 
-  return staxx_record_capture($rel, basename($file), $note);
+  $mtime = @filemtime($file);
+  return staxx_record_capture($rel, basename($file), $note,
+    'As StaXX first found it', $mtime === false ? null : $mtime);
 }
 
 /** Every kept version, newest first. [] when there is no history at all. */
@@ -406,6 +433,89 @@ function staxx_record_prune(string $rel): void {
   foreach ($dropUnnamed as $v) @unlink(staxx_record_history_path($rel, $v['n']));
 }
 
+/**
+ * The mark a retired stack's own record carries once PLAN_155's merge has
+ * folded it into a brand new stack — {host, at}, or null when it has never
+ * been retired. This is the one fact the retired stack's row badge and its
+ * "Remove" button draw from (staxx_list_stacks() surfaces it per stack as
+ * 'mergedInto'), so it survives a reload and reads back exactly as any other
+ * best-effort fact in this file: missing or unreadable is simply "not
+ * retired", never an error.
+ *
+ * The key is still called 'host' on disk, from when a merge folded a stack
+ * into a survivor rather than retiring it into a new one — see PLAN_155's
+ * "The record mark keeps its shape". Renaming it would be a migration for no
+ * reason: nothing reads differently, and every existing mergedInto entry
+ * already on a real server would otherwise need rewriting.
+ */
+function staxx_record_merged_into(string $rel): ?array {
+  if (!staxx_valid_path($rel)) return null;
+  return staxx_record_read($rel)['mergedInto'] ?? null;
+}
+
+/**
+ * Sets the mark above. Called once per source, on its own folder, at the end
+ * of a successful merge — after the new stack's file is written and after
+ * that source has been retired (its own compose text rewritten with the
+ * "retired" profile lines and NEEDS-REVIEW.md put in place), never before.
+ * Best-effort like the rest of this file: a merge that has already written
+ * the new stack and retired this source must not be undone over a marker
+ * failing to save, so a caller logs a failure here rather than treating the
+ * whole merge as refused.
+ */
+function staxx_record_mark_merged_into(string $rel, string $newRel): bool {
+  if (!staxx_valid_path($rel) || !staxx_valid_path($newRel)) return false;
+  $dir = staxx_record_dir($rel);
+  if (!@is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+
+  $record = staxx_record_read($rel);
+  return staxx_record_write_index($rel, [
+    'v'          => 1,
+    'next'       => $record['next'] ?? 1,
+    'versions'   => $record['versions'] ?? [],
+    'images'     => $record['images'] ?? [],
+    'mergedInto' => ['host' => $newRel, 'at' => time()],
+  ]);
+}
+
+/**
+ * PLAN_212 — is compose refusing this stack's file? '' when fine, otherwise
+ * the shape of the first problem. Stored so the stack list can tint a row
+ * without running compose on every stack at every listing.
+ */
+function staxx_record_needs_fix(string $stackDir): string {
+  $rel = staxx_record_rel($stackDir);
+  return $rel === '' ? '' : (string)(staxx_record_read($rel)['needsFix'] ?? '');
+}
+
+/**
+ * Set ($shape non-empty) or clear ($shape '') the mark. Clearing never makes
+ * a record that does not exist. Best-effort like the rest of this file.
+ */
+function staxx_record_set_needs_fix(string $stackDir, string $shape): bool {
+  $rel = staxx_record_rel($stackDir);
+  if ($rel === '') return false;
+  $record = staxx_record_read($rel);
+  if ((string)($record['needsFix'] ?? '') === $shape) return true;
+  $dir = staxx_record_dir($rel);
+  if (!@is_dir($dir) && $shape === '') return true;
+  if (!@is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+  return staxx_record_write_index($rel, [
+    'v'        => 1,
+    'next'     => $record['next'] ?? 1,
+    'versions' => $record['versions'] ?? [],
+    'needsFix' => $shape,
+  ]);
+}
+
+/** A stack's path under the stacks root, from its folder or its path. */
+function staxx_record_rel(string $stackDir): string {
+  $root = rtrim(staxx_stack_root(), '/').'/';
+  $rel  = strpos($stackDir, $root) === 0 ? substr($stackDir, strlen($root)) : $stackDir;
+  $rel  = trim($rel, '/');
+  return staxx_valid_path($rel) ? $rel : '';
+}
+
 /* -------------------------------------------------------------------------
  * PLAN_69 — which of a stack's declared compose profiles are switched on.
  *
@@ -464,6 +574,6 @@ function staxx_profiles_write(string $rel, array $names, array $declared): bool 
 
   $dir = staxx_record_dir($rel);
   if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) return false;
-  return staxx_record_atomic_write($path, implode("\n", $keep)."\n");
+  return staxx_atomic_write($path, implode("\n", $keep)."\n");
 }
 ?>

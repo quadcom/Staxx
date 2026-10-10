@@ -1,0 +1,37 @@
+#!/bin/bash
+# StaXX — one look at the running apps (PLAN_221), run every minute from the
+# cron entry apply_settings writes to /boot/config/plugins/staxx/staxx.cron,
+# only while at least one of the app-watching messages is switched on.
+#
+# Runs every minute, so it is written to cost nothing when there is nothing to
+# do: no store or no Docker means an immediate quiet exit.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+# The last KEY="value" line of a settings file, quotes removed.
+cfg_get() {
+  sed -n 's/^[[:space:]]*'"$1"'[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$2" | tail -n1
+}
+
+PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
+CFG="/boot/config/plugins/staxx/staxx.cfg"
+
+store_root=$(cfg_get STORE_ROOT "${CFG}" 2>/dev/null || true)
+[[ -n "${store_root}" ]] || exit 0
+
+# No Docker installed at all means nothing to watch. A missing socket is NOT a
+# reason to leave: Docker being down is exactly what PLAN_223 reports, so the
+# pass runs and decides cheaply (it waits out boot and a restart, and stays
+# quiet when Docker is switched off or the array is stopped).
+command -v docker >/dev/null 2>&1 || exit 0
+
+# Resolved explicitly rather than trusted from PATH, as update-check does.
+php_bin=""
+for candidate in /usr/bin/php /usr/local/bin/php; do
+  if [[ -x "${candidate}" ]]; then php_bin="${candidate}"; break; fi
+done
+php_bin="${php_bin:-php}"
+
+exec "${php_bin}" -r "require '${PLUGIN_DIR}/include/AppWatch.php'; staxx_appwatch_pass();" >/dev/null 2>&1

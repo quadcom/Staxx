@@ -15,6 +15,9 @@ the container is the installed, running program. One image can run as many conta
 container's name is whatever `container_name:` says in the compose file, or one Docker makes up if
 that key is absent — an ordinary compose field, not something StaXX renames.
 
+**Health check** — a small test a container runs again and again to show the app inside is
+working, not just running. See [Health checks](guide/health-checks.md).
+
 **Compose file** — a text file listing the containers you want and how they should be set up. Its
 filename is usually `compose.yaml`. It is the standard way to describe containers, understood by
 Docker on any machine — Windows, Mac, Linux, a server, a laptop.
@@ -166,8 +169,8 @@ with a converter, already built, that turns a template into a compose file on de
 Relevant because anything stored there cannot be read at boot time.
 
 **Data store** — the one folder, chosen the first time you open StaXX, that holds everything StaXX
-manages: your stacks, an archive of anything you have removed, and StaXX's own settings and icon
-cache. It normally sits on a drive pool rather than the flash drive.
+manages: your stacks, an archive of anything you have removed, and StaXX's own settings. It normally
+sits on a drive pool rather than the flash drive.
 
 *Why it matters here:* a drive pool is not available in the first seconds after the server powers
 on, and is not reachable at all if something has gone wrong. That is why three settings that have to
@@ -202,7 +205,8 @@ What it actually does depends on where the container came from:
 
 - From a **template**, the running container is stopped and set aside under another name, and the
   new stack starts in its place. Reversible — nothing is deleted, and a failed start puts the
-  original back.
+  original back. The template itself is also moved out of Unraid's own template folder, and answering
+  "It does not work" afterwards puts it back along with the container.
 - From a **Compose Manager project**, the new stack is given the same name Docker already knows
   those containers by, so taking over rebuilds the containers you already run, in place, rather than
   starting a second copy. There is no going back to a stopped original — going back means starting

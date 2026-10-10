@@ -1,0 +1,5 @@
+services:
+  store:
+    image: postgres:16-alpine  # このサービスはデータベースです 🎉
+    environment:
+      GREETING: "こんにちは世界"

@@ -1,0 +1,6 @@
+services:
+  web:
+    image: mariadb:11
+    container_name: web
+    ports:
+      - "3307:3306"

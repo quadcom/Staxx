@@ -1,0 +1,48 @@
+# Filled in for you — check these before starting:
+# - The path "Appdata" had no value; used /mnt/user/appdata/nextcloud/config as a
+#   placeholder — check it before starting the stack.
+# - The path "Path: /data" had no value; used /mnt/user/appdata/nextcloud/data as
+#   a placeholder — check it before starting the stack.
+
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/linuxserver/templates/main/unraid/nextcloud.xml"
+    name: "nextcloud"
+  category: Cloud
+  project: https://nextcloud.com/
+  support: https://github.com/linuxserver/docker-nextcloud/issues/new/choose
+  readme: https://github.com/linuxserver/docker-nextcloud#readme
+  author: linuxserver's Repository
+  overview: |
+    Nextcloud(https://nextcloud.com/) gives you access to all your files wherever
+    you are. Where are your photos and documents? With Nextcloud you pick a server
+    of your choice, at home, in a data center or at a provider. And that is where
+    your files will be. Nextcloud runs on that server, protecting your data and
+    giving you access from your desktop or mobile devices. Through Nextcloud you
+    also access, sync and share your existing data on that FTP drive at the
+    office, a Dropbox or a NAS you have at home.
+
+services:
+  nextcloud:
+    image: lscr.io/linuxserver/nextcloud
+    container_name: nextcloud
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "443:443"  # WebUI -!R
+    volumes:
+      - /mnt/user/appdata/nextcloud/config:/config  # Persistent config files -!R
+      - /mnt/user/appdata/nextcloud/data:/data      # Your personal data. -!R
+    environment:
+      PUID: "99"    # Container Variable: PUID -!R
+      PGID: "100"   # Container Variable: PGID -!R
+      UMASK: "022"  # Container Variable: UMASK
+    x-unraid:
+      icon: https://raw.githubusercontent.com/linuxserver/docker-templates/master/linuxserver.io/img/nextcloud-logo.png
+      webui: "https://[IP]:443"
+      project: https://nextcloud.com/
+      support: https://github.com/linuxserver/docker-nextcloud/issues/new/choose

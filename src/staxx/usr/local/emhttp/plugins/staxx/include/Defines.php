@@ -268,11 +268,93 @@ function staxx_cfg(): array {
     $store = @parse_ini_file($storeRoot.'/config/'.STAXX_PLUGIN.'.cfg', false, INI_SCANNER_RAW) ?: [];
   }
 
-  return $cfg = array_merge($defaults, $store, $flash);
+  $cfg = array_merge($defaults, $store, $flash);
+
+  // PLAN_214 Ruling 16: a store that already chose installed messages and has
+  // never saved a _WHEN keeps them straight away; only new installs get the
+  // summary. Read from the store's own file, since the merge above has
+  // already filled the key from default.cfg.
+  if (trim((string)($store['UPDATE_NOTIFY_INSTALLED'] ?? '')) === 'true'
+      && !array_key_exists('UPDATE_NOTIFY_INSTALLED_WHEN', $store)) {
+    $cfg['UPDATE_NOTIFY_INSTALLED_WHEN'] = 'now';
+  }
+  return $cfg;
 }
 
 function staxx_cfg_bool(string $key): bool {
   return (staxx_cfg()[$key] ?? 'false') === 'true';
+}
+
+/**
+ * The four server-wide notify switches (PLAN_150 Phase 2; 'pinned' added by
+ * PLAN_205), folding in the retired UPDATE_NOTIFY three-way choice for a
+ * config that has never been through the new settings panel. Shared between
+ * staxx_settings_read() (Settings.php, what the panel shows) and
+ * staxx_update_settings() (UpdateRun.php, what the update engine actually
+ * acts on), so an old config reads the same answer in both places rather
+ * than the panel showing "off" while the engine still behaves as "applied"
+ * underneath it.
+ *
+ * default.cfg deliberately does not define these keys, so their absence from
+ * the merged config means exactly "this store has never saved the new
+ * panel" — the moment it is saved once (the settings page posts every field
+ * on every save), they land explicitly and this function stops looking at
+ * the retired key at all. A fresh install with no retired value either gets
+ * found=false, installed=false, failed=true, which is also what the retired
+ * 'off' mapped to.
+ *
+ * UPDATE_NOTIFY_FAILED starts on even for a retired-key config: nobody who
+ * asked to hear about updates meant "but not when one breaks". UPDATE_NOTIFY_
+ * PINNED starts on for the same reason as the retired key's own defaults, and
+ * regardless of which branch below answers it: a reminder nobody switched on
+ * never reminds anybody, and the retired three-way choice predates the idea
+ * of a pin entirely, so it has no opinion to fold in either way.
+ *
+ * @return array{found:bool, installed:bool, failed:bool, pinned:bool}
+ */
+function staxx_update_notify_map(array $cfg): array {
+  $pinned = (string)($cfg['UPDATE_NOTIFY_PINNED'] ?? 'true') === 'true';
+
+  if (array_key_exists('UPDATE_NOTIFY_FOUND', $cfg)
+      || array_key_exists('UPDATE_NOTIFY_INSTALLED', $cfg)
+      || array_key_exists('UPDATE_NOTIFY_FAILED', $cfg)) {
+    return [
+      'found'     => (string)($cfg['UPDATE_NOTIFY_FOUND'] ?? 'false') === 'true',
+      'installed' => (string)($cfg['UPDATE_NOTIFY_INSTALLED'] ?? 'false') === 'true',
+      'failed'    => (string)($cfg['UPDATE_NOTIFY_FAILED'] ?? 'true') === 'true',
+      'pinned'    => $pinned,
+    ];
+  }
+
+  $old = (string)($cfg['UPDATE_NOTIFY'] ?? 'off');
+  if (!in_array($old, ['off', 'found', 'applied'], true)) $old = 'off';
+
+  return [
+    'found'     => $old === 'found' || $old === 'applied',
+    'installed' => $old === 'applied',
+    'failed'    => true,
+    'pinned'    => $pinned,
+  ];
+}
+
+/**
+ * Whether the container file manager is on (PLAN_188 part C). Same trick as
+ * staxx_update_notify_map() above: default.cfg deliberately omits
+ * FILES_ENABLED, so its absence from the merged config means "never saved,
+ * follow SHELL_ENABLED" — the setting a store already had before this switch
+ * existed, so nobody who had turned shells off finds the file manager back
+ * on. The moment the settings page saves once, FILES_ENABLED lands
+ * explicitly and this stops looking at SHELL_ENABLED at all. Every
+ * file-manager gate (staxx_cfile_container()) and the settings panel's own
+ * read (staxx_settings_read()) both call this, so the panel never shows a
+ * value the server does not act on.
+ */
+function staxx_files_enabled(): bool {
+  $cfg = staxx_cfg();
+  if (array_key_exists('FILES_ENABLED', $cfg)) {
+    return (string)$cfg['FILES_ENABLED'] === 'true';
+  }
+  return staxx_cfg_bool('SHELL_ENABLED');
 }
 
 /**
@@ -375,6 +457,68 @@ function staxx_sh(string $cmd, int $seconds = 10, ?int &$code = null): string {
 }
 
 /**
+ * Write $data to $path so a reader never sees half a file: a hidden temp
+ * file beside the target, named with this process's id so two writers never
+ * share one, then rename() over the target. $mode, when given, is set on the
+ * temp file before the rename, so the file never exists with the wrong
+ * permissions. Returns false on any failure, a short write included, and
+ * removes its own temp file on every failure path. $failed says which step
+ * failed ('write' or 'rename'; '' on success) for a caller that words the
+ * two differently. Never throws or warns.
+ */
+function staxx_atomic_write(string $path, string $data, ?int $mode = null, ?string &$failed = null): bool {
+  $failed = '';
+  $tmp = dirname($path).'/.'.basename($path).'.'.getmypid().'.tmp';
+  $written = @file_put_contents($tmp, $data);
+  if ($written === false || $written !== strlen($data)) { @unlink($tmp); $failed = 'write'; return false; }
+  if ($mode !== null) @chmod($tmp, $mode);
+  if (!@rename($tmp, $path)) { @unlink($tmp); $failed = 'rename'; return false; }
+  return true;
+}
+
+// The one place a command is started that must outlive this request, so it
+// cannot go through staxx_sh(), whose timeout would kill it. It returns at
+// once, so it cannot hang either.
+function staxx_detach(string $cmd, string $log): void {
+  @exec('setsid sh -c '.escapeshellarg($cmd).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+}
+
+/** An atomic mkdir lock; one older than $staleAfter seconds was left by a
+ *  killed process and is taken over. True when this process now holds it.
+ *  Not staxx_mkdir_lock(): that one waits, counts re-entry and reports why. */
+function staxx_mkdir_lock_stale(string $lock, int $staleAfter = 1800): bool {
+  if (@mkdir($lock, 0755, true)) return true;
+  if (!is_dir($lock) || time() - (int)@filemtime($lock) <= $staleAfter) return false;
+  @rmdir($lock);
+  return @mkdir($lock, 0755, true);
+}
+
+/**
+ * Absolute path to the php binary. PHP's environment is not a login shell,
+ * so PATH cannot be relied on — resolve it once and call it explicitly.
+ */
+function staxx_php_bin(): string {
+  static $bin = null;
+  if ($bin !== null) return $bin;
+  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
+    if (is_file($path) && is_executable($path)) return $bin = $path;
+  }
+  return $bin = 'php';
+}
+
+// The rule enforced by staxx_valid_name(), spelled out for a person: kept as
+// one string so every place that refuses a bad name says the same thing.
+const STAXX_NAME_RULE = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+                       . 'must start with a letter or number, and must be 63 characters or fewer.';
+
+/** A plugin asset's URL, carrying its modification time so an edited file
+ *  is never served from the browser's cache. $rel is relative to STAXX_ROOT. */
+function staxx_asset(string $rel): string {
+  $path = STAXX_ROOT.'/'.$rel;
+  return '/plugins/'.STAXX_PLUGIN.'/'.$rel.'?v='.(is_file($path) ? filemtime($path) : '0');
+}
+
+/**
  * Absolute path to the docker binary. PHP's environment is not a login shell,
  * so PATH cannot be relied on — resolve it once and call it explicitly.
  */
@@ -408,6 +552,26 @@ function staxx_compose_paths(): array {
   ];
 }
 
+/** The first of staxx_compose_paths() that exists and can be run, or ''. */
+function staxx_compose_found_path(): string {
+  foreach (staxx_compose_paths() as $path) {
+    if (is_file($path) && is_executable($path)) return $path;
+  }
+  return '';
+}
+
+/** Where staxx_compose()'s cross-request cache lives. The env override is
+ *  the same trick STAXX_UPDATE_STATE uses, so a server test can point this
+ *  at /tmp without ever touching the real cache. */
+function staxx_compose_cache_file(): string {
+  static $override = null;
+  if ($override === null) {
+    $env = getenv('STAXX_COMPOSE_CACHE_FILE');
+    $override = ($env !== false && $env !== '') ? $env : '';
+  }
+  return $override !== '' ? $override : '/tmp/staxx/compose.json';
+}
+
 /**
  * What compose is available, and in what form.
  *
@@ -420,6 +584,20 @@ function staxx_compose_paths(): array {
  * Unraid does not ship compose itself, but the Compose Manager plugin does,
  * and a user may have installed it by hand. Any of those count.
  *
+ * Adrian ruled (D1, PLAN_190 item 15, 2026-09-28) that the answer is worth
+ * remembering between requests, not just within one. It is cached in
+ * /tmp/staxx keyed on the resolved binary's path, size and modified time —
+ * cheap to check with a single stat() and no shell involved. A request
+ * whose stat still matches the cached one trusts the cached answer; a
+ * changed size or time means a different binary now sits there (a compose
+ * upgrade, Compose Manager reinstalling itself), so it is asked fresh and
+ * the cache is rewritten. The cache lives under /tmp, so it is already gone
+ * after a reboot or this plugin's own removal — nothing here needs its own
+ * cleanup. When the binary cannot be found at all, there is nothing to
+ * stat, so nothing is cached and every request asks again, exactly as
+ * before this rule. The in-request memo below is unchanged and still
+ * avoids a second ask within the same request.
+ *
  * @return array{available:bool, version:string, path:string, form:string}
  *         form is 'plugin' (`docker compose`), 'standalone' (`docker-compose`)
  *         or '' when unavailable.
@@ -427,6 +605,21 @@ function staxx_compose_paths(): array {
 function staxx_compose(): array {
   static $info = null;
   if ($info !== null) return $info;
+
+  // Known-path lookup is a stat, not a shell call, so it is safe to try
+  // before deciding whether the cache can be trusted.
+  $path = staxx_compose_found_path();
+
+  if ($path !== '' && ($stat = @stat($path)) !== false) {
+    $cached = json_decode((string)@file_get_contents(staxx_compose_cache_file()), true);
+    if (is_array($cached)
+        && ($cached['path'] ?? null) === $path
+        && ($cached['mtime'] ?? null) === $stat['mtime']
+        && ($cached['size'] ?? null) === $stat['size']
+        && is_array($cached['info'] ?? null)) {
+      return $info = $cached['info'];
+    }
+  }
 
   $docker = escapeshellarg(staxx_docker_bin());
   $info = ['available' => false, 'version' => '', 'path' => '', 'form' => ''];
@@ -445,24 +638,25 @@ function staxx_compose(): array {
     }
   }
 
-  foreach (staxx_compose_paths() as $path) {
-    if (is_file($path) && is_executable($path)) { $info['path'] = $path; break; }
-  }
+  $info['path'] = $path;
   if ($info['path'] === '') {
     $found = trim(staxx_sh('command -v docker-compose', 5));
     if ($found !== '' && is_file($found)) $info['path'] = $found;
   }
 
+  // Nothing to key the cache on without a file to stat, so it is left
+  // untouched and the next request asks again, same as always.
+  if ($info['path'] !== '' && ($stat = @stat($info['path'])) !== false) {
+    @mkdir('/tmp/staxx', 0755, true);
+    staxx_atomic_write(staxx_compose_cache_file(), json_encode([
+      'path'  => $info['path'],
+      'mtime' => $stat['mtime'],
+      'size'  => $stat['size'],
+      'info'  => $info,
+    ]));
+  }
+
   return $info;
-}
-
-/** Absolute path to compose, or '' if it could not be located on disk. */
-function staxx_compose_bin(): string {
-  return staxx_compose()['path'];
-}
-
-function staxx_compose_version(): string {
-  return staxx_compose()['version'];
 }
 
 function staxx_docker_running(): bool {
@@ -492,14 +686,21 @@ function staxx_docker_running(): bool {
  * @return array<int, array{name:string, driver:string, project:string}>
  */
 function staxx_docker_networks(): array {
-  if (!staxx_docker_running()) return [];
+  // Remembered for the request: a table render and a state poll both ask,
+  // and nothing in one request creates a network and then asks for the
+  // list again — the start-time check in staxx_missing_external_networks()
+  // runs before the detached job, never after it.
+  static $networks = null;
+  if ($networks !== null) return $networks;
+
+  $networks = [];
+  if (!staxx_docker_running()) return $networks;
 
   $fmt = '{{.Name}}|{{.Driver}}|{{.Labels}}';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' network ls --format '.escapeshellarg($fmt), 10
   );
 
-  $networks = [];
   foreach (explode("\n", trim($out)) as $line) {
     if ($line === '') continue;
     [$name, $driver, $labels] = array_pad(explode('|', $line, 3), 3, '');
@@ -660,7 +861,19 @@ function staxx_hub_repo_path(string $image): string {
  * surfacing a registry error in the middle of typing would be noise for a
  * field that still works perfectly well as free text.
  *
- * @return string[] up to 50 tag names, most recently updated first
+ * PLAN_188 part D follow-up, 2026-09-26: the top page is ordered by
+ * last_updated, and a tag pushed once and rarely touched again — nginx's
+ * own "latest" — can fall clean out of the top 50 despite existing and
+ * mattering to the Pinned release picker more than most of what did make
+ * the cut. Rather than a second, unbounded paginated fetch, whichever of
+ * the plan's own named "moving" tags is not already in the page is asked
+ * for BY NAME, one request each, against Hub's own single-tag endpoint —
+ * 200 if it exists, and curl's `-f` turns a 404 into no output at all, so
+ * a tag this repository does not have costs one quick, empty answer rather
+ * than a error. Bounded to that short list either way.
+ *
+ * @return string[] up to 50 tag names, most recently updated first, plus
+ *   any of the plan's own moving tags Hub confirms exist
  */
 function staxx_image_tags(string $repo): array {
   $repo = staxx_hub_repo_path($repo);
@@ -676,6 +889,19 @@ function staxx_image_tags(string $repo): array {
     $tags[] = $result['name'];
     if (count($tags) >= 50) break;
   }
+
+  // The same nine names askTagPick() (stacks.js) lists first, in its own
+  // order — kept as its own copy rather than shared, since one lives in
+  // PHP and the other in JS with no common file to hold it.
+  $moving = ['latest', 'main', 'master', 'develop', 'dev', 'stable', 'beta', 'nightly', 'edge'];
+  foreach ($moving as $tag) {
+    if (in_array($tag, $tags, true)) continue;
+    $found = staxx_hub_json(
+      'https://hub.docker.com/v2/repositories/'.$repo.'/tags/'.rawurlencode($tag), [], 4, 6
+    );
+    if (is_array($found) && ($found['name'] ?? null) === $tag) $tags[] = $tag;
+  }
+
   return $tags;
 }
 
@@ -779,7 +1005,14 @@ function staxx_hub_repo(string $image): array {
  * S6_VERBOSITY, ...) baked in when it was built, and writing them into a
  * compose file pins a snapshot that breaks the day the image changes them.
  *
- * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>}
+ * Also returns the image's own declared health check, staxx_local_image_
+ * config()'s 'healthcheck' field read off this same config blob — the merge
+ * wizard's health-check offer (PLAN_155 step 5) needs it for an image that
+ * has never been pulled onto this server, which is exactly the case this
+ * function exists for.
+ *
+ * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>,
+ *               healthcheck?:array{test:string[], declared:bool}}
  */
 function staxx_registry_config(string $image): array {
   $repo = staxx_hub_repo_path($image);
@@ -838,9 +1071,10 @@ function staxx_registry_config(string $image): array {
 
   $config = is_array($blob['config'] ?? null) ? $blob['config'] : [];
   return [
-    'ports'   => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
-    'volumes' => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
-    'labels'  => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+    'ports'       => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
+    'volumes'     => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
+    'labels'      => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+    'healthcheck' => staxx_parse_image_healthcheck(is_array($config['Healthcheck'] ?? null) ? $config['Healthcheck'] : null),
   ];
 }
 
@@ -1609,6 +1843,9 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
   if (isset($config['ports']))   $facts['ports']   = $config['ports'];
   if (isset($config['volumes'])) $facts['volumes'] = $config['volumes'];
   if (isset($config['labels']))  $facts['labels']  = $config['labels'];
+  // The image's own declared check, for the merge wizard's health-check
+  // offer (PLAN_155 step 5): the one source that needs no running container.
+  if (isset($config['healthcheck'])) $facts['healthcheck'] = $config['healthcheck'];
 
   $facts['appdata']  = staxx_appdata_root();
   $facts['timezone'] = staxx_server_timezone();
@@ -1650,9 +1887,15 @@ function staxx_health_from_status(string $status): string {
  * `health` (PLAN_107) costs no extra call — it is read straight out of the
  * status text `{{.Status}}` already carried in this same line.
  *
+ * `envFile` (PLAN_155 C18) is compose's own `--env-file` label — set only
+ * when a stack was started with one, so it reads '' for the ordinary case.
+ * It is what lets the merge wizard notice a running stack pulled its
+ * settings from a file it cannot see.
+ *
  * @return array<int, array{id:string, name:string, state:string, status:string,
  *                          image:string, project:string, service:string,
- *                          configFiles:string, configHash:string, health:string}>
+ *                          configFiles:string, configHash:string, envFile:string,
+ *                          health:string}>
  */
 function staxx_docker_ps_raw(): array {
   static $rows = null;
@@ -1668,7 +1911,9 @@ function staxx_docker_ps_raw(): array {
   $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t'
        . '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t'
        . '{{.Label "com.docker.compose.project.config_files"}}\t'
-       . '{{.Label "com.docker.compose.config-hash"}}\tend';
+       . '{{.Label "com.docker.compose.config-hash"}}\t'
+       . '{{.Label "com.docker.compose.project.environment_file"}}\t'
+       . '{{.Label "com.docker.compose.project.working_dir"}}\tend';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
   );
@@ -1698,8 +1943,75 @@ function staxx_docker_ps_raw(): array {
       'service'     => $c[6],
       'configFiles' => $c[7],
       'configHash'  => $c[8] ?? '',
+      'envFile'     => $c[9] ?? '',
+      'workingDir'  => $c[10] ?? '',
       'health'      => staxx_health_from_status($c[3]),
     ];
+  }
+  return $rows;
+}
+
+/**
+ * PLAN_190 item 2 — one `docker inspect` over every container, the ten
+ * tab-separated fields staxx_container_net() (the address column) and
+ * staxx_import_taken_facts() (the "already taken" facts) each used to ask
+ * for with a template of their own. Remembered for the request; both
+ * callers used to run this same pass separately, once each, on every
+ * render and every refresh.
+ *
+ * Field order: {{.Id}}, {{.HostConfig.NetworkMode}}, the container's own IP
+ * list, the published port bindings, the exposed ports (these five are
+ * staxx_container_net()'s own template, unchanged), then {{.Name}}, the
+ * port map with `\x1f` separators, the writable bind mounts with `\x1f`,
+ * the compose project `with` label (these four are
+ * staxx_import_taken_facts()'s own template, unchanged), then the literal
+ * `end`.
+ *
+ * A REAL tab, not the two characters `\t` — `docker inspect --format`
+ * prints `\t` literally rather than translating it, unlike `docker ps
+ * --format`; see staxx_container_net()'s own comment for what got silently
+ * lost here before. Every map is reached with `index`, never dotted access,
+ * for the same reason: a key Docker omits entirely (a container exposing no
+ * ports) fails dotted access with "map has no entry for key", where `index`
+ * just returns nothing. The trailing `end` field is not decoration either —
+ * PHP's `exec()` trims trailing whitespace from every line it collects, so
+ * a field that is never empty at the end is what stops a container with
+ * nothing in its last real field from arriving one field short and being
+ * discarded as malformed.
+ *
+ * Piped rather than a separate `ps` round trip, exit code ignored: one
+ * broken container on this server makes `inspect` print an error and exit
+ * non-zero, but the other containers are still reported on stdout. A line
+ * with fewer than ten fields, or an empty first field, is dropped.
+ *
+ * @return array<int, string[]> one string[10] per container
+ */
+function staxx_docker_inspect_rows(): array {
+  static $rows = null;
+  if ($rows !== null) return $rows;
+
+  $rows = [];
+  if (!staxx_docker_running()) return $rows;
+
+  $tab = "\t";
+  $fmt = '{{.Id}}'.$tab.'{{.HostConfig.NetworkMode}}'.$tab
+       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$v.IPAddress}},{{end}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}'.$tab
+       . '{{range $p, $v := index .Config "ExposedPorts"}}{{$p}},{{end}}'.$tab
+       . '{{.Name}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{$p}}={{.HostPort}}'."\x1f".'{{end}}{{end}}'.$tab
+       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab
+       . '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}'.$tab.'end';
+
+  $docker = escapeshellarg(staxx_docker_bin());
+  $out    = staxx_sh(
+    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
+  );
+
+  foreach (explode("\n", $out) as $line) {
+    $c = explode("\t", $line);
+    if (count($c) < 10 || $c[0] === '') continue;
+    $rows[] = $c;
   }
   return $rows;
 }
@@ -1721,5 +2033,39 @@ function staxx_containers_by_project(): array {
   }
   ksort($projects);
   return $projects;
+}
+
+/**
+ * PLAN_190 item 9 — one parsed reading of an Unraid template folder,
+ * shared by every scanner that walks it (staxx_detail_template_match(),
+ * staxx_watch_template_claims(), staxx_unraid_template_for(),
+ * staxx_unraid_templates_at_risk()) instead of each running its own
+ * scandir()/simplexml_load_file() pass, remembered per request. On
+ * Adrian's box that folder holds about 85 XML files, so a request that
+ * reaches more than one of these scanners used to re-parse the whole
+ * folder for each.
+ *
+ * *.xml only — the folder also holds a .bak of whatever template was last
+ * overwritten, and it parses just as happily as a real one.
+ *
+ * @return array<string, SimpleXMLElement> path => parsed template, in
+ *   scandir()'s own order, for every regular *.xml file in $dir that
+ *   actually parses.
+ */
+function staxx_unraid_template_xml(string $dir, bool $reset = false): array {
+  static $cache = [];
+  if ($reset) { $cache = []; return []; }
+  if (array_key_exists($dir, $cache)) return $cache[$dir];
+
+  $found = [];
+  foreach ((array)@scandir($dir) as $file) {
+    if (!preg_match('/\.xml$/i', $file)) continue;
+    $path = $dir.'/'.$file;
+    if (!is_file($path)) continue;
+    $xml = @simplexml_load_file($path);
+    if ($xml === false) continue;
+    $found[$path] = $xml;
+  }
+  return $cache[$dir] = $found;
 }
 ?>

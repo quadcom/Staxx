@@ -1,0 +1,8 @@
+services:
+  svc:
+    image: alpine:3.20
+    secrets:
+      - creds
+secrets:
+  creds:
+    file: ./secrets/a-creds.txt

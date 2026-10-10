@@ -175,6 +175,20 @@ function staxx_links_ca_map(): array {
   return $map;
 }
 
+/**
+ * One image's full Community Applications catalogue entry, or null when it
+ * is not catalogued at all — the four-line lookup (repository path, then
+ * the map, then staxx_ca_app()) that Detail.php's four fields and this
+ * file's own project/support search each ran for themselves.
+ */
+function staxx_links_ca_app_for(string $image): ?array {
+  $repo = strtolower(staxx_links_repo_path($image));
+  if ($repo === '') return null;
+  $ordinal = staxx_links_ca_map()[$repo] ?? null;
+  if ($ordinal === null) return null;
+  return staxx_ca_app($ordinal);
+}
+
 /** ghcr.io/<owner>/<name> → https://github.com/<owner>/<name>, or '' when the
  *  image is not on that host. Marked 'derived' by the caller: a package can
  *  live in a differently-named repository, so this is a good guess, not a
@@ -247,18 +261,12 @@ function staxx_project_links(string $image, array $stackX, array $serviceX): arr
   if ($label !== '') $hits[] = ['project' => $label, 'support' => '', 'from' => 'label'];
 
   // 3. the Community Applications feed, joined on repository path.
-  $repo = strtolower(staxx_links_repo_path($image));
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      if (is_array($app)) {
-        $caProject = staxx_links_url((string)($app['Project'] ?? ''));
-        $caSupport = staxx_links_url((string)($app['Support'] ?? ''));
-        if ($caProject !== '' || $caSupport !== '') {
-          $hits[] = ['project' => $caProject, 'support' => $caSupport, 'from' => 'catalog'];
-        }
-      }
+  $app = staxx_links_ca_app_for($image);
+  if ($app !== null) {
+    $caProject = staxx_links_url((string)($app['Project'] ?? ''));
+    $caSupport = staxx_links_url((string)($app['Support'] ?? ''));
+    if ($caProject !== '' || $caSupport !== '') {
+      $hits[] = ['project' => $caProject, 'support' => $caSupport, 'from' => 'catalog'];
     }
   }
 

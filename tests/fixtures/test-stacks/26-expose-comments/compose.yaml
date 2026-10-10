@@ -1,0 +1,17 @@
+name: expose-comments
+
+# PLAN_176 B3 — proves the expose: block round-trips a comment on every one
+# of its five lines, the same promise every other LEAVES-shaped block
+# (healthcheck, deploy, build...) already keeps. No host port: what this
+# fixture tests is the file's own shape, not anything that runs.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    x-unraid:
+      expose:
+        domain: app.home.lan          # the address typed into a browser
+        certificate: "*.home.lan"     # NPM's own certificate nice_name
+        websockets: false             # off on purpose, unlike the default
+        dns: true                     # also keep a Pi-hole name for it
+        enabled: false                # proxy host off, its settings kept

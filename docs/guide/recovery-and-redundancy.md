@@ -1,176 +1,38 @@
 # Recovery and redundancy
 
-<!-- index: 75 | how to return to an earlier version of a stack's file, or to an earlier build of one of its images, what each list holds, why some things cannot be gone back to, and bringing every stack back if the data store is lost. -->
+<!-- index: 75 | undoing your own edits or an app's own update from the stack editor's History and Versions tabs, and bringing every stack back if the data store is lost. -->
 
-Two different things live here. **History** undoes your own edits to the file. **Versions** undoes
-an app's own update. Both sit in the [stack editor](the-stack-editor.md), beside Configure.
+[StaXX guide](README.md) › Recovery and redundancy
 
-## History tab
-
-1. Open the stack. Click **History**.
-2. Click a version on the left to read it.
-3. Press **Restore into Configure**. This only loads it into the form — nothing is written yet.
-4. Press **Save** to keep it, or **Undo** to put the previous version back.
-
-Every save keeps a copy — both what you replaced and what you just wrote. So the newest row is
-always the file as it now stands. A save that changed nothing is not kept. A file you dropped in
-the folder yourself gets its first copy the first time you open or start it.
-
-### What the list shows
-
-![The History tab: a list of kept versions down the left with one picked out, the "Name to keep forever" box and the "Restore into Configure" button beneath it, and that version's text filling the right-hand side](../images/guide/recovery-and-redundancy-history.png)
-
-| On the row | What it is |
-|---|---|
-| A time | Relative if today, otherwise the full date. |
-| A name, in bold | Only if you named that version. See below. |
-| Which file | The stack's main file, or its override file. |
-| A size | How big that version was. |
-
-Click a row to read it on the right. Nothing picked yet says *"Pick a version on the left to look
-at it."* Nothing saved yet says *"No history yet. The next time this stack is saved, that version
-starts being kept."*
-
-### Naming a version
-
-| Kind | How long it is kept |
-|---|---|
-| Unnamed | Newest 20. Older ones are deleted as new saves arrive. |
-| Named | Forever, and it does not use up one of the 20. |
-
-Type a name into **Name to keep forever** — "before I touched the ports" — and it stops ageing out.
-Clearing a name asks first: *"A named version is kept forever. Clearing its name puts it back in
-the ordinary queue of the last 20 saves, where it can be deleted the moment a newer one is saved —
-possibly straight away."*
-
-### Missing compose file
-
-If the compose file is deleted or lost, the row reads **"No compose file in this folder"**. Click it
-and StaXX offers your last working copy, dated. Loading it works exactly like restoring above.
-
-![The editor open on a folder whose compose file is missing, with an offer beneath the tabs reading "Your last working copy of this stack was saved 2 minutes ago. Load it here instead."](../images/guide/making-a-stack-lost-file.png)
-
-Never saved or opened here at all? You get the blank starting file instead — see
-[making a stack from scratch](making-a-stack.md).
-
-### Restore limits
-
-- **An override version cannot be restored from here yet.** Its button is switched off. Open its
-  own tab and copy the text in by hand.
-- **History is unavailable while Sanitise is on.** An old version holds real, unhidden values —
-  see [hiding your values](hiding-your-values.md). Turn Sanitise off to get it back.
-
-## Versions tab
-
-![The Versions tab: a list of services down the left with each one's image, and on the right the selected service's one recorded build with its date, fingerprint and a Running now mark](../images/guide/recovery-and-redundancy-versions-tab.png)
-
-1. Open the stack. Click **Versions**.
-2. Pick a service on the left. Its recorded builds appear on the right.
-3. Find the build you want and press **Put this back**.
-
-A row on the [stack list](the-stack-list.md) offering an update it can undo has **Roll back…** on
-its menu — that opens Versions with the right service already picked.
-
-### A build's row
-
-![One build's row in the Versions tab: the version name as its heading, then "1 minute ago" and the build's fingerprint, a "See the source" link, the "Commits in this build" list opened to show what went into it, and the "Put this back" button](../images/guide/recovery-and-redundancy-build-row.png)
-
-| On the row | What it is |
-|---|---|
-| A heading | The build's version name, or its date where the publisher gave none — the ordinary case. |
-| Date and a fingerprint | Enough to tell two unnamed builds apart. |
-| See the source | Where the image was published, when known. |
-| What changed | The release notes, captured at the moment that build was pulled. |
-| Running now, or Put this back | The build you're on has no button; every other one offers to return you to it. |
-
-Where the publisher wrote no release notes, you may get the raw list of commits instead, prefaced
-*"The project published no release under this build's name, so this is the raw list of commits
-that went into it."*
-
-### Put this back
-
-**It edits the compose file so it names that exact build.** That is what makes it stick — a later
-update has nothing vague left to move on to. The file it replaced goes into History, so it can be
-undone from there.
-
-The confirmation says: *"This edits the compose file so it names that exact version, which is what
-makes it stick — a pull will not move off it. The file as it stands now is kept in History, so this
-can be undone."* And: *"The version you are moving away from will not come back on its own."*
-
-With an override file, it adds: *"This stack has an override file, though, and an image set there
-can win over this pin and make it look as though nothing happened."* Worth reading — the one case
-where the whole thing appears to do nothing.
-
-### Pinning and releasing
-
-![The orange-edged "Pinned to" band above a service's builds, naming the pinned version, with the "Release this pin" button at its right end and the pinned build's own row beneath it](../images/guide/recovery-and-redundancy-pinned-band.png)
-
-Naming an exact build is what "pinned" means — see the pin mark on [the stack list](the-stack-list.md#row-marks).
-A pinned service shows **Pinned to …** with **Release this pin** beside it, whether the pin came
-from here or was typed into the file by hand.
-
-Releasing explains: *"The compose file will stop naming an exact build, so this service follows its
-tag again. Nothing restarts now — it keeps running what it is running until the next update or
-recreate moves it."*
-
-### Nothing recorded yet
-
-A build is only recorded the first time StaXX updates that image. A new or just-imported stack
-shows *"Nothing has been recorded yet. A version is recorded the first time StaXX updates one of
-this stack's images."* See [updates](updates.md).
-
-### Rollback limits
-
-**Only a build StaXX itself recorded for that service.** Anything else is refused: *"That version
-is not one recorded for this service, so it cannot be rolled back to."* Without that check, a
-request could point a service at any image on the server — not only one it has genuinely run.
-
-| Message | What it means |
-|---|---|
-| *"There is no earlier version recorded for this service, so it cannot be rolled back."* | Nothing has been recorded for it yet. |
-| *"The previous version is no longer present on this server, so it cannot be rolled back to."* | Recorded, but the image has since been removed from the server. |
-| *"This service is not pinned to a version, so there is nothing to release."* | You asked to release a pin on a file that names no exact build. |
-
-Two [settings](settings.md) decide how much is available: how many previous versions of each image
-are kept, and whether images left behind by updating are removed automatically. That second one
-only ever removes an image nothing is running and no recorded version still needs.
+**History** undoes your own edits to a stack's file. See [History](editor-history.md). **Versions**
+undoes an app's own update, including pinning a service to one exact build and releasing it again.
+See [Versions](editor-versions.md). Both sit in the [stack editor](the-stack-editor.md), beside
+**Configure**.
 
 ## If the data store is lost
 
 StaXX keeps a plain copy of every stack's compose file on the flash drive (see
-[where things live](where-things-live.md)). If the data store itself is ever lost — a dead pool,
-nothing else — StaXX offers to bring every stack back from those copies.
-
-**The data store's folder is missing.** A card explains this and offers **Choose a new place for
-the data store**, which opens the same dialog as a first install. If the flash drive holds any
-copies, a **Show me the copies** button lists them before you choose anywhere.
+[where things live](where-things-live.md)). If the data store itself is ever lost, StaXX offers to
+bring every stack back from those copies.
 
 ![The card shown when the data store's folder is missing: StaXX cannot reach its data store, where it was, that the array may still be starting, that copies of the stacks are on the flash drive, and two buttons, Choose a new place for the data store and Show me the copies](../images/guide/recovery-and-redundancy-store-missing.png)
 
-**The data store exists but is empty.** A card offers **Bring back *N* stacks**, which writes every
-stack on the flash drive into the store. **Show me what is there** lists them first, with the date
-of each copy. **Put the data store somewhere else first** opens the same dialog again, for a store
-you would rather point elsewhere.
+If the data store's folder is missing, press **Choose a new place for the data store** to pick
+somewhere new, the same dialog as a first install. Press **Show me the copies** first to list what
+the flash drive holds.
 
 ![The card shown when the data store exists but is empty: copies of the stacks are on the flash drive, with the newest and oldest dates, where they will be written, and three buttons, Bring back the stacks, Show me what is there and Put the data store somewhere else first](../images/guide/recovery-and-redundancy-store-empty.png)
 
-![The flash-drive copies list: each stack by its path with the date and time of its copy, and an OK button](../images/guide/recovery-and-redundancy-show-me.png)
+If the data store exists but is empty, press **Bring back *N* stacks** to write every stack on the
+flash drive into the store. Press **Show me what is there** to list them first, with the date
+each one last changed, or **Put the data store somewhere else first** to point the store elsewhere before you
+restore anything.
 
-Nothing is started by either card — a restored stack sits exactly as an imported one does, ready to
-open and start when you choose to. A restored stack starts a fresh history of its own, since none of
-the versions kept while it lived in the old store came along with it. Neither card is offered once
-the data store holds at least one stack.
+![The flash-drive copies list: each stack by its path with the date and time it last changed, and an OK button](../images/guide/recovery-and-redundancy-show-me.png)
 
-## What this never does
-
-- Restoring a file never writes to disk until you press Save.
-- It never deletes a named version — only clearing its name, after asking, puts it back in the queue.
-- Releasing a pin never restarts anything.
-- It never fetches release notes when you look at them — they were saved when the build was pulled.
-- The record it keeps is not load-bearing. Delete it and everything still works; you just lose the history.
-
-**None of this certifies that going back will fix anything.** An earlier file or build is just what
-you had before — whether it still works alongside everything else that has changed is your call.
+Neither option starts anything — a restored stack sits ready to open and start when you choose to,
+exactly like an imported one, and begins a fresh history of its own. Whether an earlier file or
+build still works alongside everything else on your server is for you to check.
 
 ## Terms used here
 

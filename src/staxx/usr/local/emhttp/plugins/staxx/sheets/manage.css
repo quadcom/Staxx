@@ -358,6 +358,12 @@
   cursor: col-resize;
 }
 
+/* During a drag the pointer passes through the terminal instead of being
+   captured by it, so the page keeps receiving the move and the release. */
+.staxx-manage-dragging .staxx-manage-shell-iframe {
+  pointer-events: none;
+}
+
 
 /* min-width alongside min-height because these panes sit in a row as well as
    in a column. A flex item defaults to min-width:auto, which refuses to
@@ -693,29 +699,6 @@
 
 .staxx-manage-log-empty--hidden {
   display: none;
-}
-
-.staxx-manage-log-download-wrap {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  padding: 0.5rem;
-}
-
-.staxx-manage-log-download-wrap--hidden {
-  display: none;
-}
-
-.staxx-manage-log-download-area {
-  flex: 1 1 auto;
-  resize: none;
-  border: 1px solid var(--sm-line);
-  border-radius: var(--sm-radius);
-  background-color: var(--sm-fill-0, var(--sm-fill));
-  color: inherit;
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.8rem;
-  padding: 0.5rem;
 }
 
 /* ---- D4: the shell -------------------------------------------------------

@@ -12,17 +12,8 @@
  * the time this file's first line executes it is already too late to move
  * the store out from under it.
  *
- *     pscp tests/server/record.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b2-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/b2-store\"" >> $CFG
- *       php /tmp/record.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/record.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b2-store /tmp/record.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzb2…", under the temporary stack root, and its
@@ -192,6 +183,38 @@ $list = staxx_record_list($rel);
 $newestN = $list[0]['n'];
 ok('the byte-for-byte round trip matches exactly',
    staxx_record_get($rel, $newestN) === $tricky);
+
+/* An ordinary capture carries no name and is stamped now. */
+$plainV = staxx_record_list($rel)[0];
+ok('an ordinary capture has an empty name', ($plainV['name'] ?? null) === '');
+ok('...and is stamped within a few seconds of now', abs($plainV['at'] - time()) <= 5,
+   'at='.$plainV['at']);
+
+/* ------------------------------------------------------------ seeding -- */
+
+// A hand-dropped file's first copy is named and dated by the file's own mtime.
+$seedRel = 'zzb2seed';
+$seedDir = $root.'/'.$seedRel;
+b2_reset_stack($seedDir, $compose);
+$seedMtime = time() - 86400 * 30;
+touch($seedDir.'/compose.yaml', $seedMtime);
+clearstatcache();
+$seedNote = '';
+ok('seeding an empty history succeeds', staxx_record_seed($seedRel, $seedNote), $seedNote);
+$seedList = staxx_record_list($seedRel);
+ok('...giving exactly one version', count($seedList) === 1, 'count='.count($seedList));
+ok('...named "As StaXX first found it"',
+   ($seedList[0]['name'] ?? '') === 'As StaXX first found it', $seedList[0]['name'] ?? '?');
+ok('...dated by the file\'s own last-changed time, not now',
+   ($seedList[0]['at'] ?? 0) === $seedMtime, 'at='.($seedList[0]['at'] ?? '?').' mtime='.$seedMtime);
+
+// Seeding again, and after a real save, must change nothing.
+file_put_contents($seedDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.21\n");
+$seedNote = '';
+ok('seeding a history that already has a version succeeds', staxx_record_seed($seedRel, $seedNote), $seedNote);
+ok('...and changes nothing', staxx_record_list($seedRel) === $seedList);
+
+@exec('rm -rf '.escapeshellarg($seedDir));
 
 /* ------------------------------------------------------------ pruning -- */
 

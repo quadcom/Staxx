@@ -13,17 +13,8 @@
  * pointed at /tmp/zzc118-store, the same way tests/server/review.php does
  * it — never the real store:
  *
- *     pscp tests/server/clash.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzc118-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzc118-store\"" >> $CFG
- *       php /tmp/clash.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/clash.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzc118-store /tmp/clash.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, all named "zzc118…", under the scratch stacks

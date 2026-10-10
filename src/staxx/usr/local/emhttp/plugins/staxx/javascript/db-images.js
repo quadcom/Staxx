@@ -111,7 +111,6 @@
 
   var API = {
     images: IMAGES,
-    normaliseRef: normaliseRef,
     lookupImage: lookupImage
   };
 

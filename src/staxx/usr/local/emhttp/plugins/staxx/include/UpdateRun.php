@@ -1,6 +1,7 @@
 <?PHP
 /* StaXX — image update detection: the doing side. Settings, the clock,
- * holding and skipping, the queue, roll back and clean-up.
+ * holding and skipping, the queue, roll back and the keep-set the Scan
+ * stored images window builds its own removals from.
  * Copyright 2026, StaXX contributors.
  *
  * include/Updates.php is the finding-out side: it asks the registry and
@@ -17,11 +18,7 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
-// The per-stack record that PLAN_82 Part 1 moves image history into. The
-// central file below (staxx_update_history_push()/staxx_update_history())
-// stays as a second, un-migrated source for as long as anything is still
-// only recorded there — see staxx_update_cleanup()'s keep-set for why both
-// are read together rather than one replacing the other.
+// The per-stack record that holds each stack's image history.
 require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
 // staxx_update_record_before_pull() looks up a project link so the release
 // notes it fetches (PLAN_82 Part 2) come from the right place. action.php
@@ -34,6 +31,8 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 // includes only this file directly for the cron passes, so it has to be
 // named here too or staxx_folder_layout() is simply undefined there.
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
+// staxx_update_notify() below is the low-level call; Notify.php decides what is said and when.
+require_once '/usr/local/emhttp/plugins/staxx/include/Notify.php';
 
 if (defined('STAXX_UPDATERUN_LOADED')) return;
 define('STAXX_UPDATERUN_LOADED', true);
@@ -64,14 +63,27 @@ unset($staxx_update_tz);
 
 /**
  * @return array{mode:string, delay:int, window:bool, wstart:string, wend:string,
- *               notify:string, retain:int, cleanup:string}
+ *               notifyFound:bool, notifyInstalled:bool, notifyFailed:bool,
+ *               notifyPinned:bool, retain:int, cleanup:string, keepImages:bool}
+ *
+ * mode is always returned as 'manual' or 'auto' — the config key may still
+ * hold the older 'off'/'notify' spelling, normalised here rather than at
+ * every reader. The four notifyXxx booleans are the server-wide switches for
+ * being told about a found update, an installed one, a failed one, and
+ * (PLAN_205) a pinned service's weekly reminder — see staxx_update_notify_map()
+ * (Defines.php) for how a config that still only has the retired UPDATE_NOTIFY
+ * choice is read.
  */
 function staxx_update_settings(): array {
   $cfg = staxx_cfg();
   $time = '/^([01][0-9]|2[0-3]):[0-5][0-9]$/';
 
+  // 'off' and 'notify' are the older three-way spelling — PLAN_150 found the
+  // one caller that reads mode only ever asks "=== 'auto'", so the two of
+  // them never behaved differently and both now read as 'manual'.
   $mode = (string)($cfg['UPDATE_MODE'] ?? 'notify');
-  if (!in_array($mode, ['off', 'notify', 'auto'], true)) $mode = 'notify';
+  if (!in_array($mode, ['manual', 'off', 'notify', 'auto'], true)) $mode = 'notify';
+  if ($mode === 'off' || $mode === 'notify') $mode = 'manual';
 
   $delay = $cfg['UPDATE_DELAY_HOURS'] ?? 24;
   $delay = (is_numeric($delay) && (int)$delay == $delay) ? (int)$delay : 24;
@@ -85,71 +97,169 @@ function staxx_update_settings(): array {
   $wend = (string)($cfg['UPDATE_WINDOW_END'] ?? '05:00');
   if (!preg_match($time, $wend)) $wend = '05:00';
 
-  $notify = (string)($cfg['UPDATE_NOTIFY'] ?? 'off');
-  if (!in_array($notify, ['off', 'found', 'applied'], true)) $notify = 'off';
+  $notify = staxx_update_notify_map($cfg);
 
   $retain = $cfg['UPDATE_RETAIN'] ?? 2;
   $retain = (is_numeric($retain) && (int)$retain == $retain) ? (int)$retain : 2;
   if ($retain < 0 || $retain > 5) $retain = 2;
 
-  $cleanup = (string)($cfg['UPDATE_CLEANUP'] ?? 'off');
-  if ($cleanup !== 'weekly') $cleanup = 'off';
+  // PLAN_181 Part C — default 'yes' keeps today's behaviour for every config
+  // that predates this setting.
+  $keepImages = (string)($cfg['UPDATE_KEEP_IMAGES'] ?? 'yes') !== 'no';
 
   return ['mode' => $mode, 'delay' => $delay, 'window' => $window, 'wstart' => $wstart,
-          'wend' => $wend, 'notify' => $notify, 'retain' => $retain, 'cleanup' => $cleanup];
+          'wend' => $wend, 'notifyFound' => $notify['found'], 'notifyInstalled' => $notify['installed'],
+          'notifyFailed' => $notify['failed'], 'notifyPinned' => $notify['pinned'], 'retain' => $retain,
+          'keepImages' => $keepImages];
 }
 
 /**
- * The mode and delay that actually apply to one service, resolved service
- * first, then the stack itself, then the global default. A scope only wins
- * outright when it declares at least one of the two keys — a stack that sets
- * only 'update.delay' still inherits the global mode, it does not fall
- * through to the global delay too. An unrecognised mode or a non-numeric,
- * out-of-range delay is ignored at that scope exactly as it would be at the
- * global one, so a typo in a compose file cannot silently turn automatic
- * updates on (or off) for a service.
+ * Turns a raw x-unraid value into a real bool, or null when it is not one.
+ * staxx_yaml_flatten() always hands back a string (it reads YAML a line at a
+ * time and never types a scalar), but `docker compose config`'s own output —
+ * what staxx_compose_meta() actually parses when compose is installed — is a
+ * second route into the same array, so a genuine PHP bool is tolerated too
+ * rather than assumed away.
+ */
+function staxx_update_bool($raw): ?bool {
+  if (is_bool($raw)) return $raw;
+  if ($raw === 'true') return true;
+  if ($raw === 'false') return false;
+  return null;
+}
+
+/**
+ * The two independent axes that decide one service's behaviour — whether it
+ * is applied for you (mode) and whether it is named in update messages
+ * (notify) — resolved service first, then the stack itself, then the global
+ * default. A scope wins mode and delay outright when it declares either one
+ * — a stack that sets only 'update.delay' still inherits the global mode, it
+ * does not fall through to the global delay too. An unrecognised mode, or a
+ * non-numeric or out-of-range delay, is ignored at that scope exactly as it
+ * would be at the global one, so a typo in a compose file cannot silently
+ * turn automatic updates on or off for a service.
  *
- * @return array{mode:string, delay:int, from:string}
+ * mode is always returned as 'manual' or 'auto'. 'off' and 'notify' are the
+ * older three-way spelling, read from a hand-written file for good, but they
+ * never behaved differently from 'manual' — the only caller that reads mode
+ * asks solely whether it is 'auto' — so both normalise to 'manual' here and
+ * no caller downstream ever has to know the old spelling existed.
+ *
+ * notify (PLAN_154; a fourth event, 'pinned', added by PLAN_205) is NOT part
+ * of that mode/delay handoff — a scope setting only 'update.notify' does not
+ * thereby also decide mode and delay, and a scope setting mode/delay does not
+ * thereby also decide notify. It resolves separately, per event (found/
+ * installed/failed/pinned), service then stack: the
+ * first of those two scopes that has an opinion about a given event wins it,
+ * and a scope with no opinion about that event — because it set neither the
+ * plain boolean nor that event's own key — leaves it null rather than
+ * falling through to the server-wide switch itself. That last step is left
+ * to the caller (see staxx_update_stack_wants_notify()) because "container
+ * says nothing" and "container says follow the server" have to stay
+ * distinguishable at this layer, even though today they resolve the same
+ * way. A plain boolean `notify` (the older spelling) answers all three
+ * events at once; the older reader ignores anything it does not recognise,
+ * so a scope carrying an unrecognised shape at either key is treated as
+ * having no opinion, same as an absent key.
+ *
+ * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, notifyPinned:?bool, from:string}
  */
 function staxx_update_policy(string $stack, string $service): array {
   $global = staxx_update_settings();
-  $fallback = ['mode' => $global['mode'], 'delay' => $global['delay'], 'from' => 'global'];
 
-  if (!staxx_valid_path($stack)) return $fallback;
+  if (!staxx_valid_path($stack)) return staxx_update_policy_fallback($global);
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
-  if ($file === '') return $fallback;
+  $file = staxx_stack_compose_map()[$stack] ?? '';
+  if ($file === '') return staxx_update_policy_fallback($global);
 
   $meta = staxx_compose_meta($file);
-  if (!$meta['ok']) return $fallback;
+  if (!$meta['ok']) return staxx_update_policy_fallback($global);
 
-  $modes = ['off', 'notify', 'auto'];
+  return staxx_update_policy_from_meta($meta, $service, $global);
+}
+
+/**
+ * The global-only answer, when there is nothing more specific to read. Unlike
+ * staxx_update_policy_from_meta()'s own notifyXxx keys, these are never null
+ * — the server-wide switches are the bottom of the chain, so there is
+ * nothing left for them to defer to.
+ */
+function staxx_update_policy_fallback(array $global): array {
+  return ['mode' => $global['mode'], 'delay' => $global['delay'],
+          'notifyFound' => $global['notifyFound'], 'notifyInstalled' => $global['notifyInstalled'],
+          'notifyFailed' => $global['notifyFailed'], 'notifyPinned' => $global['notifyPinned'],
+          'from' => 'global'];
+}
+
+/**
+ * One scope's own opinion of one notify event — true, false, or null for "no
+ * opinion here". A plain boolean at 'update.notify' (the older spelling)
+ * answers every event; otherwise this event's own 'update.notify.<event>'
+ * key is read on its own, so a container can set 'failed' and say nothing
+ * about the other two.
+ */
+function staxx_update_notify_scope_value(array $x, string $event): ?bool {
+  $whole = staxx_update_bool($x['update.notify'] ?? null);
+  if ($whole !== null) return $whole;
+  return staxx_update_bool($x['update.notify.'.$event] ?? null);
+}
+
+/**
+ * The service → stack → global walk itself, split out of
+ * staxx_update_policy() so a caller that already holds a stack's
+ * staxx_compose_meta() result — the row table renders one per stack already,
+ * see staxx_stack_children() — can resolve every one of its services without
+ * the stack lookup staxx_update_policy() does first.
+ *
+ * @param array $meta staxx_compose_meta()'s return for one stack
+ * @param array $global staxx_update_settings()'s return
+ * @return array{mode:string, delay:int, notifyFound:?bool, notifyInstalled:?bool, notifyFailed:?bool, notifyPinned:?bool, from:string}
+ */
+function staxx_update_policy_from_meta(array $meta, string $service, array $global): array {
+  $modes = ['manual', 'off', 'notify', 'auto'];
   $scopes = [
     'service' => (array)($meta['services'][$service]['x'] ?? []),
-    'stack'   => (array)$meta['x'],
+    'stack'   => (array)($meta['x'] ?? []),
   ];
 
-  foreach ($scopes as $from => $x) {
+  // mode and delay: the first scope that sets either one wins both, exactly
+  // as before PLAN_154 — notify plays no part in this any more.
+  $mode = null; $delay = null; $from = 'global';
+  foreach ($scopes as $scopeName => $x) {
     $rawMode  = (string)($x['update.mode'] ?? '');
     $rawDelay = $x['update.delay'] ?? null;
 
-    $mode  = in_array($rawMode, $modes, true) ? $rawMode : null;
-    $delay = (is_numeric($rawDelay) && (int)$rawDelay == $rawDelay
+    $scopeMode = in_array($rawMode, $modes, true) ? $rawMode : null;
+    if ($scopeMode === 'off' || $scopeMode === 'notify') $scopeMode = 'manual';
+    $scopeDelay = (is_numeric($rawDelay) && (int)$rawDelay == $rawDelay
               && (int)$rawDelay >= 0 && (int)$rawDelay <= 720) ? (int)$rawDelay : null;
 
-    if ($mode !== null || $delay !== null) {
-      return [
-        'mode'  => $mode ?? $global['mode'],
-        'delay' => $delay ?? $global['delay'],
-        'from'  => $from,
-      ];
+    if ($scopeMode !== null || $scopeDelay !== null) {
+      $mode = $scopeMode ?? $global['mode'];
+      $delay = $scopeDelay ?? $global['delay'];
+      $from = $scopeName;
+      break;
+    }
+  }
+  if ($mode === null) { $mode = $global['mode']; $delay = $global['delay']; }
+
+  // notify: each event resolved on its own, service first, then stack — see
+  // staxx_update_notify_scope_value() and the docblock above for why a scope
+  // with nothing to say leaves an event null rather than borrowing the
+  // server's switch itself.
+  $events = ['found' => null, 'installed' => null, 'failed' => null, 'pinned' => null];
+  foreach ($scopes as $x) {
+    foreach ($events as $event => $resolved) {
+      if ($resolved !== null) continue;
+      $events[$event] = staxx_update_notify_scope_value($x, $event);
     }
   }
 
-  return $fallback;
+  return [
+    'mode' => $mode, 'delay' => $delay,
+    'notifyFound' => $events['found'], 'notifyInstalled' => $events['installed'],
+    'notifyFailed' => $events['failed'], 'notifyPinned' => $events['pinned'], 'from' => $from,
+  ];
 }
 
 /* ------------------------------------------------------------- the window -- */
@@ -277,7 +387,7 @@ function staxx_update_clock(string $stack, string $service, string $image): arra
     foreach (staxx_scan_stacks()['stacks'] as $s) {
       if ($s['rel'] !== $stack) continue;
       if (staxx_review_file($s['dir']) === '') {
-        $st = staxx_state_for(staxx_find_compose_file($s['dir']), $s['leaf']);
+        $st = staxx_state_for($s['file'], $s['leaf']);
         $running = stripos($st['status'] ?? '', 'running') !== false;
       }
       break;
@@ -304,7 +414,7 @@ function staxx_update_due(): array {
   $out = [];
   $now = time();
 
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
     $stack = $row['stack'];
     if ($stack['file'] === '') continue;
@@ -333,6 +443,164 @@ function staxx_update_due(): array {
   }
 
   return $out;
+}
+
+/* --------------------------------------------------------- pinned reminder -- */
+
+// How often the pinned-service reminder may actually SEND a message (PLAN_205,
+// decision P2 — fixed weekly, not a choice in Settings).
+define('STAXX_PINNED_NOTICE_INTERVAL', 7 * 86400);
+
+// How often the pass may WALK every stack to keep 'pinnedSince' current. Kept
+// far shorter than the notice interval above — a pin date is only ever set or
+// dropped when a walk actually runs, so tying it to the weekly send left it up
+// to six days late. A day is frequent enough that the date shown is never
+// meaningfully stale, and cheap enough that it costs nothing between the
+// weekly sends the box actually notices.
+define('STAXX_PINNED_WALK_INTERVAL', 86400);
+
+/**
+ * The weekly "these are still pinned" message (PLAN_205). Hooked into the
+ * 15-minute apply pass rather than UPDATE_CHECK's own cadence, so the
+ * reminder does not depend on checking being switched on at all — a pin is
+ * never checked either way, so there is nothing for UPDATE_CHECK to gate here.
+ *
+ * Two clocks, kept deliberately apart:
+ *  - 'pinnedWalkAt' gates the slow walk itself (STAXX_PINNED_WALK_INTERVAL,
+ *    a day) and is all that keeps 'pinnedSince' current — between walks this
+ *    function costs the one state read below and nothing else.
+ *  - 'pinnedNoticeAt' gates SENDING (STAXX_PINNED_NOTICE_INTERVAL, a week),
+ *    exactly as before; it only moves when a send decision is actually made.
+ *
+ * When the week is due, every pinned, opted-in service goes to
+ * staxx_notify_pinned_due() as one list of 'pinned' events; the summary
+ * (Notify.php) carries it, so this pass sends no message of its own.
+ * Nothing is handed over, but 'pinnedNoticeAt' still moves on, when there is
+ * nothing to report on a week that is due; an empty week must cost one walk,
+ * not repeat the walk every 15 minutes until something changes.
+ *
+ * The very first walk this ever runs — 'pinnedNoticeAt' still unset, a fresh
+ * install or the first pass after this feature shipped — records every
+ * 'pinnedSince' it finds and starts both clocks from now, but sends nothing:
+ * a server that has been pinned for years must not announce it the moment
+ * this code first runs, so the first real reminder arrives a full week after
+ * install, the same as for a pin made afterwards.
+ *
+ * 'pinnedSince' — when this pass first saw a given image's exact digest pin —
+ * lives per image under the update state, set the first time it is seen and
+ * dropped the moment that image is no longer pinned in any stack (the pin was
+ * released or the image was changed), so a released pin does not silently
+ * reappear with its old date if the same digest is ever pinned again later.
+ *
+ * The walk itself (which stacks are pinned right now) can take a while — it
+ * parses every compose file. Whatever it finds is folded into the freshest
+ * 'images' on disk immediately before saving, under the check pass's own
+ * lock (staxx_update_lock()/staxx_update_unlock(), Updates.php) and re-read
+ * straight from the state file rather than trusting the snapshot taken at
+ * the top — otherwise a check pass that writes 'images' while this walk is
+ * still running would have its own changes overwritten by this function's
+ * stale copy, the same failure staxx_update_refresh_after_run() guards
+ * against for the same reason. Only 'pinnedSince' is folded in; every other
+ * key in the freshest 'images' is left exactly as that fresher read found it.
+ *
+ * If the lock cannot be taken at all — a check pass is mid-write right now —
+ * this pass saves NOTHING and sends nothing: neither clock moves, today's
+ * walk is simply discarded, and the next 15-minute apply pass tries the
+ * whole thing again. Saving this walk's own stale snapshot instead would
+ * risk exactly the lost-update failure the lock exists to prevent.
+ */
+function staxx_update_pinned_reminder_pass(): void {
+  $now    = time();
+  $state  = staxx_update_state(); // the one read this costs between walks
+  $walkAt = (int)($state['pinnedWalkAt'] ?? 0);
+  if ($walkAt !== 0 && ($now - $walkAt) < STAXX_PINNED_WALK_INTERVAL) return;
+
+  $noticeAt = (int)($state['pinnedNoticeAt'] ?? 0);
+  $firstRun = ($noticeAt === 0);
+  $sendDue  = !$firstRun && ($now - $noticeAt) >= STAXX_PINNED_NOTICE_INTERVAL;
+
+  $global = staxx_update_settings();
+  $images = (array)($state['images'] ?? []);
+  $stillPinned = [];
+  $pinnedEvents = [];
+
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
+    if ($row['type'] !== 'stack') continue;
+    $stack = $row['stack'];
+    if ($stack['file'] === '') continue;
+
+    $meta = staxx_compose_meta($stack['file']);
+    if (!$meta['ok']) continue;
+
+    foreach ($meta['services'] as $svc => $svcMeta) {
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      $at = strpos($image, '@');
+      if ($at === false || !preg_match('/^sha256:[0-9a-f]{64}$/', substr($image, $at + 1))) continue;
+
+      $resolved = staxx_update_policy_from_meta($meta, $svc, $global)['notifyPinned'];
+      if (!($resolved ?? $global['notifyPinned'])) continue;
+
+      $stillPinned[$image] = true;
+      $entry = (array)($images[$image] ?? []);
+      $since = (int)($entry['pinnedSince'] ?? 0);
+      if ($since === 0) { $since = $now; $entry['pinnedSince'] = $since; }
+      $images[$image] = $entry;
+
+      $pinnedEvents[] = ['kind' => 'pinned', 'stack' => $stack['name'], 'service' => (string)$svc,
+                         'image' => $image, 'at' => $since];
+    }
+  }
+
+  // An image no longer pinned anywhere loses its start date — a released
+  // pin re-applied later starts the clock again rather than reusing the old
+  // date, since it is a new decision to pin, not a continuation of the old one.
+  foreach ($images as $img => $entry) {
+    if (isset($entry['pinnedSince']) && !isset($stillPinned[$img])) {
+      unset($entry['pinnedSince']);
+      $images[$img] = $entry;
+    }
+  }
+
+  // Fold ONLY the pinnedSince changes just found into the freshest 'images'
+  // on disk, under the check pass's own lock — see this function's docblock
+  // for why the snapshot taken at the top of this pass cannot be trusted by
+  // the time the slow walk above has finished. A check pass already holds
+  // this lock while it is writing 'images' itself, so failing to take it
+  // means today's walk is discarded outright — see the docblock — rather
+  // than risking the very lost-update failure the lock exists to prevent.
+  $lockError = '';
+  if (!staxx_update_lock($lockError)) return;
+
+  // Re-read straight from the state file (staxx_update_state() would just
+  // hand back this process's own stale cache) and push that fresh copy into
+  // the cache slot so the staxx_update_state_save() call below merges over
+  // it, not over the stale one.
+  $file  = staxx_update_state_file();
+  $raw   = $file === '' ? false : @file_get_contents($file);
+  $data  = $raw === false ? null : json_decode($raw, true);
+  $fresh = is_array($data) ? array_merge(staxx_update_state_defaults(), $data) : staxx_update_state_defaults();
+  staxx_update_state_cache($fresh);
+
+  $freshImages = (array)($fresh['images'] ?? []);
+  foreach ($images as $img => $entry) {
+    $freshEntry = (array)($freshImages[$img] ?? []);
+    if (isset($entry['pinnedSince'])) $freshEntry['pinnedSince'] = $entry['pinnedSince'];
+    else unset($freshEntry['pinnedSince']);
+    $freshImages[$img] = $freshEntry;
+  }
+  $images = $freshImages;
+
+  // The weekly reminder rides in the summary (Notify.php) rather than being a
+  // message of its own; the clocks below are unchanged.
+  if ($sendDue && $pinnedEvents) staxx_notify_pinned_due($pinnedEvents);
+
+  $toSave = ['images' => $images, 'pinnedWalkAt' => $now];
+  if ($sendDue || $firstRun) $toSave['pinnedNoticeAt'] = $now;
+  // Unlocked unconditionally, whether or not the save itself succeeded —
+  // the lock's only job is to stop a concurrent writer being overwritten,
+  // and a failed save here leaves nothing else holding it.
+  staxx_update_state_save($toSave);
+  staxx_update_unlock();
 }
 
 /* ------------------------------------------------------------ pause / hold -- */
@@ -370,15 +638,9 @@ function staxx_update_hold(string $image, bool $on, string &$error): bool {
  * Remember one service's fingerprint before an update runs, alongside the
  * version name and where it came from (PLAN_82 Part 1) — both commonly
  * absent, which is a normal answer, never a placeholder. Written straight
- * into the stack's own record rather than the old central file: retention
- * and the "never the same digest twice running" rule are staxx_image_
- * history_push()'s job now, so they are enforced exactly once rather than
- * risking two different answers from two places that both write.
- *
- * The old central file is left untouched here, on purpose. It still holds
- * whatever an un-migrated stack recorded before this change shipped, and
- * staxx_update_history() below reads both until a migration (or the lazy
- * adopt on the update path) has moved a given stack's entries across.
+ * into the stack's own record: retention and the "never the same digest
+ * twice running" rule are staxx_image_history_push()'s job, so they are
+ * enforced in exactly one place.
  */
 function staxx_update_history_push(string $stack, string $service, string $digest, array $meta = []): void {
   if ($digest === '') return;
@@ -404,21 +666,7 @@ function staxx_update_history_push(string $stack, string $service, string $diges
  * the next real update, which is soon enough.
  */
 function staxx_update_record_before_pull(string $stack, string $service = '', bool $lookups = true): void {
-  // Move anything this stack still has sitting in the old central file into
-  // its own record first — a side effect of the ordinary update path rather
-  // than a separate event, per PLAN_82 Part 1. Logged and carried on rather
-  // than blocking the record: a missed adopt just means the central file
-  // still has this stack's older entries, which staxx_update_history()
-  // already reads regardless.
-  $adoptError = '';
-  if (!staxx_image_history_adopt($stack, $adoptError) && $adoptError !== '') {
-    error_log('StaXX: image history adopt failed for '.$stack.': '.$adoptError);
-  }
-
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') return;
 
   $meta = staxx_compose_meta($file);
@@ -585,8 +833,8 @@ function staxx_update_seed_history(): array {
     return $out;
   }
 
-  foreach (staxx_list_stacks() as $s) {
-    staxx_update_record_before_pull((string)$s['name'], '', false);
+  foreach (array_keys(staxx_stack_compose_map()) as $rel) {
+    staxx_update_record_before_pull($rel, '', false);
     $out['stacks']++;
   }
 
@@ -596,25 +844,37 @@ function staxx_update_seed_history(): array {
 
 /**
  * The rollback's reader: every digest recorded for this service, newest
- * first, with no duplicates. Reads the new per-stack record AND whatever the
- * old central file still holds for this key — a union, never a replacement,
- * because a stack that has not been migrated (or adopted lazily on the
- * update path) has its history nowhere else. New entries always come from
- * the new store now, so putting its digests first is newest-first in
- * practice, not just in theory.
+ * first, from the stack's own record.
  */
 function staxx_update_history(string $stack, string $service): array {
-  $new = staxx_image_history_digests($stack, $service);
-  $old = (array)(staxx_update_state()['history'][$stack.'::'.$service] ?? []);
-
-  $merged = $new;
-  foreach ($old as $digest) {
-    if (!in_array($digest, $merged, true)) $merged[] = $digest;
-  }
-  return $merged;
+  return staxx_image_history_digests($stack, $service);
 }
 
 /* ------------------------------------------------------------------- roll back -- */
+
+/**
+ * The name Docker keeps an image under locally, with any tag or existing
+ * pin removed — e.g. "lscr.io/linuxserver/plex:latest" or an already-pinned
+ * "lscr.io/linuxserver/plex@sha256:…" both become "lscr.io/linuxserver/plex".
+ *
+ * Deliberately NOT staxx_hub_repo_path(): that turns a registry mirror
+ * address into the plain Docker Hub path it mirrors (e.g.
+ * "lscr.io/linuxserver/plex" -> "linuxserver/plex"), which is the name the
+ * image was fetched FROM, not the name Docker stored it under — `docker
+ * image inspect linuxserver/plex@<digest>` finds nothing even though the
+ * image is present as `lscr.io/linuxserver/plex@<digest>`. Using the
+ * reference exactly as the compose file wrote it sidesteps that mismatch.
+ * A bare Docker Hub name such as "redis" needs no rewriting either way.
+ *
+ * @param string $ref an image reference as it appears in a compose file,
+ *   e.g. "repo:tag" or an already-pinned "repo@digest"
+ */
+function staxx_update_local_repo(string $ref): string {
+  $ref = trim($ref);
+  $at = strpos($ref, '@');
+  if ($at !== false) $ref = substr($ref, 0, $at);
+  return preg_replace('/:[^\/]*$/', '', $ref);
+}
 
 /**
  * Point one or more services' images back at a version each has run
@@ -647,16 +907,56 @@ function staxx_update_history(string $stack, string $service): array {
  * @param array<string,string> $targets service name => digest to roll it back to
  * @return string a job id, or '' with $error set on refusal
  */
+
+/**
+ * PLAN_181 Part C — what one rollback target's presence check decides, pulled
+ * out as a pure function of its answer so the branch itself can be proved
+ * directly (tests/server/updaterun.php) without ever asking Docker anything —
+ * every digest a test can hand it is one this server was never given to
+ * begin with, so the docker call above this in staxx_update_rollback() can
+ * only ever prove "absent", never "present", and so can never tell the two
+ * settings apart on its own.
+ *
+ * @return string|null the refusal sentence, or null to proceed (whether or
+ *   not the image is actually present — the caller tells those two apart
+ *   itself, to decide whether a pull is needed)
+ */
+function staxx_update_rollback_presence_error(bool $present, bool $keepImages, string $service): ?string {
+  if ($present || !$keepImages) return null;
+  return 'The previous version for the "'.$service.'" service is no longer present on this server, so it cannot be rolled back to.';
+}
+
+/**
+ * PLAN_181 Part C — when the image is not on this server and a pull will be
+ * needed, `docker manifest inspect` asks the registry whether the digest
+ * still exists there, without downloading anything. Its exit code alone
+ * cannot be trusted: non-zero also covers a registry that is merely
+ * unreachable (network down, timeout, login expired), and refusing a
+ * rollback over that would block on a guess StaXX has no way to check. Only
+ * the two phrases Docker itself uses for "this digest is gone" are treated
+ * as a real refusal; every other non-zero exit goes ahead and lets the
+ * actual pull, a few seconds later, report whatever really went wrong.
+ *
+ * @param int    $code    exit status from the manifest inspect
+ * @param string $out     its combined stdout/stderr
+ * @param string $service the service this target belongs to, for the message
+ * @return string|null the refusal sentence, or null to proceed with the pull
+ */
+function staxx_update_rollback_source_error(int $code, string $out, string $service): ?string {
+  if ($code === 0) return null;
+  if (stripos($out, 'no such manifest') !== false || stripos($out, 'manifest unknown') !== false) {
+    return 'This version is no longer available at the source, so it cannot be rolled back to.';
+  }
+  return null;
+}
+
 function staxx_update_rollback(string $stack, array $targets, string &$error, string $yaml = '', ?string &$note = null): string {
   $error = '';
 
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
   if (empty($targets)) { $error = 'No service was named to roll back.'; return ''; }
 
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
-  }
+  $file = staxx_stack_compose_map()[$stack] ?? '';
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
 
   $meta = staxx_compose_meta($file);
@@ -712,6 +1012,10 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   file_put_contents($tmp, $yaml);
   $checkMeta = staxx_compose_meta($tmp);
   @unlink($tmp);
+  // staxx_compose_meta() caches its answer to disk keyed by this temp path's
+  // own md5, same as any other file it reads — but this path is never read
+  // again, so that cached copy would otherwise sit there forever.
+  @unlink(STAXX_META_DIR.'/'.md5($tmp).'.json');
   if (!$checkMeta['ok']) {
     $error = 'The supplied file could not be checked, so nothing was changed.';
     return '';
@@ -743,9 +1047,29 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   // real matching image pulled — untestable from fixtures alone, and any
   // test that arranged one would then fall through into the save and the job
   // below, which a test run must never do.
+  //
+  // PLAN_181 Part C — with "keep the images" switched off, an absent image is
+  // no longer a refusal: $needsPull is set instead, and staxx_start_job()
+  // below is asked to pull the exact digest back down as part of the same
+  // job, rather than trusting `up`'s own default "pull if missing" policy —
+  // that way a registry that no longer has this digest fails on the step
+  // named for it in the job's own log, before anything is recreated, with
+  // nothing already touched (the compose file is not even saved yet). The
+  // decision itself is staxx_update_rollback_presence_error() below, so it
+  // can be proved directly — the docker call above it can only ever confirm
+  // "not present" against a digest this server was never handed, which
+  // proves nothing about which of the two settings is in force.
+  //
+  // When a pull will actually be needed, `docker manifest inspect` is asked
+  // first, ahead of anything being saved — it is Docker's own no-download
+  // check, so it can tell "the source no longer has this version" apart from
+  // "not on this server yet" without pulling it to find out. The decision is
+  // staxx_update_rollback_source_error() below, kept separate from the
+  // presence check for the same reason: it can only be proved with a fixed
+  // exit code and message, never with a real registry round trip.
+  $needsPull = false;
   foreach ($targets as $service => $target) {
-    $repo = staxx_hub_repo_path($images[$service]);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($images[$service]));
+    $repo = staxx_update_local_repo($images[$service]);
 
     $checkCode = 1;
     staxx_sh(
@@ -753,9 +1077,21 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
         .' --format '.escapeshellarg('{{.Id}}').' 2>&1',
       10, $checkCode
     );
+    $presenceError = staxx_update_rollback_presence_error(
+      $checkCode === 0, staxx_update_settings()['keepImages'], $service
+    );
+    if ($presenceError !== null) { $error = $presenceError; return ''; }
+
     if ($checkCode !== 0) {
-      $error = 'The previous version for the "'.$service.'" service is no longer present on this server, so it cannot be rolled back to.';
-      return '';
+      $needsPull = true;
+
+      $manifestCode = 1;
+      $manifestOut = staxx_sh(
+        staxx_docker_bin().' manifest inspect '.escapeshellarg($repo.'@'.$target).' 2>&1',
+        20, $manifestCode
+      );
+      $sourceError = staxx_update_rollback_source_error($manifestCode, $manifestOut, $service);
+      if ($sourceError !== null) { $error = $sourceError; return ''; }
     }
   }
 
@@ -787,160 +1123,203 @@ function staxx_update_rollback(string $stack, array $targets, string &$error, st
   }
   if ($changed) staxx_update_state_save(['images' => $stImages]);
 
-  return staxx_start_job($stack, 'recreate', $error, array_keys($targets));
+  return staxx_start_job($stack, $needsPull ? 'rollback-pull' : 'recreate', $error, array_keys($targets));
 }
 
-/**
- * Release a pin: put a service's image back to plain "repo:tag", with
- * everything from the first "@" removed. The mirror of
- * staxx_update_rollback() above, minus the parts that pin something — no
- * history lookup, and deliberately no job at the end. See point 6 below for
- * why.
+/* staxx_update_unpin() (release a pin by stripping "@sha256:…" back to plain
+ * "repo:tag") and the 'update-unpin' action were removed 2026-09-26 (PLAN_188
+ * part D): a pin is now released by picking a tag — any tag, not only the
+ * one it was pinned from — through the image field or the tag picker, saved
+ * through the ordinary 'save'/'file-save' actions like any other edit. That
+ * function's own exact-match check (the release must land on precisely the
+ * pre-pin "repo:tag", nothing else) is incompatible with picking a
+ * different tag on purpose, which is the whole point of the new door — see
+ * PLAN_188's own text. staxx_pin_resolve() above is what feeds a pin now;
+ * nothing left in this file writes one back off.
  *
- * As with a rollback, the file is the authority: the browser has already
- * rewritten the image line and this function's job is to check that edit,
- * not to write YAML itself.
- *
- * @return bool true on success, false with $error set on refusal
+ * KNOWN GAP: the old function also cleared a stale "don't offer this again"
+ * fingerprint left under an image's unpinned key once released (see
+ * tests/server/pinned_due.php's own header for the detail) — the new,
+ * generic save path has no hook to run that cleanup from. Rare, and a
+ * decision for later rather than a guess made here.
  */
-function staxx_update_unpin(string $stack, string $service, string $yaml, string &$error, ?string &$note = null): bool {
+
+/**
+ * PLAN_188 part D — what the Pinned choice needs: the exact build one
+ * service is (or last was) on, as a registry digest.
+ *
+ * A container, running or stopped, answers off Docker's own record of what
+ * it actually runs — one `docker inspect` reading both {{.Config.Image}}
+ * (the reference) and {{.Image}} (the image ID: a tag can be re-pulled to a
+ * newer build without the container moving, so reading the ID is what makes
+ * this the build really on this container rather than whatever the tag now
+ * means) via staxx_image_id_digest(). No container at all (never started,
+ * or removed) falls back to the compose file's own image reference through
+ * staxx_image_local() — the plan's own "no container" case, answered the
+ * same way every other reader of a not-yet-running service's image already
+ * is.
+ *
+ * Resolves its container through staxx_service_container() with
+ * $runningOnly false, unlike the shell and file manager, which pass true:
+ * the pin wants whatever build a service's container last ran, running or
+ * not, and FILES_ENABLED's own gate (PLAN_188 part C) has nothing to do
+ * with pinning an image either way, so a server with the file manager
+ * switched off, or a service that merely is not running right now, must not
+ * also lose the ability to pin.
+ *
+ * Refuses in a sentence for the two shapes with nothing to point at: an
+ * image built on this server (no registry digest exists to pin to) and one
+ * never pulled here (nothing local to read a digest off).
+ *
+ * @return array{ok:true, image:string, digest:string}|array{ok:false, error:string}
+ */
+function staxx_pin_resolve(string $stack, string $service, string &$error): array {
   $error = '';
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ['ok' => false, 'error' => $error]; }
 
-  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return false; }
-
-  $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  if (!staxx_docker_running()) {
+    $error = 'The Docker service is not running.';
+    return ['ok' => false, 'error' => $error];
   }
-  if ($file === '') { $error = 'No compose file found in this stack.'; return false; }
+
+  $file = staxx_find_compose_file(staxx_stack_dir($stack));
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ['ok' => false, 'error' => $error]; }
 
   $meta = staxx_compose_meta($file);
   if (!$meta['ok'] || !isset($meta['services'][$service])) {
     $error = 'No service called "'.$service.'" in this stack.';
-    return false;
+    return ['ok' => false, 'error' => $error];
   }
 
-  $image = trim((string)($meta['services'][$service]['image'] ?? ''));
-  if ($image === '') {
-    $error = 'This service has no image set, so there is nothing to release.';
-    return false;
+  // Discarded on purpose when empty — "no container at all" is the plan's
+  // own fallback case here, not a refusal of staxx_pin_resolve()'s own.
+  $containerError = '';
+  $container = staxx_service_container($file, staxx_path_leaf($stack), $service, false, $containerError);
+
+  if ($container !== '') {
+    // One inspect for both fields, a real tab between them (see
+    // staxx_container_net()'s own comment on why `docker inspect --format`
+    // must never be given the two characters \t).
+    [$ref, $imageId] = array_pad(explode("\t", trim(staxx_sh(
+      escapeshellarg(staxx_docker_bin()).' inspect '.escapeshellarg($container).
+      ' --format '.escapeshellarg('{{.Config.Image}}'."\t".'{{.Image}}'),
+      10
+    ))), 2, '');
+    if ($ref === '' || $imageId === '') {
+      $error = 'Could not read what this container is running.';
+      return ['ok' => false, 'error' => $error];
+    }
+    $local = staxx_image_id_digest($imageId, $ref);
+  } else {
+    $ref = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($ref === '') {
+      $error = 'This service has no image set, so there is no build to pin to.';
+      return ['ok' => false, 'error' => $error];
+    }
+    $local = staxx_image_local($ref);
   }
 
-  $at = strpos($image, '@');
-  if ($at === false) {
-    $error = 'This service is not pinned to a version, so there is nothing to release.';
-    return false;
+  if (!empty($local['built'])) {
+    $error = 'This service is built here from a recipe, so there is no fixed build to pin to.';
+    return ['ok' => false, 'error' => $error];
   }
-  $unpinned = substr($image, 0, $at);
-
-  // The supplied text must turn the pin into exactly the same image with the
-  // "@sha256:..." removed — nothing else. Without this, "release" would be a
-  // way to change a service's image to anything at all, under cover of an
-  // action whose confirmation dialog only ever tells the person a pin is
-  // being lifted. As with a rollback, the text is parsed properly rather
-  // than trusted, so a digest (or anything else) hiding inside a comment
-  // cannot pass a plain string search.
-  $tmp = tempnam(sys_get_temp_dir(), 'staxx-up-');
-  if ($tmp === false) {
-    $error = 'Could not check the supplied file, so nothing was changed.';
-    return false;
-  }
-  file_put_contents($tmp, $yaml);
-  $checkMeta = staxx_compose_meta($tmp);
-  @unlink($tmp);
-
-  if (!$checkMeta['ok'] || !isset($checkMeta['services'][$service])) {
-    $error = 'The supplied file could not be checked, so nothing was changed.';
-    return false;
-  }
-  $checkImage = trim((string)($checkMeta['services'][$service]['image'] ?? ''));
-  if ($checkImage !== $unpinned) {
-    $error = 'The supplied file does not release this service to its unpinned image, so nothing was changed.';
-    return false;
+  if (empty($local['digest'])) {
+    $error = 'This image has never been downloaded here, so there is no build to pin to.';
+    return ['ok' => false, 'error' => $error];
   }
 
-  if (!staxx_save_stack($stack, $yaml, $error, $note)) {
-    return false;
-  }
-
-  // The "don't offer me that version again" fingerprint written at pin time
-  // sits under the image key as it existed BEFORE the pin — see
-  // staxx_update_state()['images'] in Updates.php, keyed by the image string
-  // exactly as the compose file reads. Pinning added a fresh entry under the
-  // pinned name and left this one behind; releasing puts the file back to
-  // the unpinned name, so if this stale entry is not cleared here it comes
-  // back to life and silently suppresses the very update the release was
-  // meant to resume. Cleared under $unpinned, deliberately not $image.
-  $state  = staxx_update_state();
-  $images = (array)$state['images'];
-  if (isset($images[$unpinned]['skip'])) {
-    unset($images[$unpinned]['skip']);
-    staxx_update_state_save(['images' => $images]);
-  }
-
-  // No pull, no recreate, no job: releasing a pin changes only the file. The
-  // next check pass decides on its own whether the now-unpinned image is
-  // due anything, on the normal clock and policy — this function does not
-  // pre-empt that.
-  return true;
+  return ['ok' => true, 'image' => $ref, 'digest' => (string)$local['digest']];
 }
 
-/* -------------------------------------------------------------------- cleanup -- */
+/* ------------------------------------------------------------- keep-set -- */
 
 /**
- * Remove an old image version, but only ever one that is BOTH unused by any
- * container right now AND absent from every service's history list — never a
- * general prune, which would be a foot-gun on a server carrying hand-built
- * images the way this one's own risk note describes.
+ * Every "image:" reference a current stack's compose file actually resolves
+ * to, as a lookup set keyed by that exact string — the same shape
+ * staxx_update_state()['images'] is keyed by, so the two can be compared
+ * directly. Deliberately a small walk of its own rather than a call into
+ * Images.php's staxx_images_stack_refs(): that file requires this one, so
+ * the other direction would be circular.
  *
- * Walks only the repositories staxx_update_images() already tracks, so a
- * repository this plugin knows nothing about is never touched.
- *
- * @return array{removed: string[], kept: int}
+ * @param string $excludeStack PLAN_181 Part B — a stack's own compose file is
+ *   still on disk while its archive confirmation is being worked out (nothing
+ *   has been zipped or removed yet), so a stack named here is left out as if
+ *   it were already gone, and the dry run agrees with what actually happens
+ *   once the archive really has removed it.
  */
+function staxx_update_current_refs(string $excludeStack = ''): array {
+  $refs = [];
+  foreach (staxx_stack_compose_map() as $rel => $file) {
+    if ($excludeStack !== '' && $rel === $excludeStack) continue;
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
+    foreach ((array)($meta['services'] ?? []) as $service) {
+      $ref = trim((string)($service['image'] ?? ''));
+      if ($ref !== '') $refs[$ref] = true;
+    }
+  }
+  return $refs;
+}
+
 /**
  * Every digest worth keeping, grouped by repository: the live pointer for
  * each known image, plus whatever any service's history still remembers.
  *
- * Pulled out of staxx_update_cleanup() so it can be proved directly rather
- * than re-implemented in a test and asserted about. This is the list that
- * decides what `docker rmi` is allowed to touch, so "the test builds the
- * same union by hand and it matches" proves the test, not the code.
+ * Its own function so it can be proved directly rather than re-implemented
+ * in a test and asserted about. This is the list that decides what the
+ * Scan stored images window (include/Images.php) is allowed to offer for
+ * removal, so "the test builds the same union by hand and it matches"
+ * proves the test, not the code.
  *
- * The history half is the UNION of the per-stack records and whatever the
- * old central file still holds. Reading only one of the two would mean a
- * digest a rollback still needs — whichever source went un-read — looks
- * unused and gets removed. That exact bug has been found in this codebase
- * once already; do not "tidy away" either half while anything is still
- * recorded only there.
+ * The history half is every digest the per-stack records hold; a digest a
+ * rollback still needs that went un-read would look unused and get removed.
+ *
+ * The "local" half (PLAN_181 item 8/A) only protects a ref some CURRENT
+ * stack's compose still names — otherwise the current-pointer digest for a
+ * service whose stack has since been archived or edited away is kept for
+ * ever, with nothing left that can ever roll back to it. The history half
+ * above is untouched: it is what a roll-back actually reads from.
+ *
+ * @param string $excludeStack PLAN_181 Part B — see staxx_update_current_refs();
+ *   the same name is left out of the history half here too, so an archive's
+ *   dry-run confirmation (asked before anything is actually removed) agrees
+ *   with what is left once that stack really is gone.
+ *
+ * PLAN_181 Part C — with UPDATE_KEEP_IMAGES set to "no", the history half is
+ * left out entirely: the version numbers stay recorded (image history is
+ * unaffected — see ImageHistory.php), but nothing here protects the image
+ * files any more, so the weekly-cleanup blind spot they used to be safe from
+ * now applies to them too. staxx_update_rollback() pulls the exact digest
+ * back down instead of refusing when it finds one gone. The local half is a
+ * different thing — the currently-pulled pointer for a ref still in active
+ * use — and is untouched by this setting.
  */
-function staxx_update_keep_digests(): array {
+function staxx_update_keep_digests(string $excludeStack = ''): array {
   $state  = staxx_update_state();
   $images = (array)$state['images'];
 
+  $currentRefs = staxx_update_current_refs($excludeStack);
+
   $keep = [];
   foreach ($images as $ref => $entry) {
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    if (!isset($currentRefs[$ref])) continue;
+    $repo = staxx_image_match_repo($ref);
     if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
   }
 
-  $historyKeys = array_unique(array_merge(
-    array_keys(staxx_image_history_all()),
-    array_keys((array)$state['history'])
-  ));
+  if (!staxx_update_settings()['keepImages']) return $keep;
+
+  $historyKeys = array_keys(staxx_image_history_all());
+  $files = staxx_stack_compose_map();
   foreach ($historyKeys as $key) {
     [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
-    $file = '';
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $stack) { $file = $s['file']; break; }
-    }
+    if ($excludeStack !== '' && $stack === $excludeStack) continue;
+    $file = $files[$stack] ?? '';
     if ($file === '') continue;
     $meta = staxx_compose_meta($file);
     $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
     if ($ref === '') continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    $repo = staxx_image_match_repo($ref);
     foreach (staxx_update_history($stack, $service) as $d) $keep[$repo][] = $d;
   }
 
@@ -957,103 +1336,6 @@ function staxx_update_short_id(string $id): string {
   $id = trim($id);
   if (strncmp($id, 'sha256:', 7) === 0) $id = substr($id, 7);
   return substr($id, 0, 12);
-}
-
-function staxx_update_cleanup(bool $dry, string &$error): array {
-  $error   = '';
-  $removed = [];
-  $kept    = 0;
-
-  // The keep-set below is built from the state file, which only catches up
-  // once a job finishes — so a pull the queue has just started, or is about
-  // to start, is invisible to it. The window is narrow, but skipping cleanup
-  // entirely while anything is running or waiting costs nothing and rules
-  // out deleting an image that pull just fetched.
-  foreach ((array)(staxx_update_queue_state()['items'] ?? []) as $item) {
-    if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) {
-      $error = 'An update is running or queued, so cleanup was skipped. Try again once it finishes.';
-      return ['removed' => [], 'kept' => 0];
-    }
-  }
-
-  // Fails closed outright when Docker cannot even be asked what is running —
-  // an empty "in use" list here would look identical to "nothing is using
-  // any of these images" and delete things it never actually checked.
-  if (!$dry && !staxx_docker_running()) {
-    $error = 'The Docker service is not running, so nothing was removed.';
-    return ['removed' => [], 'kept' => 0];
-  }
-
-  // PLAN_68 Part C: the history-based half of the keep-set below matches each
-  // remembered digest back to a live stack by walking staxx_list_stacks() —
-  // and when the stack root cannot be seen, that list is empty, so every
-  // digest kept for a rollback reads as belonging to no stack at all and
-  // would be handed to `docker rmi` as if genuinely unused. Failing closed
-  // here is the same principle as the Docker check just above, for a root
-  // that is unmounted or unreadable rather than a daemon that is down.
-  // A dry run is guarded too, and deliberately. Its whole job is to tell
-  // somebody what WOULD be removed, and with the root unseen that list names
-  // rollback images as unused when they are not — a preview that is confidently
-  // wrong is worse than one that declines to answer, because the answer is
-  // what somebody decides on.
-  if (!staxx_stacks_visible()) {
-    $error = 'StaXX cannot see the stacks right now, so nothing was worked out or removed. '
-           . 'Check the array is started, then try again.';
-    return ['removed' => [], 'kept' => 0];
-  }
-
-  // The keep-set, built by its own function so it can be proved directly
-  // rather than re-derived by a test that would then be proving itself.
-  $keep = staxx_update_keep_digests();
-
-  // Every image a container is actually using, by id, running or stopped —
-  // never removed regardless of what the bookkeeping above says.
-  // `docker ps --format '{{.Image}}'` prints the REFERENCE a container was
-  // started with (usually repo:tag), never a digest and rarely an id, so
-  // comparing that against a repo@digest or an id never matched — the guard
-  // was doing nothing. `docker inspect` on each container's own id reports
-  // its actual Image field, which IS the image id, and that is what
-  // `docker image ls`'s own id column can honestly be compared against —
-  // after normalising both, since one may print the long sha256:... form and
-  // the other the short twelve-character one.
-  $docker = escapeshellarg(staxx_docker_bin());
-  $used   = [];
-  $psOut  = staxx_sh(
-    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg('{{.Image}}').' 2>&1',
-    15
-  );
-  foreach (explode("\n", $psOut) as $line) {
-    $line = trim($line);
-    if ($line !== '') $used[staxx_update_short_id($line)] = true;
-  }
-
-  foreach (array_keys($keep) as $repo) {
-    $listOut = staxx_sh(
-      staxx_docker_bin().' image ls --digests --format '
-        .escapeshellarg('{{.Repository}}'."\t".'{{.Digest}}'."\t".'{{.ID}}')
-        .' '.escapeshellarg($repo),
-      10
-    );
-
-    foreach (explode("\n", $listOut) as $line) {
-      $cols = explode("\t", $line);
-      if (count($cols) < 3 || $cols[1] === '<none>' || $cols[1] === '') continue;
-      $digest = $cols[1];
-      $id     = $cols[2];
-
-      if (in_array($digest, $keep[$repo] ?? [], true)) { $kept++; continue; }
-      if (isset($used[staxx_update_short_id($id)])) { $kept++; continue; }
-
-      $ref = $repo.'@'.$digest;
-      if ($dry) { $removed[] = $ref; continue; }
-
-      $rmCode = 1;
-      staxx_sh(staxx_docker_bin().' rmi '.escapeshellarg($ref).' 2>&1', 20, $rmCode);
-      if ($rmCode === 0) $removed[] = $ref; else $kept++;
-    }
-  }
-
-  return ['removed' => $removed, 'kept' => $kept];
 }
 
 /* ---------------------------------------------------------------------- queue -- */
@@ -1080,10 +1362,7 @@ function staxx_update_queue_write(array $queue): bool {
   $encoded = json_encode($queue, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($encoded === false) return false;
 
-  $tmp = STAXX_UPDATE_DIR.'/.queue.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, staxx_update_queue_path())) { @unlink($tmp); return false; }
-  return true;
+  return staxx_atomic_write(staxx_update_queue_path(), $encoded);
 }
 
 /**
@@ -1098,14 +1377,7 @@ function staxx_update_queue_lock(string &$error): bool {
     return false;
   }
 
-  $lock = STAXX_UPDATE_DIR.'/queue.lock';
-  if (@mkdir($lock, 0755)) return true;
-
-  $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
-  if ($age > 1800) {
-    @rmdir($lock);
-    if (@mkdir($lock, 0755)) return true;
-  }
+  if (staxx_mkdir_lock_stale(STAXX_UPDATE_DIR.'/queue.lock')) return true;
 
   $error = 'The queue is already being updated.';
   return false;
@@ -1160,7 +1432,7 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
   $images = (array)staxx_update_state()['images'];
   $items  = [];
 
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack') continue;
     $stack = $row['stack'];
 
@@ -1243,6 +1515,9 @@ function staxx_update_queue_tick(): array {
         $item['state'] = 'failed';
         $item['error'] = 'The update job\'s log is gone, so its outcome could not be recorded. '
                        . 'Check the stack directly.';
+        if (empty($item['reason'])) {
+          $item['reason'] = staxx_update_failure_reason('', staxx_update_stack_image((string)($item['stack'] ?? '')));
+        }
       } elseif ($log['exit'] === 0) {
         $item['state'] = 'done';
         // The queue has no browser to prompt a refresh, so without this the
@@ -1255,6 +1530,11 @@ function staxx_update_queue_tick(): array {
       } else {
         $item['state'] = 'failed';
         $item['error'] = 'The update failed. Open the log for details.';
+        // The log is pruned within the hour, so the plain-words reason is read
+        // now and kept on the item for the message and the summary.
+        if (empty($item['reason'])) {
+          $item['reason'] = staxx_update_failure_reason((string)$log['text'], staxx_update_stack_image((string)($item['stack'] ?? '')));
+        }
       }
       $changed = true;
     }
@@ -1290,6 +1570,7 @@ function staxx_update_queue_tick(): array {
       if ($job === '') {
         $item['state'] = 'failed';
         $item['error'] = $jobError !== '' ? $jobError : 'Could not start the update.';
+        $item['reason'] = $item['error'];
       } else {
         $item['state'] = 'running';
         $item['job']   = $job;
@@ -1300,22 +1581,35 @@ function staxx_update_queue_tick(): array {
     unset($item);
   }
 
-  // Every item finished, one way or another — send the one "applied" message
-  // for the whole pass, never one per stack, and only once per queue.
+  // Every item finished, one way or another — the whole pass hands its
+  // finished items to staxx_notify_events() in ONE call, never one per stack,
+  // and only once per queue. Notify.php decides what is said and whether it
+  // goes now or waits for the summary; 'installed' and 'failed' stay
+  // independent switches, so someone who wants the failure but not the
+  // success still hears the one that broke.
+  //
+  // PLAN_154 — there is no global gate here before even asking:
+  // staxx_update_queue_notify_names() resolves each stack's own
+  // 'installed'/'failed' want per container, following the server's switch
+  // for whichever event a container leaves unset, so a container that
+  // overrides the server's switch upward is not silenced by it.
   $terminal = true;
   foreach ($items as $item) {
     if (!in_array($item['state'] ?? '', ['done', 'failed', 'skipped'], true)) { $terminal = false; break; }
   }
-  if ($terminal && $changed && empty($queue['notified']) && staxx_update_settings()['notify'] === 'applied') {
-    $done = 0; $failed = 0;
-    foreach ($items as $item) {
-      if ($item['state'] === 'done') $done++;
-      elseif ($item['state'] === 'failed') $failed++;
-    }
-    staxx_update_notify(
-      'StaXX image updates applied',
-      $done.' stack'.($done === 1 ? '' : 's').' updated'.($failed > 0 ? ', '.$failed.' failed' : '').'.'
-    );
+  if ($terminal && $changed && empty($queue['notified'])) {
+    $settings    = staxx_update_settings();
+    $names       = staxx_update_queue_notify_names($items, $settings);
+    // A failed pull and a container that will not come back up both land
+    // here as 'failed' — the job's own exit code does not say which, so
+    // neither does the message; see the 'failed' state set above.
+    $events = staxx_update_queue_events($items, $names, $settings);
+    if ($events !== []) staxx_notify_events($events);
+    // Set once the terminal state has been looked at, whether or not
+    // anything wanted a message — otherwise a queue left idle would
+    // re-evaluate this block on every tick for no reason, and a setting
+    // changed later while the same queue is still sitting there would fire
+    // a stale message for a run that finished earlier.
     $queue['notified'] = true;
   }
 
@@ -1347,8 +1641,18 @@ function staxx_update_queue_stop(): bool {
  * otherwise, when staxx_update_due() has found anything, starts a fresh
  * queue over exactly those stacks. Costs no network either way — every
  * digest it acts on was already fetched by a check pass.
+ *
+ * The pinned-service reminder (PLAN_205) rides along on this same pass,
+ * first — it is its own weekly interval and never touches the queue, so it
+ * runs whether or not anything else here is due. The summary is sent
+ * straight after it, when due (staxx_notify_digest_pass()).
  */
 function staxx_update_apply_pass(): array {
+  staxx_update_pinned_reminder_pass();
+  // The daily or weekly summary, when it is due: it carries the pinned list the
+  // pass above just marked, so it runs second.
+  staxx_notify_digest_pass();
+
   // Held only across the read-check-write below, never across a call to
   // staxx_update_queue_tick() — that function takes this same lock itself,
   // and a non-reentrant mkdir lock taken twice by one process would just
@@ -1379,7 +1683,7 @@ function staxx_update_apply_pass(): array {
   foreach ($due as $d) $wanted[$d['stack']] = true;
 
   $items = [];
-  foreach (staxx_folder_layout(staxx_list_stacks()) as $row) {
+  foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack' || !isset($wanted[$row['stack']['name']])) continue;
     $items[] = ['stack' => $row['stack']['name'], 'state' => 'waiting', 'job' => '', 'error' => ''];
   }
@@ -1401,21 +1705,293 @@ function staxx_update_apply_pass(): array {
 
 /**
  * One message through Unraid's own notifier — never one per container.
- * Silent whenever the setting is 'off'; a caller that only wants to notify
- * on its own tier (queue completion needs 'applied' specifically, not just
- * 'found') checks staxx_update_settings()['notify'] itself before calling.
+ * PLAN_154 — this no longer gates on the server's own three switches itself:
+ * a container may override one of them upward (want a message the server's
+ * own default would suppress), so every caller now works out first, per
+ * event and with the server's switch only as the fallback for a container
+ * that says nothing, whether anyone actually wants this message — and calls
+ * here only once that list is non-empty.
+ *
+ * The binary is overridable through STAXX_NOTIFY_BIN — same trick as
+ * STAXX_UPDATE_STATE — so a server suite can prove a message was actually
+ * sent by pointing this at a throwaway stub instead of Unraid's real
+ * notifier, never by sending a real notification from this box.
  */
-function staxx_update_notify(string $subject, string $body): void {
-  if (staxx_update_settings()['notify'] === 'off') return;
-
+function staxx_update_notify(string $subject, string $body, string $message = '', string $link = '',
+                             string $importance = 'normal'): void {
+  $bin = getenv('STAXX_NOTIFY_BIN');
+  $bin = ($bin !== false && $bin !== '') ? $bin : '/usr/local/emhttp/webGui/scripts/notify';
+  // $importance may carry Unraid's delivery bits after a space ("warning 5"),
+  // which override the user's own for this one message; anything else is normal.
+  if (!preg_match('/^(normal|warning|alert)( [0-7])?$/', $importance)) $importance = 'normal';
   staxx_sh(
-    '/usr/local/emhttp/webGui/scripts/notify'
+    $bin
       .' -e '.escapeshellarg('StaXX')
       .' -s '.escapeshellarg($subject)
       .' -d '.escapeshellarg($body)
-      .' -i '.escapeshellarg('normal'),
+      .($message !== '' ? ' -m '.escapeshellarg($message) : '')
+      .($link !== '' ? ' -l '.escapeshellarg($link) : '')
+      .' -i '.escapeshellarg($importance),
     10
   );
+}
+
+/**
+ * A stack name on its own when the service shares the stack's own leaf name
+ * — the ordinary shape of a one-service stack — otherwise the stack with the
+ * service named alongside it, since "jellyfin" on its own would not say
+ * which container inside a multi-service stack is meant.
+ */
+function staxx_update_container_label(string $stack, string $service): string {
+  $slash = strrpos($stack, '/');
+  $leaf  = $slash === false ? $stack : substr($stack, $slash + 1);
+  return $service === $leaf ? $stack : $stack.' ('.$service.')';
+}
+
+/**
+ * Names every entry when there are few enough to read comfortably in a
+ * single notification line, otherwise just says how many — an update
+ * message is read at a glance, not studied, so a list of fifteen containers
+ * is worse than no list at all. PLAN_150 items 2/3: this is the one place
+ * that decides "few enough" for every update notice, so the three messages
+ * that use it (found, installed, failed) never disagree on the cutoff.
+ */
+function staxx_update_name_or_count(array $names, string $singular, string $plural): string {
+  $n = count($names);
+  $word = $n === 1 ? $singular : $plural;
+  return $n <= 5 ? $n.' '.$word.': '.implode(', ', $names) : $n.' '.$word;
+}
+
+/**
+ * Whether any service in this stack's own compose file resolves to wanting a
+ * mention in an update message for one event — 'found', 'installed' or
+ * 'failed'. PLAN_154 split this per event: wanting to hear about a failure
+ * and wanting to hear about a found update are different questions, and a
+ * service that says nothing about an event follows the server's own switch
+ * for that event, not a lumped-together answer. The completion and failure
+ * notices below work a whole stack at a time — the queue always did, see
+ * staxx_update_queue_start() — so there is no single "the" service to ask;
+ * naming the stack when at least one service inside opted in is the honest
+ * reading of a per-container switch applied to a stack-level report.
+ */
+function staxx_update_stack_wants_notify(string $event, array $meta, array $global): bool {
+  $key = 'notify'.ucfirst($event);
+  foreach (array_keys((array)($meta['services'] ?? [])) as $svc) {
+    $resolved = staxx_update_policy_from_meta($meta, $svc, $global)[$key];
+    if ($resolved ?? $global[$key]) return true;
+  }
+  return false;
+}
+
+/**
+ * Labels for every container whose image is currently sitting in "update
+ * waiting" AND whose own resolved say is yes — pulled out of
+ * staxx_update_check() so a test can prove the filtering (including the
+ * "everyone opted out" case) without ever calling staxx_update_notify().
+ * $refs and $stackFiles are staxx_update_images()/staxx_update_stack_files()'s
+ * own maps, already built once by the check pass this runs inside of, so
+ * nothing here re-scans the stack root — staxx_update_policy_from_meta() is
+ * used rather than staxx_update_policy() for the same reason.
+ *
+ * @param array $images staxx_update_state()'s own 'images' map
+ * @param array $refs image => ["stack::service", …]
+ * @param array $stackFiles stack name => compose file path
+ * @param array $global staxx_update_settings()'s return
+ * @return string[] container labels, de-duplicated
+ */
+function staxx_update_found_containers(array $images, array $refs, array $stackFiles, array $global): array {
+  $wanted = [];
+  foreach (staxx_update_found_events($images, $refs, $stackFiles, $global) as $e) {
+    $wanted[] = staxx_update_container_label($e['stack'], $e['service']);
+  }
+  return array_values(array_unique($wanted));
+}
+
+/**
+ * One 'found' event per container that has an update waiting and whose own
+ * resolved say is yes — the filter staxx_update_found_containers() names its
+ * labels from, with what the message needs: the running and waiting
+ * versions, both digests and the waiting version's release notes (only the
+ * keys the check stored; Notify.php ignores notes whose notesFor is another
+ * version).
+ *
+ * @return array[] events for staxx_notify_events()
+ */
+function staxx_update_found_events(array $images, array $refs, array $stackFiles, array $global): array {
+  $events    = [];
+  $metaCache = [];
+
+  foreach (array_keys($images) as $img) {
+    if (staxx_updates_pill_for_image($img, $images)['state'] !== 'update') continue;
+
+    foreach (($refs[$img] ?? []) as $ref) {
+      $parts    = explode('::', $ref, 2);
+      $refStack = $parts[0] ?? '';
+      $refSvc   = $parts[1] ?? '';
+
+      if (!isset($metaCache[$refStack])) {
+        $file = $stackFiles[$refStack] ?? '';
+        $metaCache[$refStack] = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+      }
+      // This is the 'found' message specifically — a container's own null
+      // (no opinion at either scope) falls to the server's own 'found'
+      // switch, not to whatever it decided for 'installed' or 'failed'.
+      $meta  = $metaCache[$refStack];
+      $wants = $meta['ok'] ? (staxx_update_policy_from_meta($meta, $refSvc, $global)['notifyFound'] ?? $global['notifyFound'])
+                           : $global['notifyFound'];
+      if (!$wants) continue;
+
+      $e = (array)$images[$img];
+      $event = ['kind' => 'found', 'stack' => $refStack, 'service' => $refSvc, 'image' => (string)$img,
+                'was' => (string)($e['was'] ?? ''), 'version' => (string)($e['version'] ?? ''),
+                'digest' => (string)($e['remote'] ?? ''), 'wasDigest' => (string)($e['local'] ?? '')];
+      foreach (['notes', 'notesUrl', 'notesCut', 'notesFor'] as $k) if (isset($e[$k])) $event[$k] = $e[$k];
+      $events[] = $event;
+    }
+  }
+
+  return $events;
+}
+
+/**
+ * Which of a queue's finished items (state 'done' or 'failed') resolve to
+ * wanting a mention, split by outcome — pulled out of
+ * staxx_update_queue_tick() so a test can prove the filtering (including the
+ * "everyone opted out" case) without ever calling staxx_update_notify(),
+ * which would fire a real notification on this box if either switch happens
+ * to be on. One scan of every stack's compose file, not one per queue item —
+ * a queue only ever holds a handful of due stacks, so this costs the same
+ * lookup the check pass already makes for the same reason.
+ *
+ * @param array $items staxx_update_queue_tick()'s own item list
+ * @param array $global staxx_update_settings()'s return
+ * @return array{done: string[], failed: string[]}
+ */
+function staxx_update_queue_notify_names(array $items, array $global): array {
+  $stackFiles = staxx_update_stack_files();
+  $metaCache  = [];
+  $doneNames   = [];
+  $failedNames = [];
+
+  foreach ($items as $item) {
+    $state = $item['state'] ?? '';
+    if ($state !== 'done' && $state !== 'failed') continue;
+
+    $stackName = (string)($item['stack'] ?? '');
+    if (!isset($metaCache[$stackName])) {
+      $file = $stackFiles[$stackName] ?? '';
+      $metaCache[$stackName] = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+    }
+    // 'done' asks about the 'installed' event, 'failed' about 'failed' — the
+    // two are independent switches, not one shared "wants a message" answer.
+    $meta  = $metaCache[$stackName];
+    $event = $state === 'done' ? 'installed' : 'failed';
+    $wants = $meta['ok'] ? staxx_update_stack_wants_notify($event, $meta, $global)
+                         : $global['notify'.ucfirst($event)];
+    if (!$wants) continue;
+
+    if ($state === 'done') $doneNames[] = $stackName; else $failedNames[] = $stackName;
+  }
+
+  return ['done' => $doneNames, 'failed' => $failedNames];
+}
+
+/** The first service's image in a stack, or '' — what a failure message names the registry from. */
+function staxx_update_stack_image(string $stack): string {
+  $file = staxx_update_stack_files()[$stack] ?? '';
+  $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+  if (!$meta['ok']) return '';
+  foreach ((array)$meta['services'] as $svcMeta) {
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image !== '') return $image;
+  }
+  return '';
+}
+
+/**
+ * An image's size on disk in bytes, from one local `docker image inspect`
+ * (8 s at most, no registry request); 0 when it cannot be read, which the
+ * message treats as "leave the size out". STAXX_DOCKER_BIN lets a suite
+ * stand in for docker.
+ */
+function staxx_update_image_size(string $image): int {
+  if ($image === '') return 0;
+  $bin = getenv('STAXX_DOCKER_BIN');
+  $bin = ($bin !== false && $bin !== '') ? $bin : staxx_docker_bin();
+  $code = 1;
+  $out = trim(staxx_sh($bin.' image inspect --format '.escapeshellarg('{{.Size}}').' '.escapeshellarg($image), 8, $code));
+  return ($code === 0 && ctype_digit($out)) ? (int)$out : 0;
+}
+
+/**
+ * The events for a finished queue, as staxx_notify_events() takes them: one
+ * 'installed' event per updated service and one 'failed' event per failed
+ * stack, only for the stacks staxx_update_queue_notify_names() ($names) let
+ * through. Versions, digests and notes come from what the check already
+ * stored (updates.json) and from the stack's image history, whose newest
+ * entry is the build that was replaced; nothing is fetched here beyond the
+ * one local size read per installed service.
+ *
+ * @param array $items the queue's items
+ * @param array $names staxx_update_queue_notify_names()'s return
+ * @param array $global staxx_update_settings()'s return
+ * @return array[]
+ */
+function staxx_update_queue_events(array $items, array $names, array $global): array {
+  $stackFiles = staxx_update_stack_files();
+  $images     = (array)(staxx_update_state()['images'] ?? []);
+  $events     = [];
+
+  foreach ($items as $item) {
+    $state = $item['state'] ?? '';
+    $stack = (string)($item['stack'] ?? '');
+    if ($state !== 'done' && $state !== 'failed') continue;
+    if (!in_array($stack, $state === 'done' ? $names['done'] : $names['failed'], true)) continue;
+
+    $file = $stackFiles[$stack] ?? '';
+    $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false];
+    $services = $meta['ok'] ? (array)$meta['services'] : [];
+
+    if ($state === 'failed') {
+      $first = '';
+      foreach ($services as $svcMeta) {
+        $first = trim((string)($svcMeta['image'] ?? ''));
+        if ($first !== '') break;
+      }
+      $events[] = ['kind' => 'failed', 'stack' => $stack, 'service' => '', 'image' => $first,
+                   'reason' => (string)($item['reason'] ?? '')];
+      continue;
+    }
+
+    $before = count($events);
+    foreach ($services as $svc => $svcMeta) {
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      if ($image === '') continue;
+      if (!(staxx_update_policy_from_meta($meta, $svc, $global)['notifyInstalled'] ?? $global['notifyInstalled'])) continue;
+
+      $entry = (array)($images[$image] ?? []);
+      $prev  = (array)(staxx_image_history($stack, (string)$svc)[0] ?? []);
+      if ($entry === [] && $prev === []) continue;
+
+      $wasDigest = (string)($prev['digest'] ?? '');
+      $digest    = (string)(($entry['local'] ?? '') !== '' ? $entry['local'] : ($entry['remote'] ?? ''));
+      if ($wasDigest !== '' && $wasDigest === $digest) continue; // this service did not change
+
+      $event = ['kind' => 'installed', 'stack' => $stack, 'service' => (string)$svc, 'image' => $image,
+                'was' => (string)(($prev['version'] ?? '') !== '' ? $prev['version'] : ($entry['was'] ?? '')),
+                'version' => (string)($entry['version'] ?? ''), 'digest' => $digest, 'wasDigest' => $wasDigest];
+      foreach (['notes', 'notesUrl', 'notesCut', 'notesFor'] as $k) if (isset($entry[$k])) $event[$k] = $entry[$k];
+      $size = staxx_update_image_size($image);
+      if ($size > 0) $event['size'] = $size;
+      $events[] = $event;
+    }
+    // Nothing singled out (no versions or history known): still say the stack updated.
+    if (count($events) === $before) {
+      $events[] = ['kind' => 'installed', 'stack' => $stack, 'service' => '', 'image' => ''];
+    }
+  }
+
+  return $events;
 }
 
 /* ------------------------------------------------------------ locally built -- */

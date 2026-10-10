@@ -1,0 +1,8 @@
+services:
+  svc2:
+    image: alpine:3.20
+    volumes:
+      - namedvol:/data2
+volumes:
+  namedvol:
+    name: my-custom-real-name

@@ -117,6 +117,20 @@ function staxx_percent(string $text): float {
   return (float)str_replace('%', '', trim($text));
 }
 
+/**
+ * How many CPU threads the server has, so a per-core Docker figure can be
+ * turned into a share of the whole processor. Read once per request — the
+ * count of `processor` lines in /proc/cpuinfo does not change mid-request.
+ */
+function staxx_cpu_threads(): int {
+  static $threads = null;
+  if ($threads !== null) return $threads;
+
+  $count = preg_match_all('/^processor\s*:/m', (string)@file_get_contents('/proc/cpuinfo'));
+  $threads = max(1, (int)$count);
+  return $threads;
+}
+
 /* ----------------------------------------------------------- containers -- */
 
 /**
@@ -163,7 +177,11 @@ function staxx_stats_containers(): array {
     $out[$row['Name']] = [
       'id'       => (string)($row['Container'] ?? ''),
       'name'     => (string)$row['Name'],
-      'cpu'      => staxx_percent((string)($row['CPUPerc'] ?? '')),
+      // Docker reports CPU per core (a busy single core reads 100%, so the
+      // top on a 12-thread box is 1200%); dividing by the thread count turns
+      // it into a 0-100% share of the whole processor, which is what a
+      // person actually wants to read.
+      'cpu'      => staxx_percent((string)($row['CPUPerc'] ?? '')) / staxx_cpu_threads(),
       'memUsed'  => $memUsed,
       'memLimit' => $memLimit,
       'memPct'   => staxx_percent((string)($row['MemPerc'] ?? '')),
@@ -339,9 +357,19 @@ function staxx_gpu_support(): array {
 }
 
 function staxx_have(string $binary): bool {
+  // No shell: this runs on every stats poll. The fallback list is for a PHP
+  // process started with no PATH, where `sh` would use its own default.
   static $seen = [];
   if (!isset($seen[$binary])) {
-    $seen[$binary] = staxx_sh('command -v '.escapeshellarg($binary), 5) !== '';
+    $path = (string)getenv('PATH');
+    if ($path === '') $path = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+    $found = false;
+    foreach (explode(':', $path) as $dir) {
+      if ($dir === '') continue;
+      $candidate = $dir.'/'.$binary;
+      if (is_file($candidate) && is_executable($candidate)) { $found = true; break; }
+    }
+    $seen[$binary] = $found;
   }
   return $seen[$binary];
 }

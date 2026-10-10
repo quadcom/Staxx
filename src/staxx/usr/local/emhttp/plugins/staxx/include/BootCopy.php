@@ -17,9 +17,11 @@
  *      done for two narrow reasons, both added by the PLAN_103 addendum: to
  *      describe the shelf to a person (how many stacks, from when) so they
  *      can decide whether to restore, and to decide whether a copy needs
- *      rewriting at all (staxx_boot_sweep() compares bytes before writing).
+ *      rewriting at all (staxx_boot_sweep() compares bytes before writing,
+ *      and staxx_boot_write_file() does the same for every other caller).
  *      Neither reads happen while the store itself can answer the same
- *      question — see staxx_boot_shelf_summary() and staxx_boot_sweep().
+ *      question — see staxx_boot_shelf_summary(), staxx_boot_sweep() and
+ *      staxx_boot_write_file().
  *   2. Nothing here compares a copy's timestamp with the store's. The only
  *      timestamp involved is the filesystem's own mtime on the copy, and it
  *      is never read here — see the note on staxx_boot_write_file() below.
@@ -171,17 +173,16 @@ function staxx_boot_read_source(string $path, string &$error): ?string {
  * separate stamp file is written, because the copy's own filesystem
  * modification time already records when it landed here, one per file, for
  * free — inventing a second place to store the same fact would be a second
- * thing that could disagree with the first.
+ * thing that could disagree with the first, which is why identical content is
+ * left untouched below rather than rewritten: the modification time records
+ * when this copy's content last changed, not when it was last asked for
+ * (D4, PLAN_197 item 7, ruled 2026-09-28).
  */
 function staxx_boot_write_file(string $target, string $content, string &$error): bool {
-  $tmp = $target.'.'.getmypid().'.tmp';
-  if (@file_put_contents($tmp, $content) === false) {
-    $error = 'Could not write "'.$target.'" on the boot drive.';
-    return false;
-  }
-  if (!@rename($tmp, $target)) {
-    @unlink($tmp);
-    $error = 'Could not put "'.$target.'" in place on the boot drive.';
+  if (is_file($target) && @file_get_contents($target) === $content) return true;
+  if (!staxx_atomic_write($target, $content, null, $failed)) {
+    $error = $failed === 'write' ? 'Could not write "'.$target.'" on the boot drive.'
+                                  : 'Could not put "'.$target.'" in place on the boot drive.';
     return false;
   }
   return true;
@@ -239,10 +240,14 @@ function staxx_boot_copy_stack(string $rel, string &$error): bool {
   }
 
   // A stack that had an override at its last copy and does not now must not
-  // leave that override sitting on the shelf looking current.
-  $overrideName = staxx_expected_override_basename($main);
-  if ($overrideName !== '' && !in_array($overrideName, $wanted, true)) {
-    @unlink($dir.'/'.$overrideName);
+  // leave that override sitting on the shelf looking current — checked
+  // against all four names an override could be called (PLAN_155 C5), not
+  // just the one guessed from the main file's own extension, since a stack
+  // may switch which of the four names its override carries between copies.
+  foreach (staxx_override_names() as $overrideName) {
+    if (!in_array($overrideName, $wanted, true)) {
+      @unlink($dir.'/'.$overrideName);
+    }
   }
 
   // The .env file too, since a compose file full of ${PLACEHOLDERS} is not
@@ -343,7 +348,7 @@ function staxx_boot_sweep(): array {
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $rel  = $found['rel'];
-    $main = staxx_find_compose_file($found['dir']);
+    $main = $found['file'];
     if ($main === '') continue;
 
     $shelfDir = staxx_boot_stacks_root().'/'.$rel;

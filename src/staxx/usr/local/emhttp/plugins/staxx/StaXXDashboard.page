@@ -1,0 +1,77 @@
+Menu="Dashboard:0"
+Markdown="false"
+---
+<?PHP
+/* StaXX — the Dashboard tile (PLAN_183).
+ *
+ * Unraid's Dashboard collects every plugin's tile markup into the global
+ * $mytiles array before it renders the page — nothing here is ever displayed
+ * on its own account, so unlike every other .page in this plugin, this one
+ * emits no HTML directly and has no Cond (StaXX requires 7.2+ regardless of
+ * Docker's own state, since the tile is empty rather than wrong while Docker
+ * is down).
+ *
+ * The markup is one bare <tbody> carrying title="…", exactly as the stock
+ * tiles in dynamix/DashStats.page and gpustat build theirs: DashStats echoes
+ * each $mytiles column straight into its own column table, and its Content
+ * Manager and move/hide controls work on <tbody> elements, so a wrapping
+ * <div> or <table> would break both. Read from the box 2026-09-28.
+ *
+ * The header keeps an inner .tile-header-right-controls span because DashStats'
+ * addProperties() appends its collapse chevron into exactly that element.
+ *
+ * Copyright 2026, StaXX contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+
+// Read directly rather than through the page's own $var — this tile can be
+// built while Dashboard.page's own PHP is assembling $mytiles from every
+// plugin in turn, before Unraid's usual per-page variables are all in scope.
+// Stacks.page's no-store branch reads var.ini the same way for the same
+// reason (see include/StacksPage.php).
+$vars = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
+$csrf = (string)($vars['csrf_token'] ?? '');
+
+$jsTag   = staxx_asset('javascript/dashboard.js');
+$cssTag  = staxx_asset('sheets/dashboard.css');
+$viewUrl = staxx_view_url();
+
+$editorHref = htmlspecialchars($viewUrl.'#dashboard-editor', ENT_QUOTES);
+$csrfAttr   = htmlspecialchars($csrf, ENT_QUOTES);
+
+$mytiles['staxx']['column2'] = <<<TILE
+<tbody class="staxx-tile-root" title="StaXX" data-csrf="{$csrfAttr}"
+       data-endpoint="/plugins/staxx/include/action.php">
+<tr>
+<td>
+<link rel="stylesheet" href="{$cssTag}">
+<span class="tile-header">
+<span class="tile-header-left">
+<a class="staxx-tile-mark" href="{$editorHref}" title="Edit this tile"><i class="fa fa-cubes f32" aria-hidden="true"></i></a>
+<div class="section">
+<h3 class="tile-header-main">StaXX</h3>
+<span class="staxx-tile-sub" id="staxx-tile-sub">&nbsp;</span>
+</div>
+</span>
+<span class='tile-header-right'>
+<span class='tile-header-right-controls'>
+<a href="{$editorHref}" title="Edit this tile">
+<i class="fa fa-fw fa-cog control"></i>
+</a>
+</span>
+</span>
+</span>
+</td>
+</tr>
+<tr>
+<td>
+<div class="staxx-tile-grid" id="staxx-tile-grid"></div>
+<script src="{$jsTag}"></script>
+</td>
+</tr>
+</tbody>
+TILE;

@@ -201,4 +201,58 @@ ok('an oversized file is abandoned rather than parsed',
    strlen($oversized) > 64 * 1024 &&
    staxx_health_published_extract($oversized, 'someone/thing') === null);
 
+/* ---------------------------------- PLAN_163 part 2 — the turned-away tally - */
+
+// A scratch file, never the real store — same reasoning as every other suite
+// that redirects a state file rather than touching what is actually on disk.
+$tallyFile = '/tmp/staxx-health-turned-away-test-'.getmypid().'.json';
+@unlink($tallyFile);
+putenv('STAXX_HEALTH_TURNED_AWAY_FILE='.$tallyFile);
+
+// staxx_health_published_extract() itself is exercised again here rather
+// than staxx_health_published_check(), which reaches the real network —
+// exactly the same "no network anywhere below" reasoning the suite's own
+// header states. What check() does with a null result and a raw $unreadRaw
+// is one plain `if`, already read above; this proves the two halves it
+// joins — the out parameter, and the recorder it feeds — each do their own
+// job correctly.
+$unread = 'not set';
+$again = staxx_health_published_extract($multiline, 'someone/thing', $unread);
+ok('the multi-line shape sets the out parameter to the raw test text',
+   $again === null && is_string($unread) && strpos($unread, 'CMD') !== false);
+
+$recognisedUnread = 'not set';
+staxx_health_published_extract($goodExample, 'someone/thing:v2', $recognisedUnread);
+ok('a recognised shape leaves the out parameter null', $recognisedUnread === null);
+
+staxx_health_turned_away_record('server', 'shape-not-read', $unread, 'someone/thing');
+$tally = staxx_health_turned_away_read();
+ok('one sighting is recorded for the unread shape, and none for the recognised one',
+   count($tally) === 1);
+$sigKey = array_key_first($tally);
+ok('that one sighting starts at count 1', $tally[$sigKey]['count'] === 1);
+
+$firstSeen = $tally[$sigKey]['first'];
+$firstExample = $tally[$sigKey]['example'];
+sleep(1);   // 'first'/'last' are second-resolution ISO stamps — this proves they can actually differ
+staxx_health_turned_away_record('server', 'shape-not-read', $unread, 'someone/thing');
+$tally = staxx_health_turned_away_read();
+ok('a second sighting of the same shape raises the count', $tally[$sigKey]['count'] === 2);
+ok('and moves last on, without moving first', $tally[$sigKey]['first'] === $firstSeen &&
+   $tally[$sigKey]['last'] >= $firstSeen);
+ok('the example is kept from the first sighting, unchanged', $tally[$sigKey]['example'] === $firstExample);
+
+// A distinct shape (different raw text -> different signature word), so its
+// own images list starts empty rather than inheriting 'someone/thing' from
+// the case above.
+for ($i = 1; $i <= 6; $i++) {
+  staxx_health_turned_away_record('server', 'shape-not-read', 'pg_isready -U postgres', "image-$i/thing");
+}
+$tally = staxx_health_turned_away_read();
+$pgKey = 'server|shape-not-read|pg_isready';
+ok('a sixth image is not added to images', count($tally[$pgKey]['images']) === 5 &&
+   !in_array('image-6/thing', $tally[$pgKey]['images'], true));
+
+@unlink($tallyFile);
+
 exit($fails > 0 ? 1 : 0);

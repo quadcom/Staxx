@@ -1,0 +1,533 @@
+/* StaXX — the Dashboard tile editor and icon picker (PLAN_183).
+ * Copyright 2026, StaXX contributors. GPL-2.0.
+ *
+ * Every class here is staxx-dash-prefixed. Both dialogs are appended to
+ * .staxx-scaffold by dash-editor.js (the same place every script-built
+ * dialog in this plugin lives — see staxx.css's own note on "Own the
+ * render" and the .unapi reset), so every rule below is written at
+ * .staxx-scaffold .staxx-dash-xxx and restates font, colour, background and
+ * radius rather than trusting an ancestor for them (notes/constraints.md).
+ */
+
+.staxx-scaffold .staxx-dash-editor,
+.staxx-scaffold .staxx-dash-picker {
+  padding: 0;
+  border: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  border-radius: var(--sm-radius, 0.4rem);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  font-family: inherit;
+  font-size: 1.3rem;
+  line-height: 1.4;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin: auto;
+}
+
+.staxx-scaffold .staxx-dash-editor:not([open]),
+.staxx-scaffold .staxx-dash-picker:not([open]) { display: none; }
+
+.staxx-scaffold .staxx-dash-editor { width: min(1200px, 96vw); height: 86vh; }
+.staxx-scaffold .staxx-dash-picker { width: min(980px, 90vw); height: 78vh; }
+
+.staxx-scaffold .staxx-dash-editor::backdrop,
+.staxx-scaffold .staxx-dash-picker::backdrop { background: rgba(0, 0, 0, .5); }
+
+.staxx-scaffold .staxx-dash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 1.2rem 1.4rem 0.8rem;
+  flex: 0 0 auto;
+}
+.staxx-scaffold .staxx-dash-closebtn {
+  margin: 0;
+  padding: 0.2rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-dash-closebtn i { margin-right: 0.3rem; }
+.staxx-scaffold .staxx-dash-title { margin: 0; font-size: 1.6rem; font-weight: 700; color: var(--text-color, #e0e0e0); }
+
+.staxx-scaffold .staxx-dash-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-top: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+}
+
+.staxx-scaffold .staxx-dash-col { padding: 1rem; overflow-y: auto; min-height: 0; }
+.staxx-scaffold .staxx-dash-col--left  { width: 250px; flex: 0 0 250px; border-right: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45)); }
+.staxx-scaffold .staxx-dash-col--mid   { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; overflow: auto; }
+.staxx-scaffold .staxx-dash-col--right { width: 270px; flex: 0 0 270px; border-left: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45)); }
+
+.staxx-scaffold .staxx-dash-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  flex: 0 0 auto;
+}
+.staxx-scaffold .staxx-dash-msg { margin: 0 auto 0 0; color: var(--sm-muted, rgba(128, 128, 128, 1)); font-size: 1.2rem; }
+
+/* ---- left column: every stack, grouped by Stacks-page folder ---------- */
+
+.staxx-scaffold .staxx-dash-folderbar {
+  position: sticky;
+  top: -1rem;
+  margin: 0 -1rem;
+  padding: 0.5rem 1rem;
+  background: var(--sm-fill, rgba(128, 128, 128, .12));
+  border-top: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  border-bottom: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  font-weight: 700;
+  color: #fff;
+  font-size: 1.2rem;
+  z-index: 1;
+}
+.staxx-scaffold .staxx-dash-listrow {
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.2rem;
+  cursor: grab;
+  font-size: 1.2rem;
+  color: var(--text-color, #e0e0e0);
+}
+.staxx-scaffold .staxx-dash-listname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staxx-scaffold .staxx-dash-onTile { color: var(--sm-accent, #ff8c2f); font-size: 1.05rem; white-space: nowrap; }
+.staxx-scaffold .staxx-dash-onTile i { margin-right: 0.2rem; }
+
+.staxx-scaffold .staxx-dash-icon-img { object-fit: contain; display: inline-block; border-radius: 0.3rem; }
+.staxx-scaffold .staxx-dash-icon-blank { display: inline-block; border-radius: 0.3rem; background: var(--sm-fill, rgba(128, 128, 128, .12)); }
+
+/* ---- middle column: the canvas ----------------------------------------- */
+
+.staxx-scaffold .staxx-dash-caption { margin: 0 0 26px; font-size: 1.2rem; color: var(--sm-muted, rgba(128, 128, 128, 1)); }
+
+.staxx-scaffold .staxx-dash-canvas { position: relative; flex: 0 0 auto; }
+.staxx-scaffold .staxx-dash-cells  { position: relative; }
+
+.staxx-scaffold .staxx-dash-cell {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, .05);
+  box-sizing: border-box;
+}
+.staxx-scaffold .staxx-dash-cell--drop {
+  border: 1px solid rgba(230, 138, 0, .45);
+  background: rgba(230, 138, 0, .06);
+}
+.staxx-scaffold .staxx-dash-cell--folderhi {
+  outline: 1px solid rgba(230, 138, 0, .5);
+  outline-offset: 3px;
+  background: #3a3129;
+}
+
+.staxx-scaffold .staxx-dash-piece { position: relative; width: 100%; height: 100%; user-select: none; }
+
+/* A drag must never paint a text selection across the page; startDrag() sets
+ * this class on <body> while the pointer is down and moving. */
+body.staxx-dash-dragging, body.staxx-dash-dragging * { user-select: none; cursor: grabbing; }
+.staxx-scaffold .staxx-dash-piece--sel .staxx-dash-square {
+  outline: 2px solid var(--sm-accent, #ff8c2f);
+  outline-offset: 3px;
+}
+
+.staxx-scaffold .staxx-dash-square {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #333131;
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  cursor: grab;
+  user-select: none;
+}
+.staxx-scaffold .staxx-dash-square-body {
+  flex: 1 1 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.staxx-scaffold .staxx-dash-square-name {
+  width: 100%;
+  padding: 0 4px 4px;
+  font-weight: 700;
+  color: #fff;
+  text-align: center;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.staxx-scaffold .staxx-dash-square--dark .staxx-dash-square-name {
+  background: linear-gradient(to top, rgba(0, 0, 0, .75), transparent);
+  padding-top: 1.2rem;
+}
+.staxx-scaffold .staxx-dash-fill-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.staxx-scaffold .staxx-dash-loose-icon img,
+.staxx-scaffold .staxx-dash-loose-icon .staxx-dash-icon-img { display: block; }
+
+.staxx-scaffold .staxx-dash-glyph { color: var(--sm-accent, #ff8c2f); font-size: 2.2rem; }
+
+.staxx-scaffold .staxx-dash-auto { position: relative; display: inline-block; }
+.staxx-scaffold .staxx-dash-auto-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .6s linear;
+}
+.staxx-scaffold .staxx-dash-auto-layer:first-child { position: static; }
+.staxx-scaffold .staxx-dash-auto-layer--on { opacity: 1; }
+
+.staxx-scaffold .staxx-dash-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  line-height: 1;
+  background: var(--sm-accent, #ff8c2f);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.staxx-scaffold .staxx-dash-remove {
+  position: absolute;
+  top: -11px;
+  right: -11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  background: #d33;
+  color: #fff;
+  font-size: 1.1rem;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  padding: 0;
+}
+.staxx-scaffold .staxx-dash-piece:hover .staxx-dash-remove,
+.staxx-scaffold .staxx-dash-piece--sel .staxx-dash-remove { display: flex; }
+
+.staxx-scaffold .staxx-dash-x {
+  position: absolute;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: #d33;
+  font-size: 1.1rem;
+  line-height: 1;
+  opacity: .45;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-dash-x:hover:not(:disabled) { opacity: 1; }
+.staxx-scaffold .staxx-dash-x--dim { opacity: .12; cursor: not-allowed; }
+.staxx-scaffold .staxx-dash-x--dim:hover { opacity: .12; }
+.staxx-scaffold .staxx-dash-colxs { position: absolute; top: -14px; left: 0; right: 0; height: 22px; }
+/* 14px clear of the canvas's right edge, as in the approved picture. */
+.staxx-scaffold .staxx-dash-rowxs { position: absolute; top: 0; left: calc(100% + 14px); bottom: 0; width: 22px; }
+.staxx-scaffold .staxx-dash-x--col { top: -22px; }
+.staxx-scaffold .staxx-dash-x--row { left: 0; transform: translateY(-50%); }
+
+.staxx-scaffold .staxx-dash-ghost {
+  position: fixed;
+  z-index: 20000;
+  pointer-events: none;
+  user-select: none;
+  transform: translate(-50%, -50%);
+}
+.staxx-scaffold .staxx-dash-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  background: #333131;
+  border: 1px solid rgba(230, 138, 0, .45);
+  border-radius: 0.4rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .5);
+  color: #fff;
+  font-size: 1.2rem;
+  white-space: nowrap;
+}
+
+/* ---- right column ------------------------------------------------------ */
+
+.staxx-scaffold .staxx-dash-field { margin-bottom: 1.2rem; }
+.staxx-scaffold .staxx-dash-field > span:first-child { display: block; margin-bottom: 0.4rem; font-weight: 700; }
+.staxx-scaffold .staxx-dash-field > span.staxx-dash-heading { font-size: 1.3rem; margin-bottom: 0.8rem; }
+.staxx-scaffold .staxx-dash-fullwidth { margin-top: 0.6rem; }
+
+.staxx-scaffold .staxx-dash-steprow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+.staxx-scaffold .staxx-dash-steprow label { color: var(--text-color, #e0e0e0); font-size: 1.2rem; }
+.staxx-scaffold .staxx-dash-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  border-radius: 0.3rem;
+  background: var(--sm-fill, rgba(128, 128, 128, .12));
+  overflow: hidden;
+}
+.staxx-scaffold .staxx-dash-stepper button {
+  width: 2.6rem;
+  height: 2.4rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-color, #e0e0e0);
+  font-family: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-dash-stepper button:disabled { opacity: .4; cursor: not-allowed; }
+.staxx-scaffold .staxx-dash-stepper span { min-width: 3rem; text-align: center; font-weight: 700; color: var(--text-color, #e0e0e0); }
+
+.staxx-scaffold .staxx-dash-newfolder,
+.staxx-scaffold .staxx-dash-fullwidth {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 1rem;
+  border: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  border-radius: 0.3rem;
+  background: var(--sm-fill, rgba(128, 128, 128, .12));
+  color: var(--text-color, #e0e0e0);
+  font-family: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-dash-newfolder:disabled,
+.staxx-scaffold .staxx-dash-fullwidth:disabled { opacity: .5; cursor: not-allowed; }
+.staxx-scaffold .staxx-dash-newfolder { margin: 0.6rem 0 1.2rem; }
+
+.staxx-scaffold .staxx-dash-divider { height: 0.1rem; margin: 1rem 0; background: var(--sm-line, rgba(128, 128, 128, .45)); }
+
+.staxx-scaffold .staxx-dash-iconprev-row { display: flex; justify-content: flex-start; margin-bottom: 0.6rem; }
+
+.staxx-scaffold .staxx-dash-autorow { display: flex; align-items: center; justify-content: space-between; }
+
+.staxx-scaffold .staxx-dash-swatches { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.staxx-scaffold .staxx-dash-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 0.4rem;
+  border: 0.1rem solid rgba(255, 255, 255, .15);
+  cursor: pointer;
+  padding: 0;
+}
+.staxx-scaffold .staxx-dash-swatch--on { outline: 2px solid var(--sm-accent, #ff8c2f); outline-offset: 2px; }
+/* The dropper glyph is what shows; the real colour input lies invisibly over
+ * it, because the browser draws a native colour input as a solid block. */
+.staxx-scaffold .staxx-dash-eyedrop {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border: 0.1rem solid rgba(255, 255, 255, .3);
+  border-radius: 0.4rem;
+  background: #1c1c1c;
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-dash-eyedrop input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-dash-removecolour {
+  margin-top: 0.5rem;
+  border: 0;
+  background: none;
+  color: #d33;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1.15rem;
+  line-height: 1.2;
+  padding: 0;
+}
+
+.staxx-scaffold .staxx-dash-folderlist { display: flex; flex-direction: column; gap: 0.3rem; }
+.staxx-scaffold .staxx-dash-folderstack {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.2rem;
+  font-size: 1.15rem;
+  user-select: none;
+}
+.staxx-scaffold .staxx-dash-grip { cursor: grab; user-select: none; color: var(--sm-muted, rgba(128, 128, 128, 1)); }
+.staxx-scaffold .staxx-dash-fname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staxx-scaffold .staxx-dash-remove--inline {
+  position: static;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  font-size: 0.95rem;
+}
+.staxx-scaffold .staxx-dash-dropline { height: 2px; background: var(--sm-accent, #ff8c2f); margin: 2px 0; }
+
+.staxx-scaffold .staxx-dash-text,
+.staxx-scaffold .staxx-dash-select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  border: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  border-radius: 0.3rem;
+  background: var(--sm-fill-0, rgba(128, 128, 128, .06));
+  color: var(--text-color, #e0e0e0);
+  font-family: inherit;
+  font-size: 1.2rem;
+  line-height: 1.3;
+}
+
+/* ---- the icon picker ---------------------------------------------------- */
+
+.staxx-scaffold .staxx-dash-picker-tabs { display: flex; gap: 0.4rem; padding: 0 1.4rem; border-bottom: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45)); flex: 0 0 auto; }
+.staxx-scaffold .staxx-dash-picker-tabs .staxx-tab {
+  border: 0;
+  background: none;
+  color: var(--sm-muted, rgba(128, 128, 128, 1));
+  font-family: inherit;
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 0.6rem 0.4rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.staxx-scaffold .staxx-dash-picker-tabs .staxx-tab--on {
+  color: var(--text-color, #e0e0e0);
+  border-bottom-color: var(--sm-accent, #ff8c2f);
+}
+
+.staxx-scaffold .staxx-dash-picker-tools { display: flex; gap: 0.6rem; padding: 0.8rem 1.4rem; flex: 0 0 auto; }
+.staxx-scaffold .staxx-dash-picker-tools .staxx-dash-select { width: auto; min-width: 10rem; }
+.staxx-scaffold .staxx-dash-picker-search { flex: 1 1 auto; }
+
+.staxx-scaffold .staxx-dash-picker-grid {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 1.4rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 0.6rem;
+  align-content: start;
+}
+.staxx-scaffold .staxx-dash-pick-tile {
+  width: 76px;
+  height: 76px;
+  border-radius: 16px;
+  border: 0.1rem solid transparent;
+  background: var(--sm-fill, rgba(128, 128, 128, .12));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+}
+.staxx-scaffold .staxx-dash-pick-tile--light { background: #e9e7e4; }
+.staxx-scaffold .staxx-dash-pick-tile:hover { border-color: rgba(230, 138, 0, .5); }
+.staxx-scaffold .staxx-dash-pick-tile--on { border-color: var(--sm-accent, #ff8c2f); }
+.staxx-scaffold .staxx-dash-pick-thumb { width: 100%; height: 100%; object-fit: contain; }
+.staxx-scaffold .staxx-dash-pick-thumb--62 { width: 62%; height: 62%; }
+.staxx-scaffold .staxx-dash-pick-tile .staxx-dash-glyph { font-size: 2.4rem; }
+
+.staxx-scaffold .staxx-dash-picker-credit { margin: 0.6rem 1.4rem 0; font-size: 1.1rem; color: var(--sm-muted, rgba(128, 128, 128, 1)); flex: 0 0 auto; }
+.staxx-scaffold .staxx-dash-picker-credit a { color: var(--sm-accent, #ff8c2f); }
+
+.staxx-scaffold .staxx-dash-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line, rgba(128, 128, 128, .45));
+  flex: 0 0 auto;
+}
+.staxx-scaffold .staxx-dash-picker-preview { display: flex; align-items: center; gap: 0.6rem; font-size: 1.2rem; min-width: 0; }
+.staxx-scaffold .staxx-dash-picker-preview img,
+.staxx-scaffold .staxx-dash-picker-preview .staxx-dash-pick-thumb { width: 28px; height: 28px; object-fit: contain; }
+
+.staxx-scaffold .staxx-dash-drop {
+  grid-column: 1 / -1;
+  border: 0.15rem dashed var(--sm-line, rgba(128, 128, 128, .45));
+  border-radius: 0.6rem;
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text-color, #e0e0e0);
+}
+.staxx-scaffold .staxx-dash-drop--over { border-color: var(--sm-accent, #ff8c2f); background: rgba(230, 138, 0, .06); }
+.staxx-scaffold .staxx-dash-drop input[type="file"] { display: none; }
+
+@media (max-width: 60rem) {
+  .staxx-scaffold .staxx-dash-body { flex-direction: column; overflow-y: auto; }
+  .staxx-scaffold .staxx-dash-col--left,
+  .staxx-scaffold .staxx-dash-col--right { width: auto; flex: 0 0 auto; }
+}
+
+/* Images inside draggable pieces never start a native image drag (it cancels the pointer drag); clicks land on the piece via closest(). */
+.staxx-scaffold .staxx-dash-piece img,
+.staxx-scaffold .staxx-dash-listrow img,
+.staxx-scaffold .staxx-dash-folderstack img,
+.staxx-scaffold .staxx-dash-ghost img { -webkit-user-drag: none; user-drag: none; pointer-events: none; }
+
+.staxx-scaffold .staxx-dash-piece--lifted { visibility: hidden; }

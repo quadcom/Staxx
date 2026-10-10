@@ -1,0 +1,3 @@
+services:
+  svc2:
+    image: myapp:${TAG:-1.25}

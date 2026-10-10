@@ -1,0 +1,393 @@
+/* 1rem is 10px in the Unraid webGUI (html font-size 62.5%), so rem sizes here are tenths of a pixel-scale, not 16px. */
+/* StaXX — the Dashboard tile (PLAN_183 section 5).
+ * Copyright 2026, StaXX contributors. GPL-2.0.
+ *
+ * Every rule here is scoped under .staxx-tile-root (the tile itself) or
+ * .staxx-dash-stats-overlay (the statistics window, appended to <body> so it
+ * floats over the whole Dashboard, not just the tile). Nothing here is a
+ * bare element selector, so nothing bleeds into Unraid's other tiles, the
+ * stock Docker tile, or Folder View 3 (notes/constraints.md — "own the
+ * render"). Controls restate font, colour, background and border-radius
+ * explicitly, because Unraid resets buttons and inputs hard on its own
+ * pages and a Dashboard tile is no exception (notes/constraints.md).
+ */
+
+.staxx-tile-root { position: relative; font-family: inherit; }
+
+.staxx-tile-mark { display: inline-flex; align-items: center; text-decoration: none; }
+.staxx-tile-mark .fa { color: #e68a00; font-size: 2.24rem; margin-right: 0.64rem; }
+
+.staxx-tile-sub {
+  font-size: 1.3rem;
+  color: #fff;
+  padding: 0 0 0.8rem 0.32rem;
+}
+
+/* ---- the grid: one flex row per tile row, so an opened folder's panel can
+   sit between two rows in plain document flow (see dashboard.js buildGrid). */
+.staxx-tile-grid { display: flex; flex-direction: column; width: 100%; }
+.staxx-tile-row  { display: flex; flex-direction: row; }
+.staxx-tile-cell { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; box-sizing: border-box; }
+
+.staxx-tile-square {
+  position: relative;
+  width: var(--sq, 96px);
+  height: var(--sq, 96px);
+  border-radius: var(--rad, 22px);
+  box-sizing: border-box;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.staxx-tile-square--filled {
+  background: #333131;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0.32rem 0.8rem rgba(0, 0, 0, 0.4);
+}
+
+.staxx-tile-square--open {
+  outline: 1px solid rgba(230, 138, 0, 0.5);
+  outline-offset: 1px;
+}
+
+/* Loose stack's own icon: ~54% of the square, centred high. */
+.staxx-tile-icon {
+  position: absolute;
+  left: 50%;
+  top: 8%;
+  width: 54%;
+  height: 54%;
+  transform: translateX(-50%);
+  object-fit: contain;
+}
+
+/* A folder's picture or provider icon: fills the square edge to edge. */
+.staxx-tile-icon--cover {
+  position: absolute;
+  inset: 0;
+  left: 0; top: 0; transform: none;
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+
+/* Plain built-in glyph, centred, StaXX orange. */
+.staxx-tile-glyph {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -55%);
+  color: #e68a00;
+  font-size: calc(var(--sq, 96px) * 0.4);
+}
+
+/* Auto cross-fade: two stacked layers, whichever is .is-front holds opacity
+   1. The 0.6s opacity transition is a fade, not motion, so it is never
+   gated behind prefers-reduced-motion (PLAN_202 ruling, restated in the
+   PLAN_183 brief). */
+.staxx-tile-auto-layer {
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  width: 64%;
+  height: 64%;
+  transform: translateX(-50%);
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.staxx-tile-auto-layer.is-front { opacity: 1; }
+
+.staxx-tile-name {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 0.24rem 0.48rem;
+  font-size: var(--name-fs, 12px);
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+/* Only shown when the square carries a picture or a background colour — a
+   plain grey square's name sits directly on #333131 and needs no fade. */
+.staxx-tile-name--fade {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0));
+  padding-top: 2.24rem;
+}
+
+.staxx-tile-dot {
+  position: absolute;
+  top: 0.48rem;
+  right: 0.48rem;
+  width: calc(var(--sq, 96px) * 0.12);
+  height: calc(var(--sq, 96px) * 0.12);
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+.staxx-tile-dot--run  { background: #3fb950; }
+.staxx-tile-dot--part { background: #f0a020; }
+.staxx-tile-dot--fail { background: #f85149; }
+
+/* ---- an opened folder's panel, sitting between its row and the next one -- */
+.staxx-tile-panel-wrap { position: relative; padding-top: 0.8rem; }
+.staxx-tile-panel {
+  position: relative;
+  background: #262525;
+  border: 1px solid rgba(230, 138, 0, 0.35);
+  border-radius: 1.2rem;
+  padding: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+/* The pointer on the panel's top edge, under the folder it belongs to. */
+.staxx-tile-panel-arrow {
+  position: absolute;
+  top: 0.25rem; /* centre on the panel's top border: wrap padding 8px + 0.5 - half of 12 */
+  width: 1.2rem;
+  height: 1.2rem;
+  background: #262525;
+  border-left: 1px solid rgba(230, 138, 0, 0.35);
+  border-top: 1px solid rgba(230, 138, 0, 0.35);
+  transform: rotate(45deg);
+  /* Keep only the half above the panel's border plus ~1.5px to hide the border line under
+     the base; the lower half would paint over the first tile's top edge. In the unrotated
+     box that is the triangle x + y <= 12 + 1.5*sqrt(2) = ~14.1px, padded 2px outward. */
+  clip-path: polygon(-2px -2px, 16.1px -2px, -2px 16.1px);
+}
+.staxx-tile-panel-empty {
+  color: #9e9e9e;
+  font-size: 1.36rem;
+  padding: 0.64rem;
+}
+.staxx-tile-panel .staxx-tile-cell { flex: 0 0 auto; }
+
+/* ---- right-click menus, on both the tile and the opened panel ------------ */
+.staxx-tile-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 17.6rem;
+  background: #262525;
+  border: 1px solid var(--sm-line, rgba(128, 128, 128, 0.45));
+  border-radius: 0.8rem;
+  box-shadow: 0 0.96rem 2.56rem rgba(0, 0, 0, 0.55);
+  padding: 0.48rem 0;
+  font-size: 1.3rem;
+  color: #e8e6e3;
+}
+.staxx-tile-menu-header {
+  padding: 0.64rem 1.44rem 0.48rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #fff;
+}
+.staxx-tile-menu-sub {
+  padding: 0 1.44rem 0.64rem;
+  color: #9e9e9e;
+  font-size: 1.25rem;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  margin-bottom: 0.32rem;
+}
+.staxx-tile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.72rem 1.44rem;
+  cursor: pointer;
+  color: #e8e6e3;
+}
+.staxx-tile-menu-item:hover:not(.staxx-tile-menu-item--off) { background: rgba(230, 138, 0, 0.12); }
+.staxx-tile-menu-item .fa { width: 1.6rem; text-align: center; color: inherit; }
+.staxx-tile-menu-item--off {
+  color: #6b6b6b;
+  cursor: default;
+}
+.staxx-tile-menu-item--off .fa { color: inherit; }
+
+/* ============================================================
+ * The statistics window — appended to document.body, so it is
+ * positioned against the viewport rather than the tile.
+ * ============================================================ */
+.staxx-dash-stats-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.staxx-dash-stats {
+  width: 330px;
+  max-width: 94vw;
+  background: #262525;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 1.2rem;
+  box-shadow: 0 1.6rem 4.8rem rgba(0, 0, 0, 0.6);
+  padding: 1rem;
+  color: #e8e6e3;
+  font-size: 1rem;
+}
+
+.staxx-dash-stats-head { position: relative; padding-right: 6rem; }
+.staxx-dash-stats-headrow { display: flex; align-items: center; gap: 0.6rem; }
+.staxx-dash-stats-icon { width: 28px; height: 28px; border-radius: 0.64rem; object-fit: cover; }
+.staxx-dash-stats-name { font-weight: 700; font-size: 1.3rem; color: #fff; }
+
+.staxx-dash-chip {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 1.6rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+}
+.staxx-dash-chip--run  { background: #3fb950; }
+.staxx-dash-chip--part { background: #f0a020; }
+.staxx-dash-chip--fail { background: #f85149; }
+.staxx-dash-chip--stop { background: #8b949e; }
+
+.staxx-dash-stats-sub { color: #9e9e9e; font-size: 1rem; margin-top: 0.3rem; }
+
+/* Unraid's Dashboard styles every button (uppercase, orange border, letter-spacing,
+ * big padding); each property is restated here at higher specificity, for every state. */
+.staxx-dash-stats button.staxx-dash-stats-close,
+.staxx-dash-stats button.staxx-dash-stats-close:hover,
+.staxx-dash-stats button.staxx-dash-stats-close:focus,
+.staxx-dash-stats button.staxx-dash-stats-close:active {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #3a3939;
+  border: none;
+  box-shadow: none;
+  color: #8a8a8a;
+  font-family: inherit;
+  font-size: 1.3rem;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  text-shadow: none;
+  min-width: 0;
+  width: 2.4rem;
+  height: 2.4rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.staxx-dash-stats button.staxx-dash-stats-close:hover,
+.staxx-dash-stats button.staxx-dash-stats-close:focus { color: #fff; background: #444; }
+
+.staxx-dash-stats-row { margin-top: 0.7rem; line-height: 1.5; }
+.staxx-dash-stats-row b { color: #cfcfcf; font-weight: 600; margin-right: 0.48rem; }
+.staxx-dash-stats-services span { color: #9e9e9e; }
+
+.staxx-dash-stats-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+.staxx-dash-stats button.staxx-dash-btn,
+.staxx-dash-stats button.staxx-dash-btn:hover,
+.staxx-dash-stats button.staxx-dash-btn:focus,
+.staxx-dash-stats button.staxx-dash-btn:active,
+.staxx-dash-stats button.staxx-dash-btn:disabled {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-sizing: border-box;
+  min-width: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0.6rem 0;
+  background: #333131;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.4rem;
+  box-shadow: none;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1.2rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  text-shadow: none;
+  cursor: pointer;
+}
+.staxx-dash-stats button.staxx-dash-btn .fa { color: #cfcfcf; font-size: 1.1rem; }
+.staxx-dash-stats button.staxx-dash-btn:hover:not(:disabled),
+.staxx-dash-stats button.staxx-dash-btn:focus:not(:disabled) { background: #3d3b3b; border-color: rgba(255, 255, 255, 0.25); color: #fff; }
+.staxx-dash-stats button.staxx-dash-btn:disabled { background: #333131; color: #fff; cursor: default; opacity: 0.4; }
+
+.staxx-dash-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+.staxx-dash-card {
+  background: #1e1d1c;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 0.8rem;
+  padding: 0.5rem 0.6rem;
+}
+.staxx-dash-card-head { display: flex; justify-content: space-between; align-items: baseline; }
+.staxx-dash-card-title { font-weight: 700; font-size: 1rem; color: #cfcfcf; }
+.staxx-dash-card-sub { font-size: 0.9rem; color: #7d7d7d; }
+.staxx-dash-card-value { font-size: 1.4rem; font-weight: 700; color: #fff; margin: 0.24rem 0 0.48rem; }
+.staxx-dash-card-value small { font-size: 0.95rem; font-weight: 500; color: #9e9e9e; margin-left: 0.48rem; }
+.staxx-dash-card-graph { width: 100%; height: 28px; display: block; }
+
+.staxx-dash-stats-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  padding-top: 0.7rem;
+}
+.staxx-dash-stats .staxx-dash-foot-btn,
+.staxx-dash-stats .staxx-dash-foot-btn:hover,
+.staxx-dash-stats .staxx-dash-foot-btn:focus,
+.staxx-dash-stats .staxx-dash-foot-btn:active {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  min-width: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0.4rem 0.8rem;
+  background: #333131;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.4rem;
+  box-shadow: none;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  text-shadow: none;
+  text-decoration: none;
+  cursor: pointer;
+}
+.staxx-dash-stats .staxx-dash-foot-btn .fa { color: #cfcfcf; }
+.staxx-dash-stats .staxx-dash-foot-btn:hover,
+.staxx-dash-stats .staxx-dash-foot-btn:focus { background: #3d3b3b; border-color: rgba(255, 255, 255, 0.25); }

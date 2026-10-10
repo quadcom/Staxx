@@ -52,7 +52,9 @@ function staxx_folders_file(): string {
  * Shape:
  *   version    int
  *   collapsed  map of folder name => true
- *   start      the boot/display order block — see staxx_start_defaults()
+ *   icons      map of folder name => file name under config/icons/dash/
+ *              (the Stacks-page folder icon; VERSION 4)
+ *   start     the boot/display order block — see staxx_start_defaults()
  *
  * Only the collapsed ones are listed, so a folder nobody has touched needs no
  * entry and deleting this file loses nothing but which folders were shut.
@@ -79,7 +81,7 @@ function staxx_folders_load(bool $fresh = false): array {
   static $cache = null;
   if ($cache !== null && !$fresh) return $cache;
 
-  $empty = ['version' => 3, 'collapsed' => [], 'start' => staxx_start_defaults()];
+  $empty = ['version' => 4, 'collapsed' => [], 'icons' => [], 'start' => staxx_start_defaults()];
 
   $file = staxx_folders_file();
   if ($file === '' || !is_file($file)) return $cache = $empty;
@@ -102,9 +104,16 @@ function staxx_folders_load(bool $fresh = false): array {
     if (is_string($name) && $on) $collapsed[$name] = true;
   }
 
+  // A version 3 file has no `icons` key and loads as "no icons".
+  $icons = [];
+  foreach ((array)($data['icons'] ?? []) as $name => $file) {
+    if (is_string($name) && $name !== '' && is_string($file) && $file !== '') $icons[$name] = $file;
+  }
+
   return $cache = [
-    'version'   => 3,
+    'version'   => 4,
     'collapsed' => $collapsed,
+    'icons'     => $icons,
     'start'     => staxx_start_normalise($data['start'] ?? []),
   ];
 }
@@ -146,16 +155,9 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
     return false;
   }
 
-  $tmp = $file.'.'.getmypid().'.tmp';
-  $written = @file_put_contents($tmp, $json."\n");
-  if ($written === false || $written !== strlen($json) + 1) {
-    @unlink($tmp);
-    $error = 'Could not write '.$file;
-    return false;
-  }
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $json."\n", null, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file
+                                  : 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
 
@@ -472,6 +474,32 @@ function staxx_start_rekey(array &$start, string $from, string $to): void {
   $start['delay'] = $delay;
 }
 
+/**
+ * staxx_rename_stack() lives in Stacks.php, which sits below Folders.php in
+ * the include order and must not depend on it — so the endpoint's
+ * 'stack-rename' case calls this instead, to keep the stored order pointed
+ * at the new name. Without it the drag position a rename inherits would
+ * silently be lost.
+ */
+function staxx_folders_follow_rename(string $from, string $to): void {
+  $folder = staxx_path_folder($from);
+  staxx_folders_update(function (array $data) use ($folder, $from, $to): array {
+    $start = $data['start'];
+    $list  = $start['stacks'][$folder] ?? [];
+    $pos   = array_search(staxx_path_leaf($from), $list, true);
+    if ($pos !== false) $list[$pos] = staxx_path_leaf($to);
+    $start['stacks'][$folder] = $list;
+    // A loose stack's top-level token carries its leaf name too.
+    if ($folder === '') {
+      $ridx = array_search('stack:'.staxx_path_leaf($from), $start['root'], true);
+      if ($ridx !== false) $start['root'][$ridx] = 'stack:'.staxx_path_leaf($to);
+    }
+    staxx_start_rekey($start, $from, $to);
+    $data['start'] = $start;
+    return $data;
+  });
+}
+
 /** Drop every start-block entry that belongs to one stack, root and branch. */
 function staxx_start_drop(array &$start, string $stack): void {
   unset($start['services'][$stack]);
@@ -580,6 +608,10 @@ function staxx_folder_rename(string $from, string $to, string &$error): bool {
       unset($data['collapsed'][$from]);
       $data['collapsed'][$to] = true;
     }
+    if (isset($data['icons'][$from])) {
+      $data['icons'][$to] = $data['icons'][$from];
+      unset($data['icons'][$from]);
+    }
 
     $start = $data['start'];
     $idx = array_search($from, $start['folders'], true);
@@ -673,6 +705,7 @@ function staxx_folder_delete(string $name, string &$error): bool {
       $idx = array_search($name, $start['folders'], true);
       if ($idx !== false) array_splice($start['folders'], $idx, 1);
       unset($data['collapsed'][$name]);
+      unset($data['icons'][$name]);
 
       // The folder's own spot in the top-level order is taken by the stacks
       // it held, in the order they just left it — an empty folder simply
@@ -786,6 +819,19 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
     $oldFolder = staxx_path_folder($stack);
     $start['stacks'][$oldFolder] = staxx_start_list_remove($start['stacks'][$oldFolder] ?? [], $leaf);
     $newList = $start['stacks'][$folder] ?? [];
+
+    // staxx_start_sort() lists stored names first, then every unnamed member
+    // after — so appending onto an empty (or partial) stored list puts this
+    // stack ahead of siblings the list never named, landing it at the TOP
+    // instead of the bottom. Filling the gaps with the folder's current
+    // display order first means the append lands after everyone already
+    // there, same as staxx_folder_layout() would show them.
+    $siblings = [];
+    foreach (staxx_scan_stacks()['stacks'] as $s) {
+      if ($s['folder'] === $folder && $s['leaf'] !== $leaf) $siblings[] = $s['leaf'];
+    }
+    if (array_diff($siblings, $newList)) $newList = staxx_start_sort($siblings, $newList);
+
     $newList[] = $leaf;
     $start['stacks'][$folder] = $newList;
 
@@ -819,6 +865,61 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
 }
 
 /**
+ * Set or clear a folder's Stacks-page icon. $icon is a bare file name already
+ * in config/icons/dash/ (checked by the caller, staxx_dash_clean_icon());
+ * '' removes the choice.
+ */
+function staxx_folder_set_icon(string $name, string $icon, string &$error): bool {
+  $error = '';
+  if (!staxx_folder_valid_name($name) || !is_dir(staxx_stack_root().'/'.$name)) {
+    $error = 'No such folder.';
+    return false;
+  }
+
+  return staxx_folders_update(function (array $data) use ($name, $icon): array {
+    if ($icon === '') unset($data['icons'][$name]);
+    else $data['icons'][$name] = $icon;
+    return $data;
+  }, $error);
+}
+
+/** Is Unraid showing a dark theme (black or gray)? Read from dynamix.cfg each
+ *  time, not remembered: the file is tiny and a theme change should show at once. */
+function staxx_unraid_theme_dark(): bool {
+  $path = getenv('STAXX_DYNAMIX_CFG');
+  $path = ($path !== false && $path !== '') ? $path : '/boot/config/plugins/dynamix/dynamix.cfg';
+  $cfg  = @parse_ini_file($path, true, INI_SCANNER_RAW) ?: [];
+  $theme = strtolower(trim((string)($cfg['display']['theme'] ?? ''), " \t\"'"));
+  return $theme === 'black' || $theme === 'gray';
+}
+
+/** The file to draw for a stored dash icon name: its '-light' drawing on a dark
+ *  theme or its '-dark' drawing on a light one when that file exists, else the
+ *  name unchanged. Lives here, not in Dashboard.php, for the same cycle reason
+ *  as staxx_folder_pic_url(). */
+function staxx_dash_icon_themed(string $file): string {
+  $cfg = staxx_config_root();
+  if ($cfg === '' || !staxx_valid_filename($file)) return $file;
+  $alt = pathinfo($file, PATHINFO_FILENAME).(staxx_unraid_theme_dark() ? '-light' : '-dark');
+  $ext = pathinfo($file, PATHINFO_EXTENSION);
+  $alt .= $ext === '' ? '' : '.'.$ext;
+  return is_file($cfg.'/icons/dash/'.$alt) ? $alt : $file;
+}
+
+/**
+ * The address a folder's icon file is loaded from. Written out here rather than
+ * calling staxx_dash_icon_url(): Dashboard.php requires the table file that
+ * requires this one, and a require cycle is not worth one line of address. The
+ * file's mtime rides along so a replaced picture never serves stale.
+ */
+function staxx_folder_pic_url(string $file): string {
+  $cfg   = staxx_config_root();
+  if ($cfg !== '' && staxx_valid_filename($file)) $file = staxx_dash_icon_themed($file);
+  $mtime = ($cfg !== '' && staxx_valid_filename($file)) ? (int)@filemtime($cfg.'/icons/dash/'.$file) : 0;
+  return '/plugins/'.STAXX_PLUGIN.'/include/icon.php?dash='.rawurlencode($file).'&v='.$mtime;
+}
+
+/**
  * Arrange stacks into their folders for rendering.
  *
  * Returns a flat list of rows in display order, because that is what a table
@@ -826,7 +927,9 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
  * name — there is nothing else it could be now, and the two were only ever
  * separate so that renaming a folder did not have to touch anything.
  *
- * @param  array $stacks from staxx_list_stacks()
+ * @param  array $stacks from staxx_list_stacks() or staxx_stack_states(): reads
+ *   name, folder, leaf and running, and keeps their order for anything the
+ *   start order does not name
  * @return array<int, array{type:string, ...}>
  */
 function staxx_folder_layout(array $stacks): array {
@@ -875,6 +978,7 @@ function staxx_folder_layout(array $stacks): array {
       'id'        => $folder,
       'name'      => $folder,
       'collapsed' => $collapsed,
+      'icon'      => (string)($data['icons'][$folder] ?? ''),
       'count'     => count($members),
       'running'   => $running,
     ];

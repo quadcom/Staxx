@@ -1,0 +1,31 @@
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    name: "TubeArchivist-ES"
+  category: MediaApp:Video
+  overview: |
+    The Elasticsearch instance that powers Tube Archivist's full text search.
+
+services:
+  archivist-es:
+    image: bbilly1/tubearchivist-es:latest
+    container_name: Demo-TubeArchivist-ES
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "17920:9200"
+    volumes:
+      - /mnt/user/appdata/Demo-TubeArchivist/es:/usr/share/elasticsearch/data
+    environment:
+      # ElasticSearch Password -!R -!S
+      ELASTIC_PASSWORD: t178-test-only
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # Discovery Type
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      path.repo: /usr/share/elasticsearch/data/snapshot
+    x-unraid:
+      icon: https://i.imgur.com/ftggG6O.jpg

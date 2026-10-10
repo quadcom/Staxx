@@ -1,0 +1,6 @@
+services:
+  api:
+    image: postgrest/postgrest:v12.2.3
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.web.rule: "PathPrefix(`/api`)"

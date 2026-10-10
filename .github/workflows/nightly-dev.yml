@@ -111,6 +111,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          BEFORE="$(gh run list --workflow publish.yml --branch dev --event workflow_dispatch \
+            --limit 1 --json databaseId --jq '.[0].databaseId // 0')"
+          echo "BEFORE_RUN=${BEFORE:-0}" >> "$GITHUB_ENV"
           echo "New work found on dev — dispatching a dev release." | tee -a "$GITHUB_STEP_SUMMARY"
           gh workflow run publish.yml --ref dev
 
@@ -118,7 +121,11 @@ jobs:
       # request is accepted, which is not the same as a run existing — and a
       # nightly that goes green while quietly releasing nothing is the one
       # failure here nobody would ever notice. Bounded on purpose: a fixed
-      # number of short waits, never an open-ended poll.
+      # number of short waits, never an open-ended poll. Run ids only ever
+      # increase, so a newer id than the one taken just before dispatching
+      # means a run created after this dispatch — a snapshot count that never
+      # falls below 1 whenever any earlier dev release exists would pass even
+      # on a dispatch that produced no run at all.
       - name: Check the release run actually started
         if: env.COUNT != '0'
         env:
@@ -126,9 +133,10 @@ jobs:
         run: |
           for _ in 1 2 3 4 5 6; do
             sleep 10
-            FOUND="$(gh run list --workflow publish.yml --branch dev --event workflow_dispatch                        --limit 1 --json databaseId --jq 'length')"
-            if [ "${FOUND}" = "1" ]; then
-              echo "The dev release run has started." | tee -a "$GITHUB_STEP_SUMMARY"
+            NEWEST="$(gh run list --workflow publish.yml --branch dev --event workflow_dispatch \
+              --limit 1 --json databaseId --jq '.[0].databaseId // 0')"
+            if [ "${NEWEST:-0}" -gt "${BEFORE_RUN}" ]; then
+              echo "The dev release run has started (run ${NEWEST})." | tee -a "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
           done

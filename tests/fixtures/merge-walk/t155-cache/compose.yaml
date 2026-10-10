@@ -1,0 +1,46 @@
+version: "3.9"
+# t155-cache — Redis for the walkthrough site's page counter.
+x-unraid:
+  version: 1
+  overview: Walkthrough fixture (PLAN_156). Redis, plus a dormant Redis Commander behind a profile.
+  category: Tools:Utilities
+
+services:
+  cache:
+    image: redis:7-alpine
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    ports:
+      # Published for the web stack. Inside one stack this line is not needed.
+      - "16379:6379"
+    volumes:
+      - data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    environment:
+      TZ: ${TZ}
+    networks:
+      - backend
+    x-unraid:
+      icon: ./.staxx/icon.png
+      update:
+        mode: auto
+        delay: 24
+        notify:
+          found: false
+          installed: true
+          failed: true
+
+  commander:
+    image: rediscommander/redis-commander:latest
+    profiles: ["tools"]
+    ports:
+      - "18080:8081"
+    environment:
+      REDIS_HOSTS: local:cache:6379
+    networks:
+      - backend
+
+volumes:
+  data:
+
+networks:
+  backend:

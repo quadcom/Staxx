@@ -23,14 +23,7 @@ var RAW = fs.readFileSync(JSON_FILE, 'utf8');
 var TABLE = JSON.parse(RAW);
 var WORDS = TABLE.words || [];
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 console.log('\nA. Shape');
 
@@ -68,5 +61,4 @@ console.log('\nE. The list is sorted alphabetically');
   ok('words are in alphabetical order', JSON.stringify(sorted) === JSON.stringify(WORDS));
 })();
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

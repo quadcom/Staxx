@@ -10,16 +10,11 @@
  * and puts it back, which the script only reads and refuses to run if it is
  * not in place.
  *
- * Runs ON THE SERVER, and the caller must restore the config whatever happens:
+ * Runs ON THE SERVER, through the shared wrapper that sets STORE_ROOT and
+ * restores it on every exit path:
  *
- *     CFG=/boot/config/plugins/staxx/staxx.cfg
- *     cp $CFG /tmp/cfg.bak
- *     grep -q '^STORE_ROOT=' $CFG \
- *       && sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/b1-store"#' $CFG \
- *       || echo 'STORE_ROOT="/tmp/b1-store"' >> $CFG
- *     php /tmp/links.php; RC=$?
- *     cp /tmp/cfg.bak $CFG
- *     exit $RC
+ *     pscp tests/server/run-with-store.sh tests/server/links.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/b1-store /tmp/links.php'
  *
  * What it is really guarding is staxx_rmtree(): a symlink in a stack folder
  * must be unlinked, never followed, or archiving a stack could delete a share.

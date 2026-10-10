@@ -1,0 +1,5 @@
+services:
+  web:
+    image: ghcr.io/foo/adminer:4
+    ports:
+      - "8092:8080"

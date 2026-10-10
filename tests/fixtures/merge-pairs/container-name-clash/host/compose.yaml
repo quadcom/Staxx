@@ -1,0 +1,6 @@
+services:
+  web:
+    image: nginx:latest
+    container_name: web
+    ports:
+      - "8091:80"

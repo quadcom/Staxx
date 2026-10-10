@@ -27,6 +27,11 @@ define('STAXX_SETTINGS_LOADED', true);
 // staxx_settings_save() below for why that second half matters.
 const STAXX_HUB_TOKEN_MASK = '********';
 
+// Every setting that holds a password or a token: masked on read-back, left
+// alone on save when the posted value is still the mask, and masked again in
+// the save reply. One list, so a new secret cannot miss one of the three.
+const STAXX_SECRET_KEYS = ['HUB_TOKEN', 'NPM_PASS', 'PIHOLE_PASS'];
+
 /**
  * The allowlist, and the single source of truth for what a setting is.
  *
@@ -88,6 +93,8 @@ function staxx_settings_keys(): array {
      */
     'PLACEMENT_RULES'     => ['type' => 'choice', 'default' => 'guided', 'choices' => ['guided', 'open']],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // PLAN_212 — send Docker Compose messages StaXX has no explanation for (ErrorReports.php).
+    'ERROR_REPORTS'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // PLAN_86 — record a matched icon into the compose file and copy its
     // picture into the stack's own folder, instead of guessing again on
     // every render. Not in $reload below: nothing that reads this needs the
@@ -96,6 +103,14 @@ function staxx_settings_keys(): array {
     // Gates staxx_exec_start() on the server, not only the button in the
     // browser — see PLAN_44 section D4.
     'SHELL_ENABLED'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // Gates the container file manager (staxx_cfile_container(), PLAN_188
+    // part C) — its own switch, separate from SHELL_ENABLED above. The
+    // 'default' here is only what validates a posted value; while nothing has
+    // been saved the panel shows and the server acts on whatever
+    // staxx_files_enabled() (Defines.php) resolves instead, so a store that
+    // had shells switched off before this setting existed does not find the
+    // file manager quietly back on.
+    'FILES_ENABLED'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // Set once, by the same settings-save path, the first time a shell is
     // opened — so the "changes vanish on rebuild" warning is shown once per
     // server rather than once per browser. Not in $reload below: nothing
@@ -105,6 +120,15 @@ function staxx_settings_keys(): array {
     // is read here for reload purposes — see the $reload list further down.
     'HUB_USER'            => ['type' => 'text', 'default' => ''],
     'HUB_TOKEN'           => ['type' => 'text', 'default' => ''],
+    // PLAN_176 — Nginx Proxy Manager and Pi-hole. NPM_PASS/PIHOLE_PASS are
+    // in STAXX_SECRET_KEYS above, so they get the same mask-on-read,
+    // leave-alone-on-mask-repost treatment as HUB_TOKEN.
+    'NPM_URL'              => ['type' => 'text', 'default' => ''],
+    'NPM_USER'             => ['type' => 'text', 'default' => ''],
+    'NPM_PASS'             => ['type' => 'text', 'default' => ''],
+    'PIHOLE_URL'           => ['type' => 'text', 'default' => ''],
+    'PIHOLE_PASS'          => ['type' => 'text', 'default' => ''],
+    'EXPOSE_ALLOW_INSECURE' => ['type' => 'choice', 'default' => 'no', 'choices' => ['no', 'yes']],
     // PLAN_92a Part A — registries this server's owner runs and vouches for.
     // Not read at page load, so not in $reload below.
     'REGISTRY_TRUST'      => ['type' => 'hosts', 'default' => ''],
@@ -120,14 +144,68 @@ function staxx_settings_keys(): array {
     // service can override it — PLAN_45 Part G), and the rest of the update
     // pipeline's settings. None of these are read at page load either, so
     // none belong in $reload — the panel just closes on save.
-    'UPDATE_MODE'         => ['type' => 'choice', 'default' => 'notify', 'choices' => ['off', 'notify', 'auto']],
+    // 'off' and 'notify' are read as 'manual' — see staxx_update_settings()
+    // (UpdateRun.php) for why the three-way choice never behaved
+    // differently. Kept in `choices` only so a value already sitting in an
+    // old config still validates if it is ever posted back; the panel
+    // itself only ever offers the two real choices.
+    'UPDATE_MODE'         => ['type' => 'choice', 'default' => 'manual', 'choices' => ['off', 'notify', 'manual', 'auto']],
     'UPDATE_DELAY_HOURS'  => ['type' => 'number', 'default' => '24', 'min' => 0, 'max' => 720],
     'UPDATE_WINDOW'       => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
     'UPDATE_WINDOW_START' => ['type' => 'time',   'default' => '03:00'],
     'UPDATE_WINDOW_END'   => ['type' => 'time',   'default' => '05:00'],
-    'UPDATE_NOTIFY'       => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'found', 'applied']],
+    // Replaces the old three-way UPDATE_NOTIFY choice (PLAN_150 Phase 2).
+    // staxx_update_notify_map() (Defines.php) is what actually decides these
+    // three for a config that still only has the retired key — the defaults
+    // below are what a config with none of that history gets.
+    'UPDATE_NOTIFY_FOUND'     => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    'UPDATE_NOTIFY_INSTALLED' => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    'UPDATE_NOTIFY_FAILED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // A pinned service's weekly "still pinned" reminder (PLAN_205). Its own
+    // key rather than folded into the retired UPDATE_NOTIFY three-way choice
+    // above — that choice predates the idea of a pin. Default true: see
+    // staxx_update_notify_map() (Defines.php) for why.
+    'UPDATE_NOTIFY_PINNED'    => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // PLAN_214 — richer messages and the summary. Add-only: the four switches
+    // above keep their true/false values, and these sit beside them. A kind's
+    // _WHEN only matters while its switch is on. Pinned has no _WHEN: its
+    // reminder always rides in the summary. The INSTALLED default is 'summary'
+    // here, but staxx_cfg() (Defines.php) reads 'now' for a store that already
+    // had that switch on and has never saved a _WHEN.
+    'UPDATE_NOTIFY_FOUND_WHEN'     => ['type' => 'choice', 'default' => 'now',     'choices' => ['now', 'summary']],
+    'UPDATE_NOTIFY_INSTALLED_WHEN' => ['type' => 'choice', 'default' => 'summary', 'choices' => ['now', 'summary']],
+    'UPDATE_NOTIFY_FAILED_WHEN'    => ['type' => 'choice', 'default' => 'now',     'choices' => ['now', 'summary']],
+    // PLAN_221: messages about running apps; unlike the update kinds these
+    // carry no separate switch, so Off is a value of its own.
+    'APP_NOTIFY_RESTARTING_WHEN' => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
+    'APP_NOTIFY_UNHEALTHY_WHEN'  => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
+    'APP_NOTIFY_STOPPED_WHEN'    => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'summary', 'off']],
+    'APP_NOTIFY_DOCKER_WHEN'     => ['type' => 'choice', 'default' => 'now', 'choices' => ['now', 'off']],
+    'UPDATE_DIGEST_EVERY' => ['type' => 'choice', 'default' => 'day', 'choices' => ['day', 'week']],
+    // Day of a weekly summary, Sunday 0.
+    'UPDATE_DIGEST_DAY'   => ['type' => 'choice', 'default' => '1', 'choices' => ['0', '1', '2', '3', '4', '5', '6']],
+    'UPDATE_DIGEST_TIME'  => ['type' => 'time',   'default' => '08:00'],
+    'UPDATE_NOTIFY_NOTES' => ['type' => 'choice', 'default' => 'lines', 'choices' => ['lines', 'link', 'none']],
+    'UPDATE_NOTIFY_ICONS' => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // Quiet hours hold straight-away messages (never a failure); the window may cross midnight.
+    'UPDATE_QUIET'        => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    'UPDATE_QUIET_START'  => ['type' => 'time',   'default' => '22:00'],
+    'UPDATE_QUIET_END'    => ['type' => 'time',   'default' => '07:00'],
+    // StaXX sends its own HTML email instead of Unraid's plain one.
+    'UPDATE_NOTIFY_HTML'  => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
     'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
-    'UPDATE_CLEANUP'      => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'weekly']],
+    // PLAN_181 Part C — whether an earlier release UPDATE_RETAIN remembers
+    // also stays on disk (today's behaviour, and the default) or only its
+    // version number does, with a roll-back downloading it again by digest.
+    // Read by staxx_update_keep_digests() indirectly, through the history
+    // half's own image-history entries — see staxx_update_rollback() for the
+    // pull-when-absent path this enables.
+    'UPDATE_KEEP_IMAGES'  => ['type' => 'choice', 'default' => 'yes', 'choices' => ['yes', 'no']],
+    // PLAN_181 Part D — the storage alert that replaced the weekly cleanup
+    // (decision 1, 2026-09-25). Read by staxx_storage_alert_refresh()
+    // (Images.php), not at page load, so neither belongs in $reload below.
+    'STORAGE_ALERT_PERCENT' => ['type' => 'number', 'default' => '85', 'min' => 50, 'max' => 99],
+    'STORAGE_ALERT_DAYS'    => ['type' => 'number', 'default' => '30', 'min' => 1, 'max' => 365],
     // The password generator's own choices (PLAN_74 Part A) — a preference
     // that should follow the person to any browser, not a secret, and set
     // from the generator panel in the editor rather than the settings page.
@@ -155,14 +233,32 @@ function staxx_settings_keys(): array {
  * @return array<string, string>
  */
 function staxx_settings_read(): array {
-  $cfg = staxx_cfg();
-  $out = [];
+  $cfg    = staxx_cfg();
+  $notify = staxx_update_notify_map($cfg);
+  $out    = [];
   foreach (staxx_settings_keys() as $key => $spec) {
+    // The three notify keys are resolved together, not read straight off the
+    // config, so a config that has never been through this panel still shows
+    // what its retired UPDATE_NOTIFY value actually meant — see
+    // staxx_update_notify_map()'s own comment for why.
+    if ($key === 'UPDATE_NOTIFY_FOUND')     { $out[$key] = $notify['found']     ? 'true' : 'false'; continue; }
+    if ($key === 'UPDATE_NOTIFY_INSTALLED') { $out[$key] = $notify['installed'] ? 'true' : 'false'; continue; }
+    if ($key === 'UPDATE_NOTIFY_FAILED')    { $out[$key] = $notify['failed']    ? 'true' : 'false'; continue; }
+    if ($key === 'UPDATE_NOTIFY_PINNED')    { $out[$key] = $notify['pinned']    ? 'true' : 'false'; continue; }
+    // Same reasoning: while no FILES_ENABLED value has been saved, show what
+    // the server actually acts on (staxx_files_enabled() — follows
+    // SHELL_ENABLED), not the schema default.
+    if ($key === 'FILES_ENABLED') { $out[$key] = staxx_files_enabled() ? 'true' : 'false'; continue; }
+
     $v = trim((string)($cfg[$key] ?? ''));
     $v = $v !== '' ? $v : $spec['default'];
-    // The token itself never leaves the server once saved — the panel only
-    // needs to know whether one is set, not what it is.
-    if ($key === 'HUB_TOKEN') $v = $v !== '' ? STAXX_HUB_TOKEN_MASK : '';
+    // The retired three-way spelling still lives in some configs' files;
+    // read it as its modern equivalent so the panel never has to offer a
+    // choice that no longer exists.
+    if ($key === 'UPDATE_MODE' && ($v === 'off' || $v === 'notify')) $v = 'manual';
+    // A secret never leaves the server once saved — the panel only needs to
+    // know whether one is set, not what it is.
+    if (in_array($key, STAXX_SECRET_KEYS, true)) $v = $v !== '' ? STAXX_HUB_TOKEN_MASK : '';
     $out[$key] = $v;
   }
   return $out;
@@ -477,22 +573,21 @@ function staxx_cfg_write_keys(string $file, array $overlay, ?string &$error = nu
     $lines[] = $key.'="'.$value.'"';
   }
 
-  $tmp = $file.'.tmp-'.getmypid();
-  if (@file_put_contents($tmp, implode("\n", $lines)."\n") === false) {
-    @unlink($tmp); // a partial write is possible even though the call reported failure
-    $error = 'Could not write '.$tmp.'.';
-    return false;
-  }
+  $body = implode("\n", $lines)."\n";
+
+  // A save that changes nothing on disk writes nothing — flash has finite
+  // writes, and this runs every time Settings is opened and closed unchanged.
+  if (@file_get_contents($file) === $body) return true;
+
   // Intent is owner-only, since a settings file can hold the Docker Hub
   // token (HUB_TOKEN) in the clear — but the flash pointer lives on a vfat
   // mount with no concept of Unix permissions, so this call is a no-op
   // there: every file on that mount is already owner-only regardless of
   // what chmod reports. The store's settings file is off flash, though, so
   // this is what actually protects that one.
-  @chmod($tmp, 0600);
-  if (!@rename($tmp, $file)) {
-    @unlink($tmp);
-    $error = 'Could not save the settings file — the temporary file could not be put in place.';
+  if (!staxx_atomic_write($file, $body, 0600, $failed)) {
+    $error = $failed === 'write' ? 'Could not write '.$file.'.'
+                                  : 'Could not save the settings file — the temporary file could not be put in place.';
     return false;
   }
   return true;
@@ -516,11 +611,12 @@ function staxx_settings_save(
     $raw = $posted[$key];
     if (!is_string($raw)) { $error = 'The value for "'.$key.'" must be plain text.'; return false; }
 
-    // The browser only ever sees the placeholder for a saved token, never the
-    // token itself (staxx_settings_read() above). A form that posts it back
-    // unchanged must not overwrite the real one with eight literal asterisks
-    // — so this is read as "leave HUB_TOKEN alone", not as a value to store.
-    if ($key === 'HUB_TOKEN' && $raw === STAXX_HUB_TOKEN_MASK) continue;
+    // The browser only ever sees the placeholder for a saved secret, never
+    // the secret itself (staxx_settings_read() above). A form that posts it
+    // back unchanged must not overwrite the real one with eight literal
+    // asterisks — so this is read as "leave it alone", not as a value to
+    // store.
+    if (in_array($key, STAXX_SECRET_KEYS, true) && $raw === STAXX_HUB_TOKEN_MASK) continue;
 
     // Not trimmed first: a leading or trailing newline is exactly the kind of
     // thing the character check below exists to catch, and trimming it away
@@ -588,12 +684,24 @@ function staxx_settings_save(
   $saved = $before;
   foreach ($flashOverlay as $key => $value) $saved[$key] = $value;
   foreach ($storeOverlay as $key => $value) $saved[$key] = $value;
-  // $storeOverlay['HUB_TOKEN'], when present, is the real new token in the
+  // $storeOverlay[<secret>], when present, is the real new value in the
   // clear — it has to be, to be written above. It must not reach the browser
-  // that way, so mask it again here exactly as staxx_settings_read() does.
-  if (isset($saved['HUB_TOKEN'])) $saved['HUB_TOKEN'] = $saved['HUB_TOKEN'] !== '' ? STAXX_HUB_TOKEN_MASK : '';
+  // that way, so mask every secret again here exactly as
+  // staxx_settings_read() does.
+  foreach (STAXX_SECRET_KEYS as $secretKey) {
+    if (isset($saved[$secretKey])) {
+      $saved[$secretKey] = $saved[$secretKey] !== '' ? STAXX_HUB_TOKEN_MASK : '';
+    }
+  }
 
-  foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT'] as $key) {
+  // PLAN_188 part C: SHELL_ENABLED and FILES_ENABLED join this list because
+  // the Manage tab's layout is now baked into the page at load (StacksPage.php's
+  // data-shell-enabled/data-files-enabled) rather than asked of the server on
+  // every open — the same reason STORE_ROOT is here. Both, not only
+  // FILES_ENABLED: while FILES_ENABLED has never been saved of its own it
+  // follows SHELL_ENABLED (staxx_files_enabled()), so changing the shell
+  // switch alone can change what the file manager effectively is too.
+  foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT', 'SHELL_ENABLED', 'FILES_ENABLED'] as $key) {
     if ($saved[$key] !== $before[$key]) { $reload = true; break; }
   }
 

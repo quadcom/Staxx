@@ -1,0 +1,130 @@
+x-unraid:
+  version: 1
+  imported:
+    from: community-applications
+    on: 2026-09-24
+    id: "https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/templates/official-gluetun.xml"
+    name: "binhex-official-gluetun"
+  category: Network:VPN
+  project: https://github.com/qdm12/gluetun
+  support: https://github.com/qdm12/gluetun/issues
+  author: Binhex's Repository
+  overview: |
+    Gluetun is a lightweight swiss-knife-like VPN client to tunnel to Cyberghost,
+    ExpressVPN, FastestVPN, HideMyAss, IPVanish, IVPN, Mullvad, NordVPN, Perfect
+    Privacy, Privado, PrivateVPN, ProtonVPN, PureVPN, Surfshark, TorGuard,
+    VyprVPN, Windscribe servers using OpenVPN or Wireguard, iptables killswitch,
+    DNS over TLS, ShadowSocks, and an HTTP proxy server.
+
+services:
+  binhex-official-gluetun:
+    image: qmcgaw/gluetun
+    container_name: binhex-official-gluetun
+    restart: unless-stopped
+    networks:
+      - default
+    ports:
+      - "8000:8000"      # HTTP Control Server port
+      - "8888:8888"      # HTTP Proxy port (when HTTPPROXY=on)
+      - "8388:8388"      # Shadowsocks port TCP (when SHADOWSOCKS=on)
+      - "8388:8388/udp"  # Shadowsocks port UDP (when SHADOWSOCKS=on)
+    volumes:
+      - /mnt/cache/appdata/gluetun:/gluetun  # This is the container path to store gluetun related configuration.
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: "private internet access"       # Specify a supported VPN provider to use -!R
+      VPN_TYPE: "openvpn"                                   # VPN protocol to use. Not all providers support Wireguard.
+      VPN_INTERFACE: "tun0"                                 # Specify a custom network interface name to use
+      PRIVATE_INTERNET_ACCESS_OPENVPN_ENCRYPTION_PRESET: "normal"  # Encryption preset, 'none' disables the cipher and auth OpenVPN options (not recommended).
+      OPENVPN_USER: ""                                      # OpenVPN username (required for OpenVPN)
+      OPENVPN_PASSWORD: ""                                  # OpenVPN password (required for OpenVPN) -!S
+      OPENVPN_PROTOCOL: "udp"                               # Network protocol to use for OpenVPN
+      OPENVPN_VERSION: "2.6"                                # Set the OpenVPN version to run
+      OPENVPN_ENDPOINT_IP: ""                               # Specify a target VPN server IP address to use
+      OPENVPN_ENDPOINT_PORT: ""                             # Specify a target VPN server port number to use
+      OPENVPN_VERBOSITY: "1"                                # OpenVPN verbosity level (1-6)
+      OPENVPN_FLAGS: ""                                     # Space delimited OpenVPN flags to pass to openvpn
+      OPENVPN_ROOT: "no"                                    # Run OpenVPN as root
+      OPENVPN_CIPHERS: ""                                   # Specify a custom cipher to use (e.g. aes-256-gcm)
+      OPENVPN_AUTH: ""                                      # Specify a custom auth algorithm to use (e.g. sha256)
+      OPENVPN_MSSFIX: "0"                                   # Set the MSS fix parameter (0-9999, 0 to use defaults)
+      OPENVPN_CUSTOM_CONFIG: ""                             # Path to custom OpenVPN configuration file for custom provider
+      WIREGUARD_PRIVATE_KEY: ""                             # Wireguard client private key (required for Wireguard) -!S
+      WIREGUARD_ADDRESSES: ""                               # Wireguard IP network interface address (xx.xx.xx.xx/xx)
+      WIREGUARD_PUBLIC_KEY: ""                              # Wireguard server public key
+      WIREGUARD_ENDPOINT_IP: ""                             # Wireguard server endpoint IP address
+      WIREGUARD_ENDPOINT_PORT: ""                           # Wireguard server endpoint port number
+      WIREGUARD_PRESHARED_KEY: ""                           # Wireguard pre-shared key -!S
+      WIREGUARD_ALLOWED_IPS: "0.0.0.0/0,::/0"               # Wireguard peer allowed IPs (CSV format)
+      WIREGUARD_IMPLEMENTATION: "auto"                      # Wireguard implementation to use
+      WIREGUARD_MTU: "1400"                                 # Wireguard MTU (1-65535)
+      WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL: ""           # Wireguard persistent keepalive interval (e.g. 25s)
+      SERVER_COUNTRIES: ""                                  # Comma separated list of countries
+      SERVER_REGIONS: ""                                    # Comma separated list of regions
+      SERVER_CITIES: ""                                     # Comma separated list of cities
+      SERVER_HOSTNAMES: ""                                  # Comma separated list of server hostnames
+      SERVER_NAMES: ""                                      # Comma separated list of server names
+      SERVER_CATEGORIES: ""                                 # Comma separated list of server categories (NordVPN)
+      VPN_PORT_FORWARDING: "off"                            # Enable custom port forwarding code for supported providers
+      VPN_PORT_FORWARDING_PROVIDER: ""                      # Choose the custom port forwarding code to use
+      VPN_PORT_FORWARDING_STATUS_FILE: "/gluetun/forwarded_port"  # File path to use for writing the forwarded port obtained
+      VPN_PORT_FORWARDING_LISTENING_PORT: ""                # Port redirection for the VPN server side port forwarded
+      FIREWALL_VPN_INPUT_PORTS: ""                          # Comma separated list of ports to allow from the VPN server side
+      FIREWALL_INPUT_PORTS: ""                              # Comma separated list of ports to allow through the default interface
+      FIREWALL_DEBUG: "off"                                 # Prints every firewall related command (debugging only)
+      FIREWALL_OUTBOUND_SUBNETS: ""                         # Comma separated subnets that Gluetun is allowed to access
+      DNS_SERVER: "on"                                      # Activate DNS over TLS with Unbound
+      DNS_UPSTREAM_RESOLVER_TYPE: "dot"                     # How to connect to upstream DNS servers: dot (DNS over TLS), doh (DNS over HTTPS), plain (UDP DNS)
+      DNS_UPSTREAM_RESOLVERS: "google"                      # Comma delimited list of DNS over TLS providers, valid values are: 'google', 'quad9', 'quadrant', 'cleanbrowsing', 'libredns', 'opendns'
+      DNS_UNBLOCK_HOSTNAMES: ""                             # Comma separated list of domain names to leave unblocked from the filtering
+      DNS_CACHING: "on"                                     # Unbound caching
+      DNS_BLOCK_IP_PREFIXES: "127.0.0.1/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1/128,fc00::/7,fe80::/10,::ffff:7f00:1/104,::ffff:a00:0/104,::ffff:a9fe:0/112,::ffff:ac10:0/108,::ffff:c0a8:0/112"  # All private CIDRs ranges. Comma separated list of CIDRs or single IP addresses Unbound won't resolve to. Note that the default setting prevents DNS rebinding
+      DNS_UPSTREAM_IPV6: "off"                              # DNS IPv6 resolution
+      DNS_BLOCK_IPS: ""                                     # Comma separated list of IP addresses to not resolve public domains to
+      DNS_REBINDING_PROTECTION_EXEMPT_HOSTNAMES: ""         # Comma separated list of public domain names to exclude from DNS rebinding protection
+      DNS_UPDATE_PERIOD: "24h"                              # Period to update block lists and restart Unbound (e.g. 24h, 0 to disable)
+      DNS_ADDRESS: "127.0.0.1"                              # IP address to use as DNS resolver
+      DNS_KEEP_NAMESERVER: "off"                            # Keep /etc/resolv.conf untouched
+      BLOCK_MALICIOUS: "on"                                 # Block malicious hostnames and IPs with Unbound
+      BLOCK_SURVEILLANCE: "off"                             # Block surveillance hostnames and IPs with Unbound
+      BLOCK_ADS: "off"                                      # Block ads hostnames and IPs with Unbound
+      HTTPPROXY: "off"                                      # Enable the internal HTTP proxy
+      HTTPPROXY_LOG: "off"                                  # Logs every tunnel requests
+      HTTPPROXY_LISTENING_ADDRESS: ":8888"                  # Internal listening address for the HTTP proxy
+      HTTPPROXY_USER: ""                                    # Username to use to connect to the HTTP proxy
+      HTTPPROXY_PASSWORD: ""                                # Password to use to connect to the HTTP proxy -!S
+      HTTPPROXY_STEALTH: "off"                              # Stealth mode means HTTP proxy headers are not added
+      SHADOWSOCKS: "off"                                    # Enable the internal Shadowsocks proxy
+      SHADOWSOCKS_LOG: "off"                                # Enable Shadowsocks logging
+      SHADOWSOCKS_LISTENING_ADDRESS: ":8388"                # Internal listening address for Shadowsocks
+      SHADOWSOCKS_PASSWORD: ""                              # Password to use to connect to Shadowsocks -!S
+      SHADOWSOCKS_CIPHER: "chacha20-ietf-poly1305"          # AEAD Cipher to use for Shadowsocks
+      HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE: "{\"auth\":\"basic\",\"username\":\"controlserver\",\"password\":\"controlserver\"}"  # Authentication configuration for the HTTP Control Server
+      HTTP_CONTROL_SERVER_ADDRESS: ":8000"                  # Listening address for the HTTP Control Server
+      HTTP_CONTROL_SERVER_LOG: "on"                         # Enable logging of requests for the HTTP Control Server
+      HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH: ""          # Path to a TOML file containing authentication configuration for the HTTP Control Server
+      HEALTH_TARGET_ADDRESSES: "google.com:443"             # Comma-separated addresses to ping on every internal health check (replaces HEALTH_TARGET_ADDRESS)
+      HEALTH_VPN_DURATION_INITIAL: "6s"                     # Initial duration to wait for the VPN to be ready
+      HEALTH_VPN_DURATION_ADDITION: "5s"                    # Additional duration to add for each consecutive VPN failure
+      HEALTH_SUCCESS_WAIT_DURATION: "5s"                    # Duration to wait after a success check
+      HEALTH_SERVER_ADDRESS: "127.0.0.1:9999"               # Internal health check server listening address
+      UPDATER_PERIOD: "0"                                   # Period to update VPN servers data e.g. '24h' (0 to disable)
+      UPDATER_MIN_RATIO: "0.8"                              # Ratio of servers to be found for update to succeed
+      UPDATER_VPN_SERVICE_PROVIDERS: ""                     # List of providers to update servers data for
+      STORAGE_FILEPATH: "/gluetun/servers.json"             # Path of servers.json file (empty to disable caching)
+      TZ: ""                                                # Specify a timezone to use to have correct log times. i.e. Europe/London
+      PUID: "99"                                            # User ID to run as non root
+      PGID: "100"                                           # Group ID to run as non root
+      PUBLICIP_ENABLED: "true"                              # Check for public IP address information on VPN connection
+      PUBLICIP_API: "ipinfo"                                # Public IP echo service API to use
+      PUBLICIP_API_TOKEN: ""                                # Optional API token for the public IP echo service -!S
+      PUBLICIP_FILE: "/gluetun/ip"                          # Filepath to store the public IP address assigned
+      VERSION_INFORMATION: "on"                             # Logs a message indicating if a newer version is available
+    cap_add:
+      - NET_ADMIN
+    x-unraid:
+      icon: https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/images/gluetun-icon.png
+      webui: "http://[IP]:8000"
+      project: https://github.com/qdm12/gluetun
+      support: https://github.com/qdm12/gluetun/issues

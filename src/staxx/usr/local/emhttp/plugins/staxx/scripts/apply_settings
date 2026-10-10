@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+# The last KEY="value" line of a settings file, quotes removed.
+cfg_get() {
+  sed -n 's/^[[:space:]]*'"$1"'[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$2" | tail -n1
+}
+
 PLUGIN="staxx"
 CFG_DIR="/boot/config/plugins/${PLUGIN}"
 CFG="${CFG_DIR}/${PLUGIN}.cfg"
@@ -24,7 +29,7 @@ mkdir -p "${CFG_DIR}"
 header_menu="false"
 if [[ -f "${CFG}" ]]; then
   # Values may or may not be quoted; strip quotes and surrounding whitespace.
-  header_menu=$(sed -n 's/^[[:space:]]*HEADER_MENU[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  header_menu=$(cfg_get HEADER_MENU "${CFG}")
   header_menu="${header_menu:-false}"
 fi
 
@@ -41,7 +46,7 @@ fi
 # everything under it, reappears untouched.
 takeover_docker_tab="false"
 if [[ -f "${CFG}" ]]; then
-  takeover_docker_tab=$(sed -n 's/^[[:space:]]*TAKEOVER_DOCKER_TAB[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  takeover_docker_tab=$(cfg_get TAKEOVER_DOCKER_TAB "${CFG}")
   takeover_docker_tab="${takeover_docker_tab:-false}"
 fi
 
@@ -61,7 +66,7 @@ fi
 # below now lives in the store's own config file, because that is where the
 # rest of the settings moved. STORE_ROOT itself has to stay on flash: you
 # cannot read the house's address from inside the house.
-store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+store_root=$(cfg_get STORE_ROOT "${CFG}" 2>/dev/null || true)
 
 # The store's two fixed-name folders must exist before anything tries to
 # enumerate them — but only once the store itself is actually there. A pool
@@ -99,7 +104,7 @@ fi
 # installed for true AND prompt, and removed only for false.
 catch_installs="true"
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  catch_installs=$(sed -n 's/^[[:space:]]*CATCH_INSTALLS[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  catch_installs=$(cfg_get CATCH_INSTALLS "${store_cfg}")
   catch_installs="${catch_installs:-true}"
 fi
 
@@ -156,8 +161,8 @@ fi
 hub_user=""
 hub_token=""
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  hub_user=$(sed -n 's/^[[:space:]]*HUB_USER[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
-  hub_token=$(sed -n 's/^[[:space:]]*HUB_TOKEN[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  hub_user=$(cfg_get HUB_USER "${store_cfg}")
+  hub_token=$(cfg_get HUB_TOKEN "${store_cfg}")
 fi
 
 if [[ "${store_cfg_readable}" != "true" ]]; then
@@ -196,23 +201,20 @@ fi
 # write cycles and this script runs on every settings save AND every boot —
 # only gets rewritten when its content actually changes.
 #
-# UPDATE_CHECK/UPDATE_CHECK_TIME/UPDATE_CLEANUP now live in the store. A store
-# that has been chosen but cannot be read right now (pool not mounted yet)
-# must not rewrite this file to shipped defaults — that would silently drop
-# back to "daily at 04:00" every reboot until the pool catches up. Only a
-# genuinely unchosen store (store_root blank) falls through to the defaults
-# below, which matches today: there are no stacks to check either way.
+# UPDATE_CHECK/UPDATE_CHECK_TIME now live in the store. A store that has been
+# chosen but cannot be read right now (pool not mounted yet) must not rewrite
+# this file to shipped defaults — that would silently drop back to "daily at
+# 04:00" every reboot until the pool catches up. Only a genuinely unchosen
+# store (store_root blank) falls through to the defaults below, which matches
+# today: there are no stacks to check either way.
 skip_cron_rewrite="false"
 update_check="daily"
 update_check_time="04:00"
-update_cleanup="off"
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  update_check=$(cfg_get UPDATE_CHECK "${store_cfg}")
   update_check="${update_check:-daily}"
-  update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  update_check_time=$(cfg_get UPDATE_CHECK_TIME "${store_cfg}")
   update_check_time="${update_check_time:-04:00}"
-  update_cleanup=$(sed -n 's/^[[:space:]]*UPDATE_CLEANUP[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
-  update_cleanup="${update_cleanup:-off}"
 elif [[ -n "${store_root}" ]]; then
   skip_cron_rewrite="true"
   echo "The data store is not reachable yet, so the existing image-update schedule was left as it is."
@@ -225,9 +227,9 @@ fi
 boot_copy="true"
 boot_copy_mode="scheduled"
 if [[ "${store_cfg_readable}" == "true" ]]; then
-  boot_copy=$(sed -n 's/^[[:space:]]*BOOT_COPY[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  boot_copy=$(cfg_get BOOT_COPY "${store_cfg}")
   boot_copy="${boot_copy:-true}"
-  boot_copy_mode=$(sed -n 's/^[[:space:]]*BOOT_COPY_MODE[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  boot_copy_mode=$(cfg_get BOOT_COPY_MODE "${store_cfg}")
   boot_copy_mode="${boot_copy_mode:-scheduled}"
 fi
 
@@ -246,6 +248,23 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
     "# StaXX — image-update passes, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
     "*/15 * * * * ${PLUGIN_DIR}/scripts/update-check apply &> /dev/null"
   )
+
+  # PLAN_221: the app watcher runs once a minute, and only while at least one
+  # of its messages is not off (a missing key reads as on); the fourth is the
+  # Docker-down message (PLAN_223), which the same pass sends. A minute is
+  # cheap: one inspect of 78 containers measured 0.064 s. An unreadable store
+  # counts as on, so a boot that beat the pool keeps the line.
+  watch_on="false"
+  for watch_key in APP_NOTIFY_RESTARTING_WHEN APP_NOTIFY_UNHEALTHY_WHEN APP_NOTIFY_STOPPED_WHEN APP_NOTIFY_DOCKER_WHEN; do
+    watch_val=""
+    if [[ "${store_cfg_readable}" == "true" ]]; then
+      watch_val=$(cfg_get "${watch_key}" "${store_cfg}")
+    fi
+    if [[ "${watch_val}" != "off" ]]; then watch_on="true"; fi
+  done
+  if [[ "${watch_on}" == "true" ]]; then
+    cron_lines+=("* * * * * ${PLUGIN_DIR}/scripts/app-watch &> /dev/null")
+  fi
 
   if [[ "${update_check}" == "off" ]]; then
     echo "Image-update checking is off."
@@ -304,12 +323,17 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
     echo "Image-update checking will run hourly (at :$(printf '%02d' "${jitter_minute}") past), with a full look at every image ${when}."
   fi
 
-  if [[ "${update_cleanup}" == "weekly" ]]; then
-    # A fixed, quiet time — this is not user-configurable the way the check
-    # time is, so there is no value to read and validate here.
-    cron_lines+=("30 3 * * 0 ${PLUGIN_DIR}/scripts/update-check cleanup &> /dev/null")
-    echo "Image cleanup will run weekly, Sunday at 03:30."
-  fi
+  # PLAN_181 Part D — the storage alert that replaced the weekly cleanup
+  # (decision 1, 2026-09-25). Unconditional, like the apply pass above:
+  # it only refreshes figures for the page's own notice, never removes
+  # anything, so there is no on/off setting to gate it on. A fixed, quiet
+  # time — not user-configurable the way the check time is.
+  cron_lines+=("45 3 * * * ${PLUGIN_DIR}/scripts/update-check storage &> /dev/null")
+
+  # PLAN_212 — the daily fetch of Docker error explanations (and the send of
+  # any unexplained message waiting). Unconditional like the storage pass:
+  # whether anything is sent is the Integrations switch's business.
+  cron_lines+=("50 3 * * * ${PLUGIN_DIR}/scripts/update-check explain &> /dev/null")
 
   # PLAN_103 addendum: BOOT_COPY_MODE's own line. "scheduled" gets a
   # dedicated hourly sweep — offset from the top of the hour, and

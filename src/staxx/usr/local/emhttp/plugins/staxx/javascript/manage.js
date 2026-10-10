@@ -172,8 +172,16 @@
       mounts:     {},
       // PLAN_44 D7 — which of the three panes a narrow screen is currently
       // showing. Meaningless, and ignored, above the breakpoint, where all
-      // three are visible at once.
+      // three are visible at once. Once a pane is switched off it can never
+      // be the narrow pane — see mount() and the narrow-tab building below.
       narrowPane: 'log',
+      // PLAN_188 part C — Settings' own Container shells / Container files
+      // switches, handed in fresh on every mount() (the host reads them off
+      // the current config each time the editor opens). Defaulting both true
+      // only matters for the one build() call below that runs before the
+      // first real mount, since a real host always passes both.
+      shellEnabled: true,
+      filesEnabled: true,
       // PLAN_69 — this stack's declared compose profiles and which of them
       // are switched on. [] for the overwhelming majority of stacks, which
       // is what keeps the line beneath the buttons hidden for them.
@@ -188,6 +196,16 @@
     // unmount would render into DOM nodes no longer attached to anything —
     // invisible, not merely stale. See mount() below.
     var torndown = false;
+
+    // PLAN_188 part C — which pair of flags the DOM currently on screen was
+    // actually built for, so mount() can tell a real layout change (Shell or
+    // Files switched on/off between opens) from an ordinary reopen of the
+    // same or another stack. null until the first build() runs — that first
+    // call happens with whatever state.shellEnabled/filesEnabled default to
+    // (both true), before any real mount() has told it otherwise, so treating
+    // "never yet matched a mount" as a mismatch is what makes the very first
+    // stack opened in a session get the right layout rather than the default.
+    var builtFlags = null;
 
     // PLAN_132 B — registered once for this Instance's whole life (it is
     // never recreated, see above), not per mount/unmount, so it is removed
@@ -236,37 +254,62 @@
 
       var logPane = pane('log', 'Log');
       buildLogBody(logPane.body);
-      var right = document.createElement('div');
-      right.className = 'staxx-manage-right';
-      var shell = pane('shell', 'Shell');
-      buildShellBody(shell.body);
-      var files = pane('files', 'Files');
-      buildFilesBody(files.body);
-      right.appendChild(shell.el);
-      right.appendChild(splitter(right, shell.el, files.el, {
-        prop: '--sm-split',
-        vertical: false,
-        get: function () { return splitRatio; },
-        set: function (v) { splitRatio = v; },
-        title: 'Drag to share the room between the shell and the files. ' +
-          'Double-click for an even split.'
-      }));
-      right.appendChild(files.el);
 
-      body.appendChild(logPane.el);
-      body.appendChild(splitter(body, logPane.el, right, {
-        prop: '--sm-bodysplit',
-        vertical: true,
-        get: function () { return bodyRatio; },
-        set: function (v) { bodyRatio = v; },
-        title: 'Drag to share the room between the log and the shell. ' +
-          'Double-click for an even split.'
-      }));
-      body.appendChild(right);
+      // PLAN_188 part C — a pane whose switch is off is not built at all: no
+      // heading, no divider, no greyed box, nothing revealPane() or the
+      // narrow tabs can land on. Which of the three layouts below applies is
+      // decided once here, from the flags mount() just set on state.
+      var shell = state.shellEnabled ? pane('shell', 'Shell') : null;
+      if (shell) buildShellBody(shell.body);
+      var files = state.filesEnabled ? pane('files', 'Files') : null;
+      if (files) buildFilesBody(files.body);
 
       els.log = logPane;
       els.shell = shell;
       els.files = files;
+
+      body.appendChild(logPane.el);
+      if (shell && files) {
+        // Both on: today's layout — Log left, Shell and Files sharing the
+        // right column with their own handle.
+        var right = document.createElement('div');
+        right.className = 'staxx-manage-right';
+        right.appendChild(shell.el);
+        right.appendChild(splitter(right, shell.el, files.el, {
+          prop: '--sm-split',
+          vertical: false,
+          get: function () { return splitRatio; },
+          set: function (v) { splitRatio = v; },
+          title: 'Drag to share the room between the shell and the files. ' +
+            'Double-click for an even split.'
+        }));
+        right.appendChild(files.el);
+        body.appendChild(splitter(body, logPane.el, right, {
+          prop: '--sm-bodysplit',
+          vertical: true,
+          get: function () { return bodyRatio; },
+          set: function (v) { bodyRatio = v; },
+          title: 'Drag to share the room between the log and the shell. ' +
+            'Double-click for an even split.'
+        }));
+        body.appendChild(right);
+      } else if (shell || files) {
+        // Exactly one of the two is on: it takes the whole right side, with
+        // just the log/right handle — no shell/files handle, since there is
+        // only one pane there to share room with.
+        var only = shell || files;
+        body.appendChild(splitter(body, logPane.el, only.el, {
+          prop: '--sm-bodysplit',
+          vertical: true,
+          get: function () { return bodyRatio; },
+          set: function (v) { bodyRatio = v; },
+          title: 'Drag to share the room between the log and the ' +
+            (shell ? 'shell' : 'files') + '. Double-click for an even split.'
+        }));
+        body.appendChild(only.el);
+      }
+      // Both off: the log pane above is the only thing in body — no handle,
+      // since there is nothing on the other side of one.
 
       buildHeadActions();
       updateNarrowPanes();
@@ -379,6 +422,14 @@
       var dragging = false;
 
       function onMove(ev) {
+        // A release over the shell's iframe, or outside the window entirely,
+        // never reaches this page as a pointerup, so the window keeps sending
+        // moves with dragging still true. The next move with no button held
+        // is really the release arriving late — treat it as one.
+        if (ev.buttons === 0) {
+          endDrag();
+          return;
+        }
         var box = column.getBoundingClientRect();
         var size = opts.vertical ? column.clientWidth : column.clientHeight;
         var handleSize = opts.vertical ? el.offsetWidth : el.offsetHeight;
@@ -466,8 +517,7 @@
       domDropped: 0,    // how much of `dropped` the DOM has already trimmed for — see appendNewLines()
       pollTimer: null,
       pollDelay: LOG_POLL_FAST, // current gap between reads; see LOG_POLL_FAST
-      pollSeq:  0,      // bumped on every start/stop; a stale reply checks this before landing
-      downloadText: null
+      pollSeq:  0       // bumped on every start/stop; a stale reply checks this before landing
     };
 
     function mkLogBtn(label, cls) {
@@ -535,9 +585,8 @@
       copyBtn.addEventListener('click', copyVisible);
 
       var downloadBtn = mkLogBtn('Download all', 'staxx-manage-log-download');
-      downloadBtn.title = 'This plugin cannot hand the browser a file directly — this loads the ' +
-        'whole log into a box below so it can be selected and copied.';
-      downloadBtn.addEventListener('click', toggleDownload);
+      downloadBtn.title = 'Save this container\'s whole log as a file.';
+      downloadBtn.addEventListener('click', downloadLog);
 
       [pauseBtn, jumpBtn, searchInput, filterBtn, tsBtn, wrapBtn, copyBtn, downloadBtn]
         .forEach(function (el) { bar.appendChild(el); });
@@ -556,21 +605,13 @@
       linesWrap.appendChild(linesEl);
       linesWrap.appendChild(emptyEl);
 
-      var downloadWrap = document.createElement('div');
-      downloadWrap.className = 'staxx-manage-log-download-wrap staxx-manage-log-download-wrap--hidden';
-      var downloadArea = document.createElement('textarea');
-      downloadArea.className = 'staxx-manage-log-download-area';
-      downloadArea.readOnly = true;
-      downloadWrap.appendChild(downloadArea);
-
       bodyEl.appendChild(bar);
       bodyEl.appendChild(linesWrap);
-      bodyEl.appendChild(downloadWrap);
 
       els.logUI = {
         linesEl: linesEl, emptyEl: emptyEl,
         pauseBtn: pauseBtn, filterBtn: filterBtn, tsBtn: tsBtn, wrapBtn: wrapBtn,
-        downloadBtn: downloadBtn, downloadWrap: downloadWrap, downloadArea: downloadArea
+        downloadBtn: downloadBtn
       };
     }
 
@@ -716,7 +757,6 @@
     // changed nothing, since it is only a string compare, and it is the one
     // place that notices the selected tab or stack has moved on.
     function syncLogFollower() {
-      if (log.downloadText !== null) return; // showing the download box; leave the live view as it was
       var key = logTargetKey();
       if (key === log.target) return;
       restartFollower();
@@ -849,35 +889,42 @@
       document.body.removeChild(ta);
     }
 
-    // "Download" here cannot mean a file — action.php answers JSON, always,
-    // and a sandboxed page cannot hand the browser one either. This loads the
-    // whole capped log into a selectable box instead, and says so honestly in
-    // the button's own title rather than promising something it cannot do.
-    function toggleDownload() {
+    // Builds a file name from the stack, the service and the current local
+    // time, keeping only characters a filesystem never chokes on.
+    function logDownloadName(service) {
+      var leaf = state.stack.split('/').pop();
+      var now = new Date();
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      var stamp = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+        '-' + pad(now.getHours()) + pad(now.getMinutes());
+      var raw = leaf + '-' + (service || 'all') + '-' + stamp + '.log';
+      return raw.replace(/[^A-Za-z0-9._-]/g, '-');
+    }
+
+    // Hands the whole log to the browser as a real file, rather than a box
+    // to select and copy from — the browser can save a Blob URL through a
+    // throwaway link even though action.php only ever answers JSON.
+    function downloadLog() {
       var ui = els.logUI;
-      if (log.downloadText !== null) {
-        log.downloadText = null;
-        ui.downloadWrap.classList.add('staxx-manage-log-download-wrap--hidden');
-        ui.downloadBtn.textContent = 'Download all';
-        syncLogFollower(); // resume following if the tab moved on while this was open
-        return;
-      }
       var service = state.selected === 'all' ? '' : state.selected;
       ui.downloadBtn.disabled = true;
       ui.downloadBtn.textContent = 'Loading…';
       call('log-download', { name: state.stack, service: service }).then(function (res) {
         ui.downloadBtn.disabled = false;
+        ui.downloadBtn.textContent = 'Download all';
         if (!res.ok) {
           noteLine('could not load the full log: ' + (res.error || 'unknown error.'));
-          ui.downloadBtn.textContent = 'Download all';
           return;
         }
-        log.downloadText = res.text || '';
-        ui.downloadArea.value = log.downloadText;
-        ui.downloadWrap.classList.remove('staxx-manage-log-download-wrap--hidden');
-        ui.downloadBtn.textContent = 'Back to live log';
-        ui.downloadArea.focus();
-        ui.downloadArea.select();
+        var blob = new Blob([res.text || ''], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = logDownloadName(service);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
       });
     }
 
@@ -1176,6 +1223,8 @@
     // its own poll loop against the same terminal that has been running the
     // whole time.
     function syncShellPane() {
+      if (!state.shellEnabled) return; // no pane was built (PLAN_188 part C) — nothing to sync
+
       var service = state.selected;
 
       if (service === 'all') {
@@ -1892,6 +1941,8 @@
     // restarted on a return visit — see fileSession()'s own comment — so
     // this only fetches when there is genuinely nothing shown yet.
     function syncFilesPane() {
+      if (!state.filesEnabled) return; // no pane was built (PLAN_188 part C) — nothing to sync
+
       var service = state.selected;
 
       if (service === 'all') {
@@ -2037,39 +2088,54 @@
     //
     // Runs after build() has made the panes, since it needs their headings.
     function buildHeadActions() {
+      // Show environment reads the container's own env — same reach as the
+      // file manager, so PLAN_188 part C ties it to Files rather than
+      // building it a switch of its own; renderJobsBar() below hides the
+      // button whenever Files is off, whether or not the Files pane itself
+      // exists to sit beside it.
       var envBtn = mkJobBtn('Show environment', 'staxx-manage-job-env');
       envBtn.title = 'Runs "env" inside the container and prints the result into this pane.';
       envBtn.addEventListener('click', function () { showEnvironment(state.selected); });
       els.log.actions.appendChild(envBtn);
 
-      // The shell heading says whether there is a session, not merely whether
-      // there is something to press. A button that only appears once the
-      // connection has dropped leaves the ordinary state — connected —
-      // saying nothing at all, so a silent pane and a dead one look alike.
-      // Two elements, one shown at a time: a plain reading while it is fine,
-      // a button when it is not.
-      var shellStatus = document.createElement('span');
-      shellStatus.className = 'staxx-manage-shell-status';
-      var statusDot = document.createElement('span');
-      statusDot.className = 'staxx-manage-light';
-      var statusText = document.createElement('span');
-      shellStatus.appendChild(statusDot);
-      shellStatus.appendChild(statusText);
-      els.shell.actions.appendChild(shellStatus);
+      // The shell's own two head actions only exist when the Shell pane
+      // does — a switched-off Shell has nothing here to build them onto.
+      var shellStatus = null, statusDot = null, statusText = null, reconnectBtn = null;
+      if (els.shell) {
+        // The shell heading says whether there is a session, not merely
+        // whether there is something to press. A button that only appears
+        // once the connection has dropped leaves the ordinary state —
+        // connected — saying nothing at all, so a silent pane and a dead one
+        // look alike. Two elements, one shown at a time: a plain reading
+        // while it is fine, a button when it is not.
+        shellStatus = document.createElement('span');
+        shellStatus.className = 'staxx-manage-shell-status';
+        statusDot = document.createElement('span');
+        statusDot.className = 'staxx-manage-light';
+        statusText = document.createElement('span');
+        shellStatus.appendChild(statusDot);
+        shellStatus.appendChild(statusText);
+        els.shell.actions.appendChild(shellStatus);
 
-      var reconnectBtn = mkJobBtn('', 'staxx-manage-job-reconnect');
-      reconnectBtn.title = 'Start a new shell session in this container.';
-      var deadDot = document.createElement('span');
-      deadDot.className = 'staxx-manage-light staxx-manage-light--dead';
-      reconnectBtn.appendChild(deadDot);
-      reconnectBtn.appendChild(document.createTextNode('Reconnect'));
-      reconnectBtn.addEventListener('click', function () { reconnectShell(state.selected); });
-      els.shell.actions.appendChild(reconnectBtn);
+        reconnectBtn = mkJobBtn('', 'staxx-manage-job-reconnect');
+        reconnectBtn.title = 'Start a new shell session in this container.';
+        var deadDot = document.createElement('span');
+        deadDot.className = 'staxx-manage-light staxx-manage-light--dead';
+        reconnectBtn.appendChild(deadDot);
+        reconnectBtn.appendChild(document.createTextNode('Reconnect'));
+        reconnectBtn.addEventListener('click', function () { reconnectShell(state.selected); });
+        els.shell.actions.appendChild(reconnectBtn);
+      }
 
-      var cfgBtn = mkJobBtn('Config folder', 'staxx-manage-job-cfg');
-      cfgBtn.title = 'Point this pane at the container’s first mounted folder.';
-      cfgBtn.addEventListener('click', function () { openConfigFolder(state.selected); });
-      els.files.actions.appendChild(cfgBtn);
+      // Config folder only exists alongside a built Files pane — it is the
+      // one thing that opens it (openConfigFolder() -> revealPane('files')).
+      var cfgBtn = null;
+      if (els.files) {
+        cfgBtn = mkJobBtn('Config folder', 'staxx-manage-job-cfg');
+        cfgBtn.title = 'Point this pane at the container’s first mounted folder.';
+        cfgBtn.addEventListener('click', function () { openConfigFolder(state.selected); });
+        els.files.actions.appendChild(cfgBtn);
+      }
 
       els.jobsUI = {
         cfgBtn: cfgBtn, envBtn: envBtn, reconnectBtn: reconnectBtn,
@@ -2091,6 +2157,19 @@
       }
 
       els.statusUI.status.classList.remove('staxx-manage-status--hidden');
+
+      // The restart-count/health half of this line shares the file manager's
+      // own gate (PLAN_188 part C): it is another reach into the running
+      // container, and the server refuses cstat the same way it refuses
+      // cfile-* once Files is off. Skip asking rather than have the request
+      // reliably fail — the container-state pill above still shows.
+      if (!state.filesEnabled) {
+        stat.service = null; stat.loading = false; stat.error = '';
+        stat.restarts = null; stat.health = null;
+        renderStatusLine();
+        renderJobsBar();
+        return;
+      }
 
       if (stat.service !== service) {
         stat.service = service;
@@ -2153,19 +2232,28 @@
       var mounts = isAll ? null : mountsFor(service);
       var sess = isAll ? null : shellState.sessions[service];
 
-      ui.cfgBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts);
-      ui.envBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll);
+      // PLAN_188 part C: Config folder and Show environment both reach into
+      // the container the same way the file manager does, so both follow
+      // Files' own switch — the button may exist (Config folder, only when
+      // the Files pane itself was built) or not, but either way it is hidden
+      // once Files is off.
+      if (ui.cfgBtn) ui.cfgBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts || !state.filesEnabled);
+      ui.envBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !state.filesEnabled);
 
-      // Three states, not two: "opening" is neither connected nor dropped,
-      // and saying either of those while a session is still being set up
-      // would be untrue for the second or so that it takes.
-      var dead = !!sess && (sess.ended || !!sess.error);
-      var opening = !!sess && !dead && !sess.id;
-      ui.reconnectBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !dead);
-      ui.shellStatus.classList.toggle('staxx-manage-shell-status--hidden', isAll || !sess || dead);
-      if (sess && !dead) {
-        ui.statusText.textContent = opening ? 'Connecting…' : 'Connected';
-        ui.statusDot.classList.toggle('staxx-manage-light--running', !opening);
+      // The shell's own status/reconnect controls only exist when the Shell
+      // pane does (built in buildHeadActions() above).
+      if (ui.reconnectBtn) {
+        // Three states, not two: "opening" is neither connected nor dropped,
+        // and saying either of those while a session is still being set up
+        // would be untrue for the second or so that it takes.
+        var dead = !!sess && (sess.ended || !!sess.error);
+        var opening = !!sess && !dead && !sess.id;
+        ui.reconnectBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !dead);
+        ui.shellStatus.classList.toggle('staxx-manage-shell-status--hidden', isAll || !sess || dead);
+        if (sess && !dead) {
+          ui.statusText.textContent = opening ? 'Connecting…' : 'Connected';
+          ui.statusDot.classList.toggle('staxx-manage-light--running', !opening);
+        }
       }
     }
 
@@ -2229,7 +2317,12 @@
       el.className = 'staxx-manage-narrowtabs';
       el.setAttribute('role', 'tablist');
 
-      var defs = [['log', 'Log'], ['shell', 'Shell'], ['files', 'Files']];
+      // PLAN_188 part C — a switched-off pane gets no tab here either; the
+      // flags are already on state by the time build() (and this) run, set
+      // by mount() below.
+      var defs = [['log', 'Log']];
+      if (state.shellEnabled) defs.push(['shell', 'Shell']);
+      if (state.filesEnabled) defs.push(['files', 'Files']);
       els.narrowTabBtns = {};
       defs.forEach(function (d) {
         var key = d[0], label = d[1];
@@ -2253,9 +2346,13 @@
     // cheap to call from everywhere a pane's visibility might need to change
     // rather than gating every call site on NARROW.matches itself.
     function updateNarrowPanes() {
+      // A switched-off pane has no els[key] at all (PLAN_188 part C) — skip
+      // it rather than fail on a null .el.
       ['log', 'shell', 'files'].forEach(function (key) {
+        var p = els[key];
+        if (!p) return;
         var active = state.narrowPane === key;
-        els[key].el.classList.toggle('staxx-manage-pane--narrowhidden', !active);
+        p.el.classList.toggle('staxx-manage-pane--narrowhidden', !active);
         var btn = els.narrowTabBtns && els.narrowTabBtns[key];
         if (btn) {
           btn.classList.toggle('staxx-manage-narrowtab--selected', active);
@@ -2514,12 +2611,26 @@
 
     return {
       mount: function (spec) {
-        if (torndown) { build(); torndown = false; }
+        spec = spec || {};
+        // PLAN_188 part C — read fresh on every mount, since the host re-asks
+        // the settings each time the editor opens, and set BEFORE build()
+        // below runs so the layout it draws matches. !== false rather than a
+        // plain truthiness check: an old caller that never passes either key
+        // still gets today's behaviour (both on), not both panes vanishing.
+        state.shellEnabled = spec.shellEnabled !== false;
+        state.filesEnabled = spec.filesEnabled !== false;
+        var flagsChanged = !builtFlags ||
+          builtFlags.shellEnabled !== state.shellEnabled ||
+          builtFlags.filesEnabled !== state.filesEnabled;
+        if (torndown || flagsChanged) {
+          build();
+          builtFlags = { shellEnabled: state.shellEnabled, filesEnabled: state.filesEnabled };
+          torndown = false;
+        }
         // A different stack means an entirely different set of containers —
         // nothing an already-open shell session was talking to still exists.
         closeAllShellSessions();
         resetFileSessions();
-        spec = spec || {};
         state.stack = spec.stack || '';
         state.services = Array.isArray(spec.services) ? spec.services.slice() : [];
         state.icons = spec.icons || {};
@@ -2571,7 +2682,6 @@
       note: function (text) { noteLine(String(text == null ? '' : text)); },
       unmount: function () {
         stopFollower();
-        log.downloadText = null;
         closeAllShellSessions();
         host.innerHTML = '';
         host.classList.remove('staxx-manage');

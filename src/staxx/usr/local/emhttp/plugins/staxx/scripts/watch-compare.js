@@ -81,12 +81,11 @@ function toNameValueMap(val) {
  * at all, so a README fragment that turns out not to parse as one just
  * yields no services rather than a crash. */
 function servicesOf(doc) {
-  if (!doc.root || doc.root.kind !== 'map') return {};
-  var svcPair = doc.root.pairs.services;
-  if (!svcPair || !svcPair.value || svcPair.value.kind !== 'map') return {};
+  var map = Y.servicesMap(doc);
+  if (!map) return {};
   var out = {};
-  svcPair.value.keys.forEach(function (name) {
-    out[name] = toPlain(svcPair.value.pairs[name].value) || {};
+  map.keys.forEach(function (name) {
+    out[name] = toPlain(map.pairs[name].value) || {};
   });
   return out;
 }

@@ -8,18 +8,8 @@
  * pointed at /tmp/p102-store, the same way tests/server/files.php does it —
  * never the real store:
  *
- *     pscp tests/server/adopt.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/p102-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/p102-store\"" >> $CFG
- *       php /tmp/adopt.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       diff -q /tmp/cfg.bak $CFG && echo CONFIG_IDENTICAL
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/adopt.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/p102-store /tmp/adopt.php'
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzadopt…", under the temporary stack root. Runs
@@ -136,26 +126,32 @@ ok('row4: its content landed byte-for-byte',
 ok('row4: the unrelated file already there is untouched, byte for byte',
    file_get_contents($adoptDir.'/.env') === $envBody);
 
-// The "recorded from the start" case: a first save on an adopted directory
-// keeps nothing yet - there was no compose file before it to keep, exactly
-// like an ordinary brand-new stack's first save (see tests/server/record.php,
-// "capture with no compose file present keeps nothing and still succeeds").
-// A second save is what proves the point PLAN_102 makes: it captures the
-// FIRST save's own content, so going back reaches all the way to what was
-// originally adopted rather than starting one edit late.
-ok('row4: the first save on an adopted directory keeps no history yet - '
- . 'same as any other stack first save',
-   staxx_record_list($adoptRel) === []);
+// Since commit 5337f0e (2026-08-30), every save also captures the file AFTER
+// writing it, so a first save on an adopted fileless folder already leaves
+// one version behind - the zero-history case belongs to
+// tests/server/record.php ("capture with no compose file present keeps
+// nothing and still succeeds"), which is about a stack with nothing to
+// adopt, not this one. A second save is what proves the point PLAN_102
+// makes: the FIRST version still holds the first save's own content, so
+// going back reaches all the way to what was originally adopted rather than
+// starting one edit late.
+$history = staxx_record_list($adoptRel);
+ok('row4: one version exists after the first save', count($history) === 1,
+   'count='.count($history));
+ok('row4: it holds the FIRST save content',
+   count($history) === 1 && staxx_record_get($adoptRel, $history[0]['n']) === $compose);
 
 $secondBody = "services:\n  a:\n    image: alpine:3.21\n";
 $err = '';
 ok('row4: a second save on the adopted stack succeeds',
    staxx_save_stack($adoptRel, $secondBody, $err), $err);
 $history = staxx_record_list($adoptRel);
-ok('row4: exactly one version exists after the second save', count($history) === 1,
+ok('row4: two versions exist after the second save', count($history) === 2,
    'count='.count($history));
-ok('row4: it holds the FIRST save content - going back reaches the start',
-   count($history) === 1 && staxx_record_get($adoptRel, $history[0]['n']) === $compose);
+// staxx_record_list() orders newest first, so the FIRST save's content is
+// the oldest entry - the last one in this list, not the first.
+ok('row4: the oldest version still holds the FIRST save content - going back reaches the start',
+   count($history) === 2 && staxx_record_get($adoptRel, $history[1]['n']) === $compose);
 
 /* --------------------------------------- row 5: adopt, file already there ---- */
 // Adoption claimed, directory exists, holds a compose file -> refused,

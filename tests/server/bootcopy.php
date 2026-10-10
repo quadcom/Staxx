@@ -5,17 +5,8 @@
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
- *     pscp tests/server/bootcopy.php root@<box>:/tmp/
- *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
- *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STORE_ROOT=" $CFG \
- *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzbootcopy-store\"#" $CFG \
- *         || echo "STORE_ROOT=\"/tmp/zzbootcopy-store\"" >> $CFG
- *       php /tmp/bootcopy.php; RC=$?
- *       cp /tmp/cfg.bak $CFG
- *       exit $RC
- *     '
+ *     pscp tests/server/run-with-store.sh tests/server/bootcopy.php root@<box>:/tmp/
+ *     plink … 'bash /tmp/run-with-store.sh /tmp/zzbootcopy-store /tmp/bootcopy.php'
  *
  * Prints one line per case and exits non-zero on any failure.
  *
@@ -76,6 +67,30 @@ ok('the shelf copy exists after the save', is_file($bootFile));
 ok('the shelf copy matches the store byte for byte',
    is_file($bootFile) && file_get_contents($bootFile) === $compose);
 ok('the shelf has its README', is_file($bootScratch.'/README.txt'));
+
+/* ---------------------------------------- unchanged copy is not rewritten -- */
+// D4 (PLAN_197 item 7, ruled 2026-09-28): the shelf copy's modification time
+// is meant to say when its content last changed, not when it was last asked
+// for — so a copy of unchanged content must leave that time alone, and only
+// a real content change may move it.
+
+touch($bootFile, time() - 3600); // back-date it so "untouched" cannot pass by luck
+$mtimeBackdated = @filemtime($bootFile);
+$sameCopyErr = '';
+ok('copying a stack whose store content has not changed succeeds',
+   staxx_boot_copy_stack($rel, $sameCopyErr), $sameCopyErr);
+ok('...and leaves the unchanged copy\'s modification time exactly where it was backdated to',
+   @filemtime($bootFile) === $mtimeBackdated);
+
+$composeChanged = "services:\n  a:\n    image: alpine:3.22\n";
+file_put_contents($root.'/'.$rel.'/compose.yaml', $composeChanged);
+$changedCopyErr = '';
+ok('copying the same stack once its store content has actually changed succeeds',
+   staxx_boot_copy_stack($rel, $changedCopyErr), $changedCopyErr);
+ok('...the shelf copy now holds the changed content',
+   @file_get_contents($bootFile) === $composeChanged);
+ok('...and its modification time has moved on from the backdated one',
+   @filemtime($bootFile) > $mtimeBackdated);
 
 /* ------------------------------------------------------- override too -- */
 

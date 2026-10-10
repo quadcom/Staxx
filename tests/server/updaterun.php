@@ -2,7 +2,14 @@
 /* The doing side of PLAN_45 phases 4-8 — include/UpdateRun.php — checked
  * against the real installed plugin. Updates.php's own tests stay in
  * tests/server/updates.php; this file is only the clock, the queue, roll
- * back, cleanup and the build-base reader.
+ * back, the keep-set and the build-base reader. The storage alert has its
+ * own suite, tests/server/storage_alert.php.
+ *
+ * Also PLAN_181 Part A (staxx_update_keep_digests()'s local half only
+ * protecting a ref some CURRENT stack still names, and its $excludeStack
+ * parameter) and Part C (staxx_update_rollback_presence_error(), the pure
+ * decision behind "pull it back down" vs. "refuse" for an absent roll-back
+ * target) — both proved with in-memory state only, no Docker call either way.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
@@ -34,16 +41,59 @@
  * register_shutdown_function() — the same promise tests/server/settings.php
  * makes for the config file it edits.
  *
- * Creates one throwaway stack of its own, "zzb1updrun", under the real
- * stack root — the same "zz…" fixture convention tests/server/files.php and
- * tests/server/import.php already use — and removes it again on exit. It is
- * never started: staying stopped is what makes it a safe, deterministic
- * fixture for "a stopped stack is never due", and its build-recipe services
- * are only ever read, never built. */
+ * Creates two throwaway stacks of its own, "zzb1updrun" and
+ * "zzb1updrun-allout", under the real stack root — the same "zz…" fixture
+ * convention tests/server/files.php and tests/server/import.php already
+ * use — and removes both again on exit. Neither is ever started: staying
+ * stopped is what makes the first a safe, deterministic fixture for "a
+ * stopped stack is never due", and its build-recipe services are only ever
+ * read, never built. The second exists purely so PLAN_150 item 3's
+ * "everyone opted out" case has a stack whose every service actually says
+ * no — the first fixture's stack-level 'notify: true' means it can never
+ * produce that answer on its own.
+ *
+ * PLAN_150 items 2/3 (failure notices, per-container filtering): the
+ * filtering itself is proved through staxx_update_found_containers() and
+ * staxx_update_queue_notify_names(), which only ever read state and compose
+ * files — staxx_update_notify() itself is called nowhere in those two
+ * functions, so proving the filtering never risks a real notification. */
 
 $scratch = '/tmp/staxx-updaterun-test.json';
 @unlink($scratch);
 putenv('STAXX_UPDATE_STATE=' . $scratch);
+
+// Nothing here may reach this box's real notifier, summary file or GitHub:
+// STAXX_NOTIFY_BIN is a stub that counts its calls and keeps the last
+// arguments (NUL-separated), the summary's file and the agents folder sit
+// under /tmp, STAXX_NOTES_STUB answers the release-notes fetcher from a file
+// and logs each call, and STAXX_DOCKER_BIN stands in for docker's image size.
+$ntStub   = '/tmp/staxx-updaterun-notify-stub.sh';
+$ntCalls  = '/tmp/staxx-updaterun-notify-calls';
+$ntLast   = '/tmp/staxx-updaterun-notify-last';
+$ntDigest = '/tmp/staxx-updaterun-notify-digest.json';
+$ntAgents = '/tmp/staxx-updaterun-notify-agents';
+$notesStub = '/tmp/staxx-updaterun-notes-stub.json';
+$dockStub  = '/tmp/staxx-updaterun-docker-stub.sh';
+foreach ([$ntCalls, $ntLast, $ntDigest, $notesStub, $notesStub . '.calls'] as $f) @unlink($f);
+@mkdir($ntAgents, 0755, true);
+@mkdir('/tmp/staxx', 0755, true);
+file_put_contents($ntStub, "#!/bin/sh\nprintf x >> " . escapeshellarg($ntCalls)
+  . "\nprintf '%s\\0' \"\$@\" > " . escapeshellarg($ntLast) . "\n");
+// docker image inspect --format {{.Size}} <image>: the image is the fifth word.
+file_put_contents($dockStub, "#!/bin/sh\ncase \"\$5\" in *evtwo*) exit 1;; esac\necho 1288490189\n");
+chmod($ntStub, 0755);
+chmod($dockStub, 0755);
+putenv('STAXX_NOTIFY_BIN=' . $ntStub);
+putenv('STAXX_NOTIFY_DIGEST=' . $ntDigest);
+putenv('STAXX_NOTIFY_AGENTS=' . $ntAgents);
+putenv('STAXX_NOTES_STUB=' . $notesStub);
+putenv('STAXX_DOCKER_BIN=' . $dockStub);
+putenv('STAXX_NOTIFY_OPTS=' . json_encode(['UPDATE_NOTIFY_INSTALLED_WHEN' => 'now', 'UPDATE_NOTIFY_FAILED_WHEN' => 'now',
+                                           'UPDATE_NOTIFY_FOUND_WHEN' => 'now', 'UPDATE_QUIET' => 'false']));
+register_shutdown_function(function () use ($ntStub, $ntCalls, $ntLast, $ntDigest, $ntAgents, $notesStub, $dockStub) {
+  foreach ([$ntStub, $ntCalls, $ntLast, $ntDigest, $notesStub, $notesStub . '.calls', $dockStub] as $f) @unlink($f);
+  @rmdir($ntAgents);
+});
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
@@ -94,6 +144,27 @@ services:
       update:
         mode: bogus
         delay: notanumber
+  service-notify-only:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: false
+  service-old-notify-spelling:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        mode: notify
+  bad-notify:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: sideways
+  service-notify-failed-only:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify:
+          failed: true
   built-ok:
     build:
       context: ./build-ok
@@ -104,12 +175,38 @@ x-unraid:
   update:
     mode: auto
     delay: 12
+    notify: true
 YAML
 );
 
-register_shutdown_function(function () use ($scratch, $fixtureDir) {
+// A second, tiny fixture stack purely for PLAN_150 item 3's "everyone opted
+// out" case — the main fixture's stack-level 'notify: true' means every
+// service in it inherits true unless it says otherwise, so it can never
+// produce an empty result on its own. This one sets every service's own
+// notify to false and declares no stack-level override at all.
+$fixtureName2 = 'zzb1updrun-allout';
+$fixtureDir2  = $root . '/' . $fixtureName2;
+@exec('rm -rf ' . escapeshellarg($fixtureDir2));
+mkdir($fixtureDir2, 0755, true);
+file_put_contents($fixtureDir2 . '/compose.yaml', <<<YAML
+services:
+  a:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: false
+  b:
+    image: alpine:3.20
+    x-unraid:
+      update:
+        notify: false
+YAML
+);
+
+register_shutdown_function(function () use ($scratch, $fixtureDir, $fixtureDir2) {
   @unlink($scratch);
   @exec('rm -rf ' . escapeshellarg($fixtureDir));
+  @exec('rm -rf ' . escapeshellarg($fixtureDir2));
   $lock = STAXX_UPDATE_DIR . '/lock';
   if (is_dir($lock)) @rmdir($lock);
   echo "fixture and scratch state removed\n";
@@ -118,30 +215,44 @@ register_shutdown_function(function () use ($scratch, $fixtureDir) {
 /* -------------------------------------------------------- 1. settings -- */
 
 $settings = staxx_update_settings();
-ok('settings: mode is one of off/notify/auto',
-   in_array($settings['mode'] ?? '', ['off', 'notify', 'auto'], true), $settings['mode'] ?? '');
+// PLAN_150: the three-way mode collapsed to two — 'off' and 'notify' never
+// behaved differently from 'manual', so staxx_update_settings() normalises
+// both on the way out and no caller sees anything but manual/auto.
+ok('settings: mode is one of manual/auto',
+   in_array($settings['mode'] ?? '', ['manual', 'auto'], true), $settings['mode'] ?? '');
 ok('settings: delay is an int', is_int($settings['delay'] ?? null));
 ok('settings: window is a bool', is_bool($settings['window'] ?? null));
 ok('settings: wstart/wend look like HH:MM',
    preg_match('/^\d{2}:\d{2}$/', $settings['wstart'] ?? '') === 1
    && preg_match('/^\d{2}:\d{2}$/', $settings['wend'] ?? '') === 1,
    ($settings['wstart'] ?? '') . ' / ' . ($settings['wend'] ?? ''));
-ok('settings: notify is one of off/found/applied',
-   in_array($settings['notify'] ?? '', ['off', 'found', 'applied'], true), $settings['notify'] ?? '');
+// PLAN_150 item 2/3: the old single UPDATE_NOTIFY ladder is three independent
+// switches now — found, installed, failed — so this is three separate checks
+// rather than one enum membership test.
+ok('settings: notifyFound is a bool', is_bool($settings['notifyFound'] ?? null));
+ok('settings: notifyInstalled is a bool', is_bool($settings['notifyInstalled'] ?? null));
+ok('settings: notifyFailed is a bool', is_bool($settings['notifyFailed'] ?? null));
 ok('settings: retain is an int', is_int($settings['retain'] ?? null));
-ok('settings: cleanup is one of off/weekly',
-   in_array($settings['cleanup'] ?? '', ['off', 'weekly'], true), $settings['cleanup'] ?? '');
+ok('settings: keepImages is a bool', is_bool($settings['keepImages'] ?? null));
 
 /* ---------------------------------------------------------- 2. policy -- */
 
 $pUnknown = staxx_update_policy('staxx-no-such-stack', 'x');
+// PLAN_154 — staxx_update_policy_fallback() has nothing more specific to
+// read, so each event is the server's own switch for it, verbatim — never
+// null, unlike staxx_update_policy_from_meta()'s own per-event answers.
 ok('policy: an unknown stack falls back to the global setting, not an error',
    $pUnknown['from'] === 'global' && $pUnknown['mode'] === $settings['mode']
-   && $pUnknown['delay'] === $settings['delay'], json_encode($pUnknown));
+   && $pUnknown['delay'] === $settings['delay']
+   && $pUnknown['notifyFound'] === $settings['notifyFound']
+   && $pUnknown['notifyInstalled'] === $settings['notifyInstalled']
+   && $pUnknown['notifyFailed'] === $settings['notifyFailed'], json_encode($pUnknown));
 
+// service-mode writes the OLD 'off' spelling on purpose — proving it still
+// normalises to 'manual' is the whole point of PLAN_150's read-side change.
 $pService = staxx_update_policy($fixtureName, 'service-mode');
-ok('policy: a service-level mode wins over the stack and the global default',
-   $pService['mode'] === 'off' && $pService['from'] === 'service', json_encode($pService));
+ok('policy: a service-level mode wins over the stack and the global default, old "off" spelling reads as manual',
+   $pService['mode'] === 'manual' && $pService['from'] === 'service', json_encode($pService));
 ok('policy: a service-level delay travels with the service-level mode',
    $pService['delay'] === 5, json_encode($pService));
 
@@ -150,12 +261,61 @@ ok('policy: no service override falls back to the stack-level mode',
    $pStack['mode'] === 'auto' && $pStack['from'] === 'stack', json_encode($pStack));
 ok('policy: the stack-level delay travels with it',
    $pStack['delay'] === 12, json_encode($pStack));
+// The stack's own 'notify: true' is the older boolean spelling — PLAN_154
+// says it answers all three events at once, exactly as it always has.
+ok('policy: the stack-level notify (older boolean spelling) sets all three events',
+   $pStack['notifyFound'] === true && $pStack['notifyInstalled'] === true
+   && $pStack['notifyFailed'] === true, json_encode($pStack));
 
 $pBad = staxx_update_policy($fixtureName, 'bad-values');
 ok('policy: an unrecognised mode is ignored, not honoured',
    $pBad['mode'] !== 'bogus', json_encode($pBad));
 ok('policy: a non-numeric delay is ignored, not honoured',
    $pBad['delay'] !== 'notanumber' && is_int($pBad['delay']), json_encode($pBad));
+
+// PLAN_154 — notify no longer joins the mode/delay handoff: a service
+// declaring only notify does NOT thereby also win mode/delay for itself, so
+// this falls through to the stack's own mode/delay exactly as a service
+// declaring nothing at all would. Its own notify (the older boolean
+// spelling, false) still overrides the stack's 'true' for every event.
+$pNotifyOnly = staxx_update_policy($fixtureName, 'service-notify-only');
+ok('policy: a service declaring only notify does not also win mode/delay for itself',
+   $pNotifyOnly['from'] === 'stack' && $pNotifyOnly['mode'] === 'auto' && $pNotifyOnly['delay'] === 12,
+   json_encode($pNotifyOnly));
+ok('policy: …but its own notify still overrides the stack for every event',
+   $pNotifyOnly['notifyFound'] === false && $pNotifyOnly['notifyInstalled'] === false
+   && $pNotifyOnly['notifyFailed'] === false, json_encode($pNotifyOnly));
+
+// A service overriding just one event (the object shape) still falls to the
+// stack for the other two — here the stack's own boolean shorthand answers
+// every event, so "falls to the stack" reads as true/true here rather than
+// null; the genuinely-null case (nothing at either scope) is proved directly
+// against staxx_update_policy_from_meta() further down.
+$pFailedOnly = staxx_update_policy($fixtureName, 'service-notify-failed-only');
+ok('policy: a service overriding just "failed" leaves the other two following the stack',
+   $pFailedOnly['notifyFailed'] === true && $pFailedOnly['notifyFound'] === true
+   && $pFailedOnly['notifyInstalled'] === true, json_encode($pFailedOnly));
+
+// The OLD 'notify' spelling for mode, at service scope, on a service that
+// sets nothing else — proves normalisation happens independently of which
+// scope the old spelling was written at.
+$pOldSpelling = staxx_update_policy($fixtureName, 'service-old-notify-spelling');
+ok('policy: the old "notify" mode spelling also reads as manual',
+   $pOldSpelling['mode'] === 'manual' && $pOldSpelling['from'] === 'service', json_encode($pOldSpelling));
+
+// The genuinely-null case: neither scope has anything to say about notify at
+// all, so staxx_update_policy_from_meta() must leave every event null rather
+// than quietly borrowing the server's own switch — that step belongs to the
+// caller (staxx_update_stack_wants_notify()), proved separately below.
+$pNoNotifyAnywhere = staxx_update_policy_from_meta(['services' => ['x' => ['x' => []]], 'x' => []], 'x', $settings);
+ok('policy: nothing set at either scope leaves every notify event null, not resolved',
+   $pNoNotifyAnywhere['notifyFound'] === null && $pNoNotifyAnywhere['notifyInstalled'] === null
+   && $pNoNotifyAnywhere['notifyFailed'] === null, json_encode($pNoNotifyAnywhere));
+
+$pBadNotify = staxx_update_policy($fixtureName, 'bad-notify');
+ok('policy: a notify value that is not really a boolean is ignored, falls through to the stack',
+   $pBadNotify['notifyFound'] === true && $pBadNotify['notifyInstalled'] === true
+   && $pBadNotify['notifyFailed'] === true && $pBadNotify['from'] === 'stack', json_encode($pBadNotify));
 
 /* -------------------------------------------------- 3. the quiet window -- */
 
@@ -308,9 +468,6 @@ ok('editing: a stale marker (over 15 minutes old) no longer counts as being edit
 
 $hStack = $fixtureName;
 $hSvc   = 'stack-only';
-$state = staxx_update_state();
-unset($state['history'][$hStack . '::' . $hSvc]);
-staxx_update_state_save($state);
 
 $retain = max(1, (int)$settings['retain']);
 for ($i = 0; $i < $retain + 3; $i++) {
@@ -325,11 +482,26 @@ staxx_update_history_push($hStack, $hSvc, $before[0]); // same digest again, "ru
 $after = staxx_update_history($hStack, $hSvc);
 ok('history: pushing the same digest twice in a row does not record it twice', $before === $after, json_encode($after));
 
+/* ------------------------------------------ 8b. local repo name for a roll back -- */
+
+// Pure string arithmetic, no docker call — proves the name staxx_update_rollback()
+// checks presence against is built from the reference as written, not from
+// staxx_hub_repo_path()'s hub-path translation (see PLAN_180 part 2c: that
+// translation is right for talking to a registry, but the image is stored
+// locally under the name it was pulled AS, e.g. lscr.io/linuxserver/plex).
+ok('local repo: strips a plain tag',
+   staxx_update_local_repo('lscr.io/linuxserver/plex:latest') === 'lscr.io/linuxserver/plex');
+ok('local repo: strips an existing digest pin',
+   staxx_update_local_repo('lscr.io/linuxserver/plex@sha256:' . str_repeat('a', 64)) === 'lscr.io/linuxserver/plex');
+ok('local repo: a bare Docker Hub name needs no rewriting',
+   staxx_update_local_repo('redis:7-alpine') === 'redis');
+ok('local repo: a port in the registry host is not mistaken for a tag',
+   staxx_update_local_repo('registry.local:5000/app:1.0') === 'registry.local:5000/app');
+ok('local repo: an already-untagged reference is left alone',
+   staxx_update_local_repo('ghcr.io/a/b') === 'ghcr.io/a/b');
+
 /* ---------------------------------------------------------- 9. rollback -- */
 
-$state = staxx_update_state();
-unset($state['history'][$fixtureName . '::stack-only']);
-staxx_update_state_save($state);
 staxx_update_history_push($fixtureName, 'stack-only', 'sha256:' . str_repeat('0', 64)); // a digest guaranteed not to be on this box
 
 /* A rollback now pins the compose file, so it needs the pinned text supplied
@@ -344,9 +516,6 @@ ok('rollback: refuses when the previous image is no longer present locally, with
    $rbJob === '' && strpos($err, 'no longer present') !== false, $err);
 
 $err = '';
-$state = staxx_update_state();
-unset($state['history'][$fixtureName . '::built-ok']);
-staxx_update_state_save($state);
 // staxx_update_rollback() no longer has a "roll back to whatever came
 // before" shortcut for an omitted target — the Versions tab, its only real
 // caller, always supplies the exact digest it wants — so an empty history
@@ -355,53 +524,6 @@ staxx_update_state_save($state);
 $rbJob2 = staxx_update_rollback($fixtureName, ['built-ok' => 'sha256:' . str_repeat('1', 64)], $err);
 ok('rollback: refuses when there is no history at all for the service, with a sentence',
    $rbJob2 === '' && $err !== '', $err);
-
-/* ----------------------------------------------------------- 10. cleanup -- */
-
-// Only ever called with dry=true here — this box's real images must never
-// be at risk from a test run, dry or not, so a live delete path is simply
-// never exercised.
-$err = '';
-$cleanup1 = staxx_update_cleanup(true, $err);
-ok('cleanup: dry run returns the documented shape',
-   is_array($cleanup1) && is_array($cleanup1['removed'] ?? null) && is_int($cleanup1['kept'] ?? null), json_encode($cleanup1));
-
-// Find a real image this box actually has pulled, and prove that recording
-// it in ANY history list is enough to protect it, even though nothing here
-// checks whether it is genuinely superseded — cleanup only ever consults
-// "is it in some history list", not "is it the newest entry there".
-$stacks = function_exists('staxx_list_stacks') ? staxx_list_stacks() : [];
-$protectedDigest = null;
-$protectedImage  = null;
-foreach ($stacks as $s) {
-  if (!($s['parses'] ?? false) || $s['file'] === '') continue;
-  $meta = staxx_compose_meta($s['file']);
-  if (!$meta['ok']) continue;
-  foreach ($meta['services'] as $svc => $svcMeta) {
-    $img = trim((string)($svcMeta['image'] ?? ''));
-    if ($img === '') continue;
-    $local = staxx_image_local($img);
-    if (($local['digest'] ?? '') !== '') { $protectedImage = $img; $protectedDigest = $local['digest']; break 2; }
-  }
-}
-
-if ($protectedDigest === null) {
-  skip('cleanup: an image recorded in history is never proposed for removal',
-       'no real stack on this box has an installed, digest-bearing image to test with');
-} else {
-  $state = staxx_update_state();
-  $state['history']['zzb1updrun-protect::svc'] = [$protectedDigest];
-  staxx_update_state_save($state);
-
-  $err = '';
-  $cleanup2 = staxx_update_cleanup(true, $err);
-  $removedHasIt = false;
-  foreach ((array)($cleanup2['removed'] ?? []) as $ref) {
-    if (strpos((string)$ref, $protectedDigest) !== false) { $removedHasIt = true; break; }
-  }
-  ok('cleanup: an image present in a history list is never among those proposed for removal',
-     !$removedHasIt, $protectedImage . ' ' . $protectedDigest);
-}
 
 /* --------------------------------------------------- 11. build base -- */
 
@@ -550,20 +672,404 @@ if ($liveBusy) {
 
 /* --------------------------------------------------------- 14. notify -- */
 
-// staxx_update_notify() is void and fires a real shell command — the only
-// safe way to exercise it here is to confirm it does nothing at all when the
-// setting is off, which is the refusal this whole feature leans on. It is
-// never called with the setting on, since that would send a real
-// notification through Unraid's own notify script on this box.
-if (($settings['notify'] ?? 'off') === 'off') {
-  // No observable side effect to assert against directly; this simply
-  // confirms the call does not fatal and does not throw with the setting off.
-  staxx_update_notify('test', 'staxx updaterun test — should never be seen');
-  ok('notify: a call with the setting off does not error', true);
-} else {
-  skip('notify: a call with the setting off does not error',
-       "UPDATE_NOTIFY is currently '" . $settings['notify'] . "' on this box, and this file must not flip it just to test silence");
+// PLAN_154 removed staxx_update_notify()'s own "all three switches off"
+// gate — a container may now want a message the server's own default would
+// suppress, so the decision moved entirely to the caller (proved in
+// sections 16/16b/17 below, none of which ever reach staxx_update_notify()
+// itself). That means staxx_update_notify() now ALWAYS sends when called,
+// so it must never be called directly from this file at all any more —
+// there is no "every switch off" shape left to safely call it against.
+skip('notify: staxx_update_notify() itself is never called directly',
+     'PLAN_154 — it always sends now; the gate moved to every caller, proved without it below');
+
+/* ------------------------------------------------------ 15. naming helpers -- */
+
+// Pure formatting, no state and no file reads — the shape every notice built
+// in this plan shares.
+ok('label: a service sharing the stack\'s own leaf name is named by the stack alone',
+   staxx_update_container_label('jellyfin', 'jellyfin') === 'jellyfin');
+ok('label: a service under a folder is compared against the folder path\'s leaf, not the whole path',
+   staxx_update_container_label('media/jellyfin', 'jellyfin') === 'media/jellyfin');
+ok('label: a differently-named service is named alongside its stack',
+   staxx_update_container_label('media/jellyfin', 'sonarr') === 'media/jellyfin (sonarr)');
+
+ok('name-or-count: one entry is named, singular wording',
+   staxx_update_name_or_count(['a'], 'stack updated', 'stacks updated') === '1 stack updated: a');
+ok('name-or-count: five entries are still named in full',
+   staxx_update_name_or_count(['a', 'b', 'c', 'd', 'e'], 'stack updated', 'stacks updated')
+   === '5 stacks updated: a, b, c, d, e');
+ok('name-or-count: six entries are just counted, not named',
+   staxx_update_name_or_count(['a', 'b', 'c', 'd', 'e', 'f'], 'stack updated', 'stacks updated')
+   === '6 stacks updated');
+
+/* -------------------------------------------- 16. found-message filtering -- */
+
+// staxx_update_stack_wants_notify() proved directly against hand-built meta
+// arrays first — no disk, no docker, the fastest possible proof of the OR
+// rule the two message-filtering functions both lean on. Asked here about
+// 'found' specifically, since that is the event these two fixtures set.
+$metaAllOut = ['services' => ['a' => ['x' => ['update.notify' => false]],
+                               'b' => ['x' => ['update.notify' => false]]], 'x' => []];
+$metaMixed  = ['services' => ['a' => ['x' => ['update.notify' => false]],
+                               'b' => ['x' => ['update.notify' => true]]], 'x' => []];
+ok('stack-wants-notify: every service opted out means the stack is not named',
+   staxx_update_stack_wants_notify('found', $metaAllOut, $settings) === false);
+ok('stack-wants-notify: one service opted in is enough to name the whole stack',
+   staxx_update_stack_wants_notify('found', $metaMixed, $settings) === true);
+
+/* ------------------------------------- 16b. PLAN_154 per-event override -- */
+
+// A hand-built $global, so "server failures-only" and "server all off" are
+// real, controlled combinations rather than whatever this box happens to
+// have configured right now — staxx_update_stack_wants_notify() only ever
+// reads 'notifyFound'/'notifyInstalled'/'notifyFailed' off it.
+$gFailuresOnly = ['notifyFound' => false, 'notifyInstalled' => false, 'notifyFailed' => true];
+$gAllOff       = ['notifyFound' => false, 'notifyInstalled' => false, 'notifyFailed' => false];
+
+// Container on Default (no x-unraid update block at all) — every event
+// follows the server's own switch, never the "any switch on" collapse this
+// plan removed.
+$metaDefault = ['services' => ['a' => ['x' => []]], 'x' => []];
+ok('override: server failures-only + container Default -> failures only, not everything',
+   staxx_update_stack_wants_notify('failed', $metaDefault, $gFailuresOnly) === true
+   && staxx_update_stack_wants_notify('found', $metaDefault, $gFailuresOnly) === false
+   && staxx_update_stack_wants_notify('installed', $metaDefault, $gFailuresOnly) === false);
+
+// Server all off, container explicitly wants 'found' — proves a container
+// can override the server's switch UPWARD, which the old collapse-to-one-
+// boolean design could never express.
+$metaFoundTrue = ['services' => ['a' => ['x' => ['update.notify.found' => true]]], 'x' => []];
+ok('override: server all off + container found:true -> found, proving override upward',
+   staxx_update_stack_wants_notify('found', $metaFoundTrue, $gAllOff) === true
+   && staxx_update_stack_wants_notify('installed', $metaFoundTrue, $gAllOff) === false);
+
+// Container sets only 'failed' — the other two must still follow the
+// server, not silently inherit the container's own explicit answer.
+$metaFailedOnly = ['services' => ['a' => ['x' => ['update.notify.failed' => true]]], 'x' => []];
+ok('override: container sets failed only -> the other two still follow the server',
+   staxx_update_stack_wants_notify('failed', $metaFailedOnly, $gFailuresOnly) === true
+   && staxx_update_stack_wants_notify('found', $metaFailedOnly, $gAllOff) === false
+   && staxx_update_stack_wants_notify('installed', $metaFailedOnly, $gAllOff) === false);
+
+// The older boolean spelling, at either extreme — 'exactly as before'.
+$metaNotifyTrue  = ['services' => ['a' => ['x' => ['update.notify' => true]]], 'x' => []];
+$metaNotifyFalse = ['services' => ['a' => ['x' => ['update.notify' => false]]], 'x' => []];
+ok('override: notify:true sets all three events on',
+   staxx_update_stack_wants_notify('found', $metaNotifyTrue, $gAllOff) === true
+   && staxx_update_stack_wants_notify('installed', $metaNotifyTrue, $gAllOff) === true
+   && staxx_update_stack_wants_notify('failed', $metaNotifyTrue, $gAllOff) === true);
+$gAllOn = ['notifyFound' => true, 'notifyInstalled' => true, 'notifyFailed' => true];
+ok('override: notify:false sets all three events off',
+   staxx_update_stack_wants_notify('found', $metaNotifyFalse, $gAllOn) === false
+   && staxx_update_stack_wants_notify('installed', $metaNotifyFalse, $gAllOn) === false
+   && staxx_update_stack_wants_notify('failed', $metaNotifyFalse, $gAllOn) === false);
+
+// One service wants failures, another wants nothing (Default, server off) —
+// the stack's failure message fires, its found message does not.
+$metaOneWantsFailures = [
+  'services' => [
+    'wants-failures' => ['x' => ['update.notify.failed' => true]],
+    'wants-nothing'  => ['x' => []],
+  ],
+  'x' => [],
+];
+ok('override: one service wants failures, the other wants nothing -> failure yes, found no',
+   staxx_update_stack_wants_notify('failed', $metaOneWantsFailures, $gAllOff) === true
+   && staxx_update_stack_wants_notify('found', $metaOneWantsFailures, $gAllOff) === false);
+
+// staxx_update_found_containers() against the real fixture: its stack-level
+// notify is true, so every service that does not say otherwise is named,
+// and 'service-notify-only' (which explicitly opts out) is not — proving
+// the filter reaches individual services, not just whole stacks.
+// staxx_updates_pill_for_image() reads 'update' state from local/remote
+// digests actually differing, not from 'seen' alone.
+$foundImages = ['alpine:3.20' => ['local' => 'sha256:aaa', 'remote' => 'sha256:bbb']];
+$foundRefs = [
+  'alpine:3.20' => [
+    $fixtureName . '::stack-only',
+    $fixtureName . '::service-notify-only',
+  ],
+];
+$foundStackFiles = [$fixtureName => $fixtureDir . '/compose.yaml'];
+$found = staxx_update_found_containers($foundImages, $foundRefs, $foundStackFiles, $settings);
+ok('found-containers: a container with no override inherits the stack\'s "yes"',
+   in_array($fixtureName . ' (stack-only)', $found, true), json_encode($found));
+ok('found-containers: a container that opted itself out is never named',
+   !in_array($fixtureName . ' (service-notify-only)', $found, true), json_encode($found));
+
+// Every service in the second fixture opts out and it declares no stack
+// override, so nothing about it should ever be named — the "everyone opted
+// out, so nothing is sent" case item 3 asks for directly.
+$allOutImages = ['nginx:latest' => ['local' => 'sha256:ccc', 'remote' => 'sha256:ddd']];
+$allOutRefs = ['nginx:latest' => [$fixtureName2 . '::a', $fixtureName2 . '::b']];
+$allOutStackFiles = [$fixtureName2 => $fixtureDir2 . '/compose.yaml'];
+$allOutFound = staxx_update_found_containers($allOutImages, $allOutRefs, $allOutStackFiles, $settings);
+ok('found-containers: every container opting out leaves nothing to name',
+   $allOutFound === [], json_encode($allOutFound));
+
+/* ------------------------------------------- 17. queue-message filtering -- */
+
+// staxx_update_queue_notify_names() never calls staxx_update_notify() itself
+// — this proves the filtering a queue completion or failure message would
+// use, safely, however either switch is currently set on this box.
+$queueItemsMixed = [
+  ['stack' => $fixtureName, 'state' => 'done'],
+  ['stack' => $fixtureName2, 'state' => 'failed'],
+];
+$queueNames = staxx_update_queue_notify_names($queueItemsMixed, $settings);
+ok('queue-notify-names: a stack with at least one opted-in service is named as done',
+   in_array($fixtureName, $queueNames['done'], true), json_encode($queueNames));
+ok('queue-notify-names: a stack where every service opted out is never named as failed',
+   !in_array($fixtureName2, $queueNames['failed'], true), json_encode($queueNames));
+ok('queue-notify-names: an all-opted-out stack leaves the failed list empty',
+   $queueNames['failed'] === [], json_encode($queueNames));
+
+// An unknown stack (no compose file staxx_update_stack_files() can find)
+// falls back to the global default rather than being silently dropped — a
+// 'done' item asks about 'installed' specifically, the same event the
+// policy walk itself would fall back to for it.
+$globalWants = staxx_update_policy_fallback($settings)['notifyInstalled'];
+$queueUnknown = staxx_update_queue_notify_names(
+  [['stack' => 'staxx-no-such-stack', 'state' => 'done']], $settings
+);
+ok('queue-notify-names: an unknown stack falls back to the global default, not dropped or assumed',
+   (in_array('staxx-no-such-stack', $queueUnknown['done'], true)) === $globalWants,
+   json_encode($queueUnknown) . ' / global=' . ($globalWants ? 'true' : 'false'));
+
+/* ---------------------------------- 18. PLAN_181 Part A — keep-digests -- */
+
+// staxx_update_keep_digests()'s "local" half must protect a ref's current
+// pointer only while some CURRENT stack's compose still names it — see the
+// function's own comment for why an orphaned pointer used to be kept for
+// ever. Proved with in-memory state only (the scratch STAXX_UPDATE_STATE
+// file already in place) and one throwaway stack; nothing here touches
+// Docker or a real image.
+$keepFixture = 'zzb1updrun-keep';
+$keepDir     = $root . '/' . $keepFixture;
+@exec('rm -rf ' . escapeshellarg($keepDir));
+mkdir($keepDir, 0755, true);
+file_put_contents($keepDir . '/compose.yaml',
+  "services:\n  svc:\n    image: ghcr.io/example/keepme:latest\n");
+staxx_scan_stacks_reset();
+register_shutdown_function(function () use ($keepDir) {
+  @exec('rm -rf ' . escapeshellarg($keepDir));
+});
+
+staxx_update_state_save(['images' => [
+  // Named by this fixture's own compose file right now — its local pointer
+  // must be protected.
+  'ghcr.io/example/keepme:latest' => ['local' => 'sha256:' . str_repeat('a', 64), 'remote' => ''],
+  // Named by nothing any current stack's compose resolves to — a leftover
+  // from a stack that has since been archived, renamed or edited away.
+  'ghcr.io/example/longgone:latest' => ['local' => 'sha256:' . str_repeat('b', 64), 'remote' => ''],
+]]);
+
+$keepFlat = [];
+foreach (staxx_update_keep_digests() as $digests) foreach ($digests as $d) $keepFlat[$d] = true;
+
+ok('keep-digests: the local pointer for a ref a CURRENT stack still names is protected',
+   isset($keepFlat['sha256:' . str_repeat('a', 64)]));
+ok('keep-digests: the local pointer for a ref no current stack names any more is NOT protected',
+   !isset($keepFlat['sha256:' . str_repeat('b', 64)]));
+
+// $excludeStack (PLAN_181 Part B's own use of this function, ahead of an
+// archive that has not happened yet) must drop that stack's own ref too —
+// otherwise an archive's dry-run confirmation would see its own images as
+// still protected by itself.
+$keepFlatExcluded = [];
+foreach (staxx_update_keep_digests($keepFixture) as $digests) {
+  foreach ($digests as $d) $keepFlatExcluded[$d] = true;
 }
+ok('keep-digests: excluding a stack drops its own ref from the local half too',
+   !isset($keepFlatExcluded['sha256:' . str_repeat('a', 64)]));
+
+/* -------------------------------- 19. PLAN_181 Part C — rollback pull -- */
+
+// staxx_update_rollback_presence_error() is the whole branch: refuse when
+// "keep the images" is on and the version is absent, otherwise let the
+// caller proceed (and, when absent, ask for a pull) — proved directly, with
+// no digest, no stack and no call to Docker at all.
+ok('rollback presence: present is never a refusal, whichever way the setting is set',
+   staxx_update_rollback_presence_error(true, true, 'web') === null
+   && staxx_update_rollback_presence_error(true, false, 'web') === null);
+ok('rollback presence: absent + "keep the images" on is the familiar refusal',
+   staxx_update_rollback_presence_error(false, true, 'web') !== null);
+ok('rollback presence: absent + "keep the images" off is NOT a refusal — the caller pulls instead',
+   staxx_update_rollback_presence_error(false, false, 'web') === null);
+
+// staxx_update_rollback_source_error() — the manifest-inspect verdict, again
+// proved with a fixed exit code and message rather than a real registry
+// round trip. Only the two phrases Docker itself uses for "this digest is
+// gone" refuse; a network failure, a timeout or anything else unrecognised
+// goes ahead and lets the pull itself report the real problem.
+$sourceRefusal = 'This version is no longer available at the source, so it cannot be rolled back to.';
+
+ok('rollback source: exit 0 (source has it) is never a refusal',
+   staxx_update_rollback_source_error(0, '', 'web') === null);
+ok('rollback source: "no such manifest" refuses with the fixed sentence',
+   staxx_update_rollback_source_error(1, 'no such manifest: docker.io/library/nginx@sha256:' . str_repeat('0', 64), 'web') === $sourceRefusal);
+ok('rollback source: "manifest unknown" refuses with the same sentence',
+   staxx_update_rollback_source_error(1, 'manifest unknown', 'web') === $sourceRefusal);
+ok('rollback source: a mixed-case match still refuses',
+   staxx_update_rollback_source_error(1, 'Manifest Unknown', 'web') === $sourceRefusal);
+ok('rollback source: a DNS failure cannot tell, so it goes ahead',
+   staxx_update_rollback_source_error(1, 'Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io: no such host', 'web') === null);
+ok('rollback source: a timeout (exit 124, no output) cannot tell either',
+   staxx_update_rollback_source_error(124, '', 'web') === null);
+
+/* ------------------------- 20. PLAN_214 events, reasons, sizes, notes -- */
+
+// What the queue tick and the check hand to staxx_notify_events(): proved with
+// stub binaries only (see the top of this file), so nothing is ever sent for
+// real, fetched from GitHub or read from docker.
+$evStack = 'zzb1updrun-ev';
+$evDir   = $root . '/' . $evStack;
+@exec('rm -rf ' . escapeshellarg($evDir));
+mkdir($evDir, 0755, true);
+file_put_contents($evDir . '/compose.yaml', <<<YAML
+services:
+  one:
+    image: ghcr.io/example/evone:1
+    x-unraid:
+      project: https://github.com/example/evone
+  two:
+    image: ghcr.io/example/evtwo:1
+    x-unraid:
+      project: https://example.com/evtwo
+x-unraid:
+  update:
+    notify: true
+YAML
+);
+register_shutdown_function(function () use ($evDir) { @exec('rm -rf ' . escapeshellarg($evDir)); });
+staxx_scan_stacks_reset();
+
+$evOne = 'ghcr.io/example/evone:1';
+$evTwo = 'ghcr.io/example/evtwo:1';
+$evNotesUrl = 'https://github.com/example/evone/releases/tag/2.0.0';
+staxx_update_state_save(['images' => [
+  $evOne => ['local' => 'sha256:' . str_repeat('1', 64), 'remote' => 'sha256:' . str_repeat('2', 64),
+             'was' => '1.0.0', 'version' => '2.0.0', 'notes' => "Adds a thing\nFixes a bug",
+             'notesUrl' => $evNotesUrl, 'notesCut' => false, 'notesFor' => '2.0.0'],
+  $evTwo => ['local' => 'sha256:' . str_repeat('3', 64), 'remote' => 'sha256:' . str_repeat('4', 64),
+             'version' => '1.1'],
+]]);
+
+$failReason = "Docker Hub's download limit was reached. It resets within six hours.";
+$evItems = [
+  ['stack' => $evStack, 'state' => 'done'],
+  ['stack' => $fixtureName, 'state' => 'failed', 'reason' => $failReason],
+];
+$evNames  = staxx_update_queue_notify_names($evItems, $settings);
+$events   = staxx_update_queue_events($evItems, $evNames, $settings);
+$byKind   = ['installed' => [], 'failed' => []];
+foreach ($events as $e) $byKind[$e['kind']][$e['service'] !== '' ? $e['service'] : $e['stack']] = $e;
+
+ok('tick events: an installed event per updated service and a failed event per failed stack',
+   count($byKind['installed']) === 2 && isset($byKind['installed']['one'], $byKind['installed']['two'])
+   && array_keys($byKind['failed']) === [$fixtureName], json_encode($events));
+$one = $byKind['installed']['one'] ?? [];
+ok('tick events: versions, digests and notes come from the check\'s stored entry',
+   ($one['was'] ?? '') === '1.0.0' && ($one['version'] ?? '') === '2.0.0'
+   && ($one['digest'] ?? '') === 'sha256:' . str_repeat('1', 64)
+   && ($one['notesFor'] ?? '') === '2.0.0' && ($one['notesUrl'] ?? '') === $evNotesUrl
+   && ($one['image'] ?? '') === $evOne, json_encode($one));
+ok('tick events: the failed event carries the stored reason',
+   ($byKind['failed'][$fixtureName]['reason'] ?? '') === $failReason);
+ok('tick events: the size comes from the local image inspect',
+   ($one['size'] ?? 0) === 1288490189, json_encode($one));
+ok('tick events: a failed inspect leaves the size out, the event stays',
+   isset($byKind['installed']['two']) && !array_key_exists('size', $byKind['installed']['two']));
+ok('image size: a name docker cannot inspect is 0, not a guess', staxx_update_image_size($evTwo) === 0);
+
+// An opted-out stack gives no event at all.
+$optedOut = [['stack' => $fixtureName2, 'state' => 'failed']];
+ok('tick events: a stack whose every service opted out gives no event',
+   staxx_update_queue_events($optedOut, staxx_update_queue_notify_names($optedOut, $settings), $settings) === []);
+
+// One call carries installed and failed together: a single notifier run.
+@unlink($ntCalls);
+@unlink($ntLast);
+staxx_notify_events($events);
+$callCount = is_file($ntCalls) ? strlen((string)file_get_contents($ntCalls)) : 0;
+ok('tick events: installed and failed leave in ONE message', $callCount === 1, 'calls=' . $callCount);
+$lastArgs  = explode("\0", (string)@file_get_contents($ntLast));
+$subjectAt = array_search('-s', $lastArgs, true);
+$subject   = $subjectAt === false ? '' : (string)$lastArgs[$subjectAt + 1];
+$impAt     = array_search('-i', $lastArgs, true);
+ok('tick events: that message counts both outcomes and is marked warning',
+   strpos($subject, 'updated') !== false && strpos($subject, 'failed') !== false
+   && $impAt !== false && strpos((string)$lastArgs[$impAt + 1], 'warning') === 0, $subject);
+
+// The real tick: a running item whose job log ends in a Docker error gets the
+// plain-words reason stored on the queue item while the log still exists.
+if ($liveBusy) {
+  skip('tick reason: stored on the queue item beside the error',
+       'a real queue is currently active on this box — not touched');
+} else {
+  $jobId  = 'feedfacefeedface';
+  $jobLog = STAXX_JOB_DIR . '/' . $jobId . '.log';
+  @mkdir(STAXX_JOB_DIR, 0755, true);
+  file_put_contents($jobLog, "Error response from daemon: toomanyrequests: You have reached your pull rate limit\n"
+    . STAXX_JOB_END . " 1\n");
+  $queueBackup2 = is_file($queueFile) ? file_get_contents($queueFile) : null;
+  register_shutdown_function(function () use ($queueFile, $queueBackup2, $jobLog) {
+    if ($queueBackup2 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup2);
+    @unlink($jobLog);
+  });
+  staxx_update_queue_write(['id' => 'test' . time(), 'scope' => 'all', 'stopped' => false,
+    'includeStopped' => false,
+    'items' => [['stack' => $fixtureName, 'state' => 'running', 'job' => $jobId, 'error' => '']]]);
+  @unlink($ntCalls);
+  staxx_update_queue_tick();
+  $after = staxx_update_queue_read();
+  $item0 = $after['items'][0] ?? [];
+  ok('tick reason: a failed item keeps the reason beside its error',
+     ($item0['state'] ?? '') === 'failed' && ($item0['reason'] ?? '') === $failReason
+     && ($item0['error'] ?? '') !== '', json_encode($item0));
+  ok('tick reason: the failed run was handed to the notifier once',
+     is_file($ntCalls) && strlen((string)file_get_contents($ntCalls)) === 1);
+  if ($queueBackup2 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup2);
+  @unlink($jobLog);
+}
+
+// The check's notes fetch: only a GitHub project, once per version, capped.
+file_put_contents($notesStub, json_encode(['2.0.0' => ['notes' => 'Fetched notes', 'url' => 'https://example.test/n', 'cut' => false]]));
+$evFiles = [$evStack => $evDir . '/compose.yaml'];
+$budget  = 10;
+$got = staxx_update_incoming_notes($evOne, ['version' => '2.0.0'], [$evStack . '::one'], $evFiles, $budget);
+ok('check notes: a GitHub project\'s notes are stored with the version they belong to',
+   ($got['notes'] ?? '') === 'Fetched notes' && ($got['notesUrl'] ?? '') === 'https://example.test/n'
+   && ($got['notesFor'] ?? '') === '2.0.0' && $budget === 9, json_encode($got));
+$budget = 10;
+$again = staxx_update_incoming_notes($evOne, $got, [$evStack . '::one'], $evFiles, $budget);
+ok('check notes: notes already held for this version are not fetched again', $again === $got && $budget === 10);
+$budget = 10;
+$none = staxx_update_incoming_notes($evTwo, ['version' => '1.1'], [$evStack . '::two'], $evFiles, $budget);
+ok('check notes: a project that is not on GitHub makes no request and spends no budget',
+   !isset($none['notesFor']) && $budget === 10);
+$budget = 10;
+$noVersion = staxx_update_incoming_notes($evOne, [], [$evStack . '::one'], $evFiles, $budget);
+ok('check notes: an entry with no version name is left alone', $noVersion === [] && $budget === 10);
+
+@unlink($notesStub . '.calls');
+$budget = 10;
+$noted  = 0;
+for ($i = 1; $i <= 12; $i++) {
+  $entry = staxx_update_incoming_notes($evOne, ['version' => '9.' . $i], [$evStack . '::one'], $evFiles, $budget);
+  if (isset($entry['notesFor'])) $noted++;
+}
+$callLines = is_file($notesStub . '.calls') ? count(file($notesStub . '.calls')) : 0;
+ok('check notes: at most 10 fetches per run, the rest wait for the next check',
+   $callLines === 10 && $noted === 10 && $budget === 0, 'fetches=' . $callLines . ' noted=' . $noted);
+
+// The found message: the same filter as the label list, as events with the notes.
+$foundEv = staxx_update_found_events(
+  [$evOne => staxx_update_state()['images'][$evOne]],
+  [$evOne => [$evStack . '::one']], $evFiles, $settings);
+ok('found events: one per waiting container, with versions and the stored notes',
+   count($foundEv) === 1 && $foundEv[0]['kind'] === 'found' && $foundEv[0]['version'] === '2.0.0'
+   && $foundEv[0]['was'] === '1.0.0' && $foundEv[0]['notesFor'] === '2.0.0', json_encode($foundEv));
 
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);

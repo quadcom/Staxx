@@ -26,14 +26,7 @@ var STACKS_PATH = path.join(ROOT, 'src/staxx/usr/local/emhttp/plugins/staxx/java
 
 var Y = require(MODEL_PATH);
 
-var pass = 0, fail = 0;
-
-function ok(name, condition, detail) {
-  if (condition) { pass++; console.log('  ok    ' + name); return true; }
-  fail++;
-  console.log('  FAIL  ' + name + (detail ? '\n          ' + String(detail).replace(/\n/g, '\n          ') : ''));
-  return false;
-}
+var check = require('./lib/check.js'), ok = check.ok;
 
 function skip(name, why) {
   console.log('  skip  ' + name + ' (' + why + ')');
@@ -904,11 +897,15 @@ ok('stacks.js has a SECTIONS table naming each group\'s compose key', Object.key
 // their own (see SECTIONS's own comment) — every other group names exactly
 // the compose key(s) it renders, and SECTIONS's path's first element is the
 // top-level one (e.g. resources -> deploy.resources, checked as 'deploy').
+// A group whose path starts with '<<' or 'x-unraid' is skipped too: compose-
+// model.js's own comment above SERVICE_ORDER says both are pinned by tidy()
+// (merge key first, x-unraid last) rather than placed by that table, so
+// SERVICE_ORDER is right to leave them out.
 var composeKeysFromGroups = [];
 groupKeys.forEach(function (k) {
   if (k === 'container' || k === 'advanced') return;
   var p = pathByGroupKey[k];
-  if (p && p.length) composeKeysFromGroups.push(p[0]);
+  if (p && p.length && p[0] !== '<<' && p[0] !== 'x-unraid') composeKeysFromGroups.push(p[0]);
 });
 composeKeysFromGroups = composeKeysFromGroups.filter(function (k, i, arr) { return arr.indexOf(k) === i; });
 
@@ -953,5 +950,4 @@ if (HAS_TIDY) {
 
 /* ---- summary -------------------------------------------------------------- */
 
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+check.done();

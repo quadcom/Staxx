@@ -11,6 +11,16 @@
 
 set -euo pipefail
 
+# The last KEY="value" line of a settings file, quotes removed.
+cfg_get() {
+  sed -n 's/^[[:space:]]*'"$1"'[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$2" | tail -n1
+}
+
+# Is Docker actually up, not merely installed.
+docker_up() {
+  command -v docker >/dev/null 2>&1 && timeout -k 2 10 docker info >/dev/null 2>&1
+}
+
 PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
 CFG="/boot/config/plugins/staxx/staxx.cfg"
 LOG_DIR="/tmp/staxx/updates"
@@ -19,7 +29,7 @@ LOG_DIR="/tmp/staxx/updates"
 # up. Exit before any work starts — no log directory, no lock, nothing —
 # rather than running a pass over an empty list every time the cron entry
 # fires.
-store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+store_root=$(cfg_get STORE_ROOT "${CFG}" 2>/dev/null || true)
 if [[ -z "${store_root}" ]]; then
   exit 0
 fi
@@ -31,9 +41,9 @@ fi
 # words, so this is hygiene rather than a live vulnerability — but the order
 # still matters.
 case "${1:-}" in
-  check|full|apply|cleanup) ;;
+  check|full|apply|storage|explain) ;;
   *)
-    echo "Usage: update-check {check|full|apply|cleanup}" >&2
+    echo "Usage: update-check {check|full|apply|storage|explain}" >&2
     exit 1
     ;;
 esac
@@ -98,7 +108,7 @@ run_check() {
   # the user turned off.
   update_check="daily"
   if [[ -f "${CFG}" ]]; then
-    update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+    update_check=$(cfg_get UPDATE_CHECK "${CFG}")
     update_check="${update_check:-daily}"
   fi
 
@@ -107,7 +117,7 @@ run_check() {
     exit 0
   fi
 
-  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+  if ! docker_up; then
     # A cron job firing before Docker is up on boot is not an error.
     log "Docker is not available; skipping this pass."
     exit 0
@@ -135,7 +145,7 @@ run_check() {
 }
 
 run_apply() {
-  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+  if ! docker_up; then
     # A cron job firing before Docker is up on boot is not an error.
     log "Docker is not available; skipping this pass."
     exit 0
@@ -154,37 +164,55 @@ run_apply() {
   log "apply pass finished."
 }
 
-run_cleanup() {
-  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+run_storage() {
+  # PLAN_181 Part D — replaces the old weekly cleanup pass. This never
+  # removes anything itself; it only refreshes the figures the page's
+  # storage-alert notice reads (Images.php: staxx_storage_alert_refresh()).
+  if ! docker_up; then
     log "Docker is not available; skipping this pass."
     exit 0
   fi
 
-  log "starting cleanup pass."
+  log "starting storage-alert pass."
   "${php_bin}" -r "
-    require '${PLUGIN_DIR}/include/UpdateRun.php';
+    require '${PLUGIN_DIR}/include/Images.php';
     \$err = '';
-    \$r = staxx_update_cleanup(false, \$err);
-    if (\$err !== '') echo 'cleanup refused: '.\$err.PHP_EOL;
-    echo count(\$r['removed']).' image'.(count(\$r['removed']) === 1 ? '' : 's').' removed, '
-       . \$r['kept'].' kept.'.PHP_EOL;
-    foreach (\$r['removed'] as \$ref) echo '  removed '.\$ref.PHP_EOL;
+    \$r = staxx_storage_alert_refresh(\$err);
+    if (\$err !== '') { echo 'storage alert refused: '.\$err.PHP_EOL; exit; }
+    echo (\$r['alert'] ? 'alert on' : 'alert off').', '.\$r['clutterBytes'].' clutter bytes, '
+       . \$r['oldestDays'].' days oldest.'.PHP_EOL;
   " >> "${LOG}" 2>&1
-  log "cleanup pass finished."
+  log "storage-alert pass finished."
+}
+
+run_explain() {
+  # PLAN_212 — fetch the newest Docker error explanations and send any
+  # unexplained message still waiting. Needs the network, not Docker.
+  log "starting error-explanations pass."
+  "${php_bin}" -r "
+    require '${PLUGIN_DIR}/include/ErrorReports.php';
+    \$why = staxx_error_reports_daily();
+    echo \$why === '' ? 'explanations current.' : 'explanations not updated: '.\$why;
+    echo PHP_EOL;
+  " >> "${LOG}" 2>&1
+  log "error-explanations pass finished."
 }
 
 case "${1:-}" in
+  explain)
+    run_explain
+    ;;
   check|full)
     run_check "${1}"
     ;;
   apply)
     run_apply
     ;;
-  cleanup)
-    run_cleanup
+  storage)
+    run_storage
     ;;
   *)
-    echo "Usage: update-check {check|full|apply|cleanup}" >&2
+    echo "Usage: update-check {check|full|apply|storage}" >&2
     exit 1
     ;;
 esac

@@ -142,7 +142,7 @@ NEGATIVE = [
         {"x-unraid": {"sections": {"web": {"healthcheck": {"after": "image", "lines": []}}}}},
     ),
     (
-        "stack update mode not one of off/notify/auto",
+        "stack update mode not one of manual/off/notify/auto",
         {"x-unraid": {"update": {"mode": "always"}}},
     ),
     (
@@ -156,6 +156,30 @@ NEGATIVE = [
     (
         "stack update delay below zero",
         {"x-unraid": {"update": {"delay": -1}}},
+    ),
+    (
+        # PLAN_150: notify is the new independent axis — whether this stack
+        # is mentioned in update messages — and must stay a real boolean or
+        # (PLAN_154) the three-switch object below, never the on/off-shaped
+        # string the old mode enum used.
+        "stack update notify given as a string, not a boolean",
+        {"x-unraid": {"update": {"notify": "true"}}},
+    ),
+    (
+        # PLAN_154 — notify's object shape has exactly three named events;
+        # anything else is refused the same way an unknown update key is.
+        "stack update notify object with an unknown event key",
+        {"x-unraid": {"update": {"notify": {"found": True, "skipped": False}}}},
+    ),
+    (
+        "stack update notify object with a non-boolean event value",
+        {"x-unraid": {"update": {"notify": {"failed": "true"}}}},
+    ),
+    (
+        # PLAN_205 — pinned is a real event now, so it must be checked as
+        # strictly as the other three rather than tolerated as unknown.
+        "stack update notify pinned given as a string, not a boolean",
+        {"x-unraid": {"update": {"notify": {"pinned": "true"}}}},
     ),
     (
         "unknown key inside a stack update block",
@@ -186,8 +210,20 @@ NEGATIVE = [
         {"x-unraid": {"imported": {"from": "docker-image", "on": "2026-08-30", "id": 1234}}},
     ),
     (
-        "service update mode not one of off/notify/auto",
+        "service update mode not one of manual/off/notify/auto",
         service_doc(update={"mode": "hourly"}),
+    ),
+    (
+        "service update notify given as a string, not a boolean",
+        service_doc(update={"notify": "yes"}),
+    ),
+    (
+        "service update notify object with an unknown event key",
+        service_doc(update={"notify": {"installed": True, "quiet": True}}),
+    ),
+    (
+        "service update notify object with a non-boolean event value",
+        service_doc(update={"notify": {"found": 1}}),
     ),
     (
         "unknown key inside a service update block",
@@ -306,6 +342,27 @@ NEGATIVE = [
                         {"service": "db"}],
         }]}},
     ),
+    # PLAN_176 — the expose block (a Nginx Proxy Manager / Pi-hole entry).
+    (
+        "expose with an unknown key",
+        service_doc(expose={"domain": "app.example.com", "proxy": True}),
+    ),
+    (
+        "expose dns given as a string rather than a boolean",
+        service_doc(expose={"domain": "app.example.com", "dns": "proxy"}),
+    ),
+    (
+        "expose domain not a valid hostname",
+        service_doc(expose={"domain": "not a domain"}),
+    ),
+    (
+        "expose with dns but no domain (a proxy entry must name a domain)",
+        service_doc(expose={"dns": True}),
+    ),
+    (
+        "expose with no domain at all",
+        service_doc(expose={"certificate": "*.example.com"}),
+    ),
 ]
 
 # (description, document) — each must PASS validation.
@@ -321,7 +378,7 @@ POSITIVE = [
         "support": "https://forum.jellyfin.org",
         "readme": "https://github.com/jellyfin/jellyfin#readme",
         "author": "jellyfin",
-        "update": {"mode": "auto", "delay": 6},
+        "update": {"mode": "auto", "delay": 6, "notify": True},
     }}),
     ("every service key at once", service_doc(
         icon="./icon.png",
@@ -333,6 +390,32 @@ POSITIVE = [
         update={"mode": "notify", "delay": 12},
     )),
     ("stack update block with mode but no delay", {"x-unraid": {"update": {"mode": "off"}}}),
+    # PLAN_150: 'manual' is the new spelling of the mode that never applies
+    # anything on its own; 'off' and 'notify' (above and at C337) stay
+    # accepted for good, since a hand-written file using them still works.
+    ("stack update mode given as the new 'manual' spelling",
+     {"x-unraid": {"update": {"mode": "manual"}}}),
+    ("service update mode given as the new 'manual' spelling",
+     service_doc(update={"mode": "manual"})),
+    ("stack update notify set true", {"x-unraid": {"update": {"notify": True}}}),
+    ("stack update notify set false", {"x-unraid": {"update": {"notify": False}}}),
+    ("service update notify set true", service_doc(update={"notify": True})),
+    ("service update notify set false", service_doc(update={"notify": False})),
+    # PLAN_154 — the object shape: every key optional, and a subset is fine —
+    # a container may set only one event and leave the other two to the server.
+    ("stack update notify as an object naming all three events",
+     {"x-unraid": {"update": {"notify": {"found": True, "installed": False, "failed": True}}}}),
+    ("stack update notify as an object naming only one event",
+     {"x-unraid": {"update": {"notify": {"failed": True}}}}),
+    ("stack update notify as an empty object",
+     {"x-unraid": {"update": {"notify": {}}}}),
+    ("service update notify as an object naming only one event",
+     service_doc(update={"notify": {"found": True}})),
+    # PLAN_205 — the fourth event, a pinned service's weekly reminder.
+    ("stack update notify naming the pinned event",
+     {"x-unraid": {"update": {"notify": {"pinned": True}}}}),
+    ("service update notify naming the pinned event",
+     service_doc(update={"notify": {"pinned": False}})),
     ("a valid imported block for each of the four routes", {"x-unraid": {"imported": {
         "from": "unraid-template", "on": "2026-08-30",
     }}}),
@@ -421,6 +504,12 @@ POSITIVE = [
         "between": [{"service": "app", "environment": "TZ"},
                     {"service": "db", "environment": "PUID"}],
     }]}}),
+    # PLAN_176 — the expose block.
+    ("expose with just a domain", service_doc(expose={"domain": "sonarr.home.lan"})),
+    ("expose with every key at once", service_doc(expose={
+        "domain": "sonarr.home.lan", "certificate": "*.home.lan",
+        "dns": True, "websockets": False, "enabled": False,
+    })),
 ]
 
 

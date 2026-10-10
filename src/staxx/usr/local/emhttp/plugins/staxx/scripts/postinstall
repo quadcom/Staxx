@@ -1,0 +1,74 @@
+#!/bin/bash
+# StaXX — the install steps both routes share: the manifest's post-install
+# block and dev-install.sh run this same script, so neither can drift from
+# the other. Called with `bash`, never relied on to be executable itself.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+# Carry a pre-rename install across. The app was called stack.manager until
+# 2026-08-18 and kept its settings, folder layout and stacks under that name.
+# mv rather than cp: two config folders that both look valid is worse than one,
+# and flash writes are the thing worth being stingy with on Unraid. The
+# "new does not exist" guard is what makes a second install a no-op instead of
+# a clobber. STACK_ROOT holds an absolute path, so it has to be rewritten or it
+# points at a folder that no longer exists — and that folder is where the
+# user's stacks are.
+if [[ -d "/boot/config/plugins/stack.manager" && ! -d "/boot/config/plugins/staxx" ]]; then
+  mv "/boot/config/plugins/stack.manager" "/boot/config/plugins/staxx"
+  if [[ -f "/boot/config/plugins/staxx/stack.manager.cfg" ]]; then
+    mv "/boot/config/plugins/staxx/stack.manager.cfg" "/boot/config/plugins/staxx/staxx.cfg"
+  fi
+  sed -i 's#/boot/config/plugins/stack\.manager#/boot/config/plugins/staxx#g' \
+    "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
+fi
+rm -rf "/usr/local/emhttp/plugins/stack.manager"   # stale tree; rebuilt at boot anyway
+rm -rf "/tmp/stack.manager"                        # a cache, regenerates
+
+mkdir -p "/boot/config/plugins/staxx"
+
+# First install only — never overwrite a config the user has edited. New keys
+# added in later versions are picked up from default.cfg at read time.
+if [[ ! -f "/boot/config/plugins/staxx/staxx.cfg" ]]; then
+  cp "/usr/local/emhttp/plugins/staxx/default.cfg" \
+     "/boot/config/plugins/staxx/staxx.cfg"
+fi
+
+# Unconditional (not just on first install): the file holds a Docker Hub access
+# token, so it must not be readable by any other login on the box.
+chmod 0600 "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
+
+# Non-fatal on purpose: this is the one call in this block that must not trip
+# set -e. A settings script hiccup here is recoverable at the next settings
+# save or reboot, and should not be reported as a failed plugin install.
+bash /usr/local/emhttp/plugins/staxx/scripts/apply_settings \
+  || echo "warning: settings could not be applied yet; they will be applied on the next settings save or reboot."
+
+# Unraid does not ship Docker Compose. This installs StaXX's own copy only if
+# nothing already answers `docker compose` — Compose Manager, a future Unraid
+# release, or the user's own install are all left alone. This whole block
+# re-runs at every boot, which is what puts a flash-cached copy back after the
+# RAM root is rebuilt. Non-fatal: the settings page's self-test says why if it
+# could not be done.
+bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose || true
+
+# Draws SVG app icons as PNG for emails. Re-runs at every boot like ensure-compose;
+# without it, emails show a letter tile instead of the icon.
+bash /usr/local/emhttp/plugins/staxx/scripts/ensure-resvg || true
+
+# PLAN_150 phase 7: the one-pass conversion of the old update.mode spellings
+# ('off', 'notify') to the current one ('manual'). Runs here — install and
+# upgrade alike — rather than from apply_settings, so it never fires on an
+# ordinary settings save or a plain boot. Placed after ensure-compose above:
+# the pass needs docker compose to confirm a file was actually understood
+# before touching it, and on a first install that copy may not have existed
+# a moment ago. Idempotent and non-fatal by its own design (see
+# UpdateModeConvert.php) — nothing here may fail the rest of the install.
+php -r '
+require_once "/usr/local/emhttp/plugins/staxx/include/UpdateModeConvert.php";
+$r = staxx_update_mode_convert_run();
+if ($r["converted"]) {
+  echo "StaXX tidied up the older update-setting spelling in " . count($r["converted"]) . " stack(s).\n";
+}
+' 2>&1 || echo "warning: the update-setting tidy-up could not run; it will be tried again at the next upgrade."
