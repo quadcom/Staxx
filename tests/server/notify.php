@@ -196,11 +196,11 @@ ok('L2 carries release notes like L1 (Ruling 11)', has(staxx_notify_text([array_
 
 $jellyUrl = $jelly;
 $pin = ['kind' => 'pinned', 'stack' => 'postgres17', 'service' => 'postgres17', 'at' => strtotime('2026-09-12 10:00')];
-$t = staxx_notify_text([$jelly, $sonarr, $immich, $next, $pin, ['kind' => 'look', 'label' => 'updates paused', 'detail' => 'paused'], ['kind' => 'cleanup', 'size' => 2147483648]], '3');
+$t = staxx_notify_text([$jelly, $sonarr, $immich, $next, $pin, ['kind' => 'look', 'group' => 'other', 'label' => 'updates paused', 'detail' => 'paused'], ['kind' => 'cleanup', 'size' => 2147483648]], '3');
 ok('L3 subject: date and counts', $t['subject'] === 'StaXX daily summary · 2 Oct', $t['subject']);
 ok('L3 description: counts, then names', $t['description'] === '2 updated, 1 waiting. Failed: immich.', $t['description']);
 ok('L3 sections', has($t['body'], '✅ Updated (2)') && has($t['body'], '❌ Failed (1)') && has($t['body'], '🔔 Waiting for you (1)')
-   && has($t['body'], "📌 Pinned (1)\n   postgres17, pinned since 12 Sep") && has($t['body'], "⚠️ Needs a look\n   updates paused: paused"), $t['body']);
+   && has($t['body'], "📌 Pinned (1)\n   postgres17, pinned since 12 Sep") && has($t['body'], "🔎 Worth a look\n   Updates paused: paused"), $t['body']);
 ok('L3 never carries note lines, only the link', !has($t['body'], '•') && has($t['body'], "jellyfin 10.10.3 · Release notes ↗ $url") && has($t['body'], 'sonarr 4.0.10 · ') === false, $t['body']);
 ok('L3 old-images line and footer', has($t['body'], '💾 2.0 GB of old images can be cleaned up.') && has($t['body'], "Open StaXX: $link"));
 ok('L3 failure line has its reason', has($t['body'], "immich: Docker Hub's download limit was reached."));
@@ -354,16 +354,16 @@ reset_all(); opts(['UPDATE_DIGEST_EVERY' => 'day']);
 staxx_notify_pinned_due([$pin]);
 ok('the pinned helper stores the list and marks it due', digest()['pinnedDue'] === true && count(digest()['pinned']) === 1);
 
-// Needs a look: only beside other content.
+// Worth a look: only beside other content.
 $looks = staxx_notify_looks();
 reset_all(); opts(['UPDATE_DIGEST_EVERY' => 'day']);
 $mk([$jelly], 0);
 staxx_notify_digest_pass();
-ok('Needs a look appears beside other content exactly when the self-test has bad entries', has(calls()[0]['-m'] ?? '', 'Needs a look') === ($looks !== []), json_encode(array_column($looks, 'label')));
+ok('Worth a look appears beside other content exactly when there are look events', has(calls()[0]['-m'] ?? '', 'Worth a look') === ($looks !== []), json_encode(array_column($looks, 'label')));
 reset_all(); opts(['UPDATE_DIGEST_EVERY' => 'day']);
 $mk([], 0);
 staxx_notify_digest_pass();
-ok('Needs a look never makes a summary go out on its own', calls() === []);
+ok('Worth a look never makes a summary go out on its own', calls() === []);
 
 // The old-images line (needs the scratch store's config folder).
 $alert = staxx_storage_alert_file();
@@ -535,10 +535,10 @@ $x = $sonarr; $x['stack'] = 'a<b>'; $x['service'] = 'a<b>';
 ok('names are escaped', !has(staxx_notify_html([$x], '1')['html'], 'a<b>') && has(staxx_notify_html([$x], '1')['html'], 'a&lt;b&gt;'));
 
 // The summary and the found layout.
-$sumEvents = [$jelly, $sonarr, $immich, $plex, $pin, ['kind' => 'look', 'label' => 'updates paused', 'detail' => 'paused'], ['kind' => 'cleanup', 'size' => 2147483648]];
+$sumEvents = [$jelly, $sonarr, $immich, $plex, $pin, ['kind' => 'look', 'group' => 'other', 'label' => 'updates paused', 'detail' => 'paused'], ['kind' => 'cleanup', 'size' => 2147483648]];
 $h3 = staxx_notify_html($sumEvents, '3')['html'];
 ok('summary shows links only, never bullets (Ruling 10)', !has($h3, '<ul') && has($h3, '>Release notes&nbsp;↗</a>') && !has($h3, 'Full release notes'));
-ok('summary sections and chips', has($h3, 'Updated') && has($h3, 'Failed') && has($h3, 'Waiting for you') && has($h3, 'Pinned') && has($h3, 'Needs a look')
+ok('summary sections and chips', has($h3, 'Updated') && has($h3, 'Failed') && has($h3, 'Waiting for you') && has($h3, 'Pinned') && has($h3, 'Worth a look')
    && has($h3, '1 pinned') && has($h3, 'Daily summary · 2 Oct'));
 ok('old-images line above the button with its link', has($h3, '2.0 GB of old images can be cleaned up.') && has($h3, 'Clean up images&nbsp;↗')
    && strpos($h3, 'old images') < strpos($h3, '>Open StaXX</a>'));
@@ -571,7 +571,7 @@ $paper  = ['kind' => 'unhealthy', 'name' => 'paperless-ngx', 'count' => 3, 'reas
 $plexS  = ['kind' => 'stopped', 'name' => 'plex', 'count' => 0, 'reason' => 'It ran out of memory.'];
 $plexE  = ['kind' => 'stopped', 'name' => 'plex', 'count' => 0, 'reason' => 'It stopped with error code 3.'];
 $healthy = ['kind' => 'healthy', 'name' => 'tdarr', 'count' => 0, 'reason' => ''];
-$lookE  = ['kind' => 'look', 'label' => 'updates paused', 'detail' => 'paused'];
+$lookE  = ['kind' => 'look', 'group' => 'other', 'label' => 'updates paused', 'detail' => 'paused'];
 $cleanE = ['kind' => 'cleanup', 'size' => 2147483648];
 $five = [];
 foreach (['plex', 'sonarr', 'radarr', 'lidarr', 'bazarr'] as $n) $five[] = ['kind' => 'installed', 'stack' => $n, 'service' => $n, 'was' => '1', 'version' => '2'];
@@ -735,6 +735,120 @@ if (!is_file($icDir.'/.staxx/big.png')) {
      && ($im[$cid][0] ?? '') === 'image/png' && $dim !== false && $dim[0] <= 96 && $dim[1] <= 96, json_encode($dim));
 }
 @exec('rm -rf '.escapeshellarg($icDir));
+staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
+
+/* ===== 13. PLAN_237: Urgent first, "Worth a look" in groups, stack mosaic ===== */
+$tinyBytes = base64_decode($tinyPng);
+$mkStack = static function (string $name, array $icons) use ($tinyBytes): string {
+  $d = staxx_stack_dir($name);
+  @mkdir($d.'/'.STAXX_RECORD_DIR, 0755, true);
+  $yaml = "services:\n";
+  foreach ($icons as $svc => $png) {
+    $yaml .= "  $svc:\n    image: busybox\n";
+    if ($png) {
+      file_put_contents($d.'/'.STAXX_RECORD_DIR.'/'.$svc.'.png', $tinyBytes);
+      $yaml .= "    x-unraid:\n      icon: ./.staxx/$svc.png\n";
+    }
+  }
+  file_put_contents($d.'/compose.yaml', $yaml);
+  return $d;
+};
+$dRevB = $mkStack('zzrev-b', ['web' => false]);
+$dRevA = $mkStack('zzrev-A', ['web' => false]);
+foreach ([$dRevA, $dRevB] as $d) file_put_contents($d.'/'.STAXX_REVIEW_FILE, '');
+$dTwo  = $mkStack('zzmosaic-two', ['a' => true, 'b' => true]);
+$dSix  = $mkStack('zzmosaic-six', ['a' => true, 'b' => true, 'c' => true, 'd' => true, 'e' => true, 'f' => true]);
+$dNone = $mkStack('zzmosaic-none', ['a' => false, 'b' => false]);
+staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
+
+// The look events: review stacks by name, then no self-test text for the two replaced findings.
+$lk = staxx_notify_looks();
+$rv = array_values(array_filter($lk, static fn($e) => $e['group'] === 'review' && strpos($e['stack'], 'zzrev-') === 0));
+ok('look events: stacks awaiting review, case-insensitive by name', array_column($rv, 'stack') === ['zzrev-A', 'zzrev-b'], json_encode(array_column($rv, 'stack')));
+ok('look events: the two replaced self-test findings are not repeated as "other"',
+   array_filter($lk, static fn($e) => $e['group'] === 'other' && in_array($e['label'], ['stacks awaiting review', 'images pulling from a registry their template has left'], true)) === []);
+
+$revE  = ['kind' => 'look', 'group' => 'review', 'stack' => 'zzrev-A'];
+$revE2 = ['kind' => 'look', 'group' => 'review', 'stack' => 'zzrev-b'];
+$movE  = ['kind' => 'look', 'group' => 'moved', 'stack' => 'zzmosaic-two', 'service' => 'a', 'from' => 'Docker Hub', 'to' => 'ghcr.io'];
+$othE  = ['kind' => 'look', 'group' => 'other', 'label' => 'folder not writable', 'detail' => "line one\nline two"];
+$look3 = [$jelly, $revE, $revE2, $movE, $othE];
+
+// Urgent: first in the body, in both layouts.
+$ht = staxx_notify_html([$jelly, $tdarr], '3')['html'];
+ok('HTML: the Urgent band comes before Updated', has($ht, 'Urgent</div>') && !has($ht, 'Needs a look') && strpos($ht, 'Urgent') < strpos($ht, 'Updated'));
+$tt = staxx_notify_text([$jelly, $tdarr], '3')['body'];
+ok('text: Urgent comes before Updated', has($tt, '⚠️ Urgent (1)') && !has($tt, 'Apps that need a look') && strpos($tt, 'Urgent') < strpos($tt, 'Updated'), $tt);
+
+// The grouped section, HTML.
+$hl = staxx_notify_html($look3, '3')['html'];
+ok('HTML: Worth a look band with the three groups', has($hl, 'Worth a look') && has($hl, 'Waiting for your review <span style="color:#a15c00">(2)</span>')
+   && has($hl, 'Image has a new home <span style="color:#a15c00">(1)</span>') && has($hl, 'will not start until you open them in StaXX'));
+ok('HTML: review rows show the stack leaf names and "not reviewed"', has($hl, '>zzrev-A</td>') && has($hl, '>zzrev-b</td>') && substr_count($hl, 'not reviewed') === 2);
+ok('HTML: a moved image shows "Docker Hub → ghcr.io"', has($hl, 'Docker Hub → <b style="color:#1a7f37">ghcr.io</b>'));
+ok('HTML: an "other" finding is one line, capitalised, newlines as breaks', has($hl, 'Folder not writable: line one<br>line two'));
+ok('HTML: the first row in a group has no top line, the second has one', substr_count($hl, 'cellspacing="0" style="border-top:1px solid #eeeeee"><tr><td width="44"') === 1);
+ok('HTML: no look events, no section', !has(staxx_notify_html([$jelly], '3')['html'], 'Worth a look'));
+ok('HTML: a group with no items is left out', !has(staxx_notify_html([$othE], '3')['html'], 'Image has a new home') && !has(staxx_notify_html([$othE], '3')['html'], 'Waiting for your review'));
+
+// ... and the plain text.
+$tl = staxx_notify_text($look3, '3')['body'];
+ok('text: review stacks on one line', has($tl, "🔎 Worth a look\n   Waiting for your review (2): zzrev-A · zzrev-b"), $tl);
+ok('text: moved images one line each', has($tl, "   Image has a new home (1)\n      zzmosaic-two (a): Docker Hub → ghcr.io"), $tl);
+ok('text: other findings on one line, newlines flattened', has($tl, '   Folder not writable: line one line two'), $tl);
+
+// The stack mosaic.
+$im = [];
+$m2 = staxx_notify_stack_mosaic('zzmosaic-two', $im);
+ok('mosaic: two different pictures draw a 2x2 table', has($m2, 'width:34px;height:34px;background:#f3f3f3;border-radius:7px') && substr_count($m2, '<img src="cid:icon-') === 2
+   && substr_count($m2, '<tr>') === 2 && substr_count($m2, '<td ') === 4 && has($m2, 'width="15" height="15"'), $m2);
+$im = [];
+$m6 = staxx_notify_stack_mosaic('zzmosaic-six', $im);
+ok('mosaic: past four it is three pictures and "+3"', substr_count($m6, '<img src="cid:icon-') === 3 && has($m6, 'font-size:8px">+3</div>'), $m6);
+$im = [];
+$m0 = staxx_notify_stack_mosaic('zzmosaic-none', $im);
+ok('mosaic: services without pictures each get a letter cell, never collapsed', substr_count($m0, 'font-size:9px">A</div>') === 1 && substr_count($m0, 'font-size:9px">B</div>') === 1 && !has($m0, '<img'), $m0);
+$im = [];
+$m1 = staxx_notify_stack_mosaic('zzrev-A', $im);
+ok('mosaic: one service with no picture is the ordinary letter tile of the stack name', !has($m1, '<table') && has($m1, 'width:32px;height:32px') && has($m1, '>Z</div>'), $m1);
+$im = [];
+$hm = staxx_notify_html([$revE], '3');
+ok('HTML: a review row carries the tile and attaches nothing it does not use', has($hm['html'], '>Z</div>') && array_filter(array_keys($hm['images']), static fn($k) => strpos($k, 'icon-') === 0) === []);
+
+// Icon bytes: the step every picture kept in .staxx goes through on its way into the email.
+$im = [];
+$cid = staxx_notify_icon_attach('icon-t1@staxx', $tinyBytes, 'icon', $im);
+ok('icon bytes: a small PNG is attached as it is', $cid === 'icon-t1@staxx' && ($im[$cid][0] ?? '') === 'image/png' && ($im[$cid][1] ?? '') === $tinyBytes && ($im[$cid][2] ?? '') === 'icon.png');
+$im = [];
+ok('icon bytes: a JPEG and a GIF keep their type', staxx_notify_icon_attach('j@staxx', "\xFF\xD8\xFF\xE0abc", 'icon', $im) === 'j@staxx' && $im['j@staxx'][0] === 'image/jpeg'
+   && staxx_notify_icon_attach('g@staxx', 'GIF89aabc', 'icon', $im) === 'g@staxx' && $im['g@staxx'][0] === 'image/gif');
+$mkIco = static function (array $imgs): string {
+  $h = "\x00\x00\x01\x00".pack('v', count($imgs)); $body = ''; $off = 6 + 16 * count($imgs);
+  foreach ($imgs as $b) { $h .= "\x10\x10\x00\x00\x01\x00\x20\x00".pack('VV', strlen($b), $off + strlen($body)); $body .= $b; }
+  return $h.$body;
+};
+$bigPng = $tinyBytes.'padpadpad';
+$im = [];
+$cid = staxx_notify_icon_attach('icon-i1@staxx', $mkIco([$tinyBytes]), 'icon.ico', $im);
+ok('icon bytes: an ICO wrapping a PNG is attached as that PNG', $cid === 'icon-i1@staxx' && ($im[$cid][0] ?? '') === 'image/png' && ($im[$cid][1] ?? '') === $tinyBytes);
+$im = [];
+$cid = staxx_notify_icon_attach('icon-i2@staxx', $mkIco([$tinyBytes, $bigPng]), 'icon.ico', $im);
+ok('icon bytes: an ICO with two PNGs picks the larger', $cid === 'icon-i2@staxx' && ($im[$cid][1] ?? '') === $bigPng);
+$im = [];
+ok('icon bytes: an ICO holding only a BMP gives no picture', staxx_notify_icon_attach('icon-i3@staxx', $mkIco(["\x28\x00\x00\x00bmpbmpbmp"]), 'icon.ico', $im) === '' && $im === []);
+$im = [];
+ok('icon bytes: a truncated ICO gives no picture', staxx_notify_icon_attach('icon-i4@staxx', substr($mkIco([$tinyBytes]), 0, 30), 'icon.ico', $im) === '' && $im === []);
+putenv('STAXX_RESVG_BIN='.$fakeResvg);
+$im = [];
+$cid = staxx_notify_icon_attach('icon-s1@staxx', '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>', 'icon', $im);
+ok('icon bytes: an SVG is drawn to a PNG', $cid === 'icon-s1@staxx' && ($im[$cid][0] ?? '') === 'image/png' && strncmp($im[$cid][1] ?? '', "\x89PNG", 4) === 0);
+putenv('STAXX_RESVG_BIN='.$dir.'/no-such-resvg');
+$im = [];
+ok('icon bytes: an SVG with no resvg gives no picture', staxx_notify_icon_attach('icon-s2@staxx', '<svg/>', 'icon', $im) === '' && $im === []);
+putenv('STAXX_RESVG_BIN');
+$im = [];
+ok('icon bytes: HTML or junk gives no picture', staxx_notify_icon_attach('icon-x@staxx', '<html>not found</html>', 'icon', $im) === '' && $im === []);
+foreach (['zzrev-b', 'zzrev-A', 'zzmosaic-two', 'zzmosaic-six', 'zzmosaic-none'] as $n) @exec('rm -rf '.escapeshellarg(staxx_stack_dir($n)));
 staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
 
 reset_all();

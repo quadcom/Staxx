@@ -326,8 +326,9 @@ function staxx_notify_watch_desc(array $problems): string {
 /**
  * The words of one message from its events. $layout is '1' (an update run
  * finished), '2' (updates found) or '3' (the summary). Besides the update
- * kinds, a summary may carry 'pinned' events, 'look' events ('label',
- * 'detail': a self-test finding) and one 'cleanup' event ('size': bytes).
+ * kinds, a summary may carry 'pinned' events, 'look' events (see
+ * staxx_notify_looks(): 'group' is review, moved or other) and one 'cleanup'
+ * event ('size': bytes).
  *
  * @return array{subject:string, description:string, body:string, importance:string, link:string}
  */
@@ -383,6 +384,10 @@ function staxx_notify_text(array $events, string $layout): array {
       return array_map(static fn($i) => '   '.$i[0].($i[1] !== '' ? ' · Release notes ↗ '.$i[1] : ''), $items);
     };
     $out = [];
+    if ($problems) {
+      $out[] = $ic('⚠️').'Urgent ('.$p.')';
+      foreach ($problems as $e) $out[] = '   '.staxx_notify_watch_line($e)[1];
+    }
     if ($u) { $out[] = $ic('✅').'Updated ('.$u.')'; $out = array_merge($out, $appList($by['installed'])); }
     if ($f) {
       $out[] = $ic('❌').'Failed ('.$f.')';
@@ -391,10 +396,6 @@ function staxx_notify_text(array $events, string $layout): array {
       }
     }
     if ($w) { $out[] = $ic('🔔').'Waiting for you ('.$w.')'; $out = array_merge($out, $appList($by['found'])); }
-    if ($problems) {
-      $out[] = $ic('⚠️').'Apps that need a look ('.$p.')';
-      foreach ($problems as $e) $out[] = '   '.staxx_notify_watch_line($e)[1];
-    }
     if ($by['healthy']) {
       $out[] = $ic('💚').'Healthy again ('.count($by['healthy']).')';
       foreach ($by['healthy'] as $e) $out[] = '   '.staxx_notify_label($e);
@@ -407,8 +408,17 @@ function staxx_notify_text(array $events, string $layout): array {
       }
     }
     if ($by['look']) {
-      $out[] = $ic('⚠️').'Needs a look';
-      foreach ($by['look'] as $e) $out[] = '   '.$e['label'].': '.$e['detail'];
+      $out[] = $ic('🔎').'Worth a look';
+      $leaf = static fn(string $rel): string => ltrim((string)strrchr('/'.$rel, '/'), '/');
+      $rev = array_filter($by['look'], static fn($e) => ($e['group'] ?? '') === 'review');
+      $mov = array_filter($by['look'], static fn($e) => ($e['group'] ?? '') === 'moved');
+      $oth = array_filter($by['look'], static fn($e) => !in_array($e['group'] ?? '', ['review', 'moved'], true));
+      if ($rev) $out[] = '   Waiting for your review ('.count($rev).'): '.implode(' · ', array_map(static fn($e) => $leaf((string)$e['stack']), $rev));
+      if ($mov) {
+        $out[] = '   Image has a new home ('.count($mov).')';
+        foreach ($mov as $e) $out[] = '      '.staxx_notify_label($e).': '.$e['from'].' → '.$e['to'];
+      }
+      foreach ($oth as $e) $out[] = '   '.ucfirst((string)($e['label'] ?? '')).': '.str_replace("\n", ' ', (string)($e['detail'] ?? ''));
     }
     if ($by['cleanup']) {
       $out[] = '';
@@ -550,12 +560,12 @@ function staxx_notify_base_url(string $server): string {
 
 /**
  * The Content-ID of an app's icon picture, adding it to $images the first
- * time (one copy per file). Only an icon the service names as ./.staxx/<file>
- * goes in. A PNG, JPEG or GIF up to 100 KB is attached as it is. A larger one
- * is shrunk to fit 96x96 (never enlarged, transparency kept) and attached as
- * a PNG. An SVG up to 1 MB is drawn at 96x96 by resvg and attached as a PNG.
- * Everything else (ICO, WebP, a URL, an fa- glyph, no icon, or a picture that
- * cannot be drawn or shrunk) returns '' and the caller draws a letter tile.
+ * time (one copy per picture). Only a picture kept in the stack's own .staxx
+ * folder (./.staxx/<file>, PNG, JPEG, GIF, SVG or ICO by extension) goes in,
+ * handed to staxx_notify_icon_attach(). StaXX saves a pasted icon address into
+ * that folder when the stack is saved, so the email never goes to the web. A web
+ * address, an fa- glyph, no icon, or a picture that cannot be used returns ''
+ * and the caller draws a letter tile.
  */
 function staxx_notify_icon_cid(array $e, array &$images): string {
   $stack = (string)($e['stack'] ?? '');
@@ -563,34 +573,118 @@ function staxx_notify_icon_cid(array $e, array &$images): string {
   $file  = $stack === '' ? '' : (staxx_stack_compose_map()[$stack] ?? '');
   if ($file === '') return '';
   $meta = staxx_compose_meta($file);
-  $icon = (string)(($meta['services'][$svc]['x']['icon'] ?? ''));
-  if (!($meta['ok'] ?? false) || !preg_match('~^\./\.staxx/([^/]+)$~', $icon, $m)) return '';
-  $ext  = strtolower((string)pathinfo($m[1], PATHINFO_EXTENSION));
-  $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'svg' => 'image/svg+xml'][$ext] ?? '';
-  $path = $mime === '' ? '' : staxx_icon_serve_path($stack, $m[1]);
-  if ($path === '') return '';
-  $cid = 'icon-'.md5($path).'@staxx';
+  if (!($meta['ok'] ?? false)) return '';
+  $icon = trim((string)($meta['services'][$svc]['x']['icon'] ?? ''));
+
+  if (preg_match('~^\./\.staxx/([^/]+)$~', $icon, $m)) {
+    $ext  = strtolower((string)pathinfo($m[1], PATHINFO_EXTENSION));
+    $path = in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico'], true) ? staxx_icon_serve_path($stack, $m[1]) : '';
+    if ($path === '') return '';
+    $cid = 'icon-'.md5($path).'@staxx';
+    if (isset($images[$cid])) return $cid;
+    if ((int)@filesize($path) > 5242880) return '';
+    $data = @file_get_contents($path);
+    return $data === false ? '' : staxx_notify_icon_attach($cid, $data, basename($path), $images);
+  }
+
+  return '';
+}
+
+/**
+ * Put one icon's bytes into $images under $cid and return $cid, or '' when it
+ * cannot be used. The kind comes from the bytes, not a file name. An ICO is
+ * reduced to its largest PNG image (one with only BMP images gives ''). A PNG, JPEG
+ * or GIF up to 100 KB goes in as it is; a larger one is shrunk to fit 96x96 and
+ * attached as a PNG. An SVG up to 1 MB is drawn by resvg (which wants a file)
+ * and attached as a PNG. Anything else gets one try at GD (it may read WebP).
+ */
+function staxx_notify_icon_attach(string $cid, string $data, string $name, array &$images): string {
   if (isset($images[$cid])) return $cid;
-  $size = (int)@filesize($path);
-  $name = basename($path);
-  if ($mime === 'image/svg+xml') {
-    if ($size > 1048576) return '';
-    $data = staxx_notify_draw_svg($path);
-    if ($data === '') return '';
-    $images[$cid] = ['image/png', $data, preg_replace('/\.svg$/i', '', $name).'.png'];
-    return $cid;
+  // Some apps ship only an .ico; modern ones carry a PNG inside, so use the largest one.
+  if (strncmp($data, "\x00\x00\x01\x00", 4) === 0) {
+    $len = strlen($data);
+    $n = $len >= 6 ? unpack('v', substr($data, 4, 2))[1] : 0;
+    $best = '';
+    for ($i = 0; $i < $n && 6 + ($i + 1) * 16 <= $len; $i++) {
+      $d = unpack('Vsize/Voff', substr($data, 6 + $i * 16 + 8, 8));
+      if ($d['size'] <= strlen($best) || $d['off'] + $d['size'] > $len) continue;
+      $img = substr($data, $d['off'], $d['size']);
+      if (strncmp($img, "\x89PNG", 4) === 0) $best = $img;
+    }
+    if ($best === '') return '';
+    $data = $best;
   }
-  if ($size > 5242880) return '';
-  $data = @file_get_contents($path);
-  if ($data === false) return '';
-  if ($size > 102400) {
-    $data = staxx_notify_shrink($data);
-    if ($data === '') return '';
+  $base = preg_replace('/\.[^.]+$/', '', $name);
+  $kinds = ["\x89PNG" => ['image/png', 'png'], "\xFF\xD8\xFF" => ['image/jpeg', 'jpg'], 'GIF8' => ['image/gif', 'gif']];
+  $mime = ''; $ext = 'png';
+  foreach ($kinds as $magic => [$m, $x]) if (strncmp($data, $magic, strlen($magic)) === 0) { $mime = $m; $ext = $x; }
+
+  if ($mime !== '') {
+    if (strlen($data) > 5242880) return '';
+    if (strlen($data) > 102400) { $data = staxx_notify_shrink($data); $mime = 'image/png'; $ext = 'png'; }
+  } elseif (stripos($data, '<svg') !== false) {
+    if (strlen($data) > 1048576) return '';
+    $tmp = @tempnam(sys_get_temp_dir(), 'staxx-ico');
+    if ($tmp === false) return '';
+    @file_put_contents($tmp, $data);
+    $data = staxx_notify_draw_svg($tmp);
+    @unlink($tmp);
     $mime = 'image/png';
-    $name = preg_replace('/\.[^.]+$/', '', $name).'.png';
+  } else {
+    if (strlen($data) > 5242880) return '';
+    $data = staxx_notify_shrink($data);
+    $mime = 'image/png';
   }
-  $images[$cid] = [$mime, $data, $name];
+  if ($data === '') return '';
+  $images[$cid] = [$mime, $data, $base.'.'.$ext];
   return $cid;
+}
+
+/** A square picture for an email row: the attached image at $px pixels. */
+function staxx_notify_pic(string $cid, int $px): string {
+  return '<img src="cid:'.$cid.'" width="'.$px.'" height="'.$px.'" alt="" style="display:block;width:'.$px.'px;height:'.$px.'px;border-radius:7px;background:#f3f3f3">';
+}
+
+/** The letter tile an app or stack gets when it has no picture: its first letter, $px square. */
+function staxx_notify_tile(string $name, int $px, int $font): string {
+  $l = htmlspecialchars(mb_strtoupper(mb_substr($name, 0, 1)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+  return '<div style="width:'.$px.'px;height:'.$px.'px;line-height:'.$px.'px;text-align:center;border-radius:7px;background:#f3f3f3;color:#555555;font-weight:700;font-size:'.$font.'px">'.$l.'</div>';
+}
+
+/**
+ * A stack's icon for the email, matching the tiled icon on its row in StaXX: one
+ * cell per distinct service picture (services that reached the same picture
+ * collapse; services with none each keep a letter cell), a "+N" cell past four.
+ * A single cell is drawn as an ordinary 32px picture or letter tile; two or
+ * more as a 2x2 table, which mail readers draw without any image processing.
+ */
+function staxx_notify_stack_mosaic(string $rel, array &$images): string {
+  $leaf = ltrim((string)strrchr('/'.$rel, '/'), '/');
+  $file = staxx_stack_compose_map()[$rel] ?? '';
+  $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
+  $cells = []; $seen = [];
+  foreach (array_keys($meta['services'] ?? []) as $svc) {
+    $cid = staxx_notify_icon_cid(['stack' => $rel, 'service' => (string)$svc], $images);
+    if ($cid === '') { $cells[] = ['l' => mb_strtoupper(mb_substr((string)$svc, 0, 1))]; continue; }
+    if (isset($seen[$cid])) continue;
+    $seen[$cid] = true;
+    $cells[] = ['p' => $cid];
+  }
+  if (count($cells) <= 1) {
+    return isset($cells[0]['p']) ? staxx_notify_pic($cells[0]['p'], 32) : staxx_notify_tile($leaf, 32, 15);
+  }
+  if (count($cells) > 4) $cells = array_merge(array_slice($cells, 0, 3), [['m' => count($cells) - 3]]);
+  while (count($cells) < 4) $cells[] = [];
+  $small = 'width:15px;height:15px;line-height:15px;text-align:center;border-radius:3px;background:#e4e4e7;color:#555555;font-weight:700;';
+  $draw = static function (array $c) use ($small): string {
+    if (isset($c['p'])) return '<img src="cid:'.$c['p'].'" width="15" height="15" alt="" style="display:block;width:15px;height:15px;border-radius:3px">';
+    if (isset($c['l'])) return '<div style="'.$small.'font-size:9px">'.htmlspecialchars((string)$c['l'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</div>';
+    if (isset($c['m'])) return '<div style="'.$small.'font-size:8px">+'.(int)$c['m'].'</div>';
+    return '<div style="width:15px;height:15px"></div>';
+  };
+  $td = static fn(array $c): string => '<td style="padding:1px">'.$draw($c).'</td>';
+  return '<table role="presentation" cellpadding="0" cellspacing="0" style="width:34px;height:34px;background:#f3f3f3;border-radius:7px">'
+       . '<tr>'.$td($cells[0]).$td($cells[1]).'</tr><tr>'.$td($cells[2]).$td($cells[3]).'</tr></table>';
 }
 
 /** An SVG drawn at 96x96 by resvg, as PNG bytes; '' when resvg is missing or fails. */
@@ -780,13 +874,14 @@ function staxx_notify_html(array $events, string $layout): array {
     $body .= '<div style="font-size:15px;color:'.($down ? '#c62828' : '#1a7f37').'">'
            . $gl($down ? 'warning' : 'healthy', $down ? 'Docker is down' : 'Docker is back').$h(staxx_notify_docker_words($dock)[1]).'</div>';
   }
+  // Trouble with a running app comes first: it is the one thing in the email that may need acting on now.
+  if ($problems) {
+    if ($by['installed'] || $by['failed'] || $by['found'] || $sum || $p > 1) $body .= $head($gl('warning', 'Urgent').'Urgent');
+    foreach ($problems as $e) $body .= $item($e, $watch($e));
+  }
   if ($by['installed']) $body .= ($multi ? $head($gl('installed', 'Updated').'Updated') : '').$rows($by['installed'], $withNotes);
   if ($by['failed'])    $body .= ($multi ? $head($gl('failed', 'Failed').'Failed') : '').$rows($by['failed'], $reason);
   if ($by['found'])     $body .= ($multi && ($by['installed'] || $by['failed'] || $sum) ? $head($gl('found', 'Waiting for you').'Waiting for you') : '').$rows($by['found'], $withNotes);
-  if ($problems) {
-    if ($by['installed'] || $by['failed'] || $by['found'] || $sum || $p > 1) $body .= $head($gl('warning', 'Needs a look').'Needs a look');
-    foreach ($problems as $e) $body .= $item($e, $watch($e));
-  }
   if ($by['healthy']) $body .= $head($gl('healthy', 'Healthy again').'Healthy again').$rows($by['healthy'], $watch);
   if ($by['pinned']) {
     $body .= $head($gl('pinned', 'Pinned').'Pinned').$rows($by['pinned'], static function (array $e) use ($h): string {
@@ -795,8 +890,43 @@ function staxx_notify_html(array $events, string $layout): array {
     });
   }
   if ($by['look']) {
-    $body .= $head($gl('warning', 'Needs a look').'Needs a look');
-    foreach ($by['look'] as $e) $body .= '<div style="font-size:14px;color:#333333;padding:4px 0">'.$h($e['label'].': '.$e['detail']).'</div>';
+    $body .= $head($gl('summary', 'Worth a look').'Worth a look');
+    $groups = ['review' => [], 'moved' => [], 'other' => []];
+    foreach ($by['look'] as $e) $groups[isset($groups[$e['group'] ?? '']) ? $e['group'] : 'other'][] = $e;
+    $titles = [
+      'review' => ['Waiting for your review', 'These imported stacks will not start until you open them in StaXX and review them.'],
+      'moved'  => ['Image has a new home', 'The publisher now posts new versions somewhere else. The old address still works but gets no updates. Switch it from the app\'s row menu in StaXX.'],
+    ];
+    $mono = 'font-family:Consolas,Menlo,monospace;font-size:14px;color:#333333';
+    foreach ($groups as $g => $list) {
+      if (!$list) continue;
+      if ($g === 'other') {
+        foreach ($list as $e) {
+          $body .= '<div style="font-size:14px;color:#333333;padding:4px 0">'
+                 . str_replace("\n", '<br>', $h(ucfirst((string)($e['label'] ?? '')).': '.($e['detail'] ?? ''))).'</div>';
+        }
+        continue;
+      }
+      $body .= '<div style="margin:18px 0 4px;font-size:15px;font-weight:700;color:#1d1d1f">'.$h($titles[$g][0])
+             . ' <span style="color:#a15c00">('.count($list).')</span></div>'
+             . '<div style="font-size:14px;color:#555555;margin:0 0 4px">'.$h($titles[$g][1]).'</div>';
+      foreach ($list as $i => $e) {
+        if ($g === 'review') {
+          $name = ltrim((string)strrchr('/'.(string)$e['stack'], '/'), '/');
+          $pic  = staxx_notify_stack_mosaic((string)$e['stack'], $images);
+          $note = 'not reviewed';
+        } else {
+          $name = staxx_notify_label($e);
+          $cid  = staxx_notify_icon_cid($e, $images);
+          $pic  = $cid !== '' ? staxx_notify_pic($cid, 32) : staxx_notify_tile($name, 32, 15);
+          $note = $h($e['from'] ?? '').' → <b style="color:#1a7f37">'.$h($e['to'] ?? '').'</b>';
+        }
+        $body .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"'.($i ? ' style="border-top:1px solid #eeeeee"' : '').'><tr>'
+               . '<td width="44" valign="middle" style="padding:8px 10px 8px 0">'.$pic.'</td>'
+               . '<td valign="middle" style="padding:8px 0;font-weight:700;font-size:15px;color:#1d1d1f">'.$h($name).'</td>'
+               . '<td align="right" valign="middle" style="padding:8px 0 8px 12px;'.$mono.'">'.$note.'</td></tr></table>';
+      }
+    }
   }
   if ($by['cleanup']) {
     $body .= '<div style="margin-top:16px;font-size:14px;color:#333333">'.$gl('cleanup', 'Old images').$h(staxx_images_human_bytes((int)$by['cleanup'][0]['size']))
@@ -1046,11 +1176,47 @@ function staxx_notify_digest_due_at(int $now): int {
   return 0;
 }
 
-/** Self-test findings marked bad, as summary 'look' events. */
+/**
+ * The summary's "Worth a look" events, as structured fields rather than the
+ * self-test's diagnostic text (that was written for a forum post, not a reader):
+ *  - group 'review': one per stack still awaiting review (stack), by name;
+ *  - group 'moved': one per image whose template now publishes elsewhere
+ *    (stack, service, from, to), found by walking the stacks so a stale entry in
+ *    the update state cannot raise it. Skipped when Updates.php is not loaded;
+ *  - group 'other': every remaining bad self-test finding (label, detail). The two
+ *    findings the groups above replace are left out.
+ */
 function staxx_notify_looks(): array {
   $out = [];
+  $map = staxx_stack_compose_map();
+  $leaf = static fn(string $rel): string => ltrim((string)strrchr('/'.$rel, '/'), '/');
+
+  $review = [];
+  foreach ($map as $rel => $file) {
+    if (staxx_review_file(dirname($file)) !== '') $review[] = (string)$rel;
+  }
+  usort($review, static fn($a, $b) => strcasecmp($leaf($a), $leaf($b)) ?: strcasecmp($a, $b));
+  foreach ($review as $rel) $out[] = ['kind' => 'look', 'group' => 'review', 'stack' => $rel];
+
+  if (function_exists('staxx_updates_moved_for_stack')) {
+    foreach ($map as $rel => $file) {
+      $moved = staxx_updates_moved_for_stack((string)$rel);
+      if (!$moved) continue;
+      $meta = staxx_compose_meta($file);
+      foreach ($moved as $svc => $m) {
+        $image = (string)($meta['services'][$svc]['image'] ?? '');
+        $from  = function_exists('staxx_links_image_host') ? staxx_links_image_host($image) : '';
+        $out[] = ['kind' => 'look', 'group' => 'moved', 'stack' => (string)$rel, 'service' => (string)$svc,
+                  'from' => $from === '' ? 'Docker Hub' : $from, 'to' => (string)($m['host'] ?? '')];
+      }
+    }
+  }
+
+  $covered = ['stacks awaiting review', 'images pulling from a registry their template has left'];
   foreach (staxx_selftest() as $label => $e) {
-    if (($e['state'] ?? '') === 'bad') $out[] = ['kind' => 'look', 'label' => (string)$label, 'detail' => (string)$e['detail']];
+    if (($e['state'] ?? '') === 'bad' && !in_array((string)$label, $covered, true)) {
+      $out[] = ['kind' => 'look', 'group' => 'other', 'label' => (string)$label, 'detail' => (string)$e['detail']];
+    }
   }
   return $out;
 }
@@ -1059,7 +1225,7 @@ function staxx_notify_looks(): array {
  * Send the summary if it is due. Run from the 15-minute apply pass. A missed
  * send time goes at the next pass; a quiet day sends nothing and still moves
  * sentAt. The pinned list rides along only when the pinned pass marked it
- * due; "Needs a look" and the old-images line only beside other content.
+ * due; "Worth a look" and the old-images line only beside other content.
  */
 function staxx_notify_digest_pass(): void {
   $now = staxx_notify_now();

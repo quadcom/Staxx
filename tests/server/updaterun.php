@@ -1071,6 +1071,19 @@ ok('found events: one per waiting container, with versions and the stored notes'
    count($foundEv) === 1 && $foundEv[0]['kind'] === 'found' && $foundEv[0]['version'] === '2.0.0'
    && $foundEv[0]['was'] === '1.0.0' && $foundEv[0]['notesFor'] === '2.0.0', json_encode($foundEv));
 
+// Pruning the images map: an image no stack names any more goes, the rest are untouched.
+$pruneIn = [
+  'binhex/arch-urbackup'                => ['move' => ['to' => 'ghcr.io/binhex/arch-urbackup']],
+  'ghcr.io/binhex/arch-urbackup:latest' => ['skipMove' => true, 'seen' => 5],
+  'nginx:1'                             => ['digest' => 'sha256:aa'],
+];
+$pruned = staxx_update_prune_images($pruneIn, ['ghcr.io/binhex/arch-urbackup:latest' => ['x'], 'nginx:1' => ['y']]);
+ok('prune images: a reference no stack uses is removed', !isset($pruned['binhex/arch-urbackup']) && count($pruned) === 2);
+ok('prune images: used references keep their entries untouched, move and skipMove included',
+   $pruned['ghcr.io/binhex/arch-urbackup:latest'] === $pruneIn['ghcr.io/binhex/arch-urbackup:latest']
+   && $pruned['nginx:1'] === $pruneIn['nginx:1']);
+ok('prune images: nothing in use removes every entry', staxx_update_prune_images($pruneIn, []) === []);
+
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);
 exit($fails ? 1 : 0);
