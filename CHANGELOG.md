@@ -4,6 +4,8 @@ What changed in StaXX, newest first.
 
 ---
 
+## Unreleased
+
 ## 00.05.00 — released 2026-10-09
 
 - Unraid's own Docker page and Dashboard now show each StaXX app's icon and a WebUI link, and call it "Compose" instead of "3rd Party". Each app picks this up the next time it is started or updated. Nothing is written into your compose file.
