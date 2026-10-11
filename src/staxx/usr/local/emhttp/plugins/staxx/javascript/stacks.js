@@ -956,14 +956,15 @@
     // rather than a fixture bolted straight after Container. `flag: 'expose'`
     // wires it into serviceFlags() the same way as every other section — on
     // when the file already holds x-unraid.expose, or ticked on for this
-    // service in this editor. It is also gated on NPM_CONFIGURED (checked in
-    // the render loop below and in the Sections menu), a server-wide setting
-    // no per-service tick can override: with no Nginx Proxy Manager there is
-    // nowhere to send a proxy entry, so the group and its Sections entry are
-    // both left out entirely rather than shown disabled. Drawn by its own
-    // function (exposeGroupHtml()) rather than the generic caption/
-    // fieldHtml() loop, same reason Updates is — the Enabled switch in the
-    // group head and the Remove button at the foot do not fit that grid.
+    // service in this editor. It is also gated on NPM_CONFIGURED or
+    // PIHOLE_CONFIGURED (checked in the render loop below and in the Sections
+    // menu), server-wide settings no per-service tick can override: with
+    // neither tool set up there is nowhere to send a name, so the group and
+    // its Sections entry are both left out entirely rather than shown
+    // disabled. Drawn by its own function (exposeGroupHtml()) rather than
+    // the generic caption/fieldHtml() loop, same reason Updates is — the
+    // per-tool Enabled switches and the Remove button at the foot do not fit
+    // that grid.
     { key: 'expose', heading: 'Proxy and DNS', cls: 'staxx-formgroup--container staxx-formgroup--expose', flag: 'expose' },
     // --mapped, not --pair: a port and a mount carry a third small box (the
     // protocol, the read/write mode) that a variable and a label do not, so
@@ -1027,9 +1028,9 @@
     // every other entry's path names a key stashSection/restoreSection move
     // at the top of the compose file; this one names where inside x-unraid
     // they move it. Left out of the Sections menu entirely when
-    // NPM_CONFIGURED is false (the loop that draws the menu, below) — there
-    // is nowhere to send a proxy entry, so offering the tick would be a
-    // false promise.
+    // neither NPM_CONFIGURED nor PIHOLE_CONFIGURED is set (the loop that draws
+    // the menu, below) — there is nowhere to send a name, so offering the
+    // tick would be a false promise.
     { key: 'expose',        label: 'Proxy and DNS',       path: ['x-unraid', 'expose'],  on: false },
     { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
     { key: 'port',          label: 'Ports',               path: ['ports'],               on: true },
@@ -5077,7 +5078,14 @@
     if (!entry) return '<span class="staxx-sub">' +
       (exposeCheckCache ? 'Not set up yet. Save to set it up.' : 'Checking…') + '</span>';
     if (entry.refusal) return '<span class="red-text">' + esc(entry.refusal) + '</span>';
-    var steps = entry.steps || [];
+    // Only the parts that are on get a line: a part switched off here that
+    // also matches there has nothing worth saying. A step that is NOT 'none'
+    // (a leftover entry still to be switched off or removed) always shows.
+    var parts = MODEL ? exposeParts(svcName) : { nginxOn: true, dnsOn: true };
+    var steps = (entry.steps || []).filter(function (st) {
+      if (st.op !== 'none') return true;
+      return st.target === 'npm' ? parts.nginxOn : parts.dnsOn;
+    });
     var bad = false;
     // Short state wording, one line per service; the full step sentences are
     // for the box that opens after Save.
@@ -5096,6 +5104,13 @@
              esc(st.target === 'npm' ? 'Nginx Proxy Manager' : 'Pi-hole') + ': ' + esc(say) +
              '</div>';
     }).join('');
+    // With Nginx off the name reaches the app directly, so the port has to
+    // be typed after it; `open` is the server's worked-out address ('' when
+    // it does not apply).
+    if (!parts.nginxOn && parts.dnsOn && entry.open) {
+      lines += '<div class="staxx-expose-statusline">Open it at <a href="' + esc(entry.open) +
+               '" target="_blank" rel="noopener">' + esc(entry.open) + '</a></div>';
+    }
     if (bad) {
       lines += '<button type="button" class="staxx-btn" data-expose-apply="' + esc(svcName) + '">Apply</button>';
     }
@@ -5129,9 +5144,17 @@
 
     loadExposeCerts();
 
+    // Each tool is its own part with its own Enabled switch, drawn only when
+    // that tool is set up (NPM_CONFIGURED / PIHOLE_CONFIGURED, read off the
+    // scaffold near the top of this file). Only the Nginx rows dim when its
+    // switch is off — the Domain name and Pi-hole parts stand on their own.
+    var dimNginx = enabledOn ? '' : ' staxx-fieldrow--exposedim';
+    var tagged = function (html, extra) {
+      return html.replace('staxx-fieldrow', 'staxx-fieldrow' + extra);
+    };
+
     var out = [];
-    out.push('<div class="staxx-formgroup staxx-formgroup--container staxx-formgroup--expose' +
-              (enabledOn ? '' : ' staxx-formgroup--exposedim') + '" data-group="expose">');
+    out.push('<div class="staxx-formgroup staxx-formgroup--container staxx-formgroup--expose" data-group="expose">');
     out.push(
       '<div class="staxx-grouphead">' +
         '<div class="staxx-groupheading">' +
@@ -5139,24 +5162,24 @@
           '<h5 class="staxx-fieldgroup">' + headingToggleHtml('expose', 'Proxy and DNS') +
             ' <span class="staxx-groupnote">(optional)</span></h5>' +
         '</div>' +
-        '<label class="staxx-switch staxx-expose-enabled">' +
-          '<input type="checkbox" data-row="' + enabled.idx + '" data-part="value"' +
-          (enabledOn ? ' checked' : '') + (inert ? ' disabled' : '') + '>' +
-          '<span class="staxx-switch-track" aria-hidden="true"></span>' +
-          '<span class="staxx-switch-text">Enabled</span>' +
-        '</label>' +
       '</div>'
     );
     out.push(groupBodyOpenHtml(svc.name, 'expose', collapsed));
     out.push(captionRow({ key: 'expose', cls: 'staxx-formgroup--container' }));
     out.push(fieldHtml(domain.f, domain.idx));
-    if (cert) out.push(exposeCertRowHtml(cert.f, cert.idx, inert));
-    if (ws) out.push(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert));
-    // PIHOLE_CONFIGURED (read off the scaffold near the top of this file) —
-    // a Pi-hole entry means nothing without Nginx Proxy Manager, but NPM
-    // works perfectly well with no Pi-hole at all, so this row alone is
-    // gated on the second server-wide setting.
-    if (dns && PIHOLE_CONFIGURED) out.push(exposeSwitchRowHtml(dns.f, dns.idx, 'DNS name', 'Add to Pi-hole', dnsOn, inert));
+    if (NPM_CONFIGURED) {
+      out.push(tagged(exposeSwitchRowHtml(enabled.f, enabled.idx, 'Nginx Proxy Manager', 'Enabled', enabledOn, inert),
+                      ' staxx-fieldrow--exposesub'));
+      if (cert) out.push(tagged(exposeCertRowHtml(cert.f, cert.idx, inert), dimNginx));
+      if (ws) out.push(tagged(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert), dimNginx));
+    }
+    if (dns && PIHOLE_CONFIGURED) {
+      out.push(tagged(exposeSwitchRowHtml(dns.f, dns.idx, 'Pi-hole', 'Enabled', dnsOn, inert),
+                      ' staxx-fieldrow--exposesub'));
+    }
+    if (exposeBothOff(svc.name)) {
+      out.push('<div class="staxx-expose-warn" role="alert">' + esc(EXPOSE_BOTH_OFF) + '</div>');
+    }
     out.push(
       '<div class="staxx-fieldrow staxx-fieldrow--exposestatus">' +
         '<span class="staxx-fieldlabel">Status</span>' +
@@ -6719,7 +6742,7 @@
           // PLAN_176 B3b — left off the menu with nowhere to send a proxy
           // entry, same reason the group itself is skipped in the render
           // loop below (grp.key === 'expose').
-          if (s.key === 'expose' && !NPM_CONFIGURED) continue;
+          if (s.key === 'expose' && !NPM_CONFIGURED && !PIHOLE_CONFIGURED) continue;
           bits.push('<label class="staxx-sectionrow"><input type="checkbox" data-flag="' + s.key +
                     '" data-service="' + esc(serviceName) + '"' + (flags[s.key] ? ' checked' : '') + '> ' +
                     esc(s.label) + '</label>');
@@ -7016,10 +7039,10 @@
           // below), but still gated on NPM being configured at all — a
           // server-wide setting no per-service tick can override, checked
           // first since flags.expose can be true (ticked, or the file
-          // already holds x-unraid.expose) while NPM itself has since been
-          // switched off in Settings.
+          // already holds x-unraid.expose) while both tools have since been
+          // switched off in Settings. Either tool alone is enough to offer it.
           if (grp.key === 'expose') {
-            if (!NPM_CONFIGURED || !flags.expose) continue;
+            if ((!NPM_CONFIGURED && !PIHOLE_CONFIGURED) || !flags.expose) continue;
             var expCollapsed = isGroupCollapsed('expose') && !rowsHaveGap(rows, gaps);
             out.push(exposeGroupHtml(svc, rows, form.fields, expCollapsed));
             continue;
@@ -7169,7 +7192,37 @@
         out.push({ index: i, field: f, why: gapWhy(f) });
       }
     }
+    // A Proxy and DNS name with both parts off is a name that goes nowhere;
+    // it blocks Save like any other gap, pinned on the Domain name row.
+    for (var xi = 0; xi < MODEL.fields.length; xi++) {
+      var xf = MODEL.fields[xi];
+      if (xf.service && xf.target === 'x-unraid.expose.domain' && exposeBothOff(xf.service)) {
+        out.push({ index: xi, field: xf, why: EXPOSE_BOTH_OFF });
+      }
+    }
     return out;
+  }
+
+  var EXPOSE_BOTH_OFF = 'Turn on Nginx Proxy Manager or Pi-hole for this name, or clear the domain name.';
+
+  // The live on/off of one service's two Proxy and DNS parts, read off the
+  // model. Nginx counts as off whenever NPM is not set up here: the editor
+  // writes enabled:false in that case (see commit()), so the file says so.
+  function exposeParts(svcName) {
+    var st = { hasDomain: false, nginxOn: false, dnsOn: false };
+    MODEL.fields.forEach(function (f) {
+      if (f.service !== svcName || !f.parts || !f.parts.value) return;
+      var v = f.absent ? '' : f.parts.value.value;
+      if (f.target === 'x-unraid.expose.domain')  st.hasDomain = String(v || '').trim() !== '';
+      if (f.target === 'x-unraid.expose.enabled') st.nginxOn = NPM_CONFIGURED && v !== 'false';
+      if (f.target === 'x-unraid.expose.dns')     st.dnsOn = v === 'true';
+    });
+    return st;
+  }
+
+  function exposeBothOff(svcName) {
+    var st = exposeParts(svcName);
+    return st.hasDomain && !st.nginxOn && !st.dnsOn;
   }
 
   function updateRequired() {
@@ -9457,6 +9510,23 @@
     // comment above scheduleCrossLinkCheck() for exactly what has to be true
     // of the typed value before this asks the server anything at all.
     if (propEp) scheduleCrossLinkCheck(f, el.value);
+
+    // With Nginx Proxy Manager not set up, its part is hidden, so the file
+    // has to say it is off: a domain typed here is written with
+    // enabled: false, and setting NPM up later then changes nothing by
+    // itself. Read from a fresh form since the write above may have just
+    // created the expose block.
+    if (!NPM_CONFIGURED && f.target === 'x-unraid.expose.domain' && el.dataset.part === 'value' &&
+        String(el.value).trim() !== '') {
+      var xform = YAML.buildForm(MODEL.doc);
+      var xen = null;
+      xform.fields.forEach(function (xf) {
+        if (xf.service === f.service && xf.target === 'x-unraid.expose.enabled') xen = xf;
+      });
+      if (xen && (xen.absent || xen.parts.value.value !== 'false')) {
+        YAML.setPart(MODEL.doc, xform, xen.id, 'value', 'false');
+      }
+    }
     quietEdit();
   }
 
@@ -10123,8 +10193,12 @@
     document.querySelectorAll('[data-dnsmark]').forEach(function (el) {
       var row = EXPOSE_STATUS[el.dataset.dnsmark];
       if (!row) { el.hidden = true; return; }
-      var grey = !row.enabled;
-      var bad  = !grey && (row.npm === false || row.dns === false);
+      // Each part counts only while it is on: Nginx by row.enabled, Pi-hole
+      // by a known state (row.dns is null when its switch is off). Grey means
+      // neither is, and red only ever means a part that is on and wrong.
+      var npmOn = !!row.enabled;
+      var grey = !npmOn && row.dns === null;
+      var bad  = !grey && ((npmOn && row.npm === false) || row.dns === false);
       var mark = document.createElement(bad ? 'button' : 'span');
       if (bad) mark.type = 'button';
       mark.className = 'staxx-dnsmark' + (grey ? '' : bad ? ' staxx-dnsmark--bad' : ' staxx-dnsmark--ok');
@@ -10134,7 +10208,7 @@
       // exists in the card when dns is actually on (B5: "the Pi-hole row
       // only when dns is on"), same as row.dns === null meaning the switch
       // is off rather than drifted.
-      mark.dataset.npm = row.npm === false ? 'bad' : row.npm === true ? 'ok' : '';
+      mark.dataset.npm = !npmOn ? '' : row.npm === false ? 'bad' : row.npm === true ? 'ok' : '';
       mark.dataset.dns = row.dns === false ? 'bad' : row.dns === true ? 'ok' : '';
       mark.dataset.tip = grey ? 'Switched off' : '';
       mark.textContent = 'DNS';
@@ -22707,19 +22781,22 @@
       card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
         '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
     } else if (pill.classList.contains('staxx-dnsmark')) {
-      // PLAN_176 B5 — grey (the service's Enabled switch is off) says so
+      // PLAN_176 B5 — grey (both Enabled switches are off) says so
       // plainly and leaves it there, the same lead-only shape a bare data-tip
       // card gets — there is nothing to check while it is off, so a table of
       // ✓/✗ would be answering a question that does not apply. Green/red get
       // the domain as the lead and one fact row per switch that is actually
-      // on, the Pi-hole row left out when data-dns is '' (the switch itself
-      // is off), same reasoning updCardFacts() gives for skipping a row that
+      // on, the Nginx row left out when data-npm is '' and the Pi-hole row
+      // when data-dns is '' (that switch is off), same reasoning updCardFacts() gives for skipping a row that
       // does not apply.
       if (pill.dataset.tip) {
         card.innerHTML = '<div class="staxx-updcard__lead">' + esc(pill.dataset.tip) + '</div>';
       } else {
-        var facts = '<dt>Nginx Proxy Manager</dt><dd>' + (pill.dataset.npm === 'bad'
-          ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
+        var facts = '';
+        if (pill.dataset.npm) {
+          facts += '<dt>Nginx Proxy Manager</dt><dd>' + (pill.dataset.npm === 'bad'
+            ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
+        }
         if (pill.dataset.dns) {
           facts += '<dt>Pi-hole</dt><dd>' + (pill.dataset.dns === 'bad'
             ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';

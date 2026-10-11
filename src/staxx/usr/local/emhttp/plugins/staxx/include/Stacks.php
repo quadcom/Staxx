@@ -2602,7 +2602,31 @@ function staxx_webui_url(
   // Whatever came out has to actually be a web address. Without this check a
   // webui typed by hand — or one left with a stray token nothing replaced —
   // could turn a row button into something other than a link.
-  return preg_match('/^https?:\/\//i', $raw) ? $raw : '';
+  if (!preg_match('/^https?:\/\//i', $raw)) return '';
+
+  // Pi-hole on, Nginx off: the domain name answers at the same address and
+  // port, so the button opens the name rather than the bare address.
+  $x = (array)($service['x'] ?? []);
+  $domain = trim((string)($x['expose.domain'] ?? ''));
+  if ($domain !== '' && preg_match('/^[A-Za-z0-9.-]+$/', $domain)
+      && staxx_expose_flag($x, 'expose.dns', false)
+      && !staxx_expose_flag($x, 'expose.enabled', true)) {
+    $raw = preg_replace('#^(https?://)[^/:?\#]+#i', '${1}'.$domain, $raw, 1);
+  }
+  return $raw;
+}
+
+/**
+ * One boolean out of a service's flattened x-unraid keys. The compose reader
+ * hands scalars over as the text written in the file, so `false` arrives as
+ * the string "false", which a plain (bool) cast reads as true; only the YAML
+ * spellings of false count as off.
+ */
+function staxx_expose_flag(array $x, string $key, bool $absent): bool {
+  if (!array_key_exists($key, $x)) return $absent;
+  $v = $x[$key];
+  if (is_bool($v)) return $v;
+  return !in_array(strtolower(trim((string)$v)), ['false', 'no', 'off', '0', ''], true);
 }
 
 /**

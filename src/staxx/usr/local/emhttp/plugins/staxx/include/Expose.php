@@ -303,6 +303,12 @@ function staxx_pihole_is_v6(string $version): bool {
  * hold for it, and (only for expose-apply) makes it so. See the plan's
  * "Entries that already exist" section — that text plus this comment block
  * together are the spec these functions follow.
+ *
+ * The two tools are independent (PLAN_238): `enabled` is the Nginx host's
+ * switch and `dns` is the Pi-hole record's, in any combination. A record
+ * points at Nginx Proxy Manager when Nginx is on, and straight at the app's
+ * own address when it is off; nothing here needs NPM unless Nginx is on for
+ * some service or an entry StaXX made there has to be switched off.
  * ========================================================================
  */
 
@@ -344,15 +350,8 @@ function staxx_expose_json_write(string $rel, array $data): bool {
 function staxx_expose_config(array $svcX): ?array {
   $domain = trim((string)($svcX['expose.domain'] ?? ''));
   if ($domain === '') return null;
-  // The compose reader hands scalars over as the text written in the file, so
-  // `false` arrives as the string "false", which a plain (bool) cast reads as
-  // true. Only the YAML spellings of false count as off.
-  $flag = function (string $key, bool $absent) use ($svcX): bool {
-    if (!array_key_exists($key, $svcX)) return $absent;
-    $v = $svcX[$key];
-    if (is_bool($v)) return $v;
-    return !in_array(strtolower(trim((string)$v)), ['false', 'no', 'off', '0', ''], true);
-  };
+  // staxx_expose_flag() (Stacks.php) reads the text "false" as off.
+  $flag = fn(string $key, bool $absent): bool => staxx_expose_flag($svcX, $key, $absent);
   return [
     'domain'      => $domain,
     'certificate' => isset($svcX['expose.certificate']) ? trim((string)$svcX['expose.certificate']) : '',
@@ -413,6 +412,17 @@ function staxx_expose_target(string $rel, string $service, string &$err): ?array
     return null;
   }
   return ['scheme' => $scheme !== '' ? $scheme : 'http', 'host' => $host, 'port' => (int)$port];
+}
+
+/**
+ * The address to open a service at when only Pi-hole names it (Nginx off, DNS
+ * on): the domain plus the app's own port, since no proxy supplies one. '' in
+ * every other case. Shared by the check/apply reply and the status list so the
+ * two cannot disagree.
+ */
+function staxx_expose_open_address(array $config, array $target): string {
+  if ($config['enabled'] || !$config['dns']) return '';
+  return 'http://'.$config['domain'].':'.$target['port'];
 }
 
 /** Every proxy host NPM holds, exactly as NPM sent it — StaXX only ever
@@ -631,20 +641,26 @@ function staxx_pihole_sudo_hint(int $code): string {
 }
 
 /**
- * Where the DNS record should point — Nginx Proxy Manager's own address
- * (Proposed behaviour 3: the record always points at NPM, never straight at
- * the app, because a DNS record carries no port). A host name is resolved
+ * Where a DNS record should point, as an IPv4 address.
+ *
+ * With Nginx on (`$appHost` empty) it is Nginx Proxy Manager's own address: a
+ * DNS record carries no port, so the name has to reach the proxy, which then
+ * forwards to the app. With Nginx off, `$appHost` is the host part of the
+ * app's own forward target (staxx_expose_target()) — the server's address for
+ * a bridge or host network, the container's own address on macvlan/ipvlan —
+ * and the person adds the port when opening the name. A host name is resolved
  * with gethostbyname(); an address already given as an IP is used as-is.
  */
-function staxx_expose_dns_ip(string &$err): string {
+function staxx_expose_dns_ip(string &$err, string $appHost = ''): string {
   $err  = '';
   $cfg  = staxx_cfg();
-  $host = (string)parse_url(rtrim((string)($cfg['NPM_URL'] ?? ''), '/'), PHP_URL_HOST);
+  $host = $appHost !== '' ? $appHost
+        : (string)parse_url(rtrim((string)($cfg['NPM_URL'] ?? ''), '/'), PHP_URL_HOST);
   if ($host === '') {
     $err = 'Nginx Proxy Manager\'s address is not set, so StaXX has no address to point the DNS name at.';
     return '';
   }
-  if (filter_var($host, FILTER_VALIDATE_IP)) return $host;
+  if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return $host;
   $ip = @gethostbyname($host);
   if ($ip === '' || $ip === $host) {
     $err = 'Could not look up an address for '.$host.'.';
@@ -776,7 +792,9 @@ function staxx_expose_plan_service(
     } else {
       $steps[] = ['service' => $service, 'target' => 'pihole', 'op' => 'replace',
                   'text' => 'Pi-hole sends '.$config['domain'].' to '.$rec['ip']
-                          . '; this will change it to Nginx Proxy Manager.'];
+                          . '; this will change it to '
+                          . ($config['enabled'] ? 'Nginx Proxy Manager' : 'the address this app answers at')
+                          . ' ('.$dnsIp.').'];
     }
   }
 
@@ -867,7 +885,8 @@ function staxx_expose_apply_step(
 }
 
 /**
- * The one NPM login and one Pi-hole session shared by expose-check and
+ * The one NPM login (only when a service needs NPM) and one Pi-hole session
+ * (only when a service has DNS on) shared by expose-check and
  * expose-apply — $apply false only builds the plan, $apply true carries it
  * out step by step, service by service, right after building it, so what
  * was shown and what was written can never drift apart (Refusals: "never
@@ -892,21 +911,35 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
   $needsDns = false;
   foreach ($configs as $c) if ($c['dns']) $needsDns = true;
 
+  $records = staxx_expose_json_read($rel);
+
+  // Nginx Proxy Manager is only needed when a service has Nginx on, or has it
+  // off but may still own an entry there (expose.json remembers its id) that
+  // has to be switched off. A Pi-hole-only stack never touches it.
+  $needsNpmUrl = false; $needsNpm = false;
+  foreach ($configs as $svcName => $c) {
+    if ($c['enabled']) $needsNpmUrl = true;
+    if ($c['enabled'] || (int)($records[$svcName]['npm_id'] ?? 0) > 0) $needsNpm = true;
+  }
+
   $cfg    = staxx_cfg();
   $npmUrl = trim((string)($cfg['NPM_URL'] ?? ''));
-  if ($npmUrl === '') {
-    $err = 'Nginx Proxy Manager is not set up yet — fill in its address in the Integrations settings.';
+  if ($npmUrl === '' && $needsNpmUrl) {
+    $err = 'Nginx Proxy Manager is not set up yet — fill in its address in the Integrations settings, or turn Nginx off for this service.';
     return [];
   }
-  $npmErr = '';
-  $token  = staxx_npm_login($npmErr);
-  if ($token === '') { $err = $npmErr; return []; }
-  $certs = staxx_npm_certificates($npmUrl, $token, $npmErr);
-  if ($npmErr !== '') { $err = $npmErr; return []; }
-  $hosts = staxx_npm_proxy_hosts($npmUrl, $token, $npmErr);
-  if ($npmErr !== '') { $err = $npmErr; return []; }
+  $token = ''; $certs = []; $hosts = [];
+  if ($npmUrl !== '' && $needsNpm) {
+    $npmErr = '';
+    $token  = staxx_npm_login($npmErr);
+    if ($token === '') { $err = $npmErr; return []; }
+    $certs = staxx_npm_certificates($npmUrl, $token, $npmErr);
+    if ($npmErr !== '') { $err = $npmErr; return []; }
+    $hosts = staxx_npm_proxy_hosts($npmUrl, $token, $npmErr);
+    if ($npmErr !== '') { $err = $npmErr; return []; }
+  }
 
-  $piUrl = ''; $piHeaders = []; $piHosts = []; $dnsIp = '';
+  $piUrl = ''; $piHeaders = []; $piHosts = [];
   if ($needsDns) {
     $piUrl = staxx_pihole_url();
     if ($piUrl === '') {
@@ -917,19 +950,26 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
     $piHeaders = staxx_pihole_login($piErr);
     if ($piErr !== '') { $err = $piErr; return []; }
     $piHosts = staxx_pihole_hosts($piUrl, $piHeaders, $piErr);
-    if ($piErr === '') $dnsIp = staxx_expose_dns_ip($piErr);
     // A session was opened above, and Pi-hole's pool of them is small.
     if ($piErr !== '') { staxx_pihole_logout($piUrl, $piHeaders); $err = $piErr; return []; }
   }
 
   $allConfigs = staxx_expose_all_configs();
-  $records    = staxx_expose_json_read($rel);
   $out = [];
 
   foreach ($configs as $svcName => $config) {
     $tErr = '';
     $target = staxx_expose_target($rel, $svcName, $tErr);
     if ($target === null) { $out[$svcName] = ['refusal' => $tErr]; continue; }
+    $open = staxx_expose_open_address($config, $target);
+
+    // Per service: Nginx on points the name at the proxy, off at the app.
+    $dnsIp = '';
+    if ($config['dns']) {
+      $dErr = '';
+      $dnsIp = staxx_expose_dns_ip($dErr, $config['enabled'] ? '' : $target['host']);
+      if ($dErr !== '') { $out[$svcName] = ['refusal' => $dErr]; continue; }
+    }
 
     $sErr = '';
     $steps = staxx_expose_plan_service(
@@ -937,7 +977,7 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
     );
     if ($sErr !== '') { $out[$svcName] = ['refusal' => $sErr]; continue; }
 
-    if (!$apply) { $out[$svcName] = ['steps' => $steps]; continue; }
+    if (!$apply) { $out[$svcName] = ['steps' => $steps, 'open' => $open]; continue; }
 
     $applied = [];
     $record  = $records[$svcName] ?? [];
@@ -960,7 +1000,7 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
     // already done.
     $records[$svcName] = $record;
     staxx_expose_json_write($rel, $records);
-    $out[$svcName] = ['steps' => $applied];
+    $out[$svcName] = ['steps' => $applied, 'open' => $open];
   }
 
   if ($needsDns) staxx_pihole_logout($piUrl, $piHeaders);
@@ -988,12 +1028,15 @@ function staxx_expose_status(string &$err): array {
   $piErr = '';
   $piHeaders = $piUrl !== '' ? staxx_pihole_login($piErr) : [];
   $piHosts   = ($piUrl !== '' && $piErr === '') ? staxx_pihole_hosts($piUrl, $piHeaders, $piErr) : [];
+  // The proxy's own address, for services with Nginx on; a service with Nginx
+  // off points at its own forward target instead (below).
   $dnsErr = '';
-  $dnsIp  = $piUrl !== '' ? staxx_expose_dns_ip($dnsErr) : '';
+  $npmIp  = $piUrl !== '' ? staxx_expose_dns_ip($dnsErr) : '';
 
   $out = [];
   foreach ($allConfigs as $rel => $svcs) {
     foreach ($svcs as $svcName => $config) {
+      $target = null;   // read at most once per service
       $npmState = null;
       if ($token !== '') {
         $host = staxx_npm_find_host($hosts, $config['domain']);
@@ -1003,21 +1046,29 @@ function staxx_expose_status(string &$err): array {
           $certId = $config['certificate'] !== '' ? staxx_npm_cert_resolve($certs, $config['certificate'], $config['domain'], $ce) : 0;
           $diffs  = ($target !== null && $ce === '') ? staxx_npm_diff($host, $target, $certId, $config, $certs) : ['-'];
           $npmState = ($diffs === []) && (!empty($host['enabled']) === $config['enabled']);
-        } else {
+        } elseif ($config['enabled']) {
           $npmState = false;
         }
+        // Nginx off and no entry of ours: nothing to be right or wrong about.
       }
 
-      $dnsState = null;
-      if ($config['dns']) {
-        $dnsState = ($piUrl !== '' && $piErr === '')
-          ? (($rec = staxx_pihole_find($piHosts, $config['domain'])) !== null && $rec['ip'] === $dnsIp)
-          : null;
+      $dnsState = null; $open = '';
+      if (!$config['enabled'] && $config['dns']) {
+        if ($target === null) { $tErr = ''; $target = staxx_expose_target($rel, $svcName, $tErr); }
+        if ($target !== null) $open = staxx_expose_open_address($config, $target);
+      }
+      if ($config['dns'] && $piUrl !== '' && $piErr === '') {
+        $want = $npmIp;
+        if (!$config['enabled']) {
+          $want = '';
+          if ($target !== null) { $aErr = ''; $want = staxx_expose_dns_ip($aErr, $target['host']); }
+        }
+        $dnsState = $want !== '' ? (($rec = staxx_pihole_find($piHosts, $config['domain'])) !== null && $rec['ip'] === $want) : null;
       }
 
       $out[] = [
         'stack' => $rel, 'service' => $svcName, 'domain' => $config['domain'],
-        'npm' => $npmState, 'dns' => $dnsState, 'enabled' => $config['enabled'],
+        'npm' => $npmState, 'dns' => $dnsState, 'enabled' => $config['enabled'], 'open' => $open,
       ];
     }
   }

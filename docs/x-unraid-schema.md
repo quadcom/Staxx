@@ -427,20 +427,19 @@ services:
   sonarr:
     x-unraid:
       expose:
-        domain: sonarr.home.lan        # present = an NPM proxy host for this service
+        domain: sonarr.home.lan        # the name; enabled and dns choose which tools keep it
         certificate: "*.home.lan"      # NPM certificate nice_name; absent = plain http
         websockets: false               # absent = true; NPM's own "Websockets Support"
-        enabled: false                  # absent = true; false = proxy host switched off in NPM
-        dns: true                       # Pi-hole A record for domain, pointed at NPM's address
+        enabled: false                  # absent = true; false = no Nginx Proxy Manager entry
+        dns: true                       # Pi-hole A record for domain; absent = off
 ```
 
-Asks StaXX to keep a [Nginx Proxy Manager](https://nginxproxymanager.com/) entry — and, if you also
-run [Pi-hole](https://pi-hole.net/), a matching local DNS name — pointed at this service, so the
-address you type in a browser does not have to be `http://server:port`. Only `domain` is required;
-every other key is optional.
+Asks StaXX to keep a domain name for this service in [Nginx Proxy Manager](https://nginxproxymanager.com/),
+in [Pi-hole](https://pi-hole.net/), or in both, so the address you type in a browser does not have to
+be `http://server:port`. Only `domain` is required; every other key is optional.
 
-- `domain` — the address a browser would be typed to reach this service. Writing this is what asks
-  for the proxy entry in the first place; there is no separate on/off key for the entry itself.
+- `domain` — the address a browser would be typed to reach this service. `enabled` and `dns` choose
+  which tools keep it.
 - `certificate` — a Nginx Proxy Manager certificate, named by its own *nice name* rather than its
   numeric id, because the id means nothing outside that one NPM and the file has to stay portable.
   Absent means the proxy host answers on plain `http`.
@@ -448,12 +447,13 @@ every other key is optional.
   same as most apps want, and the same as a host StaXX finds already there keeps meaning, so
   adopting an existing entry changes nothing. Only `false` is ever written; turning this back on
   removes the line rather than writing `true`.
-- `enabled` — whether the proxy host itself is switched on in Nginx Proxy Manager. **Absent means
-  on**, for the same reason `websockets` is, and is written the same way: only `false` ever appears
-  in the file. Switching this off does not touch a Pi-hole name written alongside it.
-- `dns` — whether StaXX also keeps a Pi-hole A record for `domain`, pointed at Nginx Proxy
-  Manager's own address rather than at this container directly. Unlike `websockets`/`enabled`,
-  absent here simply means no DNS name — there is no separate default to fall back to.
+- `enabled` — turns the Nginx Proxy Manager entry on or off. **Absent means on**, for the same
+  reason `websockets` is, and is written the same way: only `false` ever appears in the file. It does
+  not affect Pi-hole.
+- `dns` — whether StaXX keeps a Pi-hole A record for `domain`. It points at Nginx Proxy Manager when
+  its part is enabled, otherwise at the address the app answers on: the server's own address on a
+  bridge network, the app's own address on macvlan or ipvlan, reached with its port. Unlike
+  `websockets`/`enabled`, absent here simply means no DNS name — there is no separate default.
 
 Where the proxy should actually point is answered the same way `webui` (above) already answers it:
 the host-facing side of the service's first port on a bridge network, or the container's own side
