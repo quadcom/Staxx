@@ -645,10 +645,20 @@ function staxx_notify_pic(string $cid, int $px): string {
   return '<img src="cid:'.$cid.'" width="'.$px.'" height="'.$px.'" alt="" style="display:block;width:'.$px.'px;height:'.$px.'px;border-radius:7px;background:#f3f3f3">';
 }
 
-/** The letter tile an app or stack gets when it has no picture: its first letter, $px square. */
-function staxx_notify_tile(string $name, int $px, int $font): string {
-  $l = htmlspecialchars(mb_strtoupper(mb_substr($name, 0, 1)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-  return '<div style="width:'.$px.'px;height:'.$px.'px;line-height:'.$px.'px;text-align:center;border-radius:7px;background:#f3f3f3;color:#555555;font-weight:700;font-size:'.$font.'px">'.$l.'</div>';
+/** The page's ten tile colours, in index order; must match `.staxx-tile--N` in sheets/staxx.css. */
+const STAXX_NOTIFY_TILE_COLOURS = ['#3f6fb0', '#2f8f7a', '#8a5fb0', '#b06a3f', '#a04a5e', '#4a7f3f', '#7a6a3f', '#3f7f9f', '#8f4f8f', '#5a5f8f'];
+
+/**
+ * The letter tile an app or stack gets when it has no picture, $px square: the
+ * two-letter initials the page uses, white on the colour the page gives that name.
+ * $font is the size for one letter; two letters are drawn at 80% of it.
+ */
+function staxx_notify_tile(string $name, int $px, int $font, int $radius = 7): string {
+  $i = staxx_icon_initials($name);
+  $t = htmlspecialchars((string)$i['text'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+  $bg = STAXX_NOTIFY_TILE_COLOURS[(int)$i['colour'] % 10];
+  if (mb_strlen((string)$i['text']) > 1) $font = (int)round($font * 0.8);
+  return '<div style="width:'.$px.'px;height:'.$px.'px;line-height:'.$px.'px;text-align:center;border-radius:'.$radius.'px;background:'.$bg.';color:#ffffff;font-weight:700;font-size:'.$font.'px">'.$t.'</div>';
 }
 
 /**
@@ -662,23 +672,29 @@ function staxx_notify_stack_mosaic(string $rel, array &$images): string {
   $leaf = ltrim((string)strrchr('/'.$rel, '/'), '/');
   $file = staxx_stack_compose_map()[$rel] ?? '';
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
-  $cells = []; $seen = [];
+  // Pictures are collected into a scratch copy first: only the cells that end up drawn
+  // are attached, so a picture cut by the "+N" cell never shows as a stray attachment.
+  $cells = []; $seen = []; $scratch = $images;
   foreach (array_keys($meta['services'] ?? []) as $svc) {
-    $cid = staxx_notify_icon_cid(['stack' => $rel, 'service' => (string)$svc], $images);
-    if ($cid === '') { $cells[] = ['l' => mb_strtoupper(mb_substr((string)$svc, 0, 1))]; continue; }
+    $cid = staxx_notify_icon_cid(['stack' => $rel, 'service' => (string)$svc], $scratch);
+    if ($cid === '') { $cells[] = ['l' => (string)$svc]; continue; }
     if (isset($seen[$cid])) continue;
     $seen[$cid] = true;
     $cells[] = ['p' => $cid];
   }
+  if (count($cells) > 4) $cells = array_merge(array_slice($cells, 0, 3), [['m' => count($cells) - 3]]);
+  foreach ($cells as $c) if (isset($c['p']) && isset($scratch[$c['p']])) $images[$c['p']] = $scratch[$c['p']];
   if (count($cells) <= 1) {
     return isset($cells[0]['p']) ? staxx_notify_pic($cells[0]['p'], 32) : staxx_notify_tile($leaf, 32, 15);
   }
-  if (count($cells) > 4) $cells = array_merge(array_slice($cells, 0, 3), [['m' => count($cells) - 3]]);
   while (count($cells) < 4) $cells[] = [];
   $small = 'width:15px;height:15px;line-height:15px;text-align:center;border-radius:3px;background:#e4e4e7;color:#555555;font-weight:700;';
   $draw = static function (array $c) use ($small): string {
     if (isset($c['p'])) return '<img src="cid:'.$c['p'].'" width="15" height="15" alt="" style="display:block;width:15px;height:15px;border-radius:3px">';
-    if (isset($c['l'])) return '<div style="'.$small.'font-size:9px">'.htmlspecialchars((string)$c['l'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</div>';
+    if (isset($c['l'])) {
+      $i = staxx_icon_initials($c['l']);
+      return '<div style="width:15px;height:15px;line-height:15px;text-align:center;border-radius:3px;background:'.STAXX_NOTIFY_TILE_COLOURS[(int)$i['colour'] % 10].';color:#ffffff;font-weight:700;font-size:7px">'.htmlspecialchars((string)$i['text'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</div>';
+    }
     if (isset($c['m'])) return '<div style="'.$small.'font-size:8px">+'.(int)$c['m'].'</div>';
     return '<div style="width:15px;height:15px"></div>';
   };
@@ -809,7 +825,7 @@ function staxx_notify_html(array $events, string $layout): array {
     $cid  = staxx_notify_icon_cid($e, $images);
     $pic  = $cid !== ''
       ? '<img src="cid:'.$cid.'" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;background:#f3f3f3">'
-      : '<div style="width:40px;height:40px;line-height:40px;text-align:center;border-radius:8px;background:#f3f3f3;color:#555555;font-weight:700;font-size:16px">'.$h(mb_strtoupper(mb_substr($name, 0, 1))).'</div>';
+      : staxx_notify_tile($name, 40, 16, 8);
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="'.$line.'"><tr>'
          . '<td width="54" valign="top" style="padding:12px 14px 12px 0">'.$pic.'</td>'
          . '<td valign="top" style="padding:12px 0"><div style="font-weight:700;font-size:16px;color:#1d1d1f">'.$h($name).'</div>'.$inner.'</td></tr></table>';

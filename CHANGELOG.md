@@ -6,7 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
-- The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.
+- The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, an app with no picture gets the same coloured letters as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.
 - A "new home for this image" warning no longer stays behind after the stack has switched to the new address or stopped using that image.
 
 ## 00.05.00 — released 2026-10-09

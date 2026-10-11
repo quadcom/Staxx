@@ -489,7 +489,9 @@ ok('a PNG icon goes by cid, one copy', preg_match_all('~Content-ID: <icon-~', $r
 ok('with no resvg: SVG, over-100KB, URL and fa- icons get the letter tile, not a picture', substr_count($html, 'src="cid:icon-') === 1
    && substr_count($html, 'line-height:40px') === 4, (string)substr_count($html, 'line-height:40px'));
 $tile = staxx_notify_label($ev('vec'));
-ok('the tile is the first letter of the app name', has($html, '>'.mb_strtoupper(mb_substr($tile, 0, 1)).'</div>'));
+$tIni = staxx_icon_initials($tile);
+ok('the tile is the page\'s initials of the app name, white on its colour', has($html, 'background:'.STAXX_NOTIFY_TILE_COLOURS[$tIni['colour']].';color:#ffffff;font-weight:700;font-size:')
+   && has($html, '>'.htmlspecialchars($tIni['text']).'</div>'));
 putenv('STAXX_RESVG_BIN');
 ok('page and card are light with inline colours', has($html, 'background:#f4f4f5') && has($html, 'background:#ffffff') && has($html, 'width="640"') && !has($html, '<style'));
 ok('footer and button', has($html, 'Sent by StaXX on Tower. Change these emails in StaXX, Settings, Updates.')
@@ -759,6 +761,7 @@ foreach ([$dRevA, $dRevB] as $d) file_put_contents($d.'/'.STAXX_REVIEW_FILE, '')
 $dTwo  = $mkStack('zzmosaic-two', ['a' => true, 'b' => true]);
 $dSix  = $mkStack('zzmosaic-six', ['a' => true, 'b' => true, 'c' => true, 'd' => true, 'e' => true, 'f' => true]);
 $dNone = $mkStack('zzmosaic-none', ['a' => false, 'b' => false]);
+$dLate = $mkStack('zzmosaic-late', ['a' => false, 'b' => false, 'c' => false, 'd' => true, 'e' => true]);
 staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
 
 // The look events: review stacks by name, then no self-test text for the two replaced findings.
@@ -807,13 +810,25 @@ $m6 = staxx_notify_stack_mosaic('zzmosaic-six', $im);
 ok('mosaic: past four it is three pictures and "+3"', substr_count($m6, '<img src="cid:icon-') === 3 && has($m6, 'font-size:8px">+3</div>'), $m6);
 $im = [];
 $m0 = staxx_notify_stack_mosaic('zzmosaic-none', $im);
-ok('mosaic: services without pictures each get a letter cell, never collapsed', substr_count($m0, 'font-size:9px">A</div>') === 1 && substr_count($m0, 'font-size:9px">B</div>') === 1 && !has($m0, '<img'), $m0);
+$iA = staxx_icon_initials('a'); $iB = staxx_icon_initials('b');
+$cellOf = static fn(array $i): string => 'background:'.STAXX_NOTIFY_TILE_COLOURS[$i['colour']].';color:#ffffff;font-weight:700;font-size:7px">'.htmlspecialchars($i['text']).'</div>';
+ok('mosaic: services without pictures each get a coloured two-letter cell, never collapsed', substr_count($m0, $cellOf($iA)) === 1 && substr_count($m0, $cellOf($iB)) === 1 && !has($m0, '<img'), $m0);
 $im = [];
 $m1 = staxx_notify_stack_mosaic('zzrev-A', $im);
-ok('mosaic: one service with no picture is the ordinary letter tile of the stack name', !has($m1, '<table') && has($m1, 'width:32px;height:32px') && has($m1, '>Z</div>'), $m1);
+$iZ = staxx_icon_initials('zzrev-A');
+ok('mosaic: one service with no picture is the ordinary letter tile of the stack name', !has($m1, '<table') && has($m1, 'width:32px;height:32px')
+   && has($m1, 'background:'.STAXX_NOTIFY_TILE_COLOURS[$iZ['colour']].';color:#ffffff') && has($m1, '>'.htmlspecialchars($iZ['text']).'</div>'), $m1);
 $im = [];
 $hm = staxx_notify_html([$revE], '3');
-ok('HTML: a review row carries the tile and attaches nothing it does not use', has($hm['html'], '>Z</div>') && array_filter(array_keys($hm['images']), static fn($k) => strpos($k, 'icon-') === 0) === []);
+ok('HTML: a review row carries the tile and attaches nothing it does not use', has($hm['html'], '>'.htmlspecialchars($iZ['text']).'</div>') && array_filter(array_keys($hm['images']), static fn($k) => strpos($k, 'icon-') === 0) === []);
+
+// Only the pictures actually drawn are attached.
+$im = [];
+staxx_notify_stack_mosaic('zzmosaic-late', $im);
+ok('mosaic: pictures on services 4 and 5 of five are cut by "+N", so nothing is attached', $im === [], json_encode(array_keys($im)));
+$im = [];
+staxx_notify_stack_mosaic('zzmosaic-six', $im);
+ok('mosaic: six pictures attach exactly the three drawn', count($im) === 3, (string)count($im));
 
 // Icon bytes: the step every picture kept in .staxx goes through on its way into the email.
 $im = [];
@@ -848,7 +863,7 @@ ok('icon bytes: an SVG with no resvg gives no picture', staxx_notify_icon_attach
 putenv('STAXX_RESVG_BIN');
 $im = [];
 ok('icon bytes: HTML or junk gives no picture', staxx_notify_icon_attach('icon-x@staxx', '<html>not found</html>', 'icon', $im) === '' && $im === []);
-foreach (['zzrev-b', 'zzrev-A', 'zzmosaic-two', 'zzmosaic-six', 'zzmosaic-none'] as $n) @exec('rm -rf '.escapeshellarg(staxx_stack_dir($n)));
+foreach (['zzrev-b', 'zzrev-A', 'zzmosaic-two', 'zzmosaic-six', 'zzmosaic-none', 'zzmosaic-late'] as $n) @exec('rm -rf '.escapeshellarg(staxx_stack_dir($n)));
 staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
 
 reset_all();
