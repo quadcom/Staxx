@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.01">
+<!ENTITY version              "00.05.01_dev20261011">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "01aeeba6df73b91e84d42e8d0b3e4f19">
-<!ENTITY packageSHA256        "a1b88ad7bcf93cbaab27637ae7d1744c40a73d68de7efc6e6a61ba8c5a10c067">
+<!ENTITY packageMD5           "07e8615582d63294ea9ab1878f62fd50">
+<!ENTITY packageSHA256        "a902a609cb24ac8a2a2acfbfab2ecbe4f02d3758d5183e014f86f168807f4e49">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,9 @@
 >
 
 <CHANGES>
+###00.05.01_dev20261011
+- The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.
+- A "new home for this image" warning no longer stays behind after the stack has switched to the new address or stopped using that image.
 ###00.05.00
 - Unraid's own Docker page and Dashboard now show each StaXX app's icon and a WebUI link, and call it "Compose" instead of "3rd Party". Each app picks this up the next time it is started or updated. Nothing is written into your compose file.
 - A web page address that names its own site, such as `http://app.example.com`, now lights the WebUI button. It used to stay grey unless the address carried a port number.
@@ -518,7 +521,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.00-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.01_dev20261011-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
