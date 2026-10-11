@@ -2975,6 +2975,10 @@
   // places rather than only the first one PLAN_147 touched.
   var netProject = {};
 
+  // name -> first IPv4 subnet in CIDR form ('' when none), for the Proxy and
+  // DNS read-out's partial address (PLAN_239). Filled in netLoad().
+  var netSubnet  = {};
+
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
   // are none" have to lead to different behaviour: the first must not let a
@@ -5032,20 +5036,149 @@
   // other boolean leaf gets (Adrian, 2026-09-24 — see PLAN_176 B3). No Notes
   // box on either (Adrian: a switch needs no note); the empty cell stays so
   // the grid does not shift against the rows above and below it.
-  function exposeSwitchRowHtml(f, idx, label, switchText, on, inert) {
+  // `where` ('<service>|npm' or '<service>|dns', PLAN_239) adds the green
+  // "domain → address" read-out beside the switch. It shares one flex box
+  // with the switch and spans the value and Notes columns, and sits outside
+  // the <label>, or clicking the text would flip the switch. The box is
+  // always drawn and left empty while the switch is off or there is no
+  // domain: a form edit does not redraw the form, so repaintExposeWhere()
+  // fills or empties it in place.
+  function exposeSwitchRowHtml(f, idx, label, switchText, on, inert, where) {
+    var sw = '<label class="staxx-switch">' +
+             '<input type="checkbox" data-row="' + idx + '" data-part="value"' + (on ? ' checked' : '') +
+               (inert ? ' disabled' : '') + '>' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(switchText) + '</span>' +
+           '</label>';
+    var tail = '<span class="staxx-boxgap" aria-hidden="true"></span>';
+    if (where) {
+      var w = where.split('|');
+      sw = '<div class="staxx-expose-whereflex">' + sw +
+           '<span class="staxx-expose-where" data-expose-where="' + esc(where) + '">' +
+             exposeWhereHtml(w[0], w[1]) + '</span></div>';
+      tail = '';
+    }
     return '<div class="staxx-fieldrow staxx-fieldrow--exposeswitch" data-row="' + idx + '"' +
            ' data-field-row="' + esc(f.id) + '"' +
            ' data-from="' + (f.range ? f.range.start : -1) + '" data-to="' + (f.range ? f.range.end : -1) + '"' +
            ' tabindex="0">' +
            '<span class="staxx-fieldlabel">' + esc(label) + '</span>' +
-           '<label class="staxx-switch">' +
-             '<input type="checkbox" data-row="' + idx + '" data-part="value"' + (on ? ' checked' : '') +
-               (inert ? ' disabled' : '') + '>' +
-             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
-             '<span class="staxx-switch-text">' + esc(switchText) + '</span>' +
-           '</label>' +
-           '<span class="staxx-boxgap" aria-hidden="true"></span>' +
+           sw + tail +
            '</div>';
+  }
+
+  // PLAN_239 — what expose-where said (server address, Nginx Proxy Manager's
+  // address, and each running macvlan/ipvlan service's own address). Asked
+  // once per editor open, with or without a saved stack, and reset in
+  // openEditor() beside exposeCheckLoaded.
+  var exposeWhereLoaded = false;
+  var exposeWhere       = null;   // {hostIp, npmIp, live:{svc: ip}}
+  function loadExposeWhere() {
+    if (exposeWhereLoaded || !(NPM_CONFIGURED || PIHOLE_CONFIGURED)) return;
+    exposeWhereLoaded = true;
+    call('expose-where', { name: openedName || '' }).then(function (r) {
+      if (!r || !r.ok) return;
+      exposeWhere = r;
+      repaintExposeWhere();
+    }).catch(function () { /* the read-outs just stay as they are */ });
+  }
+
+  // Redraws the read-outs in place, for an expose-where or networks answer
+  // that lands after the group was drawn.
+  function repaintExposeWhere() {
+    document.querySelectorAll('[data-expose-where]').forEach(function (el) {
+      var w = el.dataset.exposeWhere.split('|');
+      el.innerHTML = exposeWhereHtml(w[0], w[1]);
+    });
+  }
+
+  // "192.168.1.0/24" -> "192.168.1.x". Only the whole numbers the prefix
+  // fixes are kept (a /22 fixes two), and at least one is left unknown.
+  // '' when there is no usable IPv4 subnet.
+  function partialAddress(cidr) {
+    var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cidr || '');
+    if (!m) return '';
+    var whole = Math.min(3, Math.floor(+m[5] / 8));
+    if (whole < 1) return '';
+    var out = [];
+    for (var i = 0; i < 4; i++) out.push(i < whole ? m[i + 1] : 'x');
+    return out.join('.');
+  }
+
+  var EXPOSE_TIP_NOADDR = 'Docker or you assign this address. It shows here once the app has an address: type one in its network settings, or start the app.';
+
+  // The read-out text for one switch, worked out from the live form so it
+  // follows every edit. Mirrors staxx_webui_url() (include/Stacks.php), except
+  // that the form's fixed address wins over the live one: the form is what
+  // will be true after Save. which: 'npm' (domain -> app address:port) or
+  // 'dns' (domain -> Nginx's address, or the app's when Nginx is off).
+  // Returns HTML, '' when there is nothing to show yet.
+  function exposeWhereHtml(svcName, which) {
+    if (!MODEL) return '';
+    var domain = '', port = '', fixed = '', netName = '', mode = '';
+    MODEL.fields.forEach(function (f) {
+      if (f.service !== svcName || !f.parts) return;
+      var v = f.absent || !f.parts.value ? '' : String(f.parts.value.value || '').trim();
+      if (f.target === 'x-unraid.expose.domain') domain = v;
+      else if (f.target === 'x-unraid.webui') port = v;
+      else if (f.target === 'network_mode') mode = v;
+      else if (f.binder === 'list' && f.listKey === 'networks') {
+        if (!netName) netName = v;
+        var ip = f.parts.ipv4_address ? String(f.parts.ipv4_address.value || '').trim() : '';
+        if (!fixed && ip) fixed = ip;
+      }
+    });
+    if (!domain) return '';
+    var parts = exposeParts(svcName);
+    if (which === 'npm' ? !parts.nginxOn : !parts.dnsOn) return '';
+
+    var notSet = function (tip) {
+      return '<span class="staxx-expose-where-notset" title="' + esc(tip) + '">Not set</span>';
+    };
+    var arrow = esc(domain) + ' → ';
+
+    // Pi-hole with Nginx on points at Nginx itself.
+    if (which === 'dns' && parts.nginxOn) {
+      if (!exposeWhere) return '';
+      return arrow + (exposeWhere.npmIp ? esc(exposeWhere.npmIp)
+        : notSet('StaXX could not work out Nginx Proxy Manager\'s address. Check its address in Settings.'));
+    }
+
+    // The app's own address. network_mode naming a macvlan/ipvlan network
+    // counts like an attached one.
+    var kind = netKindOfService(svcName);
+    if (kind !== 'other' && mode && mode !== 'host' && !/^(container|service):/.test(mode)
+        && (netDriver[mode] === 'macvlan' || netDriver[mode] === 'ipvlan')) {
+      kind = 'other';
+      netName = mode;
+    }
+    // A network Docker does not have yet (the list has loaded and does not
+    // name it) gives no address to show, whatever kind it will turn out to be.
+    if (!fixed && netName && netLoaded && !(netName in netDriver)) {
+      return arrow + notSet(EXPOSE_TIP_NOADDR);
+    }
+    var addr = fixed, partial = false;
+    if (!addr && kind !== 'other') {
+      if (!exposeWhere) return '';
+      addr = exposeWhere.hostIp || '';
+    } else if (!addr) {
+      if (!exposeWhere) return '';
+      addr = (exposeWhere.live && exposeWhere.live[svcName]) || '';
+      if (!addr) {
+        addr = partialAddress(netSubnet[netName]);
+        if (!addr) return arrow + notSet(EXPOSE_TIP_NOADDR);
+        partial = true;
+      }
+    }
+    if (!addr) return '';
+
+    var text = esc(addr);
+    if (which === 'npm') {
+      if (!port) return arrow + notSet('Fill in the web page port to see where the proxy sends people.');
+      text += ':' + esc(port);
+    }
+    if (partial) text = '<span class="staxx-expose-where-partial" title="' + esc(EXPOSE_TIP_NOADDR) + '">' + text + '</span>';
+    return arrow + text;
   }
 
   // PLAN_176 B5 — what expose-check said for this stack, cached across the
@@ -5055,7 +5188,7 @@
   // exposeCheckLoaded), and again after this stack's own Apply button or the
   // save-time flow succeeds.
   var exposeCheckLoaded = false;
-  var exposeCheckCache  = null;   // {svcName: {steps:[...]} | {refusal: '...'}}
+  var exposeCheckCache  = null;   // {svcName: {steps:[...]} | {refusal: '...'} | {waiting: '...'}}
   function loadExposeCheck() {
     // A brand-new, unsaved stack has no compose file on disk yet for
     // expose-check to read — nothing to ask until the first save.
@@ -5078,6 +5211,9 @@
     if (!entry) return '<span class="staxx-sub">' +
       (exposeCheckCache ? 'Not set up yet. Save to set it up.' : 'Checking…') + '</span>';
     if (entry.refusal) return '<span class="red-text">' + esc(entry.refusal) + '</span>';
+    // {waiting} is not a failure: the entry is set up once the container runs,
+    // so it is plain text with no mark. The save flow and Apply ignore it too.
+    if (entry.waiting) return '<span>' + esc(entry.waiting) + '</span>';
     // Only the parts that are on get a line: a part switched off here that
     // also matches there has nothing worth saying. A step that is NOT 'none'
     // (a leftover entry still to be switched off or removed) always shows.
@@ -5168,13 +5304,13 @@
     out.push(captionRow({ key: 'expose', cls: 'staxx-formgroup--container' }));
     out.push(fieldHtml(domain.f, domain.idx));
     if (NPM_CONFIGURED) {
-      out.push(tagged(exposeSwitchRowHtml(enabled.f, enabled.idx, 'Nginx Proxy Manager', 'Enabled', enabledOn, inert),
+      out.push(tagged(exposeSwitchRowHtml(enabled.f, enabled.idx, 'Nginx Proxy Manager', 'Enabled', enabledOn, inert, svc.name + '|npm'),
                       ' staxx-fieldrow--exposesub'));
       if (cert) out.push(tagged(exposeCertRowHtml(cert.f, cert.idx, inert), dimNginx));
       if (ws) out.push(tagged(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert), dimNginx));
     }
     if (dns && PIHOLE_CONFIGURED) {
-      out.push(tagged(exposeSwitchRowHtml(dns.f, dns.idx, 'Pi-hole', 'Enabled', dnsOn, inert),
+      out.push(tagged(exposeSwitchRowHtml(dns.f, dns.idx, 'Pi-hole', 'Enabled', dnsOn, inert, svc.name + '|dns'),
                       ' staxx-fieldrow--exposesub'));
     }
     if (exposeBothOff(svc.name)) {
@@ -9281,6 +9417,7 @@
     // reparse() above for why this is the quiet recompute, not findRun()).
     findRecompute();
     updateRequired();
+    repaintExposeWhere();   // PLAN_239 — a switch, address or port edit changes where the name points
     relint();   // a form commit rebuilds MODEL.doc just like reparse() does
   }
 
@@ -16764,6 +16901,7 @@
       netPresent = Object.create(null);
       netDriver = {};
       netProject = {};
+      netSubnet = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver, project = nets[n].project;
@@ -16772,6 +16910,7 @@
         netPresent[name] = true;
         netDriver[name] = driver;
         netProject[name] = project || '';
+        netSubnet[name] = nets[n].subnet || '';
         if (known[name]) continue;
         // A compose-created network is offered too, marked with the stack
         // that made it — hiding it just sent people into the YAML by hand
@@ -16784,6 +16923,7 @@
 
       if (!netLoaded) lateWanted = true;
       netLoaded = true;
+      repaintExposeWhere();
 
       return res;
     });
@@ -17870,6 +18010,8 @@
     // lines. Re-asked below, once MODEL exists to draw "Checking…" into.
     exposeCheckLoaded = false;
     exposeCheckCache  = null;
+    exposeWhereLoaded = false;
+    exposeWhere       = null;
     reparse();
 
     // PLAN_176 B5 — what the editor's own save() compares against once it
@@ -17890,6 +18032,7 @@
     // below.
     loadExposeStatus();
     loadExposeCheck();
+    loadExposeWhere();
 
     // Ask what hardware this server has, so device rows can be named after it
     // rather than showing a bare path. Not waited for — the form is usable at

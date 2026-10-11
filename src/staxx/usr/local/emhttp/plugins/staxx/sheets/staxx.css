@@ -6651,6 +6651,32 @@ div.title.staxx-has-titlebar {
    .staxx-fieldrow's own align-items: center, so nothing else changes. */
 .staxx-fieldrow--exposeswitch { min-height: 3.2rem; }
 
+/* PLAN_239: the "domain -> address" read-out sits right after its switch, in
+   one box spanning the value and Notes columns so it reads as belonging to
+   that switch. Green is the page's existing "working" green; "Not set" is not
+   an address, so it keeps the normal text colour. */
+.staxx-scaffold .staxx-expose-whereflex {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 2.4rem;
+}
+.staxx-scaffold .staxx-expose-where {
+  color: #3fb950;
+  font-family: monospace;
+  font-size: 1.3rem;
+  white-space: nowrap;
+}
+.staxx-scaffold .staxx-expose-where-partial {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+.staxx-scaffold .staxx-expose-where-notset {
+  color: #fff;
+  cursor: help;
+}
+
 .staxx-expose-remove {
   display: flex;
   justify-content: flex-end;

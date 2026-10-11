@@ -8326,11 +8326,14 @@ function staxx_hostport_step(string $name, array $only): string {
  * clash. A chain that failed keeps its own code, and a check that merely
  * crashed (not exit 1) never fails a start that worked.
  */
-function staxx_job_inner(string $dir, string $chain, string $check = ''): string {
+function staxx_job_inner(string $dir, string $chain, string $check = '', string $after = ''): string {
   $head = 'cd '.escapeshellarg($dir).' && '.$chain;
-  if ($check === '') return $head.'; echo "'.STAXX_JOB_END.' $?"';
+  // $after is a best-effort step that runs only when the chain succeeded and
+  // never changes the reported code (the proxy and DNS step after a start).
+  $tail = $after === '' ? '' : ' if [ "$rc" -eq 0 ]; then '.$after.' || true; fi;';
+  if ($check === '') return $head.'; rc=$?;'.$tail.' echo "'.STAXX_JOB_END.' $rc"';
   return $head.'; rc=$?; if [ "$rc" -eq 0 ]; then sleep 5; '.$check
-       .'; [ "$?" -ne 1 ] || rc=1; fi; echo "'.STAXX_JOB_END.' $rc"';
+       .'; [ "$?" -ne 1 ] || rc=1; fi;'.$tail.' echo "'.STAXX_JOB_END.' $rc"';
 }
 
 /**
@@ -8548,7 +8551,18 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // so after a start the job looks once at whether it stopped on a taken port.
   // Nothing about it is in $shown: the line shown is what compose ran.
   $hostSvcs = $startsSomething ? staxx_hostport_services($file, $names) : [];
-  $inner = staxx_job_inner($dir, $chain, $hostSvcs ? staxx_hostport_step($name, $hostSvcs) : '');
+  // Proxy and DNS entries that wait for a running container are applied once
+  // compose is done. Verbs that only start or recreate; not stop, pull or remove.
+  // Expose.php is loaded here rather than relied on: the scheduled update run
+  // (scripts/update-check) starts jobs without the endpoint's includes, and
+  // an update is exactly when Docker can hand out a new address.
+  $exposeStep = '';
+  $starts = in_array($verb, ['up', 'restart', 'recreate', 'update', 'rebuild', 'rollback-pull'], true);
+  if ($starts) require_once __DIR__.'/Expose.php';
+  if ($starts && staxx_expose_has_assigned($name)) {
+    $exposeStep = staxx_php_bin().' '.escapeshellarg(STAXX_ROOT.'/scripts/expose-sync').' '.escapeshellarg($name).' 2>&1';
+  }
+  $inner = staxx_job_inner($dir, $chain, $hostSvcs ? staxx_hostport_step($name, $hostSvcs) : '', $exposeStep);
 
   // The log's first line is what the output panel shows above the command's
   // own output, so it has to say what actually ran — service name included,

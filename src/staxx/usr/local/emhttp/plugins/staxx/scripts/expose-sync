@@ -1,0 +1,42 @@
+<?PHP
+/* StaXX — the after-start step for a stack's proxy and DNS entries.
+ * Copyright 2026, StaXX contributors.
+ *
+ * Run by a start job (see staxx_job_inner() in include/Stacks.php) once compose
+ * has finished, because a name can only be pointed at a container's address
+ * after the container exists. Best effort by design: whatever goes wrong prints
+ * one plain sentence into the job log and the script still exits 0, so it can
+ * never turn a good start into a failed one.
+ *   php /usr/local/emhttp/plugins/staxx/scripts/expose-sync <stack>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+
+if (php_sapi_name() !== 'cli') {
+  fwrite(STDERR, "This script only runs from the command line.\n");
+  exit(1);
+}
+
+require_once '/usr/local/emhttp/plugins/staxx/include/Expose.php';
+
+$rel = (string)($argv[1] ?? '');
+if (!staxx_valid_path($rel)) {
+  echo "Proxy and DNS: that is not a valid stack name, so nothing was pointed.\n";
+  exit(0);
+}
+
+try {
+  // `up -d` returns before a slow container is listed as running, and the
+  // address to point at is only known once it is, so wait a little for it.
+  for ($i = 0; $i < 10; $i++) {
+    $state = staxx_stack_states()[$rel] ?? null;
+    if ($state && !empty($state['running'])) break;
+    sleep(1);
+  }
+  foreach (staxx_expose_sync_started($rel) as $line) echo $line, "\n";
+} catch (Throwable $e) {
+  echo "Proxy and DNS: the names could not be pointed after the start. Open the stack and press Apply on its Proxy and DNS section to retry.\n";
+}
+exit(0);

@@ -2391,7 +2391,7 @@ switch ($action) {
    * dropdown can offer them alongside bridge/host/none. Takes no parameters.
    */
   case 'networks':
-    staxx_reply(['ok' => true, 'networks' => staxx_docker_networks()]);
+    staxx_reply(['ok' => true, 'networks' => staxx_docker_networks_with_subnets()]);
 
   /* ---- images this server's docker has already pulled ----
    *
@@ -2720,6 +2720,16 @@ switch ($action) {
     $services = staxx_expose_run($name, false, $err);
     if ($err !== '') staxx_reply(['ok' => false, 'error' => $err]);
     staxx_reply(['ok' => true, 'services' => $services]);
+
+  /* ---- read-only: the addresses the editor needs to say where a name will
+   * point — the server's, Nginx Proxy Manager's, and each running macvlan or
+   * ipvlan container's own. Asked once per editor open and asks neither NPM
+   * nor Pi-hole. `name` is optional: a stack not yet saved has none, and then
+   * `live` is simply empty. ---- */
+  case 'expose-where':
+    $where = staxx_expose_where($name);
+    $where['live'] = (object)$where['live'];
+    staxx_reply(['ok' => true] + $where);
 
   /* ---- makes NPM and Pi-hole match this stack's expose blocks. Refuses on
    * the same "changed since it was opened" race 'save' guards against —

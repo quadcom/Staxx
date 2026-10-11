@@ -388,40 +388,101 @@ function staxx_expose_all_configs(): array {
   return array_map(fn($svcs) => array_map(fn($c) => $c['domain'], $svcs), staxx_expose_configs());
 }
 
+const STAXX_EXPOSE_WAITING = 'Waits for the app to start: Docker gives it its address then, and StaXX sets this up.';
+
 /**
- * The forward target for one service, from the same resolver the row's own
- * web-page link uses (staxx_webui_for(), Stacks.php) — so "what the proxy
- * forwards to" and "what the web-page icon opens" can never quietly
- * disagree. Its own refusal sentences (no compose file, container not
- * running, no port) are used as-is since they say more than the plan's
- * generic sentence would; that sentence is only the fallback for the one
- * case staxx_webui_for() could somehow return '' with no $err set.
+ * The driver of a service's first attached network, for an app that is not
+ * running and so has no live answer. The compose file's network name is not
+ * Docker's: compose prefixes the project name, so an exact match is tried
+ * first and then any network ending `_<name>`. '' when it cannot be told.
+ */
+function staxx_expose_net_driver(array $svc): string {
+  $drivers = staxx_network_drivers();
+  $names   = $svc['networks'] ?? [];
+  $mode    = (string)($svc['netMode'] ?? '');
+  if ($mode !== '' && isset($drivers[$mode])) return $drivers[$mode];
+  if ($names === []) return '';
+  $first = (string)$names[0];
+  if (isset($drivers[$first])) return $drivers[$first];
+  foreach ($drivers as $name => $driver) {
+    if (substr((string)$name, -strlen($first) - 1) === '_'.$first) return $driver;
+  }
+  return '';
+}
+
+/**
+ * Where a service answers, worked out from the compose file so it works for a
+ * stopped app too (staxx_webui_for() refuses one). A running container's own
+ * address, mode and driver are used when there is one; otherwise the driver of
+ * the service's first network, so a macvlan/ipvlan service is still
+ * recognised. The host is the real address, never the Pi-hole domain that
+ * staxx_webui_url() swaps in for a Pi-hole-only app. `port` is null when the
+ * service has no web page port. `assigned` is true when Docker hands the
+ * address out at start and it is not known yet (macvlan/ipvlan, no fixed
+ * address, not running); `host` is then ''.
+ *
+ * @return array{scheme:string,host:string,port:?int,assigned:bool}|null
  */
 function staxx_expose_target(string $rel, string $service, string &$err): ?array {
   $err = '';
-  $url = staxx_webui_for($rel, $service, $err);
-  if ($url === '') {
-    if ($err === '') $err = 'Give this app a web page address first; the proxy forwards to it.';
+  if (!staxx_valid_path($rel)) { $err = 'That stack name is not valid.'; return null; }
+  $file = staxx_find_compose_file(staxx_stack_dir($rel));
+  if ($file === '') { $err = 'No compose file was found for that stack.'; return null; }
+  $meta = staxx_compose_meta($file);
+  if (!isset($meta['services'][$service])) {
+    $err = 'That service is not declared in this stack\'s compose file.';
     return null;
   }
-  $scheme = strtolower((string)parse_url($url, PHP_URL_SCHEME));
-  $host   = (string)parse_url($url, PHP_URL_HOST);
-  $port   = parse_url($url, PHP_URL_PORT);
-  if ($host === '' || $port === null) {
+  $svc = $meta['services'][$service];
+
+  $s = ['name' => $rel, 'file' => $file, 'leaf' => staxx_path_leaf($rel), 'project' => ''];
+  $liveIp = $mode = $driver = '';
+  $running = false;
+  foreach (staxx_stack_containers($s) as $c) {
+    if (($c['service'] !== '' ? $c['service'] : $c['name']) !== $service) continue;
+    if (($c['state'] ?? '') !== 'running') continue;
+    $running = true;
+    $n      = staxx_container_net()[$c['id']] ?? [];
+    $liveIp = (string)($n['addresses'][0]['ip'] ?? '');
+    $mode   = (string)($n['mode'] ?? '');
+    $driver = (string)($n['driver'] ?? '');
+    break;
+  }
+  if (!$running) $driver = staxx_expose_net_driver($svc);
+
+  $hostIp = staxx_host_ip();
+  $fixed  = (string)($svc['fixedIp'] ?? '');
+  $kind   = staxx_service_net_kind($svc, $mode, $driver);
+  $assigned = $kind === 'other' && $fixed === '' && !$running;
+
+  // Same rule as staxx_webui_url(), minus its need for a port.
+  $host = $assigned ? ''
+        : (($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
+          : ($fixed !== '' ? $fixed : $hostIp));
+  if ($host === '' && !$assigned) {
     $err = 'Give this app a web page address first; the proxy forwards to it.';
     return null;
   }
-  return ['scheme' => $scheme !== '' ? $scheme : 'http', 'host' => $host, 'port' => (int)$port];
+
+  $url    = staxx_webui_url($svc, $hostIp, $liveIp, $mode, $driver);
+  $scheme = $url !== '' ? strtolower((string)parse_url($url, PHP_URL_SCHEME)) : '';
+  $port   = $url !== '' ? parse_url($url, PHP_URL_PORT) : null;
+  return [
+    'scheme'   => $scheme !== '' ? $scheme : 'http',
+    'host'     => $host,
+    'port'     => $port === null ? null : (int)$port,
+    'assigned' => $assigned,
+  ];
 }
 
 /**
  * The address to open a service at when only Pi-hole names it (Nginx off, DNS
  * on): the domain plus the app's own port, since no proxy supplies one. '' in
- * every other case. Shared by the check/apply reply and the status list so the
- * two cannot disagree.
+ * every other case, and when the app has no web page port. Shared by the
+ * check/apply reply and the status list so the two cannot disagree.
  */
 function staxx_expose_open_address(array $config, array $target): string {
-  if ($config['enabled'] || !$config['dns']) return '';
+  if ($config['enabled'] || !$config['dns'] || $target['port'] === null) return '';
   return 'http://'.$config['domain'].':'.$target['port'];
 }
 
@@ -669,6 +730,39 @@ function staxx_expose_dns_ip(string &$err, string $appHost = ''): string {
   return $ip;
 }
 
+/**
+ * The addresses the editor needs to say where a name will point, without
+ * asking NPM or Pi-hole anything.
+ *
+ * `live` maps service name => the running container's own IPv4 address, for
+ * macvlan/ipvlan containers only (the ones whose address is not the server's).
+ * A blank, invalid or compose-less stack name gives an empty `live` rather than
+ * an error: the editor asks before a brand-new stack has been saved.
+ *
+ * @return array{hostIp:string, npmIp:string, live:array<string,string>}
+ */
+function staxx_expose_where(string $rel): array {
+  $err   = '';
+  $npmIp = staxx_expose_dns_ip($err);
+  $out   = ['hostIp' => staxx_host_ip(), 'npmIp' => $err === '' ? $npmIp : '', 'live' => []];
+
+  if (!staxx_valid_path($rel)) return $out;
+  $file = staxx_find_compose_file(staxx_stack_dir($rel));
+  if ($file === '') return $out;
+
+  $s   = ['name' => $rel, 'file' => $file, 'leaf' => staxx_path_leaf($rel), 'project' => ''];
+  $net = staxx_container_net();
+  foreach (staxx_stack_containers($s) as $c) {
+    if (($c['state'] ?? '') !== 'running') continue;
+    $n = $net[$c['id']] ?? [];
+    if (!in_array((string)($n['driver'] ?? ''), ['macvlan', 'ipvlan'], true)) continue;
+    $ip = (string)($n['addresses'][0]['ip'] ?? '');
+    if ($ip === '') continue;
+    $out['live'][$c['service'] !== '' ? $c['service'] : $c['name']] = $ip;
+  }
+  return $out;
+}
+
 /** The owned-field differences between an existing NPM host and what StaXX
  * would write, as the plan's own sub-line sentences. */
 function staxx_npm_diff(array $host, array $target, int $certId, array $config, array $certs): array {
@@ -892,9 +986,14 @@ function staxx_expose_apply_step(
  * was shown and what was written can never drift apart (Refusals: "never
  * reported as done unless a read-back... shows the entry as intended").
  *
- * @return array<string, array{steps?:array, refusal?:string}>
+ * A service whose address Docker has not handed out yet (staxx_expose_target()
+ * 'assigned') gets `waiting` rather than steps or a refusal: it is not wrong,
+ * it is early, and staxx_expose_sync_started() fills it in after the start.
+ *
+ * @param string[] $only when not empty, only these services are worked on
+ * @return array<string, array{steps?:array, refusal?:string, waiting?:string}>
  */
-function staxx_expose_run(string $rel, bool $apply, string &$err): array {
+function staxx_expose_run(string $rel, bool $apply, string &$err, array $only = []): array {
   $err = '';
   if (!staxx_valid_path($rel)) { $err = 'That stack name is not valid.'; return []; }
   $file = staxx_find_compose_file(staxx_stack_dir($rel));
@@ -903,6 +1002,7 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
 
   $configs = [];
   foreach ($meta['services'] as $svcName => $svc) {
+    if ($only !== [] && !in_array($svcName, $only, true)) continue;
     $c = staxx_expose_config($svc['x']);
     if ($c !== null) $configs[$svcName] = $c;
   }
@@ -961,6 +1061,11 @@ function staxx_expose_run(string $rel, bool $apply, string &$err): array {
     $tErr = '';
     $target = staxx_expose_target($rel, $svcName, $tErr);
     if ($target === null) { $out[$svcName] = ['refusal' => $tErr]; continue; }
+    if ($target['assigned']) { $out[$svcName] = ['waiting' => STAXX_EXPOSE_WAITING]; continue; }
+    if ($config['enabled'] && $target['port'] === null) {
+      $out[$svcName] = ['refusal' => 'Give this app a web page address first; the proxy forwards to it.'];
+      continue;
+    }
     $open = staxx_expose_open_address($config, $target);
 
     // Per service: Nginx on points the name at the proxy, off at the app.
@@ -1036,13 +1141,17 @@ function staxx_expose_status(string &$err): array {
   $out = [];
   foreach ($allConfigs as $rel => $svcs) {
     foreach ($svcs as $svcName => $config) {
-      $target = null;   // read at most once per service
+      $tErr = '';
+      $target = staxx_expose_target($rel, $svcName, $tErr);   // read once per service
+      // Waiting for Docker's address is early, not wrong: no mark either way
+      // (null is the "nothing to be right or wrong about" state both marks
+      // already have), so the stack's DNS mark does not go red for it.
+      $waiting = $target !== null && $target['assigned'];
       $npmState = null;
-      if ($token !== '') {
+      if ($token !== '' && !$waiting) {
         $host = staxx_npm_find_host($hosts, $config['domain']);
         if ($host !== null && (($host['meta']['staxx'] ?? '') === $rel.'/'.$svcName)) {
-          $tErr = ''; $ce = '';
-          $target = staxx_expose_target($rel, $svcName, $tErr);
+          $ce = '';
           $certId = $config['certificate'] !== '' ? staxx_npm_cert_resolve($certs, $config['certificate'], $config['domain'], $ce) : 0;
           $diffs  = ($target !== null && $ce === '') ? staxx_npm_diff($host, $target, $certId, $config, $certs) : ['-'];
           $npmState = ($diffs === []) && (!empty($host['enabled']) === $config['enabled']);
@@ -1053,11 +1162,10 @@ function staxx_expose_status(string &$err): array {
       }
 
       $dnsState = null; $open = '';
-      if (!$config['enabled'] && $config['dns']) {
-        if ($target === null) { $tErr = ''; $target = staxx_expose_target($rel, $svcName, $tErr); }
-        if ($target !== null) $open = staxx_expose_open_address($config, $target);
+      if (!$config['enabled'] && $config['dns'] && $target !== null) {
+        $open = staxx_expose_open_address($config, $target);
       }
-      if ($config['dns'] && $piUrl !== '' && $piErr === '') {
+      if ($config['dns'] && $piUrl !== '' && $piErr === '' && !$waiting) {
         $want = $npmIp;
         if (!$config['enabled']) {
           $want = '';
@@ -1069,12 +1177,82 @@ function staxx_expose_status(string &$err): array {
       $out[] = [
         'stack' => $rel, 'service' => $svcName, 'domain' => $config['domain'],
         'npm' => $npmState, 'dns' => $dnsState, 'enabled' => $config['enabled'], 'open' => $open,
+        'waiting' => $waiting,
       ];
     }
   }
 
   if ($piUrl !== '' && $piErr === '') staxx_pihole_logout($piUrl, $piHeaders);
   return $out;
+}
+
+/**
+ * The exposed services of a stack whose address Docker hands out at start:
+ * macvlan/ipvlan with no fixed address in the file. Only these can move when
+ * the app is recreated, so only these are re-applied after a start. Reads the
+ * compose file and the network list; asks neither NPM nor Pi-hole nor the
+ * containers.
+ *
+ * @return string[] service names
+ */
+function staxx_expose_assigned_services(string $rel): array {
+  if (!staxx_valid_path($rel)) return [];
+  $file = staxx_find_compose_file(staxx_stack_dir($rel));
+  if ($file === '') return [];
+  $out = [];
+  foreach (staxx_compose_meta($file)['services'] as $name => $svc) {
+    if (staxx_expose_config($svc['x']) === null || (string)($svc['fixedIp'] ?? '') !== '') continue;
+    if (in_array(staxx_expose_net_driver($svc), ['macvlan', 'ipvlan'], true)) $out[] = (string)$name;
+  }
+  return $out;
+}
+
+/** Cheap check for the job launcher: is there anything for
+ * staxx_expose_sync_started() to do for this stack? */
+function staxx_expose_has_assigned(string $rel): bool {
+  $cfg = staxx_cfg();
+  if (trim((string)($cfg['NPM_URL'] ?? '')) === '' && staxx_pihole_url() === '') return false;
+  return staxx_expose_assigned_services($rel) !== [];
+}
+
+/**
+ * After StaXX starts a stack: apply the Nginx/Pi-hole steps of the services
+ * whose address Docker just assigned, now that the live address is known.
+ * Every other service is left alone, so a "Not now" at Save is never
+ * overridden by a start. Returns one plain sentence per service for the job
+ * log; empty when there was nothing to do.
+ *
+ * @return string[]
+ */
+function staxx_expose_sync_started(string $rel): array {
+  $only = staxx_expose_assigned_services($rel);
+  if ($only === []) return [];
+
+  $err = '';
+  $res = staxx_expose_run($rel, true, $err, $only);
+  if ($err !== '') return ['Proxy and DNS: '.$err];
+
+  $configs = staxx_expose_configs()[$rel] ?? [];
+  $lines = [];
+  foreach ($res as $svcName => $r) {
+    $domain = $configs[$svcName]['domain'] ?? $svcName;
+    if (isset($r['refusal'])) { $lines[] = 'Proxy and DNS: '.$domain.': '.$r['refusal']; continue; }
+    if (isset($r['waiting'])) {
+      $lines[] = 'Proxy and DNS: '.$domain.' is not running yet, so its address was not set.';
+      continue;
+    }
+    $failed = null;
+    foreach ($r['steps'] ?? [] as $step) if (empty($step['done'])) { $failed = $step; break; }
+    if ($failed !== null) {
+      $lines[] = 'Proxy and DNS: '.$domain.' could not be set up: '.($failed['error'] !== '' ? $failed['error'] : $failed['text']);
+      continue;
+    }
+    $t = staxx_expose_target($rel, $svcName, $tErr);
+    $lines[] = !empty($configs[$svcName]['enabled']) && $t !== null && $t['port'] !== null
+      ? 'Proxy and DNS: '.$domain.' now forwards to '.$t['host'].':'.$t['port'].'.'
+      : 'Proxy and DNS: '.$domain.' now points at '.($t['host'] ?? '').'.';
+  }
+  return $lines;
 }
 
 /**
