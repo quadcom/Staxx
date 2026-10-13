@@ -11,6 +11,9 @@ What changed in StaXX, newest first.
 - The Proxy and DNS section now shows where each name points: the address the proxy sends people to, and the address Pi-hole gives out for the name.
 - Proxy and DNS can be set up for an app that is not running, and a Pi-hole name no longer needs a web page port, so a background service that only answers on a port can have one. An app whose address Docker hands out shows the known part of it, such as `192.168.1.x`, and its proxy and Pi-hole entries are set up, or corrected, each time StaXX starts or updates it.
 - A "new home for this image" warning no longer stays behind after the stack has switched to the new address or stopped using that image.
+- The stack list on a phone has a new card. The icon and name are bigger and sit at the left edge, with the four buttons, now finger-sized, directly under the name, so a long name is always shown in full. The chips sit just above the buttons as icons; tap them to open a small window that says what each one means, with a button for anything a chip can do. A tap there never starts an update by itself. A card shows only the address of the app's web page, its charts split evenly across the card, and an orange line runs down the left from an open folder to its last stack.
+- On a phone, the page no longer slides sideways a little when you swipe.
+- In the stack list, a stack with several addresses shows each on its own line instead of running them together.
 
 ## 00.05.00 — released 2026-10-09
 

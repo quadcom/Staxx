@@ -13115,7 +13115,9 @@ dialog::backdrop {
      card, called the column an interruption of the card's flow. The comma is
      drawn by CSS, since PLAN_121 took it out of the markup. */
   .staxx-stacks .staxx-addr {
-    display: inline;
+    /* block, not inline: sibling addresses each take their own line instead
+       of running together ("192.0.2.10192.0.2.11"). */
+    display: block;
     flex-direction: row;
     align-items: baseline;
     gap: 0;
@@ -13444,6 +13446,9 @@ dialog::backdrop {
   .staxx-stacks { grid-template-columns: minmax(0, 1fr); }
   .staxx-stacks .staxx-stack-row {
     padding: 1.2rem 1.4rem 1.3rem 1rem;
+    /* Only .2rem each side: Unraid's own page padding already insets the list,
+       and a wider card inset overflowed its scrolling box. */
+    margin-inline: .2rem;
     gap: 0 1.2rem;
     grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr);
     grid-template-rows: auto auto auto auto auto auto;
@@ -13457,56 +13462,139 @@ dialog::backdrop {
   .staxx-stacks .staxx-stack-row .staxx-icon,
   .staxx-stacks .staxx-stack-row .staxx-spinner,
   .staxx-stacks .staxx-stack-row .staxx-chevron { grid-column: 2; grid-row: 1; }
+  .staxx-stacks .staxx-stack-row .staxx-icon,
+  .staxx-stacks .staxx-stack-row .staxx-spinner { align-self: start; }
+  .staxx-scaffold .staxx-stacks .staxx-stack-row .staxx-icon { width: 5.6rem; height: 5.6rem; }
   .staxx-stacks .staxx-stack-row .staxx-dot {
     grid-column: 2; grid-row: 1;
-    align-self: end; justify-self: end;
+    align-self: start; justify-self: end;
     position: static;
-    margin: 0 -.3rem -.3rem 0;
+    margin: 4.7rem -.3rem -.3rem 0; /* the icon's lower-right corner */
+  }
+  .staxx-scaffold .staxx-stacks .staxx-stack-row .staxx-name-text { font-size: 1.7rem; }
+  /* The expand button stays in the card's corner, a proper tap target. */
+  .staxx-scaffold .staxx-stacks .staxx-stack-row .staxx-chevron:not(.staxx-chevron--empty) {
+    width: 3.6rem; height: 3.6rem; font-size: 2rem;
+    top: .6rem; right: .6rem;
   }
   .staxx-stacks .staxx-stack-row .staxx-nameinfo {
     grid-column: 3 / -1; grid-row: 1;
     margin: 0;
-    padding-right: 3.2rem; /* clearance for the corner chevron */
+    padding-right: 0;
+    align-self: start;
+  }
+  .staxx-stacks .staxx-stack-row:has(.staxx-chevron:not(.staxx-chevron--empty)) .staxx-nameinfo {
+    padding-right: 4.4rem; /* clearance for the corner expand button */
   }
   .staxx-stacks .staxx-stack-row .staxx-rowactions {
-    grid-column: 1 / -1; grid-row: 2;
-    margin-top: .8rem;
+    grid-column: 2 / -1; grid-row: 2;
+    justify-self: end;
+    margin-top: .6rem;
     display: grid;
     grid-template-columns: repeat(4, auto);
     grid-template-rows: auto;
     justify-content: end;
     gap: .6rem;
   }
-  .staxx-stacks .staxx-stack-row .staxx-rowactions > * {
-    min-height: 2.8rem;
-    line-height: 2.8rem;
-    padding: 0 1.2rem;
-    font-size: 1.2rem;
+  .staxx-scaffold .staxx-stacks .staxx-stack-row .staxx-rowactions > * {
+    height: 4.2rem;
+    min-height: 4.2rem;
+    line-height: 1;
+    padding: 0 1.4rem;
+    font-size: 1.8rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border-radius: .5rem;
   }
+  /* Chips sit at the right of the name line, bottom-aligned with the icon.
+     The words are hidden (icon and count only); a tap on the group opens the
+     chip window, which lists every chip in full. The group is one tap target. */
   .staxx-stacks .staxx-stack-row .staxx-cell--state {
-    grid-column: 1 / -1; grid-row: 3;
+    grid-column: 3 / -1; grid-row: 1;
+    justify-self: end; align-self: end;
+    width: max-content;
+    min-height: 4.4rem;
     display: flex;
-    flex-direction: row-reverse;
-    flex-wrap: wrap;
-    justify-content: flex-start;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
     align-items: center;
-    gap: .5rem;
+    gap: .8rem;
+    margin: 0 0 .2rem;
+    font-size: 1.6rem;
+    cursor: pointer;
   }
-  .staxx-stacks .staxx-stack-row .staxx-cell--state > * { margin: 0; }
-  .staxx-stacks .staxx-stack-row .staxx-cell--services { grid-column: 1 / 4; grid-row: 4; }
+  .staxx-stacks .staxx-stack-row:has(.staxx-chevron:not(.staxx-chevron--empty)) .staxx-cell--state {
+    margin-right: 3.4rem; /* left of the expand button */
+  }
+  .staxx-stacks .staxx-stack-row .staxx-cell--state > * { margin: 0; font-size: 1.6rem; }
+  .staxx-scaffold .staxx-stacks .staxx-stack-row .staxx-cell--state .staxx-chipmark { font-size: 2rem; }
+  .staxx-stacks .staxx-stack-row .staxx-chip-words { display: none; }
+  .staxx-stacks .staxx-stack-row .staxx-cell--services { display: none; }
+
+  /* Address line: the WebUI container's address only (marked
+     staxx-addr--webui); a stack with none shows its first. */
   .staxx-stacks .staxx-stack-row .staxx-cell--address {
-    grid-column: 4 / -1; grid-row: 4;
+    grid-column: 1 / -1; grid-row: 3;
     justify-self: end; align-self: start;
     text-align: right;
+    font-size: 1.6rem;
   }
-  .staxx-stacks .staxx-stack-row [data-stat="cpu"] { grid-column: 1 / 4; grid-row: 5; }
-  .staxx-stacks .staxx-stack-row [data-stat="mem"] { grid-column: 4 / -1; grid-row: 5; }
-  .staxx-stacks .staxx-stack-row [data-stat="net"] { grid-column: 1 / 4; grid-row: 6; }
-  .staxx-stacks .staxx-stack-row [data-stat="gpu"] { grid-column: 4 / -1; grid-row: 6; }
+  .staxx-stacks .staxx-stack-row .staxx-cell--address:has(.staxx-addr--webui) .staxx-addr:not(.staxx-addr--webui),
+  .staxx-stacks .staxx-stack-row .staxx-cell--address:not(:has(.staxx-addr--webui)) .staxx-addr:not(:first-of-type) {
+    display: none;
+  }
+  /* The lone dash of a stack with no address. */
+  .staxx-stacks .staxx-stack-row .staxx-addrcell:not(:has(.staxx-addr)) { display: none; }
+
+  /* Figures: two equal halves, left and right, whether the stack runs or
+     not (a stopped stack's blank cells split the same way). */
+  .staxx-stacks .staxx-stack-row .staxx-num[data-stat] {
+    grid-column: 1 / -1;
+    width: calc(50% - .6rem);
+  }
+  .staxx-stacks .staxx-stack-row .staxx-num[data-stat="cpu"] { grid-row: 5; justify-self: start; }
+  .staxx-stacks .staxx-stack-row .staxx-num[data-stat="mem"] { grid-row: 5; justify-self: end; }
+  .staxx-stacks .staxx-stack-row .staxx-num[data-stat="net"] { grid-row: 6; justify-self: start; }
+  .staxx-stacks .staxx-stack-row .staxx-num[data-stat="gpu"] { grid-row: 6; justify-self: end; }
+
+  /* Locked padlock: the grip is gone, so its column and the gap after it go
+     too. Column 1 then holds nothing and shrinks to 0; the column gap is
+     zeroed and the name takes the 1.2rem back as its own left margin. */
+  .staxx-scaffold.staxx-sort-locked .staxx-stacks .staxx-stack-row { column-gap: 0; }
+  .staxx-scaffold.staxx-sort-locked .staxx-stacks .staxx-stack-row .staxx-grip,
+  .staxx-scaffold.staxx-sort-locked .staxx-stacks .staxx-folder-row .staxx-grip { display: none; }
+  .staxx-scaffold.staxx-sort-locked .staxx-stacks .staxx-stack-row .staxx-nameinfo { margin-left: 1.2rem; }
+
+  /* The orange line that ties a folder's stacks to it: one piece per nested
+     card, from the gap above down to its bottom edge, so no joins show; the
+     last card also closes it with a bottom border. --sm-accent is the
+     page's orange. */
+  .staxx-stacks .staxx-stack-row.staxx-nested {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+  .staxx-stacks .staxx-stack-row.staxx-nested::after {
+    content: '';
+    position: absolute;
+    left: -1px;
+    top: calc(-1.7rem - 1px);
+    bottom: -1px;
+    width: .3rem;
+    background: var(--sm-accent);
+    pointer-events: none;
+  }
+  .staxx-stacks .staxx-stack-row.staxx-nested--last { border-bottom: .3rem solid var(--sm-accent); }
+  .staxx-stacks .staxx-folder-row:has(.staxx-chevron[aria-expanded="true"])::before {
+    content: '';
+    position: absolute;
+    left: .2rem; top: 0; bottom: 0;
+    width: .3rem;
+    background: var(--sm-accent);
+    pointer-events: none;
+  }
+
 
   /* At phone width the folder heading's one-line flex arrangement (see the
      wider card step above) squeezes the name, its update pill and the
@@ -13544,8 +13632,13 @@ dialog::backdrop {
      against the icon strip; settled live with Adrian on 2026-09-14 so the
      icons clear the edges rather than sitting against them. */
   .staxx-stacks .staxx-folder-row {
-    padding: 1.8rem 2.2rem 2rem;
+    padding: 1.8rem 1rem 2rem 1.4rem;
     border-radius: 0;
+  }
+  /* The app icons start under the folder icon: past the chevron and its gap. */
+  .staxx-stacks .staxx-folder-row .staxx-fstrip {
+    padding-left: calc(var(--staxx-chevron-w) + var(--staxx-namebox-gap));
+    box-sizing: border-box;
   }
 }
 
@@ -13647,6 +13740,87 @@ dialog::backdrop {
   cursor: pointer;
 }
 
+/* ---- Chip window (phone) -------------------------------------------------
+ * Opened by a tap on a card's chip group; reuses the services window's
+ * backdrop, frame, title and close. The body is a list, one line per chip:
+ * its icon, its meaning in words, and a button when the chip is one. Text
+ * stays at or above the page's 13px body size. */
+.staxx-chipwin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.6rem 1.2rem 1.2rem;
+  min-width: 26rem;
+}
+
+/* A grid, not a row: icon and sentence share the first line and the action
+   button drops underneath, under the text, so the sentence keeps the width. */
+.staxx-chipwin-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.8rem 1.2rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--staxx-card-line, var(--sm-line));
+  color: var(--sm-fg);
+  font-size: 1.5rem;
+  line-height: 1.35;
+}
+
+.staxx-chipwin-item:first-child { border-top: 0; }
+
+.staxx-chipwin-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4rem;
+  font-size: 2rem;
+}
+
+.staxx-chipwin-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Same look as the card's buttons, at touch size. .staxx-scaffold prefix for
+   the same reason as the close button above. */
+.staxx-scaffold .staxx-chipwin-action {
+  grid-column: 2;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 4.2rem;
+  padding: 0 1.4rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--sm-fg);
+  font-size: 1.6rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Close sits at the right of the window's foot, at touch size, with the same
+   1.2rem side padding as the list above it. */
+.staxx-scaffold .staxx-chipwin-close {
+  display: block;
+  height: 4.2rem;
+  margin: 0 1.2rem 1.2rem auto;
+  padding: 0 1.6rem;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-chipwin-action:hover,
+.staxx-scaffold .staxx-chipwin-action:focus-visible {
+  color: var(--sm-accent);
+  border-color: var(--sm-accent);
+}
+
 /* ---- Narrow screens ----------------------------------------------------- */
 
 /* Everything at this width EXCEPT the stack list, which is the one-across
@@ -13673,40 +13847,6 @@ dialog::backdrop {
   .staxx-menu {
     min-width: 20rem;
     max-width: calc(100vw - 2rem);
-  }
-
-  /* The list reads as a divider across the page on a phone, rather than
-     another card floating in the middle of it — settled live with Adrian,
-     2026-09-13. This can't live on the row, and can't live in a @container
-     staxx-table query, for two reasons found the hard way:
-     - .staxx-table-wrap scrolls its own content (overflow: auto), so a row
-       given a negative side margin is CLIPPED by that scroll box — it
-       measures full width and draws short of the edge, which looks exactly
-       like the rule not applying at all.
-     - an element is never matched by a @container query on its own
-       container, so a rule here could not reach .staxx-table-wrap itself
-       even written the other way.
-     So the wrapper is widened here instead. max-width: none matters: the
-     wrapper's own max-width: 100% otherwise caps the widened width straight
-     back to its parent's, which again looks like the rule failing rather
-     than being overridden. The 1rem cancels Unraid's own page padding
-     (.content carries 10px each side) — the sheet sizes against a 10px
-     root, so 1rem is exactly that 10px. A few pixels of dark page still show
-     at each edge: that's Unraid's own page container, outside anything this
-     plugin owns, and Adrian chose to leave it rather than take that
-     container over too. */
-  .staxx-table-wrap {
-    max-width: none;
-    margin-inline: -1rem;
-    width: calc(100% + 2rem);
-  }
-
-  /* The cards get back the inset the wrapper just gave up, so they still
-     read as sitting inside the folder heading above them rather than
-     spanning past it. */
-  .staxx-stacks .staxx-stack-row,
-  .staxx-stacks .staxx-container-row {
-    margin-inline: 1.8rem;
   }
 
   /* No truncation here — there is nowhere to truncate to once the cell is the

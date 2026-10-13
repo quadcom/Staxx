@@ -20935,7 +20935,7 @@
   function busyPillHtml(label) {
     return '<button type="button" class="staxx-pill staxx-pill--busy">' +
       '<span class="staxx-chipmark" data-mark="refresh" aria-hidden="true"></span>' +
-      '<span class="staxx-chiptext">' + label + '</span></button>';
+      '<span class="staxx-chiptext staxx-chip-words">' + label + '</span></button>';
   }
 
   function paintBusyLabel(row, label) {
@@ -22592,9 +22592,12 @@
     // is only ever a count or a version, never a word. A waiting chip with
     // a live countdown is left blank here — paintPillClock() fills it in,
     // and must not be fought with a value written on every poll.
-    var text = '';
+    // `words` marks a phrase (a version, a countdown) as opposed to a count,
+    // so the phone card can hide it and leave the icon.
+    var text = '', words = false;
     if (meaning === 'waiting' && entry.due > 0) {
       text = '';
+      words = true;
     } else if (meaning === 'watch') {
       // Adrian's ruling, 2026-09-18: shows its count as text, always — it is
       // not a countdown, so nothing overwrites this later. Checked ahead of
@@ -22605,6 +22608,7 @@
       text = String(entry.count);
     } else if ((meaning === 'update' || meaning === 'newbuild') && entry.version) {
       text = entry.version;
+      words = true;
     }
     // The words the chip used to print in full, kept for screen readers and
     // the title-less hover: the old label plus the old "(N)" suffix rule,
@@ -22640,6 +22644,7 @@
       pill.appendChild(txt);
     }
     if (txt.staxxTxt !== text) { txt.textContent = text; txt.staxxTxt = text; }
+    txt.classList.toggle('staxx-chip-words', words);
     // The note is appended to the tip rather than replacing it, mirroring
     // staxx_update_pill_html() — a stale tooltip after a recovery is worse
     // than none, so this is rebuilt every time rather than only when new.
@@ -22691,6 +22696,7 @@
     var txt = pill.querySelector('.staxx-chiptext');
     if (!txt) return;
     if (txt.staxxTxt !== text) { txt.textContent = text; txt.staxxTxt = text; }
+    txt.classList.add('staxx-chip-words');
   }
 
   var pageClockTimer = null;
@@ -24513,6 +24519,20 @@
     refreshRows(function () { waiting.forEach(function (d) { d(); }); });
   });
 
+  // The server marks each folder's last stack card (the phone layout closes
+  // the folder's orange line there); this repeats it after a swap so the mark
+  // can never be left on a card that is no longer last.
+  function markLastNested() {
+    if (!rowsHost) return;
+    Array.prototype.forEach.call(rowsHost.querySelectorAll('.staxx-nested--last'), function (r) {
+      r.classList.remove('staxx-nested--last');
+    });
+    Array.prototype.forEach.call(rowsHost.querySelectorAll('.staxx-group--folder-children'), function (g) {
+      var cards = g.querySelectorAll('.staxx-row.staxx-stack-row.staxx-nested');
+      if (cards.length) cards[cards.length - 1].classList.add('staxx-nested--last');
+    });
+  }
+
   function refreshRows(done) {
     if (dockerQuiet()) {
       if (done) quietDones.push(done);
@@ -24565,6 +24585,7 @@
       // showing rows now orphaned. closeServicesModal() is a no-op when
       // nothing is open.
       closeServicesModal();
+      closeChipWindow();
 
       var seenRows = {};
       if (rowsHost) {
@@ -24573,6 +24594,7 @@
           function (r) { seenRows[r.dataset.stackRow] = true; });
 
         rowsHost.innerHTML = res.html;
+        markLastNested();
 
         Array.prototype.forEach.call(
           rowsHost.querySelectorAll('[data-stack-row]'), function (r) {
@@ -34812,9 +34834,12 @@
   var servicesModal = null;   // the one overlay, built the first time it is needed
   var svcModalState  = null;  // { moved: [{el, parent, next}], chevron } while open, else null
 
-  function buildServicesModal() {
+  // `chips` builds the phone card's chip window instead: the same shell (head,
+  // close button, backdrop) around a list in place of the services grid.
+  function buildServicesModal(chips) {
+    var closeIt = chips ? closeChipWindow : closeServicesModal;
     var el = document.createElement('div');
-    el.className = 'staxx-svcmodal';
+    el.className = 'staxx-svcmodal' + (chips ? ' staxx-svcmodal--chips' : '');
     el.hidden = true;
     el.innerHTML =
       '<div class="staxx-svcmodal__dialog" role="dialog" aria-modal="true">' +
@@ -34824,15 +34849,20 @@
           '<span class="staxx-svcmodal__count"></span>' +
         '</div>' +
         '<button type="button" class="staxx-svcmodal__close" aria-label="Close">✕</button>' +
-        '<div class="staxx-table-wrap"><div class="staxx-stacks staxx-stacks--modal" role="grid"></div></div>' +
+        (chips
+          ? '<div class="staxx-chipwin-body"><ul class="staxx-chipwin-list"></ul>' +
+            '<button type="button" class="staxx-btn staxx-chipwin-close">Close</button></div>'
+          : '<div class="staxx-table-wrap"><div class="staxx-stacks staxx-stacks--modal" role="grid"></div></div>') +
       '</div>';
     // Backdrop click only — a click inside the dialog must not close it.
     el.addEventListener('click', function (event) {
-      if (event.target === el) closeServicesModal();
+      if (event.target === el) closeIt();
     });
     el.querySelector('.staxx-svcmodal__close').addEventListener('click', function () {
-      closeServicesModal();
+      closeIt();
     });
+    var bodyClose = el.querySelector('.staxx-chipwin-close');
+    if (bodyClose) bodyClose.addEventListener('click', closeIt);
     // Inside .staxx-scaffold, not <body> — see the bundle/export modals
     // above for the same reasoning: .staxx-btn and the card rules this
     // modal depends on are only styled inside the scaffold.
@@ -34910,6 +34940,203 @@
     });
     if (state.chevron && state.chevron.isConnected) state.chevron.focus();
   }
+
+  /* ---- PLAN_241: the chip window, on the phone card ----------------------
+   *
+   * On the phone the chips show only their icons, and some are buttons (an
+   * update chip starts a real `compose pull`). A tap anywhere on a stack
+   * card's state cell therefore opens this window instead, and never reaches
+   * a chip's own action: that action is offered here as a labelled button.
+   * The phone is detected the way the layout does it: the list's container
+   * is 600px (60rem) wide or less.
+   */
+  var chipWindow = null;
+  var chipBypass = false;   // true for the one click the window's action button replays
+
+  function onPhoneList() {
+    var wrap = (rowsHost && rowsHost.closest('.staxx-table-wrap')) || scaffold.querySelector('.staxx-table-wrap');
+    return !!wrap && wrap.getBoundingClientRect().width <= 600;
+  }
+
+  function chipsOf(cell) {
+    return Array.prototype.filter.call(cell.children, function (c) {
+      return !c.hidden && c.matches('.staxx-pill, .staxx-updatepill, .staxx-pendingchip');
+    });
+  }
+
+  // One chip's full meaning, and the label of its own action when it has one.
+  function describeChip(chip) {
+    var isBtn = chip.tagName === 'BUTTON';
+    var txtEl = chip.querySelector('.staxx-chiptext');
+    var words = txtEl ? txtEl.textContent.trim() : '';
+    var markEl = chip.querySelector('.staxx-chipmark');
+    var mark = markEl ? markEl.dataset.mark : '';
+    var cls = chip.classList;
+    var text, action = null;
+
+    if (cls.contains('staxx-updatepill')) {
+      var st = chip.dataset.updateState;
+      var count = parseInt(chip.dataset.updateCount || '0', 10) || 0;
+      var note = chip.dataset.updateNote || '';
+      if (cls.contains('staxx-updatepill--waiting') && st === 'update') {
+        text = words === 'due now' ? 'An update is due now.'
+             : words ? 'Update due in ' + words + '.' : 'An update is waiting.';
+        if (chip.dataset.updateWhy) text += ' ' + chip.dataset.updateWhy;
+        if (isBtn) action = 'Update now';
+      } else if (st === 'watch') {
+        var n = parseInt(chip.dataset.updateWatch || '0', 10) || 0;
+        text = 'The author’s published example does ' + n + (n === 1 ? ' thing' : ' things') +
+          ' differently from this file.';
+      } else if (cls.contains('staxx-updatepill--newbuild')) {
+        text = count > 1 ? count + ' images have a new build available.' : 'A new build of the image is available.';
+        if (isBtn) action = 'Update now';
+      } else if (cls.contains('staxx-updatepill--update')) {
+        text = count > 1 ? count + ' images have updates available.'
+             : 'An update is available' + (words ? ' (' + words + ')' : '') + '.';
+        if (isBtn) action = 'Update now';
+      } else if (cls.contains('staxx-updatepill--failing')) {
+        text = 'The last check for updates failed.';
+      } else if (cls.contains('staxx-updatepill--notfound')) {
+        text = 'The image, or its tag, could not be found.';
+      } else if (cls.contains('staxx-updatepill--notinstalled')) {
+        text = 'The image is not installed yet.';
+      } else {
+        text = chip.getAttribute('aria-label') || 'There is news about this image.';
+      }
+      if (note) text += ' ' + note;
+      return { text: text, action: action };
+    }
+
+    // Everything else reads from its hover words, with the "Click to ..." tail
+    // dropped: the action button says that part.
+    var tip = (chip.dataset.tip || chip.getAttribute('title') || chip.getAttribute('aria-label') || '')
+      .replace(/\s*Click to [^.]*\./g, '').trim();
+    var lines = tip.split('\n');
+    var rest = lines.slice(1).join(' ').trim();
+
+    if (chip.dataset.fixStack) {
+      return { text: 'Docker Compose cannot read this stack’s file, so it cannot start.',
+               action: 'Open the file to fix it' };
+    }
+    if (cls.contains('staxx-pill--fail')) {
+      return { text: tip || 'The last command failed.', action: 'Show what happened' };
+    }
+    if (cls.contains('staxx-pill--busy')) {
+      return { text: words ? 'Working on it: ' + words : 'A command is still running on this stack.',
+               action: 'Show its output' };
+    }
+    if (mark === 'play') {
+      // The tip's own explanation already opens with "running" for a single
+      // container, so a head is added only where it says something more: how
+      // many containers are running.
+      var many = /^\d+$/.test(words) && parseInt(words, 10) > 1;
+      var bad  = cls.contains('staxx-pill--bad') || cls.contains('staxx-pill--warn');
+      if (rest) text = (many && !bad ? words + ' containers are running. ' : '') + rest;
+      else      text = many ? 'Running (' + words + ' containers).' : 'Running.';
+      return { text: text, action: cls.contains('staxx-pill--offer') ? 'Look for a health check' : null };
+    }
+    if (mark === 'stop') {
+      var status = lines[0].trim();
+      if (status.toLowerCase() === 'not created') return { text: 'Not created yet.', action: null };
+      status = status.replace(/exited\s*\((\d+)\)(\s+)?/i, function (m, code, sp) {
+        return 'exited with code ' + code + (sp ? ', ' : '');
+      });
+      status = status.charAt(0).toLowerCase() + status.slice(1);
+      return { text: 'Stopped' + (status && status !== 'stopped' ? ' (' + status + ')' : '') + '.', action: null };
+    }
+    if (cls.contains('staxx-pendingchip')) {
+      return { text: tip, action: isBtn ? 'Show what changed' : null };
+    }
+    return { text: tip.replace(/\n+/g, ' ') || words || 'No more detail is available for this chip.', action: null };
+  }
+
+  function openChipWindow(row, cell) {
+    var name  = row.dataset.stackRow;
+    var chips = chipsOf(cell);
+    if (!chipWindow) chipWindow = buildServicesModal(true);
+
+    var iconBtn  = row.querySelector('.staxx-icon');
+    var iconHost = chipWindow.querySelector('.staxx-svcmodal__icon');
+    iconHost.innerHTML = '';
+    if (iconBtn && iconBtn.firstElementChild) iconHost.appendChild(iconBtn.firstElementChild.cloneNode(true));
+    chipWindow.querySelector('.staxx-svcmodal__name').textContent = (iconBtn && iconBtn.dataset.label) || name;
+    chipWindow.querySelector('.staxx-svcmodal__count').textContent = '';
+
+    var list = chipWindow.querySelector('.staxx-chipwin-list');
+    list.innerHTML = '';
+    chips.forEach(function (chip, index) {
+      var d  = describeChip(chip);
+      var li = document.createElement('li');
+      li.className = 'staxx-chipwin-item';
+
+      // The chip's own classes on an empty shell, so the icon keeps its colour.
+      var icon = document.createElement('span');
+      icon.className = 'staxx-chipwin-icon';
+      var shell = document.createElement('span');
+      shell.className = chip.className;
+      var mark = chip.querySelector('.staxx-chipmark');
+      if (mark) shell.appendChild(mark.cloneNode(true));
+      icon.appendChild(shell);
+      li.appendChild(icon);
+
+      var text = document.createElement('span');
+      text.className = 'staxx-chipwin-text';
+      text.textContent = d.text;
+      li.appendChild(text);
+
+      if (d.action) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'staxx-btn staxx-chipwin-action';
+        btn.textContent = d.action;
+        var sig = chip.className;
+        btn.addEventListener('click', function () { runChipAction(name, index, sig); });
+        li.appendChild(btn);
+      }
+      list.appendChild(li);
+    });
+
+    chipWindow.hidden = false;
+    document.addEventListener('keydown', onChipWindowKeydown);
+    var closeBtn = chipWindow.querySelector('.staxx-svcmodal__close');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function onChipWindowKeydown(event) {
+    if (event.key === 'Escape') closeChipWindow();
+  }
+
+  function closeChipWindow() {
+    if (!chipWindow || chipWindow.hidden) return;
+    chipWindow.hidden = true;
+    document.removeEventListener('keydown', onChipWindowKeydown);
+  }
+
+  // Closes the window, then replays a click on the chip itself so its own
+  // handler runs exactly as on desktop. The chip is looked up again, since a
+  // refresh may have repainted the cell; if it no longer looks the same
+  // nothing is run, rather than something the person did not choose.
+  function runChipAction(name, index, sig) {
+    closeChipWindow();
+    var row  = rowFor(name);
+    var cell = row && row.querySelector('.staxx-cell--state');
+    var chip = cell && chipsOf(cell)[index];
+    if (!chip || chip.className !== sig) return;
+    chipBypass = true;
+    try { chip.click(); } finally { chipBypass = false; }
+  }
+
+  // Capture phase on the scaffold, so it runs before every chip's own click
+  // handling below it and can stop it. Only a stack card's state cell with at
+  // least one chip in it is taken, and only on the phone.
+  scaffold.addEventListener('click', function (event) {
+    if (chipBypass || !event.target.closest) return;
+    var cell = event.target.closest('.staxx-stack-row .staxx-cell--state');
+    if (!cell || !onPhoneList() || !chipsOf(cell).length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openChipWindow(cell.closest('.staxx-stack-row'), cell);
+  }, true);
 
   // New folder's own click now runs through buildAddMenu() (PLAN_173); see
   // askNewFolder() above for why the naming box always anchors to the
