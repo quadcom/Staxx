@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.01_dev20261014">
+<!ENTITY version              "00.05.01_dev20261015">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "66d8792bc094f4ea0902862bf5629d85">
-<!ENTITY packageSHA256        "ad29d1ccbfc93a1b24769f2dbbb53fcbb6abc98c6a0874e5aa7707f70e6531ac">
+<!ENTITY packageMD5           "4671adc4a448b34f0aedac2e0b919f0f">
+<!ENTITY packageSHA256        "687c9d8cd8c531ace1080e1021117fb176449a48677a5eb75c1bf0237c6adc0e">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,7 @@
 >
 
 <CHANGES>
-###00.05.01_dev20261014
+###00.05.01_dev20261015
 - The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, an app with no picture gets the same coloured letters as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.
 - Proxy and DNS works with Nginx Proxy Manager, Pi-hole or both. Each has its own Enabled switch under the domain name. With Pi-hole on its own, the name points at the server, or at the app's own address when it has one, and you open the app with its port, such as `http://app.home.lan:8080`. The app's WebUI button opens that address.
 - The Proxy and DNS section now shows where each name points: the address the proxy sends people to, and the address Pi-hole gives out for the name.
@@ -46,6 +46,8 @@
 - The stack list on a phone has a new card. The icon and name are bigger and sit at the left edge, with the four buttons, now finger-sized, directly under the name, so a long name is always shown in full. The chips sit just above the buttons as icons; tap them to open a small window that says what each one means, with a button for anything a chip can do. A tap there never starts an update by itself. A card shows only the address of the app's web page, its charts split evenly across the card, and an orange line runs down the left from an open folder to its last stack.
 - On a phone, the page no longer slides sideways a little when you swipe.
 - In the stack list, a stack with several addresses shows each on its own line instead of running them together.
+- Opening the old Docker address (a bookmark or typed /Docker) while StaXX has taken over the Docker menu now goes to StaXX instead of a blank page.
+- Rename, Delete and Download on a stack's extra files work again; they had stopped doing anything (Download gave the compose file instead).
 ###00.05.00
 - Unraid's own Docker page and Dashboard now show each StaXX app's icon and a WebUI link, and call it "Compose" instead of "3rd Party". Each app picks this up the next time it is started or updated. Nothing is written into your compose file.
 - A web page address that names its own site, such as `http://app.example.com`, now lights the WebUI button. It used to stay grey unless the address carried a port number.
@@ -527,7 +529,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.01_dev20261014-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.01_dev20261015-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
