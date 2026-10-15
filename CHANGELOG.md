@@ -4,7 +4,7 @@ What changed in StaXX, newest first.
 
 ---
 
-## Unreleased
+## 00.05.01 — released 2026-10-15
 
 - The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, an app with no picture gets the same coloured letters as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.
 - Proxy and DNS works with Nginx Proxy Manager, Pi-hole or both. Each has its own Enabled switch under the domain name. With Pi-hole on its own, the name points at the server, or at the app's own address when it has one, and you open the app with its port, such as `http://app.home.lan:8080`. The app's WebUI button opens that address.
