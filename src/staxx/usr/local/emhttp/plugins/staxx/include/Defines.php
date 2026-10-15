@@ -716,6 +716,40 @@ function staxx_docker_networks(): array {
     }
     $networks[] = ['name' => $name, 'driver' => trim($driver), 'project' => $project];
   }
+
+  return $networks;
+}
+
+/**
+ * staxx_docker_networks() plus each network's first IPv4 subnet in CIDR form
+ * (`subnet`, blank when it has none), for the editor's Proxy and DNS read-out
+ * (PLAN_239). Kept apart because `network ls` cannot show subnets, and the
+ * table render and state poll that also call staxx_docker_networks() have no
+ * use for the extra inspect.
+ *
+ * @return array<int, array{name:string, driver:string, project:string, subnet:string}>
+ */
+function staxx_docker_networks_with_subnets(): array {
+  $networks = staxx_docker_networks();
+  foreach ($networks as &$n) $n['subnet'] = '';
+  unset($n);
+  if (!$networks) return $networks;
+
+  // One inspect over every name. A failure just leaves the subnets blank.
+  $names = implode(' ', array_map(function ($n) { return escapeshellarg($n['name']); }, $networks));
+  $ifmt  = '{{.Name}}|{{range .IPAM.Config}}{{.Subnet}} {{end}}';
+  $out   = staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' network inspect '.$names.' --format '.escapeshellarg($ifmt), 10
+  );
+  $subnets = [];
+  foreach (explode("\n", trim($out)) as $line) {
+    [$n, $list] = array_pad(explode('|', $line, 2), 2, '');
+    foreach (preg_split('/\s+/', trim($list), -1, PREG_SPLIT_NO_EMPTY) as $cidr) {
+      if (strpos($cidr, ':') === false) { $subnets[trim($n)] = $cidr; break; }
+    }
+  }
+  foreach ($networks as &$n) $n['subnet'] = $subnets[$n['name']] ?? '';
+  unset($n);
   return $networks;
 }
 

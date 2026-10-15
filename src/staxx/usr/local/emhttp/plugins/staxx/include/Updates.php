@@ -1745,6 +1745,22 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
 }
 
 /**
+ * $images with every reference not in $inUse removed, entries kept untouched.
+ * $inUse is keyed by image reference, as staxx_update_images() returns it.
+ * An entry outlives the stack that named it (an image switch leaves the old
+ * one behind, 'move' finding and all), so the health check would warn about
+ * images nobody runs. Only a full pass may call this: a scoped one has not
+ * seen every stack's images and would delete what it did not visit.
+ *
+ * @param array<string,array> $images
+ * @param array<string,mixed> $inUse
+ * @return array<string,array>
+ */
+function staxx_update_prune_images(array $images, array $inUse): array {
+  return array_intersect_key($images, $inUse);
+}
+
+/**
  * The whole check pass: ask the registry about every distinct image in
  * scope, one at a time, and fold the answers into the state file.
  *
@@ -2389,6 +2405,20 @@ function staxx_update_check(string $scope, bool $force, bool $progress = false):
     foreach (array_keys($stacksState) as $known) {
       if (!isset($live[$known])) unset($stacksState[$known]);
     }
+
+    // The same pass retires images no stack names any more. A stack that
+    // switches its image (binhex/x to ghcr.io/binhex/x) left the old entry
+    // behind for ever, 'move' finding included, and the health check's "pulling
+    // from a registry their template has left" line is built from this map
+    // alone, so it warned about images nobody runs. Only when every compose
+    // file parsed: an unreadable stack contributes nothing to $refs, and
+    // pruning then would throw away that image's history, a "keep the old
+    // address" choice (skipMove) among it, and the warning would return.
+    $allRead = true;
+    foreach (staxx_stack_compose_map() as $composeFile) {
+      if ($composeFile === '' || !staxx_compose_meta($composeFile)['ok']) { $allRead = false; break; }
+    }
+    if ($allRead) $images = staxx_update_prune_images($images, $refs);
   }
 
   staxx_update_state_save([

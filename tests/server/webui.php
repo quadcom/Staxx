@@ -239,6 +239,30 @@ ok('an unknown live mode reads as bridge, never as other',
 ok('an unrecognised live driver reads as bridge',
    staxx_service_net_kind(svc('', '', [], ''), '', 'overlay') === 'bridge');
 
+/* ------------------------------------- Pi-hole only: the name opens (PLAN_238) -- */
+
+function svcExpose(array $expose): array {
+  $s = svc('http://[IP]:[PORT:8096]/admin', '', ['target' => '8096', 'published' => '15114']);
+  foreach ($expose as $k => $v) $s['x']['expose.'.$k] = $v;
+  return $s;
+}
+
+ok('Pi-hole on, Nginx off: the button opens the domain on the same port and path',
+   staxx_webui_url(svcExpose(['domain' => 'app.home.lan', 'dns' => 'true', 'enabled' => 'false']), $hostIp)
+     === 'http://app.home.lan:15114/admin');
+
+ok('Pi-hole on, Nginx on: the button still opens the address',
+   staxx_webui_url(svcExpose(['domain' => 'app.home.lan', 'dns' => 'true']), $hostIp)
+     === 'http://10.0.0.5:15114/admin');
+
+ok('Nginx off, Pi-hole off: the button still opens the address',
+   staxx_webui_url(svcExpose(['domain' => 'app.home.lan', 'enabled' => 'false']), $hostIp)
+     === 'http://10.0.0.5:15114/admin');
+
+ok('Pi-hole only with no webui at all: still no link',
+   staxx_webui_url(['x' => ['expose.domain' => 'app.home.lan', 'expose.dns' => 'true', 'expose.enabled' => 'false'],
+                    'fixedIp' => '', 'firstPort' => $port], $hostIp) === '');
+
 /* ------------------------------------------------------ staxx_webui_for() -- */
 
 $err = '';

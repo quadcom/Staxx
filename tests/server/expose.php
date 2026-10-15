@@ -221,6 +221,72 @@ $steps = staxx_expose_plan_service('DEV/x', 'off', ['domain' => 'off.example.com
 ok('plan_service: switched off with no entry yet needs nothing, and creates nothing',
    $err === '' && count($steps) === 1 && $steps[0]['op'] === 'none', json_encode($steps));
 
+// PLAN_238: Pi-hole only (Nginx off, DNS on). The record points at the app's
+// own host, which the caller passes in as $dnsIp, never at NPM.
+$piOnly = ['domain' => 'sonarr.tld', 'certificate' => '', 'dns' => true, 'websockets' => true, 'enabled' => false];
+$appIp  = '192.168.1.5'; // $target2['host']
+$err = '';
+$steps = staxx_expose_plan_service($rel, $service, $piOnly, $target2, [], [], [], $appIp, [], $err);
+$npmSteps = array_values(array_filter($steps, fn($s) => $s['target'] === 'npm' && $s['op'] !== 'none'));
+$piStep = null;
+foreach ($steps as $s) if ($s['target'] === 'pihole') $piStep = $s;
+ok('plan_service: Pi-hole only with no NPM host plans no NPM action',
+   $err === '' && $npmSteps === [], json_encode($steps));
+ok('plan_service: Pi-hole only creates the DNS name at the app\'s own host',
+   $piStep !== null && $piStep['op'] === 'create' && strpos($piStep['text'], 'pointing at '.$appIp) !== false,
+   json_encode($piStep));
+
+// Nginx on keeps pointing the name at NPM.
+$err = '';
+$steps = staxx_expose_plan_service($rel, $service, $dnsCfg, $target2, [], [], [], $dnsIp, [], $err);
+$piStep = null;
+foreach ($steps as $s) if ($s['target'] === 'pihole') $piStep = $s;
+ok('plan_service: Nginx on still points the DNS name at NPM\'s address',
+   $piStep !== null && $piStep['op'] === 'create' && strpos($piStep['text'], 'pointing at '.$dnsIp) !== false,
+   json_encode($piStep));
+
+// Pi-hole only, record elsewhere: the replace text names the app, not NPM.
+$err = '';
+$steps = staxx_expose_plan_service($rel, $service, $piOnly, $target2, [], [], $piOther, $appIp, [], $err);
+$piStep = null;
+foreach ($steps as $s) if ($s['target'] === 'pihole') $piStep = $s;
+ok('plan_service: Pi-hole only replace text names the app\'s address, not NPM',
+   $piStep !== null && $piStep['op'] === 'replace'
+   && strpos($piStep['text'], 'Nginx Proxy Manager') === false
+   && strpos($piStep['text'], $appIp) !== false, json_encode($piStep));
+
+// Pi-hole only, but StaXX's own NPM host exists and is on: it is switched off.
+$mineOn = $host;
+$mineOn['meta'] = ['staxx' => $rel.'/'.$service];
+$err = '';
+$steps = staxx_expose_plan_service($rel, $service, $piOnly, $target2, [$mineOn], [], [], $appIp, [], $err);
+ok('plan_service: Pi-hole only with an existing NPM host of ours switches it off',
+   $err === '' && $steps[0]['target'] === 'npm' && $steps[0]['op'] === 'disable', json_encode($steps));
+
+ok('open_address: Pi-hole only gives http://<domain>:<port>',
+   staxx_expose_open_address($piOnly, $target2) === 'http://sonarr.tld:8989');
+ok('open_address: empty with Nginx on, or with Pi-hole off',
+   staxx_expose_open_address($dnsCfg, $target2) === '' && staxx_expose_open_address($domCfg, $target2) === '');
+
+/* ------------------------------------------------------ staxx_expose_dns_ip
+ * With an app host given it never reads NPM_URL, so a Pi-hole-only service
+ * needs no NPM setting at all. */
+$err = 'x';
+ok('dns_ip: an app host that is an IPv4 address is used as-is',
+   staxx_expose_dns_ip($err, '192.168.1.5') === '192.168.1.5' && $err === '', $err);
+$err = '';
+ok('dns_ip: an IPv6 address is refused as an app host (no IPv4 record possible)',
+   staxx_expose_dns_ip($err, '::1') === '' && $err !== '', $err);
+
+/* ------------------------------------------------- staxx_expose_run, no NPM
+ * A stack whose only service is Pi-hole only is not refused for a missing
+ * NPM_URL: that refusal needs a real stack and an empty NPM_URL, neither of
+ * which this suite may set up (see the header), so it is checked by hand on
+ * the box. The sentence it still gives when Nginx is on is asserted here. */
+$src = (string)file_get_contents('/usr/local/emhttp/plugins/staxx/include/Expose.php');
+ok('run: the missing-NPM refusal still exists, for services with Nginx on',
+   strpos($src, 'Nginx Proxy Manager is not set up yet') !== false);
+
 /* ---------------------------------------------------- staxx_expose_config */
 // The compose reader hands scalars over as the file's own text, so the
 // switches arrive as the strings "true" / "false", not booleans.

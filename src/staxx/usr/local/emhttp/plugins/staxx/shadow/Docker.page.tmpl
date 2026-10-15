@@ -20,8 +20,11 @@ Cond="false"
  * reachable once the menu they hang off no longer exists. That is the whole
  * point: Stacks becomes its own top-level button instead, in place of Docker.
  *
- * Cond is permanently false: this file's only job is to occupy the stock
- * page's Menu slot so nothing else can, never to render anything of its own.
+ * Cond is permanently false: that keeps this page out of the navigation, and
+ * its job is to occupy the stock page's Menu slot so nothing else can. A
+ * direct visit to /Docker (a bookmark, a typed address) still runs the body
+ * below, because Unraid picks the visited page by name without checking Cond,
+ * so the body sends the browser on to /StaXX instead of leaving a blank page.
  * No Title is set, matching the stock file, whose label comes from its
  * filename. If Unraid ever renames its file this stops matching and the
  * stock button simply reappears — the safe direction to fail in.
@@ -31,3 +34,4 @@ Cond="false"
  * as published by the Free Software Foundation.
  */
 ?>
+<script>location.replace('/StaXX' + location.hash);</script>

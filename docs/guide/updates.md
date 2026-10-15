@@ -211,7 +211,11 @@ Every message links to StaXX's update view.
 The summary goes out at the time you set. On a day with nothing to report, nothing is sent. Each
 app in it shows a **Release notes** link, not the notes.
 
-![A daily summary email: chips for 3 updated, 1 failed, 2 waiting, 1 pinned, 1 stopped and 1 healthy, then headings on grey bands for Updated, Failed, Waiting for you, Needs a look, Healthy again and Pinned, each app with its version and a Release notes link, Lidatube marked major version, plex under Needs a look with "Stopped. It ran out of memory.", a line saying 4.2 GB of old images can be cleaned up with a Clean up images link, and the Open StaXX button](../images/guide/updates-email-summary.png)
+**Urgent** comes first and lists apps that stopped with an error, keep restarting or failed their
+health check. **Worth a look** comes last and lists stacks waiting for your review and apps whose
+image now comes from a new address.
+
+![A daily summary email: chips for 3 updated, 1 failed, 2 waiting, 1 pinned, 1 stopped and 1 healthy. An Urgent heading comes first, with plex "Stopped. It ran out of memory." Then headings on grey bands for Updated (plex, paperless-ngx and tdarr with old and new version, size and a Release notes link), Failed (dbgate with "Docker Hub's download limit was reached. It resets within six hours."), Waiting for you (posterr, and Lidatube marked major version), Healthy again (posterr) and Pinned (paperless-mariadb, pinned since 12 Sep). Last, a Worth a look heading: Waiting for your review (2) lists CoolerControl and PenPot_Complete, the second with a tiled icon, both marked not reviewed, and Image has a new home (1) shows it-tools moving from Docker Hub to ghcr.io. Then a line saying 4.2 GB of old images can be cleaned up with a Clean up images link, and the Open StaXX button](../images/guide/updates-email-summary.png)
 
 ### Quiet hours
 

@@ -92,10 +92,19 @@ sideways or a small laptop, two on a tablet held upright, one on a phone.
 
 ![The same folder on a tablet held upright: the Database heading, then its stacks as cards two across](../images/guide/the-stack-list-cards-two.png)
 
-![The Database folder on a phone: the heading gives its name, its next-check countdown and its "6 stacks, 5 running" line the full width of the screen, with its six app icons on a line of their own beneath; then its stacks one card per row, each with the WebUI, Logs, Repo and CA buttons on a line of their own at a finger's size and the running chip on the line beneath them](../images/guide/the-stack-list-cards-phone.png)
+![The Media folder open on a phone, with an orange line down its left side, then the PMB and plex cards: each has its icon at the left and its name beside it, its chips as small icons above the WebUI, Logs, Repo and CA buttons, its web page address, and its four graphs two by two](../images/guide/the-stack-list-cards-phone.png)
 
-On a phone, a card's four small buttons take a line of their own at a size a finger can hit, with
-the state chips on the line beneath them.
+On a phone, each card shows the stack's icon on the left with its name beside it. The **WebUI**,
+**Logs**, **Repo** and **CA** buttons sit under the name, at a size a finger can hit. The card shows
+the address of the stack's web page.
+
+The chips sit just above the buttons, as icons only. Tap them to open a window that says what each
+chip means in words. Where a chip can do something, such as **Update now**, the window has a button
+for it.
+
+![The chip window for plex open over the list: the plex icon and name at the top, a line for the running chip explaining that nothing checks the app is working, with a Look for a health check button under it, a line for the author-example chip, and Close at the bottom right](../images/guide/the-stack-list-chip-window.png)
+
+When a folder is open, an orange line runs down the left side from the folder to its last stack.
 
 The folder heading changes shape here too. Its name, its update marker and its "N stacks, N running"
 line take the full width, with the icons of the apps inside it on their own line underneath rather

@@ -94,6 +94,9 @@ function staxx_address_html(array $addresses): string {
     $ip    = (string)($a['ip'] ?? '');
     $label = (string)($a['label'] ?? $ip);
     if ($label === '') continue;
+    // Set only by staxx_merged_addresses(), on the one address that belongs to
+    // the stack's WebUI container, for the phone card to show alone.
+    $webCls = !empty($a['webui']) ? ' staxx-addr--webui' : '';
 
     $title = ($ip !== $label && $ip !== '')
       ? ' title="'.htmlspecialchars(sprintf(_('on %s'), $ip)).'"'
@@ -104,7 +107,7 @@ function staxx_address_html(array $addresses): string {
     // An address with no ports is still how you reach it — the application may
     // well be on 80 — so it is worth showing on its own.
     if (!$ports) {
-      $out[] = '<span class="staxx-addr"'.$title.'>'.$name.'</span>';
+      $out[] = '<span class="staxx-addr'.$webCls.'"'.$title.'>'.$name.'</span>';
       continue;
     }
 
@@ -119,7 +122,7 @@ function staxx_address_html(array $addresses): string {
     // PLAN_121 item 4: one <span> per port, not one comma-joined text node —
     // the ports wrap under the name in the wide layout (see staxx.css), so the
     // join that used to be ", " in the text is now the layout itself.
-    $out[] = '<span class="staxx-addr"'.$title.'>'
+    $out[] = '<span class="staxx-addr'.$webCls.'"'.$title.'>'
            . '<span class="staxx-addr-label">'.htmlspecialchars($label).'</span>'
            . '<span class="staxx-addr-colon">:</span>'
            . '<span class="staxx-addr-ports">'
@@ -158,6 +161,14 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
   // entry holding all three ports, which is the whole point — the alternative
   // repeats the same name on three lines.
   $groups = [];
+  // The phone card shows only the WebUI container's address: the first
+  // container with a web address (the same one the stack's WebUI button
+  // opens when exactly one has it). Its first label is flagged below.
+  $webuiId = '';
+  foreach ($containers as $c) {
+    if (($webuiById[$c['id']] ?? '') !== '') { $webuiId = (string)$c['id']; break; }
+  }
+  $webuiLabels = [];
   foreach ($containers as $c) {
     $rec = $net[$c['id']] ?? [];
     $addresses = staxx_address_webui_override(
@@ -167,6 +178,7 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
     foreach ($addresses as $a) {
       $key = (string)($a['label'] ?? $a['ip'] ?? '');
       if ($key === '') continue;
+      if ((string)$c['id'] === $webuiId) $webuiLabels[$key] = true;
       if (!isset($groups[$key])) $groups[$key] = ['ip' => $a['ip'] ?? '', 'ports' => []];
       foreach ((array)($a['ports'] ?? []) as $port) $groups[$key]['ports'][$port] = true;
     }
@@ -184,6 +196,11 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
     $rank = fn($x) => $x['ip'] === $hostIp ? 0 : 1;
     return $rank($a) <=> $rank($b) ?: strcmp($a['label'], $b['label']);
   });
+
+  foreach ($out as &$o) {
+    if (isset($webuiLabels[$o['label']])) { $o['webui'] = true; break; }
+  }
+  unset($o);
 
   return $out;
 }
@@ -405,9 +422,9 @@ function staxx_container_pill(array $c, string $stack = ''): string {
       // PLAN_161 — a transient state with no mark of its own in the picked
       // palette; the word itself stays the chip's text (wrapped for the
       // shared chiptext styling), just no glyph.
-      return '<span class="staxx-pill staxx-pill--warn"><span class="staxx-chiptext">'.$status.'</span></span>';
+      return '<span class="staxx-pill staxx-pill--warn"><span class="staxx-chiptext staxx-chip-words">'.$status.'</span></span>';
     case 'dead':
-      return '<span class="staxx-pill staxx-pill--bad"><span class="staxx-chiptext">'.$status.'</span></span>';
+      return '<span class="staxx-pill staxx-pill--bad"><span class="staxx-chiptext staxx-chip-words">'.$status.'</span></span>';
     default:                                   // exited, created
       return '<span class="staxx-pill staxx-pill--down" title="'.$status.'">'
            . '<span class="staxx-chipmark" data-mark="stop" aria-hidden="true"></span>'
@@ -504,8 +521,13 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // is known, and otherwise nothing — the mark alone says what kind of chip
   // this is (PLAN_161). A waiting chip with a countdown due leaves its text
   // to the browser, which paints the ticking figure in on top of this.
+  // $chipWords marks text that is a phrase (a version, a countdown) rather
+  // than a count, so the phone card can show the chip as its icon alone. The
+  // countdown is painted in by the browser, hence true for it as well.
+  $chipWords = false;
   if ($meaning === 'waiting' && $due > 0) {
     $chipText = '';
+    $chipWords = true;
   } elseif ($meaning === 'watch') {
     // Adrian's ruling, 2026-09-18: this chip shows its count as text — it is
     // not a countdown, so there is nothing for the browser to paint over it.
@@ -516,6 +538,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     $chipText = (string)$count;
   } elseif (($meaning === 'update' || $meaning === 'newbuild') && $version !== '') {
     $chipText = $version;
+    $chipWords = true;
   } else {
     $chipText = '';
   }
@@ -604,7 +627,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   $watchAttr = isset($u['watch']) ? ' data-update-watch="'.(int)$u['watch'].'"' : '';
 
   $chip = '<span class="staxx-chipmark" data-mark="'.$mark.'" aria-hidden="true"></span>'
-        . '<span class="staxx-chiptext">'.$chipText.'</span>';
+        . '<span class="staxx-chiptext'.($chipWords ? ' staxx-chip-words' : '').'">'.$chipText.'</span>';
 
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . $ariaAttr
@@ -1840,6 +1863,12 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
   // way round) still gets a live grip.
   $topLevelCount = $folderCount + ($groupCounts[''] ?? 0);
 
+  // The last stack of each folder, for the phone card's closing orange line:
+  // a multi-service stack sits inside an extra wrapper, so no structural
+  // selector can find the last card.
+  $lastInFolder = [];
+  foreach ($folderStacks as $fid => $members) $lastInFolder[$fid] = end($members)['name'];
+
   $autostart = staxx_autostart_state($stackList);
 
   // Gathered once for the same reason as $autostart above: this walks at
@@ -2223,7 +2252,7 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
 <?
       endif;
 ?>
-        <div class="staxx-row staxx-stack-row<?= $row['folder'] !== '' ? ' staxx-nested' : '' ?><?= $sNeedsFix ? ' staxx-row--fix' : ($s['review'] && !($s['mergedInto'] ?? null) ? ' staxx-row--fresh' : '') ?>"
+        <div class="staxx-row staxx-stack-row<?= $row['folder'] !== '' ? ' staxx-nested' : '' ?><?= ($row['folder'] !== '' && ($lastInFolder[$row['folder']] ?? null) === $s['name']) ? ' staxx-nested--last' : '' ?><?= $sNeedsFix ? ' staxx-row--fix' : ($s['review'] && !($s['mergedInto'] ?? null) ? ' staxx-row--fresh' : '') ?>"
              role="row" aria-level="<?= $stackLevel ?>"
              <? if ($expandable): ?>aria-expanded="<?= $expanded ? 'true' : 'false' ?>"<? endif; ?>
              data-stack-row="<?= htmlspecialchars($s['name']) ?>"

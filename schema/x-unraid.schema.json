@@ -174,21 +174,21 @@
         },
         "expose": {
           "$ref": "#/$defs/expose",
-          "description": "A Nginx Proxy Manager entry (and, optionally, a Pi-hole DNS name) for this service (PLAN_176). Absent means this service has neither."
+          "description": "A domain name for this service, kept in Nginx Proxy Manager, Pi-hole, or both (PLAN_176, PLAN_238). Absent means this service has neither."
         }
       }
     },
 
     "expose": {
       "type": "object",
-      "description": "A domain name asks StaXX to keep a Nginx Proxy Manager proxy host, and optionally a Pi-hole DNS name, pointed at this service. Written by the editor's 'Proxy and DNS' group, one block per service.",
+      "description": "A domain name asks StaXX to keep a Nginx Proxy Manager proxy host, a Pi-hole DNS name, or both, pointed at this service. Written by the editor's 'Proxy and DNS' group, one block per service.",
       "additionalProperties": false,
       "required": ["domain"],
       "properties": {
         "domain": {
           "type": "string",
           "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$",
-          "description": "The address a browser would be typed to reach this service, e.g. sonarr.home.lan. Present at all is what asks StaXX to keep a proxy host for it; there is no separate on/off key for the proxy entry itself."
+          "description": "The address a browser would be typed to reach this service, e.g. sonarr.home.lan. Which tools keep it is decided by enabled (the Nginx Proxy Manager entry) and dns (the Pi-hole name)."
         },
         "certificate": {
           "type": "string",
@@ -196,7 +196,7 @@
         },
         "dns": {
           "type": "boolean",
-          "description": "Whether StaXX also keeps a Pi-hole A record for domain, pointed at Nginx Proxy Manager's own address. Absent means no DNS name — there is no separate default for this one."
+          "description": "Whether StaXX keeps a Pi-hole A record for domain. It points at Nginx Proxy Manager when its part is enabled, otherwise at the address the app answers on: the server's own address on a bridge network, the app's own address on macvlan or ipvlan, reached with its port. Absent means no DNS name — there is no separate default for this one."
         },
         "websockets": {
           "type": "boolean",
@@ -206,7 +206,7 @@
         "enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Whether the Nginx Proxy Manager proxy host itself is switched on. Absent means on, for the same reason websockets is: turning it back on removes the key, and only off is ever spelled out. Turning this off does not touch the Pi-hole name."
+          "description": "Turns the Nginx Proxy Manager entry on or off. Absent means on, for the same reason websockets is: turning it back on removes the key, and only off is ever spelled out. It does not affect Pi-hole."
         }
       }
     },

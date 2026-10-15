@@ -956,14 +956,15 @@
     // rather than a fixture bolted straight after Container. `flag: 'expose'`
     // wires it into serviceFlags() the same way as every other section — on
     // when the file already holds x-unraid.expose, or ticked on for this
-    // service in this editor. It is also gated on NPM_CONFIGURED (checked in
-    // the render loop below and in the Sections menu), a server-wide setting
-    // no per-service tick can override: with no Nginx Proxy Manager there is
-    // nowhere to send a proxy entry, so the group and its Sections entry are
-    // both left out entirely rather than shown disabled. Drawn by its own
-    // function (exposeGroupHtml()) rather than the generic caption/
-    // fieldHtml() loop, same reason Updates is — the Enabled switch in the
-    // group head and the Remove button at the foot do not fit that grid.
+    // service in this editor. It is also gated on NPM_CONFIGURED or
+    // PIHOLE_CONFIGURED (checked in the render loop below and in the Sections
+    // menu), server-wide settings no per-service tick can override: with
+    // neither tool set up there is nowhere to send a name, so the group and
+    // its Sections entry are both left out entirely rather than shown
+    // disabled. Drawn by its own function (exposeGroupHtml()) rather than
+    // the generic caption/fieldHtml() loop, same reason Updates is — the
+    // per-tool Enabled switches and the Remove button at the foot do not fit
+    // that grid.
     { key: 'expose', heading: 'Proxy and DNS', cls: 'staxx-formgroup--container staxx-formgroup--expose', flag: 'expose' },
     // --mapped, not --pair: a port and a mount carry a third small box (the
     // protocol, the read/write mode) that a variable and a label do not, so
@@ -1027,9 +1028,9 @@
     // every other entry's path names a key stashSection/restoreSection move
     // at the top of the compose file; this one names where inside x-unraid
     // they move it. Left out of the Sections menu entirely when
-    // NPM_CONFIGURED is false (the loop that draws the menu, below) — there
-    // is nowhere to send a proxy entry, so offering the tick would be a
-    // false promise.
+    // neither NPM_CONFIGURED nor PIHOLE_CONFIGURED is set (the loop that draws
+    // the menu, below) — there is nowhere to send a name, so offering the
+    // tick would be a false promise.
     { key: 'expose',        label: 'Proxy and DNS',       path: ['x-unraid', 'expose'],  on: false },
     { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
     { key: 'port',          label: 'Ports',               path: ['ports'],               on: true },
@@ -2973,6 +2974,10 @@
   // labels — so the "whose network is this" answer needs to reach both
   // places rather than only the first one PLAN_147 touched.
   var netProject = {};
+
+  // name -> first IPv4 subnet in CIDR form ('' when none), for the Proxy and
+  // DNS read-out's partial address (PLAN_239). Filled in netLoad().
+  var netSubnet  = {};
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
@@ -5031,20 +5036,149 @@
   // other boolean leaf gets (Adrian, 2026-09-24 — see PLAN_176 B3). No Notes
   // box on either (Adrian: a switch needs no note); the empty cell stays so
   // the grid does not shift against the rows above and below it.
-  function exposeSwitchRowHtml(f, idx, label, switchText, on, inert) {
+  // `where` ('<service>|npm' or '<service>|dns', PLAN_239) adds the green
+  // "domain → address" read-out beside the switch. It shares one flex box
+  // with the switch and spans the value and Notes columns, and sits outside
+  // the <label>, or clicking the text would flip the switch. The box is
+  // always drawn and left empty while the switch is off or there is no
+  // domain: a form edit does not redraw the form, so repaintExposeWhere()
+  // fills or empties it in place.
+  function exposeSwitchRowHtml(f, idx, label, switchText, on, inert, where) {
+    var sw = '<label class="staxx-switch">' +
+             '<input type="checkbox" data-row="' + idx + '" data-part="value"' + (on ? ' checked' : '') +
+               (inert ? ' disabled' : '') + '>' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(switchText) + '</span>' +
+           '</label>';
+    var tail = '<span class="staxx-boxgap" aria-hidden="true"></span>';
+    if (where) {
+      var w = where.split('|');
+      sw = '<div class="staxx-expose-whereflex">' + sw +
+           '<span class="staxx-expose-where" data-expose-where="' + esc(where) + '">' +
+             exposeWhereHtml(w[0], w[1]) + '</span></div>';
+      tail = '';
+    }
     return '<div class="staxx-fieldrow staxx-fieldrow--exposeswitch" data-row="' + idx + '"' +
            ' data-field-row="' + esc(f.id) + '"' +
            ' data-from="' + (f.range ? f.range.start : -1) + '" data-to="' + (f.range ? f.range.end : -1) + '"' +
            ' tabindex="0">' +
            '<span class="staxx-fieldlabel">' + esc(label) + '</span>' +
-           '<label class="staxx-switch">' +
-             '<input type="checkbox" data-row="' + idx + '" data-part="value"' + (on ? ' checked' : '') +
-               (inert ? ' disabled' : '') + '>' +
-             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
-             '<span class="staxx-switch-text">' + esc(switchText) + '</span>' +
-           '</label>' +
-           '<span class="staxx-boxgap" aria-hidden="true"></span>' +
+           sw + tail +
            '</div>';
+  }
+
+  // PLAN_239 — what expose-where said (server address, Nginx Proxy Manager's
+  // address, and each running macvlan/ipvlan service's own address). Asked
+  // once per editor open, with or without a saved stack, and reset in
+  // openEditor() beside exposeCheckLoaded.
+  var exposeWhereLoaded = false;
+  var exposeWhere       = null;   // {hostIp, npmIp, live:{svc: ip}}
+  function loadExposeWhere() {
+    if (exposeWhereLoaded || !(NPM_CONFIGURED || PIHOLE_CONFIGURED)) return;
+    exposeWhereLoaded = true;
+    call('expose-where', { name: openedName || '' }).then(function (r) {
+      if (!r || !r.ok) return;
+      exposeWhere = r;
+      repaintExposeWhere();
+    }).catch(function () { /* the read-outs just stay as they are */ });
+  }
+
+  // Redraws the read-outs in place, for an expose-where or networks answer
+  // that lands after the group was drawn.
+  function repaintExposeWhere() {
+    document.querySelectorAll('[data-expose-where]').forEach(function (el) {
+      var w = el.dataset.exposeWhere.split('|');
+      el.innerHTML = exposeWhereHtml(w[0], w[1]);
+    });
+  }
+
+  // "192.168.1.0/24" -> "192.168.1.x". Only the whole numbers the prefix
+  // fixes are kept (a /22 fixes two), and at least one is left unknown.
+  // '' when there is no usable IPv4 subnet.
+  function partialAddress(cidr) {
+    var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cidr || '');
+    if (!m) return '';
+    var whole = Math.min(3, Math.floor(+m[5] / 8));
+    if (whole < 1) return '';
+    var out = [];
+    for (var i = 0; i < 4; i++) out.push(i < whole ? m[i + 1] : 'x');
+    return out.join('.');
+  }
+
+  var EXPOSE_TIP_NOADDR = 'Docker or you assign this address. It shows here once the app has an address: type one in its network settings, or start the app.';
+
+  // The read-out text for one switch, worked out from the live form so it
+  // follows every edit. Mirrors staxx_webui_url() (include/Stacks.php), except
+  // that the form's fixed address wins over the live one: the form is what
+  // will be true after Save. which: 'npm' (domain -> app address:port) or
+  // 'dns' (domain -> Nginx's address, or the app's when Nginx is off).
+  // Returns HTML, '' when there is nothing to show yet.
+  function exposeWhereHtml(svcName, which) {
+    if (!MODEL) return '';
+    var domain = '', port = '', fixed = '', netName = '', mode = '';
+    MODEL.fields.forEach(function (f) {
+      if (f.service !== svcName || !f.parts) return;
+      var v = f.absent || !f.parts.value ? '' : String(f.parts.value.value || '').trim();
+      if (f.target === 'x-unraid.expose.domain') domain = v;
+      else if (f.target === 'x-unraid.webui') port = v;
+      else if (f.target === 'network_mode') mode = v;
+      else if (f.binder === 'list' && f.listKey === 'networks') {
+        if (!netName) netName = v;
+        var ip = f.parts.ipv4_address ? String(f.parts.ipv4_address.value || '').trim() : '';
+        if (!fixed && ip) fixed = ip;
+      }
+    });
+    if (!domain) return '';
+    var parts = exposeParts(svcName);
+    if (which === 'npm' ? !parts.nginxOn : !parts.dnsOn) return '';
+
+    var notSet = function (tip) {
+      return '<span class="staxx-expose-where-notset" title="' + esc(tip) + '">Not set</span>';
+    };
+    var arrow = esc(domain) + ' → ';
+
+    // Pi-hole with Nginx on points at Nginx itself.
+    if (which === 'dns' && parts.nginxOn) {
+      if (!exposeWhere) return '';
+      return arrow + (exposeWhere.npmIp ? esc(exposeWhere.npmIp)
+        : notSet('StaXX could not work out Nginx Proxy Manager\'s address. Check its address in Settings.'));
+    }
+
+    // The app's own address. network_mode naming a macvlan/ipvlan network
+    // counts like an attached one.
+    var kind = netKindOfService(svcName);
+    if (kind !== 'other' && mode && mode !== 'host' && !/^(container|service):/.test(mode)
+        && (netDriver[mode] === 'macvlan' || netDriver[mode] === 'ipvlan')) {
+      kind = 'other';
+      netName = mode;
+    }
+    // A network Docker does not have yet (the list has loaded and does not
+    // name it) gives no address to show, whatever kind it will turn out to be.
+    if (!fixed && netName && netLoaded && !(netName in netDriver)) {
+      return arrow + notSet(EXPOSE_TIP_NOADDR);
+    }
+    var addr = fixed, partial = false;
+    if (!addr && kind !== 'other') {
+      if (!exposeWhere) return '';
+      addr = exposeWhere.hostIp || '';
+    } else if (!addr) {
+      if (!exposeWhere) return '';
+      addr = (exposeWhere.live && exposeWhere.live[svcName]) || '';
+      if (!addr) {
+        addr = partialAddress(netSubnet[netName]);
+        if (!addr) return arrow + notSet(EXPOSE_TIP_NOADDR);
+        partial = true;
+      }
+    }
+    if (!addr) return '';
+
+    var text = esc(addr);
+    if (which === 'npm') {
+      if (!port) return arrow + notSet('Fill in the web page port to see where the proxy sends people.');
+      text += ':' + esc(port);
+    }
+    if (partial) text = '<span class="staxx-expose-where-partial" title="' + esc(EXPOSE_TIP_NOADDR) + '">' + text + '</span>';
+    return arrow + text;
   }
 
   // PLAN_176 B5 — what expose-check said for this stack, cached across the
@@ -5054,7 +5188,7 @@
   // exposeCheckLoaded), and again after this stack's own Apply button or the
   // save-time flow succeeds.
   var exposeCheckLoaded = false;
-  var exposeCheckCache  = null;   // {svcName: {steps:[...]} | {refusal: '...'}}
+  var exposeCheckCache  = null;   // {svcName: {steps:[...]} | {refusal: '...'} | {waiting: '...'}}
   function loadExposeCheck() {
     // A brand-new, unsaved stack has no compose file on disk yet for
     // expose-check to read — nothing to ask until the first save.
@@ -5077,7 +5211,17 @@
     if (!entry) return '<span class="staxx-sub">' +
       (exposeCheckCache ? 'Not set up yet. Save to set it up.' : 'Checking…') + '</span>';
     if (entry.refusal) return '<span class="red-text">' + esc(entry.refusal) + '</span>';
-    var steps = entry.steps || [];
+    // {waiting} is not a failure: the entry is set up once the container runs,
+    // so it is plain text with no mark. The save flow and Apply ignore it too.
+    if (entry.waiting) return '<span>' + esc(entry.waiting) + '</span>';
+    // Only the parts that are on get a line: a part switched off here that
+    // also matches there has nothing worth saying. A step that is NOT 'none'
+    // (a leftover entry still to be switched off or removed) always shows.
+    var parts = MODEL ? exposeParts(svcName) : { nginxOn: true, dnsOn: true };
+    var steps = (entry.steps || []).filter(function (st) {
+      if (st.op !== 'none') return true;
+      return st.target === 'npm' ? parts.nginxOn : parts.dnsOn;
+    });
     var bad = false;
     // Short state wording, one line per service; the full step sentences are
     // for the box that opens after Save.
@@ -5096,6 +5240,13 @@
              esc(st.target === 'npm' ? 'Nginx Proxy Manager' : 'Pi-hole') + ': ' + esc(say) +
              '</div>';
     }).join('');
+    // With Nginx off the name reaches the app directly, so the port has to
+    // be typed after it; `open` is the server's worked-out address ('' when
+    // it does not apply).
+    if (!parts.nginxOn && parts.dnsOn && entry.open) {
+      lines += '<div class="staxx-expose-statusline">Open it at <a href="' + esc(entry.open) +
+               '" target="_blank" rel="noopener">' + esc(entry.open) + '</a></div>';
+    }
     if (bad) {
       lines += '<button type="button" class="staxx-btn" data-expose-apply="' + esc(svcName) + '">Apply</button>';
     }
@@ -5129,9 +5280,17 @@
 
     loadExposeCerts();
 
+    // Each tool is its own part with its own Enabled switch, drawn only when
+    // that tool is set up (NPM_CONFIGURED / PIHOLE_CONFIGURED, read off the
+    // scaffold near the top of this file). Only the Nginx rows dim when its
+    // switch is off — the Domain name and Pi-hole parts stand on their own.
+    var dimNginx = enabledOn ? '' : ' staxx-fieldrow--exposedim';
+    var tagged = function (html, extra) {
+      return html.replace('staxx-fieldrow', 'staxx-fieldrow' + extra);
+    };
+
     var out = [];
-    out.push('<div class="staxx-formgroup staxx-formgroup--container staxx-formgroup--expose' +
-              (enabledOn ? '' : ' staxx-formgroup--exposedim') + '" data-group="expose">');
+    out.push('<div class="staxx-formgroup staxx-formgroup--container staxx-formgroup--expose" data-group="expose">');
     out.push(
       '<div class="staxx-grouphead">' +
         '<div class="staxx-groupheading">' +
@@ -5139,24 +5298,24 @@
           '<h5 class="staxx-fieldgroup">' + headingToggleHtml('expose', 'Proxy and DNS') +
             ' <span class="staxx-groupnote">(optional)</span></h5>' +
         '</div>' +
-        '<label class="staxx-switch staxx-expose-enabled">' +
-          '<input type="checkbox" data-row="' + enabled.idx + '" data-part="value"' +
-          (enabledOn ? ' checked' : '') + (inert ? ' disabled' : '') + '>' +
-          '<span class="staxx-switch-track" aria-hidden="true"></span>' +
-          '<span class="staxx-switch-text">Enabled</span>' +
-        '</label>' +
       '</div>'
     );
     out.push(groupBodyOpenHtml(svc.name, 'expose', collapsed));
     out.push(captionRow({ key: 'expose', cls: 'staxx-formgroup--container' }));
     out.push(fieldHtml(domain.f, domain.idx));
-    if (cert) out.push(exposeCertRowHtml(cert.f, cert.idx, inert));
-    if (ws) out.push(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert));
-    // PIHOLE_CONFIGURED (read off the scaffold near the top of this file) —
-    // a Pi-hole entry means nothing without Nginx Proxy Manager, but NPM
-    // works perfectly well with no Pi-hole at all, so this row alone is
-    // gated on the second server-wide setting.
-    if (dns && PIHOLE_CONFIGURED) out.push(exposeSwitchRowHtml(dns.f, dns.idx, 'DNS name', 'Add to Pi-hole', dnsOn, inert));
+    if (NPM_CONFIGURED) {
+      out.push(tagged(exposeSwitchRowHtml(enabled.f, enabled.idx, 'Nginx Proxy Manager', 'Enabled', enabledOn, inert, svc.name + '|npm'),
+                      ' staxx-fieldrow--exposesub'));
+      if (cert) out.push(tagged(exposeCertRowHtml(cert.f, cert.idx, inert), dimNginx));
+      if (ws) out.push(tagged(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert), dimNginx));
+    }
+    if (dns && PIHOLE_CONFIGURED) {
+      out.push(tagged(exposeSwitchRowHtml(dns.f, dns.idx, 'Pi-hole', 'Enabled', dnsOn, inert, svc.name + '|dns'),
+                      ' staxx-fieldrow--exposesub'));
+    }
+    if (exposeBothOff(svc.name)) {
+      out.push('<div class="staxx-expose-warn" role="alert">' + esc(EXPOSE_BOTH_OFF) + '</div>');
+    }
     out.push(
       '<div class="staxx-fieldrow staxx-fieldrow--exposestatus">' +
         '<span class="staxx-fieldlabel">Status</span>' +
@@ -6719,7 +6878,7 @@
           // PLAN_176 B3b — left off the menu with nowhere to send a proxy
           // entry, same reason the group itself is skipped in the render
           // loop below (grp.key === 'expose').
-          if (s.key === 'expose' && !NPM_CONFIGURED) continue;
+          if (s.key === 'expose' && !NPM_CONFIGURED && !PIHOLE_CONFIGURED) continue;
           bits.push('<label class="staxx-sectionrow"><input type="checkbox" data-flag="' + s.key +
                     '" data-service="' + esc(serviceName) + '"' + (flags[s.key] ? ' checked' : '') + '> ' +
                     esc(s.label) + '</label>');
@@ -7016,10 +7175,10 @@
           // below), but still gated on NPM being configured at all — a
           // server-wide setting no per-service tick can override, checked
           // first since flags.expose can be true (ticked, or the file
-          // already holds x-unraid.expose) while NPM itself has since been
-          // switched off in Settings.
+          // already holds x-unraid.expose) while both tools have since been
+          // switched off in Settings. Either tool alone is enough to offer it.
           if (grp.key === 'expose') {
-            if (!NPM_CONFIGURED || !flags.expose) continue;
+            if ((!NPM_CONFIGURED && !PIHOLE_CONFIGURED) || !flags.expose) continue;
             var expCollapsed = isGroupCollapsed('expose') && !rowsHaveGap(rows, gaps);
             out.push(exposeGroupHtml(svc, rows, form.fields, expCollapsed));
             continue;
@@ -7169,7 +7328,37 @@
         out.push({ index: i, field: f, why: gapWhy(f) });
       }
     }
+    // A Proxy and DNS name with both parts off is a name that goes nowhere;
+    // it blocks Save like any other gap, pinned on the Domain name row.
+    for (var xi = 0; xi < MODEL.fields.length; xi++) {
+      var xf = MODEL.fields[xi];
+      if (xf.service && xf.target === 'x-unraid.expose.domain' && exposeBothOff(xf.service)) {
+        out.push({ index: xi, field: xf, why: EXPOSE_BOTH_OFF });
+      }
+    }
     return out;
+  }
+
+  var EXPOSE_BOTH_OFF = 'Turn on Nginx Proxy Manager or Pi-hole for this name, or clear the domain name.';
+
+  // The live on/off of one service's two Proxy and DNS parts, read off the
+  // model. Nginx counts as off whenever NPM is not set up here: the editor
+  // writes enabled:false in that case (see commit()), so the file says so.
+  function exposeParts(svcName) {
+    var st = { hasDomain: false, nginxOn: false, dnsOn: false };
+    MODEL.fields.forEach(function (f) {
+      if (f.service !== svcName || !f.parts || !f.parts.value) return;
+      var v = f.absent ? '' : f.parts.value.value;
+      if (f.target === 'x-unraid.expose.domain')  st.hasDomain = String(v || '').trim() !== '';
+      if (f.target === 'x-unraid.expose.enabled') st.nginxOn = NPM_CONFIGURED && v !== 'false';
+      if (f.target === 'x-unraid.expose.dns')     st.dnsOn = v === 'true';
+    });
+    return st;
+  }
+
+  function exposeBothOff(svcName) {
+    var st = exposeParts(svcName);
+    return st.hasDomain && !st.nginxOn && !st.dnsOn;
   }
 
   function updateRequired() {
@@ -9228,6 +9417,7 @@
     // reparse() above for why this is the quiet recompute, not findRun()).
     findRecompute();
     updateRequired();
+    repaintExposeWhere();   // PLAN_239 — a switch, address or port edit changes where the name points
     relint();   // a form commit rebuilds MODEL.doc just like reparse() does
   }
 
@@ -9457,6 +9647,23 @@
     // comment above scheduleCrossLinkCheck() for exactly what has to be true
     // of the typed value before this asks the server anything at all.
     if (propEp) scheduleCrossLinkCheck(f, el.value);
+
+    // With Nginx Proxy Manager not set up, its part is hidden, so the file
+    // has to say it is off: a domain typed here is written with
+    // enabled: false, and setting NPM up later then changes nothing by
+    // itself. Read from a fresh form since the write above may have just
+    // created the expose block.
+    if (!NPM_CONFIGURED && f.target === 'x-unraid.expose.domain' && el.dataset.part === 'value' &&
+        String(el.value).trim() !== '') {
+      var xform = YAML.buildForm(MODEL.doc);
+      var xen = null;
+      xform.fields.forEach(function (xf) {
+        if (xf.service === f.service && xf.target === 'x-unraid.expose.enabled') xen = xf;
+      });
+      if (xen && (xen.absent || xen.parts.value.value !== 'false')) {
+        YAML.setPart(MODEL.doc, xform, xen.id, 'value', 'false');
+      }
+    }
     quietEdit();
   }
 
@@ -10123,8 +10330,12 @@
     document.querySelectorAll('[data-dnsmark]').forEach(function (el) {
       var row = EXPOSE_STATUS[el.dataset.dnsmark];
       if (!row) { el.hidden = true; return; }
-      var grey = !row.enabled;
-      var bad  = !grey && (row.npm === false || row.dns === false);
+      // Each part counts only while it is on: Nginx by row.enabled, Pi-hole
+      // by a known state (row.dns is null when its switch is off). Grey means
+      // neither is, and red only ever means a part that is on and wrong.
+      var npmOn = !!row.enabled;
+      var grey = !npmOn && row.dns === null;
+      var bad  = !grey && ((npmOn && row.npm === false) || row.dns === false);
       var mark = document.createElement(bad ? 'button' : 'span');
       if (bad) mark.type = 'button';
       mark.className = 'staxx-dnsmark' + (grey ? '' : bad ? ' staxx-dnsmark--bad' : ' staxx-dnsmark--ok');
@@ -10134,7 +10345,7 @@
       // exists in the card when dns is actually on (B5: "the Pi-hole row
       // only when dns is on"), same as row.dns === null meaning the switch
       // is off rather than drifted.
-      mark.dataset.npm = row.npm === false ? 'bad' : row.npm === true ? 'ok' : '';
+      mark.dataset.npm = !npmOn ? '' : row.npm === false ? 'bad' : row.npm === true ? 'ok' : '';
       mark.dataset.dns = row.dns === false ? 'bad' : row.dns === true ? 'ok' : '';
       mark.dataset.tip = grey ? 'Switched off' : '';
       mark.textContent = 'DNS';
@@ -16690,6 +16901,7 @@
       netPresent = Object.create(null);
       netDriver = {};
       netProject = {};
+      netSubnet = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver, project = nets[n].project;
@@ -16698,6 +16910,7 @@
         netPresent[name] = true;
         netDriver[name] = driver;
         netProject[name] = project || '';
+        netSubnet[name] = nets[n].subnet || '';
         if (known[name]) continue;
         // A compose-created network is offered too, marked with the stack
         // that made it — hiding it just sent people into the YAML by hand
@@ -16710,6 +16923,7 @@
 
       if (!netLoaded) lateWanted = true;
       netLoaded = true;
+      repaintExposeWhere();
 
       return res;
     });
@@ -17796,6 +18010,8 @@
     // lines. Re-asked below, once MODEL exists to draw "Checking…" into.
     exposeCheckLoaded = false;
     exposeCheckCache  = null;
+    exposeWhereLoaded = false;
+    exposeWhere       = null;
     reparse();
 
     // PLAN_176 B5 — what the editor's own save() compares against once it
@@ -17816,6 +18032,7 @@
     // below.
     loadExposeStatus();
     loadExposeCheck();
+    loadExposeWhere();
 
     // Ask what hardware this server has, so device rows can be named after it
     // rather than showing a bare path. Not waited for — the form is usable at
@@ -18919,10 +19136,11 @@
       var row = event.target.closest('.staxx-tabmenu-row');
       if (!row) return;
       var act = row.dataset.act;
+      var file = tabmenuFile;   // read first: closing the menu clears tabmenuFile
       closeTabmenu();
-      if (act === 'rename') renameFile();
-      else if (act === 'delete') deleteFile();
-      else if (act === 'download') downloadFile();
+      if (act === 'rename') renameFile(file);
+      else if (act === 'delete') deleteFile(file);
+      else if (act === 'download') downloadFile(file);
       else if (act === 'refresh') filesLoad();
     });
   }
@@ -18965,8 +19183,8 @@
     return COMPOSE_FILENAMES.indexOf(file.toLowerCase()) === -1;
   }
 
-  function renameFile() {
-    var name = tabmenuFile;   // the file whose chevron opened this menu, not necessarily the open tab
+  // `name` is the file whose chevron opened the menu, not necessarily the open tab.
+  function renameFile(name) {
     if (name === null) return;   // the compose tab has no Rename item
 
     askText('Rename file', 'Rename "' + name + '" to', name).then(function (to) {
@@ -18997,12 +19215,12 @@
     });
   }
 
-  // Deletes the file whose chevron opened this menu — not necessarily the
-  // open tab, now that every tab carries its own — through #staxx-confirm
-  // either way: a file nothing references gets the short one-line question,
-  // a file the compose file DOES reference gets the longer warning below.
-  function deleteFile() {
-    var name = tabmenuFile;
+  // Deletes the file `name` — the one whose chevron opened the menu, not
+  // necessarily the open tab, now that every tab carries its own — through
+  // #staxx-confirm either way: a file nothing references gets the short
+  // one-line question, a file the compose file DOES reference gets the
+  // longer warning below.
+  function deleteFile(name) {
     if (name === null) return;   // the compose tab has no Delete item
 
     function go() {
@@ -19079,13 +19297,12 @@
   // when the companion was opened. A companion file is not necessarily
   // loaded at all — read() it fresh, so Download works for a file that is
   // not the one open either.
-  function downloadFile() {
-    if (tabmenuFile === null) {
+  function downloadFile(name) {
+    if (name === null) {
       triggerDownload(tabLabel(), fileOpen === null ? currentText() : fileStash);
       return;
     }
 
-    var name = tabmenuFile;
     call('file-read', { name: openedName, file: name }).then(function (res) {
       if (!res || !res.ok) {
         setYamlStatus((res && res.error) || ('Could not read "' + name + '".'));
@@ -19422,7 +19639,8 @@
     });
   }
 
-  if (binGet) binGet.addEventListener('click', downloadFile);
+  // Passes the open file explicitly: the handler would otherwise get the click event as `name`.
+  if (binGet) binGet.addEventListener('click', function () { downloadFile(fileOpen); });
 
   // Dropping is anywhere on the editor, not just the strip — listened for on
   // the modal body, which covers both panes. preventDefault() on dragenter
@@ -20718,7 +20936,7 @@
   function busyPillHtml(label) {
     return '<button type="button" class="staxx-pill staxx-pill--busy">' +
       '<span class="staxx-chipmark" data-mark="refresh" aria-hidden="true"></span>' +
-      '<span class="staxx-chiptext">' + label + '</span></button>';
+      '<span class="staxx-chiptext staxx-chip-words">' + label + '</span></button>';
   }
 
   function paintBusyLabel(row, label) {
@@ -22375,9 +22593,12 @@
     // is only ever a count or a version, never a word. A waiting chip with
     // a live countdown is left blank here — paintPillClock() fills it in,
     // and must not be fought with a value written on every poll.
-    var text = '';
+    // `words` marks a phrase (a version, a countdown) as opposed to a count,
+    // so the phone card can hide it and leave the icon.
+    var text = '', words = false;
     if (meaning === 'waiting' && entry.due > 0) {
       text = '';
+      words = true;
     } else if (meaning === 'watch') {
       // Adrian's ruling, 2026-09-18: shows its count as text, always — it is
       // not a countdown, so nothing overwrites this later. Checked ahead of
@@ -22388,6 +22609,7 @@
       text = String(entry.count);
     } else if ((meaning === 'update' || meaning === 'newbuild') && entry.version) {
       text = entry.version;
+      words = true;
     }
     // The words the chip used to print in full, kept for screen readers and
     // the title-less hover: the old label plus the old "(N)" suffix rule,
@@ -22423,6 +22645,7 @@
       pill.appendChild(txt);
     }
     if (txt.staxxTxt !== text) { txt.textContent = text; txt.staxxTxt = text; }
+    txt.classList.toggle('staxx-chip-words', words);
     // The note is appended to the tip rather than replacing it, mirroring
     // staxx_update_pill_html() — a stale tooltip after a recovery is worse
     // than none, so this is rebuilt every time rather than only when new.
@@ -22474,6 +22697,7 @@
     var txt = pill.querySelector('.staxx-chiptext');
     if (!txt) return;
     if (txt.staxxTxt !== text) { txt.textContent = text; txt.staxxTxt = text; }
+    txt.classList.add('staxx-chip-words');
   }
 
   var pageClockTimer = null;
@@ -22707,19 +22931,22 @@
       card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
         '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
     } else if (pill.classList.contains('staxx-dnsmark')) {
-      // PLAN_176 B5 — grey (the service's Enabled switch is off) says so
+      // PLAN_176 B5 — grey (both Enabled switches are off) says so
       // plainly and leaves it there, the same lead-only shape a bare data-tip
       // card gets — there is nothing to check while it is off, so a table of
       // ✓/✗ would be answering a question that does not apply. Green/red get
       // the domain as the lead and one fact row per switch that is actually
-      // on, the Pi-hole row left out when data-dns is '' (the switch itself
-      // is off), same reasoning updCardFacts() gives for skipping a row that
+      // on, the Nginx row left out when data-npm is '' and the Pi-hole row
+      // when data-dns is '' (that switch is off), same reasoning updCardFacts() gives for skipping a row that
       // does not apply.
       if (pill.dataset.tip) {
         card.innerHTML = '<div class="staxx-updcard__lead">' + esc(pill.dataset.tip) + '</div>';
       } else {
-        var facts = '<dt>Nginx Proxy Manager</dt><dd>' + (pill.dataset.npm === 'bad'
-          ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
+        var facts = '';
+        if (pill.dataset.npm) {
+          facts += '<dt>Nginx Proxy Manager</dt><dd>' + (pill.dataset.npm === 'bad'
+            ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
+        }
         if (pill.dataset.dns) {
           facts += '<dt>Pi-hole</dt><dd>' + (pill.dataset.dns === 'bad'
             ? '<span class="staxx-updcard__bad">✗</span>' : '<span class="staxx-updcard__ok">✓</span>') + '</dd>';
@@ -24293,6 +24520,20 @@
     refreshRows(function () { waiting.forEach(function (d) { d(); }); });
   });
 
+  // The server marks each folder's last stack card (the phone layout closes
+  // the folder's orange line there); this repeats it after a swap so the mark
+  // can never be left on a card that is no longer last.
+  function markLastNested() {
+    if (!rowsHost) return;
+    Array.prototype.forEach.call(rowsHost.querySelectorAll('.staxx-nested--last'), function (r) {
+      r.classList.remove('staxx-nested--last');
+    });
+    Array.prototype.forEach.call(rowsHost.querySelectorAll('.staxx-group--folder-children'), function (g) {
+      var cards = g.querySelectorAll('.staxx-row.staxx-stack-row.staxx-nested');
+      if (cards.length) cards[cards.length - 1].classList.add('staxx-nested--last');
+    });
+  }
+
   function refreshRows(done) {
     if (dockerQuiet()) {
       if (done) quietDones.push(done);
@@ -24345,6 +24586,7 @@
       // showing rows now orphaned. closeServicesModal() is a no-op when
       // nothing is open.
       closeServicesModal();
+      closeChipWindow();
 
       var seenRows = {};
       if (rowsHost) {
@@ -24353,6 +24595,7 @@
           function (r) { seenRows[r.dataset.stackRow] = true; });
 
         rowsHost.innerHTML = res.html;
+        markLastNested();
 
         Array.prototype.forEach.call(
           rowsHost.querySelectorAll('[data-stack-row]'), function (r) {
@@ -34592,9 +34835,12 @@
   var servicesModal = null;   // the one overlay, built the first time it is needed
   var svcModalState  = null;  // { moved: [{el, parent, next}], chevron } while open, else null
 
-  function buildServicesModal() {
+  // `chips` builds the phone card's chip window instead: the same shell (head,
+  // close button, backdrop) around a list in place of the services grid.
+  function buildServicesModal(chips) {
+    var closeIt = chips ? closeChipWindow : closeServicesModal;
     var el = document.createElement('div');
-    el.className = 'staxx-svcmodal';
+    el.className = 'staxx-svcmodal' + (chips ? ' staxx-svcmodal--chips' : '');
     el.hidden = true;
     el.innerHTML =
       '<div class="staxx-svcmodal__dialog" role="dialog" aria-modal="true">' +
@@ -34604,15 +34850,20 @@
           '<span class="staxx-svcmodal__count"></span>' +
         '</div>' +
         '<button type="button" class="staxx-svcmodal__close" aria-label="Close">✕</button>' +
-        '<div class="staxx-table-wrap"><div class="staxx-stacks staxx-stacks--modal" role="grid"></div></div>' +
+        (chips
+          ? '<div class="staxx-chipwin-body"><ul class="staxx-chipwin-list"></ul>' +
+            '<button type="button" class="staxx-btn staxx-chipwin-close">Close</button></div>'
+          : '<div class="staxx-table-wrap"><div class="staxx-stacks staxx-stacks--modal" role="grid"></div></div>') +
       '</div>';
     // Backdrop click only — a click inside the dialog must not close it.
     el.addEventListener('click', function (event) {
-      if (event.target === el) closeServicesModal();
+      if (event.target === el) closeIt();
     });
     el.querySelector('.staxx-svcmodal__close').addEventListener('click', function () {
-      closeServicesModal();
+      closeIt();
     });
+    var bodyClose = el.querySelector('.staxx-chipwin-close');
+    if (bodyClose) bodyClose.addEventListener('click', closeIt);
     // Inside .staxx-scaffold, not <body> — see the bundle/export modals
     // above for the same reasoning: .staxx-btn and the card rules this
     // modal depends on are only styled inside the scaffold.
@@ -34690,6 +34941,203 @@
     });
     if (state.chevron && state.chevron.isConnected) state.chevron.focus();
   }
+
+  /* ---- PLAN_241: the chip window, on the phone card ----------------------
+   *
+   * On the phone the chips show only their icons, and some are buttons (an
+   * update chip starts a real `compose pull`). A tap anywhere on a stack
+   * card's state cell therefore opens this window instead, and never reaches
+   * a chip's own action: that action is offered here as a labelled button.
+   * The phone is detected the way the layout does it: the list's container
+   * is 600px (60rem) wide or less.
+   */
+  var chipWindow = null;
+  var chipBypass = false;   // true for the one click the window's action button replays
+
+  function onPhoneList() {
+    var wrap = (rowsHost && rowsHost.closest('.staxx-table-wrap')) || scaffold.querySelector('.staxx-table-wrap');
+    return !!wrap && wrap.getBoundingClientRect().width <= 600;
+  }
+
+  function chipsOf(cell) {
+    return Array.prototype.filter.call(cell.children, function (c) {
+      return !c.hidden && c.matches('.staxx-pill, .staxx-updatepill, .staxx-pendingchip');
+    });
+  }
+
+  // One chip's full meaning, and the label of its own action when it has one.
+  function describeChip(chip) {
+    var isBtn = chip.tagName === 'BUTTON';
+    var txtEl = chip.querySelector('.staxx-chiptext');
+    var words = txtEl ? txtEl.textContent.trim() : '';
+    var markEl = chip.querySelector('.staxx-chipmark');
+    var mark = markEl ? markEl.dataset.mark : '';
+    var cls = chip.classList;
+    var text, action = null;
+
+    if (cls.contains('staxx-updatepill')) {
+      var st = chip.dataset.updateState;
+      var count = parseInt(chip.dataset.updateCount || '0', 10) || 0;
+      var note = chip.dataset.updateNote || '';
+      if (cls.contains('staxx-updatepill--waiting') && st === 'update') {
+        text = words === 'due now' ? 'An update is due now.'
+             : words ? 'Update due in ' + words + '.' : 'An update is waiting.';
+        if (chip.dataset.updateWhy) text += ' ' + chip.dataset.updateWhy;
+        if (isBtn) action = 'Update now';
+      } else if (st === 'watch') {
+        var n = parseInt(chip.dataset.updateWatch || '0', 10) || 0;
+        text = 'The author’s published example does ' + n + (n === 1 ? ' thing' : ' things') +
+          ' differently from this file.';
+      } else if (cls.contains('staxx-updatepill--newbuild')) {
+        text = count > 1 ? count + ' images have a new build available.' : 'A new build of the image is available.';
+        if (isBtn) action = 'Update now';
+      } else if (cls.contains('staxx-updatepill--update')) {
+        text = count > 1 ? count + ' images have updates available.'
+             : 'An update is available' + (words ? ' (' + words + ')' : '') + '.';
+        if (isBtn) action = 'Update now';
+      } else if (cls.contains('staxx-updatepill--failing')) {
+        text = 'The last check for updates failed.';
+      } else if (cls.contains('staxx-updatepill--notfound')) {
+        text = 'The image, or its tag, could not be found.';
+      } else if (cls.contains('staxx-updatepill--notinstalled')) {
+        text = 'The image is not installed yet.';
+      } else {
+        text = chip.getAttribute('aria-label') || 'There is news about this image.';
+      }
+      if (note) text += ' ' + note;
+      return { text: text, action: action };
+    }
+
+    // Everything else reads from its hover words, with the "Click to ..." tail
+    // dropped: the action button says that part.
+    var tip = (chip.dataset.tip || chip.getAttribute('title') || chip.getAttribute('aria-label') || '')
+      .replace(/\s*Click to [^.]*\./g, '').trim();
+    var lines = tip.split('\n');
+    var rest = lines.slice(1).join(' ').trim();
+
+    if (chip.dataset.fixStack) {
+      return { text: 'Docker Compose cannot read this stack’s file, so it cannot start.',
+               action: 'Open the file to fix it' };
+    }
+    if (cls.contains('staxx-pill--fail')) {
+      return { text: tip || 'The last command failed.', action: 'Show what happened' };
+    }
+    if (cls.contains('staxx-pill--busy')) {
+      return { text: words ? 'Working on it: ' + words : 'A command is still running on this stack.',
+               action: 'Show its output' };
+    }
+    if (mark === 'play') {
+      // The tip's own explanation already opens with "running" for a single
+      // container, so a head is added only where it says something more: how
+      // many containers are running.
+      var many = /^\d+$/.test(words) && parseInt(words, 10) > 1;
+      var bad  = cls.contains('staxx-pill--bad') || cls.contains('staxx-pill--warn');
+      if (rest) text = (many && !bad ? words + ' containers are running. ' : '') + rest;
+      else      text = many ? 'Running (' + words + ' containers).' : 'Running.';
+      return { text: text, action: cls.contains('staxx-pill--offer') ? 'Look for a health check' : null };
+    }
+    if (mark === 'stop') {
+      var status = lines[0].trim();
+      if (status.toLowerCase() === 'not created') return { text: 'Not created yet.', action: null };
+      status = status.replace(/exited\s*\((\d+)\)(\s+)?/i, function (m, code, sp) {
+        return 'exited with code ' + code + (sp ? ', ' : '');
+      });
+      status = status.charAt(0).toLowerCase() + status.slice(1);
+      return { text: 'Stopped' + (status && status !== 'stopped' ? ' (' + status + ')' : '') + '.', action: null };
+    }
+    if (cls.contains('staxx-pendingchip')) {
+      return { text: tip, action: isBtn ? 'Show what changed' : null };
+    }
+    return { text: tip.replace(/\n+/g, ' ') || words || 'No more detail is available for this chip.', action: null };
+  }
+
+  function openChipWindow(row, cell) {
+    var name  = row.dataset.stackRow;
+    var chips = chipsOf(cell);
+    if (!chipWindow) chipWindow = buildServicesModal(true);
+
+    var iconBtn  = row.querySelector('.staxx-icon');
+    var iconHost = chipWindow.querySelector('.staxx-svcmodal__icon');
+    iconHost.innerHTML = '';
+    if (iconBtn && iconBtn.firstElementChild) iconHost.appendChild(iconBtn.firstElementChild.cloneNode(true));
+    chipWindow.querySelector('.staxx-svcmodal__name').textContent = (iconBtn && iconBtn.dataset.label) || name;
+    chipWindow.querySelector('.staxx-svcmodal__count').textContent = '';
+
+    var list = chipWindow.querySelector('.staxx-chipwin-list');
+    list.innerHTML = '';
+    chips.forEach(function (chip, index) {
+      var d  = describeChip(chip);
+      var li = document.createElement('li');
+      li.className = 'staxx-chipwin-item';
+
+      // The chip's own classes on an empty shell, so the icon keeps its colour.
+      var icon = document.createElement('span');
+      icon.className = 'staxx-chipwin-icon';
+      var shell = document.createElement('span');
+      shell.className = chip.className;
+      var mark = chip.querySelector('.staxx-chipmark');
+      if (mark) shell.appendChild(mark.cloneNode(true));
+      icon.appendChild(shell);
+      li.appendChild(icon);
+
+      var text = document.createElement('span');
+      text.className = 'staxx-chipwin-text';
+      text.textContent = d.text;
+      li.appendChild(text);
+
+      if (d.action) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'staxx-btn staxx-chipwin-action';
+        btn.textContent = d.action;
+        var sig = chip.className;
+        btn.addEventListener('click', function () { runChipAction(name, index, sig); });
+        li.appendChild(btn);
+      }
+      list.appendChild(li);
+    });
+
+    chipWindow.hidden = false;
+    document.addEventListener('keydown', onChipWindowKeydown);
+    var closeBtn = chipWindow.querySelector('.staxx-svcmodal__close');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function onChipWindowKeydown(event) {
+    if (event.key === 'Escape') closeChipWindow();
+  }
+
+  function closeChipWindow() {
+    if (!chipWindow || chipWindow.hidden) return;
+    chipWindow.hidden = true;
+    document.removeEventListener('keydown', onChipWindowKeydown);
+  }
+
+  // Closes the window, then replays a click on the chip itself so its own
+  // handler runs exactly as on desktop. The chip is looked up again, since a
+  // refresh may have repainted the cell; if it no longer looks the same
+  // nothing is run, rather than something the person did not choose.
+  function runChipAction(name, index, sig) {
+    closeChipWindow();
+    var row  = rowFor(name);
+    var cell = row && row.querySelector('.staxx-cell--state');
+    var chip = cell && chipsOf(cell)[index];
+    if (!chip || chip.className !== sig) return;
+    chipBypass = true;
+    try { chip.click(); } finally { chipBypass = false; }
+  }
+
+  // Capture phase on the scaffold, so it runs before every chip's own click
+  // handling below it and can stop it. Only a stack card's state cell with at
+  // least one chip in it is taken, and only on the phone.
+  scaffold.addEventListener('click', function (event) {
+    if (chipBypass || !event.target.closest) return;
+    var cell = event.target.closest('.staxx-stack-row .staxx-cell--state');
+    if (!cell || !onPhoneList() || !chipsOf(cell).length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openChipWindow(cell.closest('.staxx-stack-row'), cell);
+  }, true);
 
   // New folder's own click now runs through buildAddMenu() (PLAN_173); see
   // askNewFolder() above for why the naming box always anchors to the

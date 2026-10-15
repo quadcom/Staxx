@@ -21,6 +21,11 @@ setting is on but the header-menu setting is off. Both markers are **projections
 parsing an ini file there — or quoting a config lookup inside an ini header — would be wasteful and
 fragile.
 
+**The Docker takeover page.** With the takeover on, `shadow/Docker.page.tmpl` becomes `Docker.page`
+and hides the stock Docker button. A direct visit to `/Docker` still renders its body: `template.php`
+picks the page by name with no `Cond` check, and `DefaultPageLayout.php` shows the body whenever it
+is non-empty. So the body redirects to `/StaXX` rather than leaving a blank page.
+
 **The Dashboard tile** is `StaXXDashboard.page` (`Menu="Dashboard:0"`). It has **no `Title`**: a
 Title makes Unraid draw a tab bar across the whole Dashboard. Like gpustat and dynamix's DashStats
 it adds one bare `<tbody title=…>` to `$mytiles['staxx']['column2']`. Its header must contain
