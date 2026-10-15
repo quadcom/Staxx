@@ -19136,10 +19136,11 @@
       var row = event.target.closest('.staxx-tabmenu-row');
       if (!row) return;
       var act = row.dataset.act;
+      var file = tabmenuFile;   // read first: closing the menu clears tabmenuFile
       closeTabmenu();
-      if (act === 'rename') renameFile();
-      else if (act === 'delete') deleteFile();
-      else if (act === 'download') downloadFile();
+      if (act === 'rename') renameFile(file);
+      else if (act === 'delete') deleteFile(file);
+      else if (act === 'download') downloadFile(file);
       else if (act === 'refresh') filesLoad();
     });
   }
@@ -19182,8 +19183,8 @@
     return COMPOSE_FILENAMES.indexOf(file.toLowerCase()) === -1;
   }
 
-  function renameFile() {
-    var name = tabmenuFile;   // the file whose chevron opened this menu, not necessarily the open tab
+  // `name` is the file whose chevron opened the menu, not necessarily the open tab.
+  function renameFile(name) {
     if (name === null) return;   // the compose tab has no Rename item
 
     askText('Rename file', 'Rename "' + name + '" to', name).then(function (to) {
@@ -19214,12 +19215,12 @@
     });
   }
 
-  // Deletes the file whose chevron opened this menu — not necessarily the
-  // open tab, now that every tab carries its own — through #staxx-confirm
-  // either way: a file nothing references gets the short one-line question,
-  // a file the compose file DOES reference gets the longer warning below.
-  function deleteFile() {
-    var name = tabmenuFile;
+  // Deletes the file `name` — the one whose chevron opened the menu, not
+  // necessarily the open tab, now that every tab carries its own — through
+  // #staxx-confirm either way: a file nothing references gets the short
+  // one-line question, a file the compose file DOES reference gets the
+  // longer warning below.
+  function deleteFile(name) {
     if (name === null) return;   // the compose tab has no Delete item
 
     function go() {
@@ -19296,13 +19297,12 @@
   // when the companion was opened. A companion file is not necessarily
   // loaded at all — read() it fresh, so Download works for a file that is
   // not the one open either.
-  function downloadFile() {
-    if (tabmenuFile === null) {
+  function downloadFile(name) {
+    if (name === null) {
       triggerDownload(tabLabel(), fileOpen === null ? currentText() : fileStash);
       return;
     }
 
-    var name = tabmenuFile;
     call('file-read', { name: openedName, file: name }).then(function (res) {
       if (!res || !res.ok) {
         setYamlStatus((res && res.error) || ('Could not read "' + name + '".'));
@@ -19639,7 +19639,8 @@
     });
   }
 
-  if (binGet) binGet.addEventListener('click', downloadFile);
+  // Passes the open file explicitly: the handler would otherwise get the click event as `name`.
+  if (binGet) binGet.addEventListener('click', function () { downloadFile(fileOpen); });
 
   // Dropping is anywhere on the editor, not just the strip — listened for on
   // the modal body, which covers both panes. preventDefault() on dragenter

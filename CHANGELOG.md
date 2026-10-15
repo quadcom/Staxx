@@ -14,6 +14,8 @@ What changed in StaXX, newest first.
 - The stack list on a phone has a new card. The icon and name are bigger and sit at the left edge, with the four buttons, now finger-sized, directly under the name, so a long name is always shown in full. The chips sit just above the buttons as icons; tap them to open a small window that says what each one means, with a button for anything a chip can do. A tap there never starts an update by itself. A card shows only the address of the app's web page, its charts split evenly across the card, and an orange line runs down the left from an open folder to its last stack.
 - On a phone, the page no longer slides sideways a little when you swipe.
 - In the stack list, a stack with several addresses shows each on its own line instead of running them together.
+- Opening the old Docker address (a bookmark or typed /Docker) while StaXX has taken over the Docker menu now goes to StaXX instead of a blank page.
+- Rename, Delete and Download on a stack's extra files work again; they had stopped doing anything (Download gave the compose file instead).
 
 ## 00.05.00 — released 2026-10-09
 
