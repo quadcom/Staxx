@@ -605,7 +605,7 @@ $liveBusy  = false;
 foreach ($liveItems as $it) { if (($it['state'] ?? '') === 'running') { $liveBusy = true; break; } }
 
 if ($liveBusy) {
-  skip('queue: refuses to start a second run while one is active',
+  skip('queue: a second start while one is active appends and leaves the running item alone',
        'a real queue is currently active on this box — not touched');
   skip('queue: Stop leaves the running item alone and marks the rest skipped',
        'a real queue is currently active on this box — not touched');
@@ -628,9 +628,49 @@ if ($liveBusy) {
     ],
   ]));
 
+  // A second start appends (or says nothing is waiting); it never replaces
+  // the live queue. The tick is not called, so nothing appended can run.
   $err = '';
   $secondQueue = staxx_update_queue_start('all', false, $err);
-  ok('queue: refuses to start a second run while one is active', $secondQueue === '' && $err !== '', $err);
+  $afterSecond = staxx_update_queue_read();
+  ok('queue: a second start while one is active appends and leaves the running item alone',
+     ($afterSecond['items'][0]['stack'] ?? '') === $fixtureName && ($afterSecond['items'][0]['state'] ?? '') === 'running'
+     && ($afterSecond['items'][1]['stack'] ?? '') === 'zzb1updrun-b', $secondQueue . ' ' . $err);
+
+  // Adding one app: lands on the live queue as a pull (the fixture is stopped),
+  // with every field the page reads, and a repeat adds nothing.
+  file_put_contents($queueFile, json_encode([
+    'id' => 'test' . time(), 'scope' => 'all', 'stopped' => true, 'includeStopped' => false,
+    'items' => [['stack' => 'zzb1updrun-b', 'service' => '', 'verb' => 'update', 'state' => 'running',
+                 'job' => 'deadbeefdeadbeef', 'error' => '', 'started' => 1, 'checkStart' => 0, 'finished' => 0]],
+  ]));
+  $err = '';
+  $added1 = staxx_update_queue_add($fixtureName, '', $err);
+  $added2 = staxx_update_queue_add($fixtureName, '', $err);
+  $q = staxx_update_queue_read();
+  $mine = array_values(array_filter($q['items'], fn($it) => $it['stack'] === $fixtureName));
+  ok('queue add: appends once, a repeat of the same app is not added twice',
+     $added1 && $added2 && count($mine) === 1 && count($q['items']) === 2, json_encode($q['items']));
+  ok('queue add: the item is a waiting pull with all the time fields, and the queue resumes',
+     ($mine[0]['verb'] ?? '') === 'pull' && ($mine[0]['state'] ?? '') === 'waiting' && ($mine[0]['service'] ?? 'x') === ''
+     && ($mine[0]['started'] ?? -1) === 0 && ($mine[0]['checkStart'] ?? -1) === 0 && ($mine[0]['finished'] ?? -1) === 0
+     && ($q['stopped'] ?? true) === false, json_encode($mine));
+  file_put_contents($queueFile, json_encode(['id' => 'x', 'scope' => 'all', 'stopped' => false, 'includeStopped' => false,
+    'items' => [['stack' => 'zzb1updrun-b', 'state' => 'checking', 'service' => '', 'verb' => 'update']]]));
+  staxx_update_queue_add($fixtureName, '', $err);
+  ok('queue add: a queue whose only item is being checked is still live, so the add appends',
+     count(staxx_update_queue_read()['items']) === 2);
+  $err = '';
+  ok('queue add: a stack with no compose file is refused with a sentence',
+     staxx_update_queue_add('zz-no-such-stack', '', $err) === false && $err !== '', $err);
+  file_put_contents($queueFile, json_encode([
+    'id' => 'test' . time(), 'scope' => 'all', 'stopped' => false, 'includeStopped' => false,
+    'items' => [
+      ['stack' => $fixtureName, 'service' => '', 'state' => 'running', 'job' => 'deadbeefdeadbeef', 'error' => ''],
+      ['stack' => 'zzb1updrun-b', 'service' => '', 'state' => 'waiting', 'job' => '', 'error' => ''],
+      ['stack' => 'zzb1updrun-c', 'service' => '', 'state' => 'waiting', 'job' => '', 'error' => ''],
+    ],
+  ]));
 
   ok('queue: Stop is accepted', staxx_update_queue_stop() === true);
   $afterStop = staxx_update_queue_state();
@@ -1031,6 +1071,84 @@ if ($liveBusy) {
      is_file($ntCalls) && strlen((string)file_get_contents($ntCalls)) === 1);
   if ($queueBackup2 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup2);
   @unlink($jobLog);
+}
+
+// The check after a start: 10 s running, 2 minutes for a health check. Rows
+// come from STAXX_UPDATE_CHECK_ROWS, ages from a checkStart written in the past.
+$rowsFile = '/tmp/staxx-updaterun-check-rows.json';
+register_shutdown_function(function () use ($rowsFile) { @unlink($rowsFile); });
+putenv('STAXX_UPDATE_CHECK_ROWS=' . $rowsFile);
+$cRow = fn(string $state, string $status, string $health = 'none', string $svc = 'web') =>
+  ['name' => 'zzc-' . $svc, 'state' => $state, 'status' => $status, 'health' => $health, 'service' => $svc];
+$verdict = function (array $rows, int $age, array $extra = []) use ($rowsFile) {
+  file_put_contents($rowsFile, json_encode($rows));
+  return staxx_update_check_verdict($extra + ['stack' => 'zz', 'service' => '', 'checkStart' => time() - $age], time());
+};
+ok('check: running and steady after 10 s is a pass', $verdict([$cRow('running', 'Up 11 seconds')], 11) === '');
+ok('check: not judged before 10 s', $verdict([$cRow('exited', 'Exited (1) 1 second ago')], 3) === null);
+ok('check: exited names the container and the exit code',
+   $verdict([$cRow('exited', 'Exited (1) 2 seconds ago')], 11) === 'Did not start: zzc-web stopped straight after starting (exit code 1).');
+ok('check: exited with no code drops the bracket',
+   $verdict([$cRow('dead', 'Dead')], 11) === 'Did not start: zzc-web stopped straight after starting.');
+ok('check: restarting is its own sentence',
+   $verdict([$cRow('restarting', 'Restarting (1) 3 seconds ago')], 11) === 'Did not start: zzc-web keeps restarting.');
+ok('check: no containers after 10 s fails', $verdict([], 11) === 'Did not start: no container is running for this app.');
+ok('check: unhealthy fails at once', $verdict([$cRow('running', 'Up 3 seconds (unhealthy)', 'unhealthy')], 3) === 'zzc-web failed its health check.');
+ok('check: a health check still starting after 10 s keeps waiting', $verdict([$cRow('running', 'Up 20 seconds (health: starting)', 'starting')], 20) === null);
+ok('check: a health check still starting past 2 minutes fails',
+   $verdict([$cRow('running', 'Up 3 minutes (health: starting)', 'starting')], 125) === "zzc-web's health check had not passed after 2 minutes.");
+ok('check: only the updated service is judged',
+   $verdict([$cRow('running', 'Up 20 seconds'), $cRow('exited', 'Exited (2) 1 minute ago', 'none', 'db')], 20, ['service' => 'web']) === '');
+
+if ($liveBusy) {
+  skip('tick check: running to checking to done or failed, and the next item waits', 'a real queue is currently active on this box — not touched');
+} else {
+  $okLog = STAXX_JOB_DIR . '/feedfacefeed0001.log';
+  @mkdir(STAXX_JOB_DIR, 0755, true);
+  file_put_contents($okLog, STAXX_JOB_END . " 0
+");
+  $queueBackup3 = is_file($queueFile) ? file_get_contents($queueFile) : null;
+  register_shutdown_function(function () use ($queueFile, $queueBackup3, $okLog) {
+    if ($queueBackup3 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup3);
+    @unlink($okLog);
+  });
+  $mk = fn(array $items) => staxx_update_queue_write(['id' => 'test' . time(), 'scope' => 'all', 'stopped' => false,
+    'includeStopped' => false, 'items' => $items]);
+  $it = fn(string $state, array $x = []) => $x + ['stack' => $fixtureName, 'service' => '', 'verb' => 'update',
+    'state' => $state, 'job' => '', 'error' => '', 'started' => 1, 'checkStart' => 0, 'finished' => 0];
+
+  $mk([$it('running', ['job' => 'feedfacefeed0001'])]);
+  staxx_update_queue_tick();
+  $i0 = staxx_update_queue_read()['items'][0];
+  ok('tick check: a job that exits 0 becomes checking, not done, with checkStart set',
+     $i0['state'] === 'checking' && $i0['checkStart'] > 0 && $i0['finished'] === 0, json_encode($i0));
+
+  // The waiting stack does not exist, so even a bug here could not start a real job.
+  file_put_contents($rowsFile, json_encode([$cRow('running', 'Up 3 seconds')]));
+  $mk([$it('checking', ['checkStart' => time() - 3]), $it('waiting', ['stack' => 'zz-no-such-stack'])]);
+  staxx_update_queue_tick();
+  $q = staxx_update_queue_read();
+  ok('tick check: the next item waits while one is being checked',
+     $q['items'][0]['state'] === 'checking' && $q['items'][1]['state'] === 'waiting', json_encode($q['items']));
+
+  file_put_contents($rowsFile, json_encode([$cRow('exited', 'Exited (1) 2 seconds ago')]));
+  $mk([$it('checking', ['checkStart' => time() - 11])]);
+  @unlink($ntCalls);
+  staxx_update_queue_tick();
+  $i0 = staxx_update_queue_read()['items'][0];
+  ok('tick check: a failed check sets state, error, reason and finished',
+     $i0['state'] === 'failed' && $i0['error'] === $i0['reason'] && strpos($i0['reason'], '(exit code 1)') !== false
+     && $i0['finished'] > 0, json_encode($i0));
+  ok('tick check: the failure joins the notify batch', is_file($ntCalls) && strlen((string)file_get_contents($ntCalls)) === 1);
+
+  file_put_contents($rowsFile, json_encode([$cRow('running', 'Up 11 seconds')]));
+  $mk([$it('checking', ['checkStart' => time() - 11])]);
+  staxx_update_queue_tick();
+  $i0 = staxx_update_queue_read()['items'][0];
+  ok('tick check: a steady app becomes done with finished set', $i0['state'] === 'done' && $i0['finished'] > 0, json_encode($i0));
+
+  if ($queueBackup3 === null) @unlink($queueFile); else @file_put_contents($queueFile, $queueBackup3);
+  @unlink($okLog);
 }
 
 // The check's notes fetch: only a GitHub project, once per version, capped.

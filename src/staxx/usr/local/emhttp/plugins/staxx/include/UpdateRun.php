@@ -1409,19 +1409,11 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
   $error = '';
 
   // Held for the whole read-check-write below, so a manual start landing on
-  // the cron tick can never pass "nothing running" against a queue the tick
-  // is about to replace. staxx_update_queue_tick() takes this same lock, but
-  // is never called from here, so there is no re-entrancy to worry about.
+  // the cron tick can never race a queue the tick is about to change.
+  // staxx_update_queue_tick() takes this same lock, but is never called from
+  // here, so there is no re-entrancy to worry about. A queue already live
+  // gets these stacks appended (see staxx_update_queue_put()).
   if (!staxx_update_queue_lock($error)) return '';
-
-  $current = staxx_update_queue_read();
-  foreach ((array)($current['items'] ?? []) as $item) {
-    if (in_array($item['state'] ?? '', ['running', 'waiting'], true) && !($current['stopped'] ?? false)) {
-      $error = 'A queue is already running. Stop it before starting another.';
-      staxx_update_queue_unlock();
-      return '';
-    }
-  }
 
   if ($scope !== 'all' && !staxx_valid_path($scope)) {
     $error = 'Invalid scope.';
@@ -1460,7 +1452,7 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
     }
     if (!$hasUpdate) continue;
 
-    $items[] = ['stack' => $stack['name'], 'state' => 'waiting', 'job' => '', 'error' => ''];
+    $items[] = staxx_update_queue_item($stack['name']);
   }
 
   if (!$items) {
@@ -1469,18 +1461,162 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
     return '';
   }
 
-  $id = (string)time();
-  if (!staxx_update_queue_write([
-    'id' => $id, 'scope' => $scope, 'stopped' => false,
-    'includeStopped' => $includeStopped, 'items' => $items,
-  ])) {
-    $error = 'Could not write the update queue.';
-    staxx_update_queue_unlock();
-    return '';
-  }
-
+  $id = staxx_update_queue_put($scope, $includeStopped, $items, $error);
   staxx_update_queue_unlock();
   return $id;
+}
+
+/** One queue item, waiting. 'only' (a list) is the running services of a part-running stack. */
+function staxx_update_queue_item(string $stack, string $service = '', string $verb = 'update', array $only = []): array {
+  $item = ['stack' => $stack, 'service' => $service, 'verb' => $verb, 'state' => 'waiting',
+           'job' => '', 'error' => '', 'started' => 0, 'checkStart' => 0, 'finished' => 0];
+  if ($only) $item['only'] = array_values($only);
+  return $item;
+}
+
+/** Whether an item is still in play: waiting, running or being checked. */
+function staxx_update_item_live(array $item): bool {
+  return in_array($item['state'] ?? '', ['running', 'checking', 'waiting'], true);
+}
+
+/**
+ * Put items into the queue; the caller holds the queue lock. A live queue
+ * takes them on the end (skipping a stack + service already in play) and
+ * resumes if it was stopped, since asking for another update is asking to
+ * go on; otherwise a fresh queue starts. Returns the queue id, '' on failure.
+ */
+function staxx_update_queue_put(string $scope, bool $includeStopped, array $items, string &$error): string {
+  $queue = staxx_update_queue_read();
+  $live  = false;
+  $seen  = [];
+  foreach ((array)($queue['items'] ?? []) as $item) {
+    if (!staxx_update_item_live($item)) continue;
+    $live = true;
+    $seen[($item['stack'] ?? '').'|'.($item['service'] ?? '').'|'.json_encode($item['only'] ?? [])] = true;
+  }
+
+  if ($live) {
+    foreach ($items as $item) {
+      $key = $item['stack'].'|'.$item['service'].'|'.json_encode($item['only'] ?? []);
+      if (isset($seen[$key])) continue;
+      $queue['items'][] = $item;
+    }
+    $queue['stopped'] = false;
+  } else {
+    $queue = ['id' => (string)time(), 'scope' => $scope, 'stopped' => false,
+              'includeStopped' => $includeStopped, 'items' => $items];
+  }
+
+  if (!staxx_update_queue_write($queue)) {
+    $error = 'Could not write the update queue.';
+    return '';
+  }
+  return (string)$queue['id'];
+}
+
+/**
+ * Whether to update or only pull, and for which services: the one choice
+ * every update makes. Update never starts what the reader stopped: a named
+ * service updates only if it is running, otherwise it is pulled; a whole
+ * stack with nothing running is pulled; a part-running stack updates just
+ * the running services (the array in the second slot).
+ *
+ * @return array{0:string, 1:string|array} the verb and the service argument
+ */
+function staxx_update_verb_for(string $name, string $service): array {
+  $file = staxx_find_compose_file(staxx_stack_dir($name));
+  $rows = staxx_stack_containers([
+    'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '', 'file' => $file,
+  ]);
+  $runningSvcs = [];
+  foreach ($rows as $row) {
+    if ($row['service'] !== '' && strtolower($row['state']) === 'running') $runningSvcs[] = $row['service'];
+  }
+  $runningSvcs = array_values(array_unique($runningSvcs));
+
+  if ($service !== '') return [in_array($service, $runningSvcs, true) ? 'update' : 'pull', $service];
+  if (!$runningSvcs) return ['pull', ''];
+
+  // If the compose file cannot be read for its service list, every container
+  // row seen running is the best available stand-in for "all of them".
+  $allSvcs = staxx_service_names($file);
+  $fullyRunning = $allSvcs !== [] ? !array_diff($allSvcs, $runningSvcs) : count($runningSvcs) === count($rows);
+  return ['update', $fullyRunning ? '' : $runningSvcs];
+}
+
+/**
+ * Line one app up for an update, whoever asked: a hand-pressed Update joins
+ * the live queue or starts one. No pill check, since the person asked for
+ * this app.
+ */
+function staxx_update_queue_add(string $name, string $service, string &$error): bool {
+  $error = '';
+  if (staxx_find_compose_file(staxx_stack_dir($name)) === '') {
+    $error = 'That stack has no compose file to update.';
+    return false;
+  }
+  if (!staxx_update_queue_lock($error)) return false;
+
+  [$verb, $arg] = staxx_update_verb_for($name, $service);
+  $item = staxx_update_queue_item($name, is_array($arg) ? '' : $arg, $verb, is_array($arg) ? $arg : []);
+  $ok = staxx_update_queue_put($name, false, [$item], $error) !== '';
+  staxx_update_queue_unlock();
+  return $ok;
+}
+
+/**
+ * The containers the check judges: this stack's, narrowed to the one
+ * service (or the running few) the update touched. STAXX_UPDATE_CHECK_ROWS
+ * names a JSON file of rows that stands in for Docker in a server suite.
+ */
+function staxx_update_check_rows(array $item): array {
+  $stub = getenv('STAXX_UPDATE_CHECK_ROWS');
+  if ($stub !== false && $stub !== '') {
+    $rows = json_decode((string)@file_get_contents($stub), true);
+    $rows = is_array($rows) ? $rows : [];
+  } else {
+    $name = (string)($item['stack'] ?? '');
+    $rows = staxx_stack_containers([
+      'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
+      'file' => staxx_find_compose_file(staxx_stack_dir($name)),
+    ]);
+  }
+
+  $want = (array)($item['only'] ?? []) ?: (($item['service'] ?? '') !== '' ? [(string)$item['service']] : []);
+  if (!$want) return $rows;
+  return array_values(array_filter($rows, fn($r) => in_array($r['service'] ?? '', $want, true)));
+}
+
+/**
+ * Has the updated app really come up? null = not yet, '' = yes, otherwise
+ * the plain sentence for why not. A container must still be running 10 s
+ * after the start, and one with a health check must pass it (up to 2 min).
+ */
+function staxx_update_check_verdict(array $item, int $now): ?string {
+  $rows    = staxx_update_check_rows($item);
+  $elapsed = $now - (int)($item['checkStart'] ?? $now);
+
+  foreach ($rows as $r) {
+    if (strtolower((string)($r['state'] ?? '')) === 'running' && ($r['health'] ?? '') === 'unhealthy') {
+      return $r['name'].' failed its health check.';
+    }
+  }
+  if ($elapsed < 10) return null;
+
+  if (!$rows) return 'Did not start: no container is running for this app.';
+
+  $starting = '';
+  foreach ($rows as $r) {
+    $state = strtolower((string)($r['state'] ?? ''));
+    if ($state === 'restarting') return 'Did not start: '.$r['name'].' keeps restarting.';
+    if ($state !== 'running') {
+      $code = preg_match('/\((\d+)\)/', (string)($r['status'] ?? ''), $m) ? ' (exit code '.$m[1].')' : '';
+      return 'Did not start: '.$r['name'].' stopped straight after starting'.$code.'.';
+    }
+    if (($r['health'] ?? '') === 'starting') $starting = $r['name'];
+  }
+  if ($starting === '') return '';
+  return $elapsed > 120 ? $starting."'s health check had not passed after 2 minutes." : null;
 }
 
 /**
@@ -1504,7 +1640,25 @@ function staxx_update_queue_tick(): array {
   $changed = false;
 
   foreach ($items as $i => &$item) {
-    if (($item['state'] ?? '') !== 'running') continue;
+    $itemState = $item['state'] ?? '';
+    if ($itemState === 'checking') {
+      // Part of this app's turn: nothing else starts until it settles.
+      $verdict = staxx_update_check_verdict($item, time());
+      if ($verdict !== null) {
+        $item['finished'] = time();
+        if ($verdict === '') {
+          $item['state'] = 'done';
+          staxx_update_refresh_after_run((string)($item['stack'] ?? ''));
+        } else {
+          $item['state']  = 'failed';
+          $item['error']  = $verdict;
+          $item['reason'] = $verdict;
+        }
+        $changed = true;
+      }
+      break;
+    }
+    if ($itemState !== 'running') continue;
     $log = staxx_job_log((string)$item['job'], 0);
     if ($log['done']) {
       // A null exit means the job's own log is gone (pruned, or never
@@ -1513,22 +1667,27 @@ function staxx_update_queue_tick(): array {
       // done, because there is nothing here to say it actually succeeded.
       if ($log['exit'] === null) {
         $item['state'] = 'failed';
+        $item['finished'] = time();
         $item['error'] = 'The update job\'s log is gone, so its outcome could not be recorded. '
                        . 'Check the stack directly.';
         if (empty($item['reason'])) {
           $item['reason'] = staxx_update_failure_reason('', staxx_update_stack_image((string)($item['stack'] ?? '')));
         }
       } elseif ($log['exit'] === 0) {
-        $item['state'] = 'done';
-        // The queue has no browser to prompt a refresh, so without this the
-        // local digest stays at its pre-pull value and the same stack looks
-        // due again at the next tick, fifteen minutes from now. This also
-        // re-asks the registry when the disk still disagrees with the
-        // remembered answer, which is what stops a stale registry digest
-        // re-queueing the same stack every fifteen minutes forever.
-        staxx_update_refresh_after_run((string)($item['stack'] ?? ''));
+        if (($item['verb'] ?? 'update') === 'pull') {
+          // A pull starts nothing, so there is nothing to watch.
+          $item['state'] = 'done';
+          $item['finished'] = time();
+          staxx_update_refresh_after_run((string)($item['stack'] ?? ''));
+        } else {
+          // Compose succeeding is not the app staying up: the check watches
+          // it for a while before it counts as updated.
+          $item['state'] = 'checking';
+          $item['checkStart'] = time();
+        }
       } else {
         $item['state'] = 'failed';
+        $item['finished'] = time();
         $item['error'] = 'The update failed. Open the log for details.';
         // The log is pruned within the hour, so the plain-words reason is read
         // now and kept on the item for the message and the summary.
@@ -1543,7 +1702,7 @@ function staxx_update_queue_tick(): array {
   unset($item);
 
   $hasRunning = false;
-  foreach ($items as $item) if (($item['state'] ?? '') === 'running') $hasRunning = true;
+  foreach ($items as $item) if (in_array($item['state'] ?? '', ['running', 'checking'], true)) $hasRunning = true;
 
   // PLAN_68 Part C: starting the next item looks the stack up by name in
   // staxx_list_stacks() twice below — once to push its rollback fingerprint,
@@ -1563,12 +1722,16 @@ function staxx_update_queue_tick(): array {
       // same "before, not after" ordering staxx_update_record_before_pull()
       // documents, so a roll back has something to roll back to even if the
       // update job itself never finishes cleanly.
-      staxx_update_record_before_pull($item['stack']);
+      $only = (array)($item['only'] ?? []);
+      $arg  = $only ?: (string)($item['service'] ?? '');
+      staxx_update_record_before_pull($item['stack'], $only ? '' : $arg);
 
       $jobError = '';
-      $job = staxx_start_job($item['stack'], 'update', $jobError);
+      $job = staxx_start_job($item['stack'], (string)($item['verb'] ?? 'update'), $jobError, $arg);
+      $item['started'] = time();
       if ($job === '') {
         $item['state'] = 'failed';
+        $item['finished'] = time();
         $item['error'] = $jobError !== '' ? $jobError : 'Could not start the update.';
         $item['reason'] = $item['error'];
       } else {
@@ -1622,7 +1785,7 @@ function staxx_update_queue_tick(): array {
   return staxx_update_queue_state();
 }
 
-/** Let the running stack finish; mark everything still waiting as skipped. */
+/** Let the running (or checked) stack finish; mark everything still waiting as skipped. */
 function staxx_update_queue_stop(): bool {
   $queue = staxx_update_queue_read();
   if (!$queue || !isset($queue['items'])) return false;
@@ -1664,7 +1827,7 @@ function staxx_update_apply_pass(): array {
   $queue = staxx_update_queue_read();
   $active = false;
   foreach ((array)($queue['items'] ?? []) as $item) {
-    if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) { $active = true; break; }
+    if (in_array($item['state'] ?? '', ['running', 'checking', 'waiting'], true)) { $active = true; break; }
   }
   if ($active && !($queue['stopped'] ?? false)) {
     staxx_update_queue_unlock();
@@ -1685,7 +1848,7 @@ function staxx_update_apply_pass(): array {
   $items = [];
   foreach (staxx_folder_layout(staxx_stack_states()) as $row) {
     if ($row['type'] !== 'stack' || !isset($wanted[$row['stack']['name']])) continue;
-    $items[] = ['stack' => $row['stack']['name'], 'state' => 'waiting', 'job' => '', 'error' => ''];
+    $items[] = staxx_update_queue_item($row['stack']['name']);
   }
   if (!$items) {
     staxx_update_queue_unlock();

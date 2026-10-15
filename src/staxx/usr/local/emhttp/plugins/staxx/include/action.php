@@ -1603,6 +1603,7 @@ switch ($action) {
       // above already pays for, so nothing here costs a second sweep.
       'paused'  => (bool)(staxx_update_state()['paused'] ?? false),
       'queue'   => staxx_update_queue_tick(),
+      'now'     => time(),
       'due'     => staxx_update_due(),
     ]);
 
@@ -1814,70 +1815,20 @@ switch ($action) {
     }
     staxx_reply(['ok' => true]);
 
-  /* ---- "update it now" — the same 'update' verb the clock would run itself --
+  /* ---- "update it now" — lined up behind any update already running --
    *
-   * A whole stack when service is left out, one service when it is given —
-   * except a stopped service, which runs 'pull' instead (see below).
-   * staxx_start_job() is what actually checks the service name against this
-   * stack's own compose services; nothing here needs to repeat that check.
+   * A whole stack when service is left out, one service when it is given.
+   * Every update goes through the queue, so the page has one place to watch
+   * and updates still run one stack at a time; the tick starts this one at
+   * once when nothing else is running. staxx_update_verb_for() chooses
+   * between update and pull, and staxx_start_job() checks the service name
+   * against the stack's own compose services.
    */
   case 'update-apply':
     staxx_need_stack($name);
-    $service = (string)($_POST['service'] ?? '');
-
-    // Update must never be the thing that starts a container or a stack the
-    // reader deliberately stopped — at either scope. A single named service
-    // only updates if it is already running; otherwise (stopped, or never
-    // started at all) it is pulled instead, same as the menu's own Pull, so
-    // its next start picks up the new image. Whole-stack scope now follows
-    // the same rule: nothing running pulls the whole stack, so every image
-    // is refreshed and the stack stays stopped; everything running updates
-    // the whole stack as before; a mix updates only the services that are
-    // running, leaving the stopped ones neither started nor pulled — their
-    // chip stays until they are next started, which is the honest state.
-    // Same container lookup staxx_stack_containers() gives the row
-    // renderer, so this can never disagree with what the row itself shows
-    // as running.
-    $file = staxx_find_compose_file(staxx_stack_dir($name));
-    $rows = staxx_stack_containers([
-      'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
-      'file' => $file,
-    ]);
-    $runningSvcs = [];
-    foreach ($rows as $row) {
-      if ($row['service'] !== '' && strtolower($row['state']) === 'running') {
-        $runningSvcs[] = $row['service'];
-      }
-    }
-    $runningSvcs = array_values(array_unique($runningSvcs));
-
-    $verb = 'update';
-    if ($service !== '') {
-      if (!in_array($service, $runningSvcs, true)) $verb = 'pull';
-    } elseif (!$runningSvcs) {
-      $verb = 'pull';
-    } else {
-      // Fully running if every declared service is among the running ones;
-      // if the compose file cannot be read for its service list, fall back
-      // to every container row seen being running — the best that can be
-      // told without it.
-      $allSvcs = staxx_service_names($file);
-      $fullyRunning = $allSvcs !== []
-        ? !array_diff($allSvcs, $runningSvcs)
-        : count($runningSvcs) === count($rows);
-      if (!$fullyRunning) $service = $runningSvcs; // array: update only these
-    }
-
-    // Recorded before the job starts, not after — a hand-pressed Update is
-    // how most updates actually happen, so it has to leave a rollback
-    // record the same way the automatic queue does, and a slow or failed
-    // job must not be the reason nothing was ever recorded.
-    staxx_update_record_before_pull($name, is_array($service) ? '' : $service);
-
-    $job = staxx_start_job($name, $verb, $error, $service);
-    if ($job === '') staxx_fail($error);
+    if (!staxx_update_queue_add($name, (string)($_POST['service'] ?? ''), $error)) staxx_fail($error);
     staxx_prune_jobs();
-    staxx_reply(['ok' => true, 'job' => $job]);
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_tick(), 'now' => time()]);
 
   /* ---- "rebuild ready" — build fresh from the (moved-on) base, then come up --
    *
@@ -2000,8 +1951,7 @@ switch ($action) {
    *
    * $scope takes the same three shapes 'update-check' already accepts —
    * 'all', a folder name, or one stack's path — checked the same way.
-   * staxx_update_queue_start() itself refuses a second queue on top of one
-   * already running.
+   * staxx_update_queue_start() appends to a queue already running.
    */
   case 'update-queue-start':
     $scope = (string)($_POST['scope'] ?? 'all');
@@ -2010,7 +1960,7 @@ switch ($action) {
     }
     $qid = staxx_update_queue_start($scope, ($_POST['stopped'] ?? '') === '1', $error);
     if ($qid === '') staxx_fail($error);
-    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state()]);
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state(), 'now' => time()]);
 
   // ---- advance the queue one step, and say where it now stands ----
   //
@@ -2019,12 +1969,12 @@ switch ($action) {
   // mirrors, so this is the one place that has to call tick() rather than
   // just reading the state back.
   case 'update-queue':
-    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_tick()]);
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_tick(), 'now' => time()]);
 
   // ---- let the running stack finish, then mark the rest skipped ----
   case 'update-queue-stop':
     staxx_update_queue_stop();
-    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state()]);
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state(), 'now' => time()]);
 
   // ---- PLAN_180 Part 1 — "Scan stored images" on the Storage tab ----
   //

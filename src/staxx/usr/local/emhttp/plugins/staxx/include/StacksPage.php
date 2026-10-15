@@ -532,6 +532,10 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
       <button type="button" class="staxx-btn" id="staxx-update-pause">
         <i class="fa fa-pause"></i> <?= _('Pause updates') ?>
       </button>
+      <!-- PLAN_244 — the update bubble: hidden until an update runs, painted
+           entirely by paintUpdateBubble() in stacks.js; a click opens or
+           closes the details window below. -->
+      <button type="button" class="staxx-ubub staxx-ubub--out" id="staxx-update-bubble" hidden></button>
     </div>
   </div>
 
@@ -543,10 +547,13 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
        entirely by paintSelectBar() in stacks.js. -->
   <div class="staxx-selectbar" id="staxx-select-bar" hidden></div>
 
-  <!-- PLAN_45 phase 4-8. Hidden until update-queue-start begins one, and
-       painted entirely by paintUpdateQueue() in stacks.js — a queue's own
-       progress is polled from the browser, not part of the page's render. -->
-  <div class="staxx-updatequeue" id="staxx-update-queue" hidden></div>
+  <!-- PLAN_244 — the floating details window for the update queue (PLAN_45).
+       Not a <dialog>: the page stays usable while it is open. Hidden until
+       the bubble opens it; the whole inside is painted by
+       paintUpdateWindow() in stacks.js, since the queue is polled from the
+       browser rather than being part of the page's render. -->
+  <div class="staxx-uwin staxx-uwin--hide" id="staxx-update-window" role="region"
+       aria-label="<?= _('Update progress') ?>" hidden></div>
 
   <!-- The table is always here, even with nothing in it.
        The browser replaces this table's body in place rather than reloading

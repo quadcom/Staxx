@@ -4295,23 +4295,259 @@ div.title.staxx-has-titlebar {
   font-size: 1rem;
 }
 
-/* The progress bar above the grid while "Update all" (or a folder's own
-   "Update this folder") is running — painted entirely by
-   paintUpdateQueue(), hidden the rest of the time. */
-.staxx-updatequeue {
-  display: flex;
+/* PLAN_244 — the update bubble at the end of the toolbar row and the floating
+   window it opens, both painted by script (paintUpdateBubble() and
+   paintUpdateWindow() in stacks.js) from the update queue. The bubble grows in
+   and shrinks out by width and fade; the window fades and scales from its top
+   right. [hidden] is restated because display below would beat it. */
+.staxx-scaffold .staxx-ubub {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin: 0 0 1.2rem;
-  padding: 0.6rem 1rem;
-  border: 0.1rem solid var(--sm-line);
-  border-radius: var(--sm-radius);
-  background: var(--sm-fill);
+  gap: 0.8rem;
+  margin: 0 0 0 1rem;
+  padding: 0.5rem 1.2rem;
+  max-width: 30rem;
+  overflow: hidden;
+  border: 0.1rem solid #3d7cc9;
+  border-radius: 99.9rem;
+  background: #1d3b5c;
+  color: #fff;
+  font: inherit;
+  font-size: 1.3rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity 350ms ease, transform 350ms ease, max-width 450ms ease,
+              padding 450ms ease, margin 450ms ease,
+              background-color 400ms ease, border-color 400ms ease;
 }
 
-.staxx-updatequeue-text {
-  font-size: 1.2rem;
+.staxx-scaffold .staxx-ubub[hidden] { display: none; }
+
+.staxx-scaffold .staxx-ubub:hover { background: #244a73; }
+.staxx-scaffold .staxx-ubub:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0.2rem;
+}
+
+.staxx-scaffold .staxx-ubub--out {
+  opacity: 0;
+  transform: translateX(1rem) scale(0.9);
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  margin-left: 0;
+  border-width: 0;
+  pointer-events: none;
+}
+
+.staxx-scaffold .staxx-ubub--done { background: #1e4024; border-color: #4caf50; }
+.staxx-scaffold .staxx-ubub--done:hover { background: #25502d; }
+.staxx-scaffold .staxx-ubub--fail {
+  background: #4a1c1c;
+  border-color: #e05555;
+  animation: staxx-ububpulse 2s ease-in-out infinite;
+}
+.staxx-scaffold .staxx-ubub--fail:hover { background: #5a2222; }
+
+.staxx-scaffold .staxx-ubub-spin {
+  flex: none;
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 0.2rem solid #7fb3ff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: staxx-uspin 1s linear infinite;
+}
+
+.staxx-scaffold .staxx-ubub-mark { flex: none; font-weight: 700; }
+.staxx-scaffold .staxx-ubub-txt { transition: opacity 200ms ease; }
+
+.staxx-scaffold .staxx-uwin {
+  position: fixed;
+  z-index: 9999;
+  width: min(46rem, calc(100vw - 3.2rem));
+  box-sizing: border-box;
+  padding: 1.4rem 1.6rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.8rem;
+  background: var(--sm-bg);
+  box-shadow: var(--sm-pop-shadow);
+  color: var(--sm-fg);
+  font-size: 1.3rem;
+  line-height: 1.4;
+  text-align: left;
+  transform-origin: top right;
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.staxx-scaffold .staxx-uwin[hidden] { display: none; }
+
+.staxx-scaffold .staxx-uwin--hide {
+  opacity: 0;
+  transform: scale(0.96) translateY(-0.6rem);
+  pointer-events: none;
+}
+
+.staxx-scaffold .staxx-uwin-grip {
+  position: relative;
+  padding-left: 1.4rem;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.staxx-scaffold .staxx-uwin-grip::before {
+  content: "\22EE\22EE";
+  position: absolute;
+  left: 0;
+  top: 0;
+  letter-spacing: -0.3rem;
+  opacity: 0.6;
+}
+
+.staxx-scaffold .staxx-uwin-title { margin: 0 0 0.3rem; font-size: 1.5rem; font-weight: 700; color: inherit; }
+.staxx-scaffold .staxx-uwin-title--bad { color: #ff8a8a; }
+.staxx-scaffold .staxx-uwin-sub { margin: 0; opacity: 0.85; }
+
+.staxx-scaffold .staxx-uwin-bar {
+  height: 0.6rem;
+  margin: 1rem 0 0.8rem;
+  border-radius: 0.3rem;
+  background: var(--sm-fill-2);
+  overflow: hidden;
+}
+
+.staxx-scaffold .staxx-uwin-barfill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #3d7cc9;
+  transition: width 600ms ease;
+}
+
+.staxx-scaffold .staxx-uwin-list { max-height: 50vh; overflow-y: auto; }
+
+/* One line per app: icon | name | Show output, then the step under the name. */
+.staxx-scaffold .staxx-uwin-row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  gap: 0.2rem 0.8rem;
+  padding: 0.6rem 0;
+  border-top: 0.1rem solid var(--sm-hairline);
+  transition: background-color 600ms ease;
+}
+
+.staxx-scaffold .staxx-uwin-row--flash { background: rgba(76, 175, 80, 0.15); }
+
+.staxx-scaffold .staxx-uwin-ico { text-align: center; }
+.staxx-scaffold .staxx-uwin-row--done .staxx-uwin-ico { color: #5fd068; }
+.staxx-scaffold .staxx-uwin-row--running .staxx-uwin-ico,
+.staxx-scaffold .staxx-uwin-row--checking .staxx-uwin-ico { color: #7fb3ff; }
+.staxx-scaffold .staxx-uwin-row--waiting .staxx-uwin-ico,
+.staxx-scaffold .staxx-uwin-row--skipped .staxx-uwin-ico { opacity: 0.7; }
+
+.staxx-scaffold .staxx-uwin-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.staxx-scaffold .staxx-uwin-step { grid-column: 2 / 4; opacity: 0.85; }
+
+.staxx-scaffold .staxx-uwin-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #7fb3ff;
+  font: inherit;
+  font-size: 1.3rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.staxx-scaffold .staxx-uwin-link[hidden] { display: none; }
+
+/* The running app's headline and its Download / Unpack bars, the same figures
+   the row's own overlay shows. They slide shut when the app finishes. */
+.staxx-scaffold .staxx-uwin-prog {
+  grid-column: 2 / 4;
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  gap: 0.4rem 1rem;
+  max-height: 8rem;
+  overflow: hidden;
+  transition: opacity 300ms ease, max-height 400ms ease;
+}
+.staxx-scaffold .staxx-uwin-prog--gone { opacity: 0; max-height: 0; }
+.staxx-scaffold .staxx-uwin-head { grid-column: 1 / -1; font-weight: 600; }
+.staxx-scaffold .staxx-uwin-label { align-self: center; }
+.staxx-scaffold .staxx-uwin-info { align-self: center; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.staxx-scaffold .staxx-uwin-track {
+  align-self: center;
+  height: 0.6rem;
+  border-radius: 0.3rem;
+  background: var(--sm-fill-2);
+  overflow: hidden;
+}
+.staxx-scaffold .staxx-uwin-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--sm-accent);
+  transition: width 600ms ease;
+}
+
+/* A failed line shakes once, then breathes red for as long as it shows. */
+.staxx-scaffold .staxx-uwin-row--failed {
+  padding-left: 0.8rem;
+  padding-right: 0.8rem;
+  border-radius: 0.4rem;
+  animation: staxx-ushake 500ms ease 1, staxx-uredpulse 2s ease-in-out 500ms infinite;
+}
+.staxx-scaffold .staxx-uwin-row--failed .staxx-uwin-ico { color: #ff6b6b; }
+.staxx-scaffold .staxx-uwin-row--failed .staxx-uwin-step { color: #ff8a8a; opacity: 1; }
+.staxx-scaffold .staxx-uwin-x {
+  display: inline-block;
+  font-weight: 700;
+  animation: staxx-uxpulse 2s ease-in-out 500ms infinite;
+}
+
+.staxx-scaffold .staxx-uwin-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 1.2rem;
+}
+.staxx-scaffold .staxx-uwin-foot .staxx-btn[hidden] { display: none; }
+
+@keyframes staxx-uspin { to { transform: rotate(360deg); } }
+@keyframes staxx-ushake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-0.5rem); }
+  40% { transform: translateX(0.5rem); }
+  60% { transform: translateX(-0.3rem); }
+  80% { transform: translateX(0.3rem); }
+}
+@keyframes staxx-uredpulse {
+  0%, 100% { background: rgba(224, 85, 85, 0.10); box-shadow: inset 0.3rem 0 0 #e05555; }
+  50%      { background: rgba(224, 85, 85, 0.28); box-shadow: inset 0.3rem 0 0 #ff7676; }
+}
+@keyframes staxx-uxpulse {
+  0%, 100% { transform: scale(1); text-shadow: none; }
+  50%      { transform: scale(1.25); text-shadow: 0 0 0.6rem #ff5c5c; }
+}
+@keyframes staxx-ububpulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 85, 85, 0); }
+  50%      { box-shadow: 0 0 0 0.4rem rgba(224, 85, 85, 0.35); }
+}
+
+/* Fades stay, movement goes: no scale or slide on the bubble or window, no
+   shake or growing cross on a failed line — its colour pulse is all that is
+   left. These classes are named in the global reduced-motion block's :not()
+   list further down, so the rules here are the ones that apply to them. */
+@media (prefers-reduced-motion: reduce) {
+  .staxx-scaffold .staxx-ubub { transition: opacity 350ms ease, background-color 400ms ease, border-color 400ms ease; }
+  .staxx-scaffold .staxx-ubub--out { transform: none; max-width: 30rem; padding: 0.5rem 1.2rem; margin-left: 1rem; border-width: 0.1rem; }
+  .staxx-scaffold .staxx-ubub-spin { animation: none; border-top-color: #7fb3ff; }
+  .staxx-scaffold .staxx-uwin--hide { transform: none; }
+  .staxx-scaffold .staxx-uwin-row--failed { animation: staxx-uredpulse 2s ease-in-out infinite; }
+  .staxx-scaffold .staxx-uwin-x { animation: none; }
 }
 
 /* A checkbox row inside a confirm dialog (PLAN_45 phase 4-8's "include
@@ -14054,7 +14290,7 @@ dialog::backdrop {
  * repaint in stacks.js) can hang waiting for an event that a `none` duration
  * would never send. */
 @media (prefers-reduced-motion: reduce) {
-  .staxx-scaffold *:not(.staxx-modal):not(.staxx-picker):not(.staxx-tz):not(.staxx-ca):not(.staxx-ca-app):not(.staxx-import):not(.staxx-confirm):not(.staxx-settings):not(.staxx-logdlg):not(.staxx-legend):not(.staxx-export) {
+  .staxx-scaffold *:not(.staxx-modal):not(.staxx-picker):not(.staxx-tz):not(.staxx-ca):not(.staxx-ca-app):not(.staxx-import):not(.staxx-confirm):not(.staxx-settings):not(.staxx-logdlg):not(.staxx-legend):not(.staxx-export):not(.staxx-ubub):not(.staxx-uwin):not(.staxx-uwin-row--failed):not(.staxx-uwin-x) {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }
