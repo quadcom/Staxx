@@ -174,10 +174,42 @@ underneath shows again, with its own controls back.
 
 A folder has the same two actions for just what is inside it; see [folders](the-stack-list.md#folders).
 
-While **Update all** is running, a progress line sits above the list, counting how many stacks are
-done and naming the one it is updating now. Press **Stop** to end the run once that one stack has finished.
+## The update window
 
-![The Update all progress line under the toolbar, reading 1 of 3 updated, updating demo-web now, 1 waiting, with the Stop button at its right](../images/guide/updates-queue.png)
+![The StaXX page during an update: at the right end of the toolbar a blue bubble reads "Updating 2 of 6", and the update window open under it lists six apps: mariadb ticked as updated, postgresql17 downloading with its Download and Unpack bars, and four more waiting, with Stop after this app and Close at the foot](../images/guide/updates-window-running.png)
+
+When an update starts, a bubble appears at the right end of the toolbar and the update window opens
+under it. This happens for **Update all**, a folder's **Update this folder**, stacks picked with
+**Select**, and a single app's **Update**.
+
+1. Watch each app take its turn in the window. Apps update one at a time, in list order.
+2. Drag the window by its title to move it aside, or press **Close**. The update carries on.
+3. Click the bubble to open the window again.
+4. When an app fails, read its red line and press **Show output** for the details.
+
+| Line | What it means |
+|---|---|
+| **Waiting** | Its turn has not come yet. |
+| Download and Unpack bars | It is downloading and unpacking the new image now. Its row shows the same bars. |
+| **Checking it stays running** | It has started, and the countdown runs while StaXX makes sure it stays up. An app with its own health check reads **Waiting for its health check** until the check passes. |
+| **Updated just now, running** | It is done. |
+| A red line | It did not come up. The line says why. |
+
+![The update window with five apps ticked and the last, CloudBeaver, reading "Checking it stays running · 5 s" over two full bars](../images/guide/updates-window-checking.png)
+
+Press **Stop after this app** to finish the app updating now and skip the rest. **Show output**
+opens what the update printed for that app.
+
+When every app comes up, the bubble turns green and reads **Done**, with how many were updated. The
+window closes itself five seconds later and the bubble goes.
+
+![The green bubble reading "Done, 6 updated" and the window titled "All 6 apps updated", saying it closes in 5 seconds, with every app ticked](../images/guide/updates-window-done.png)
+
+When an app fails, its line turns red and pulses, and the bubble turns red. The window stays open
+until you close it, and the app's row keeps its red mark.
+
+![The red bubble reading "Done, 5 updated, 1 failed" and the window titled "5 of 6 apps updated, 1 failed", with phpmyadmin's line in red reading "Did not start: phpmyadmin stopped straight after starting (exit code 1)." and a Show output link](../images/guide/updates-window-failed.png)
+
 
 ## Notifications
 

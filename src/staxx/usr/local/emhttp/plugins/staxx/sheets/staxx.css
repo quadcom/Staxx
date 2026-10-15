@@ -4391,7 +4391,7 @@ div.title.staxx-has-titlebar {
 
 .staxx-scaffold .staxx-uwin-grip {
   position: relative;
-  padding-left: 1.4rem;
+  padding-left: 3rem;
   cursor: move;
   user-select: none;
   touch-action: none;
@@ -4402,7 +4402,11 @@ div.title.staxx-has-titlebar {
   position: absolute;
   left: 0;
   top: 0;
-  letter-spacing: -0.3rem;
+  /* Sized and spaced like the title line (1.5rem, 1.4) so the dots sit on its
+     middle; the padding above leaves a clear gap before the first letter. */
+  font-size: 1.5rem;
+  line-height: 1.4;
+  letter-spacing: -0.8rem;
   opacity: 0.6;
 }
 
