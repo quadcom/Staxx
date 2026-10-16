@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.02">
+<!ENTITY version              "00.05.02_dev20261016">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "054f92dafeecf401234732db2107eca9">
-<!ENTITY packageSHA256        "34db09df52b1af1c32208e3d7f7fe79a6e62a89e3ed762d9f3ae04dbe819d094">
+<!ENTITY packageMD5           "bdb5ab17ddc3b76387dc0952ef4e2dec">
+<!ENTITY packageSHA256        "75b09ca6bce593bd8be155bcfefc93a5c714e5548670434a3cbe59eed0a49090">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,8 @@
 >
 
 <CHANGES>
+###00.05.02_dev20261016
+- While apps update, a bubble at the end of the toolbar says how far along it is, and a window opens beside it showing each app in turn: Download and Unpack bars for the one updating now, then a short check that it really started and stays running. The window can be dragged aside, closed and reopened from the bubble. When every app comes up, everything turns green and the window closes by itself; if one does not, its line turns red and says why, and the window stays open until you close it. This covers Update all, a folder's Update, a few stacks picked with Select, and a single app's Update, which now wait their turn in the same line-up. It replaces the progress line that used to sit under the toolbar.
 ###00.05.01
 - The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, an app with no picture gets the same coloured letters as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.
 - Proxy and DNS works with Nginx Proxy Manager, Pi-hole or both. Each has its own Enabled switch under the domain name. With Pi-hole on its own, the name points at the server, or at the app's own address when it has one, and you open the app with its port, such as `http://app.home.lan:8080`. The app's WebUI button opens that address.
@@ -529,7 +531,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.01-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.02_dev20261016-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
