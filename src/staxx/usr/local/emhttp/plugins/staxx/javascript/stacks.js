@@ -2264,11 +2264,26 @@
   // PLAN_145 round 2, Part A: the view-row toggle folds at its own width the
   // same way the note strip does, so it rides the same observer rather than
   // opening a second one against the same element.
+  // The dialog's border-box width, kept here so syncNoteStrip() never has to
+  // measure it: that runs several times inside every reparse(), straight after
+  // the DOM was written, and each getBoundingClientRect() forced a whole-page
+  // layout (~80 ms on a five-service stack). null means "not observed yet",
+  // and syncNoteStrip() then measures as before.
+  var modalWidthCache = null;
   if (window.ResizeObserver) {
     // PLAN_145 round 3: applySplit() re-clamps --staxx-split against the
     // dialog's current width, the same width this observer already exists to
     // notice a window drag or the Form/Split glide change continuously.
-    new ResizeObserver(function () { if (modal.open) { syncNoteStrip(); syncViewRow(); applySplit(); } }).observe(modal);
+    new ResizeObserver(function (entries) {
+      if (!modal.open) { modalWidthCache = null; return; }   // closed: width is 0, so don't keep it
+      var e = entries && entries[entries.length - 1], w;
+      if (e && e.borderBoxSize && e.borderBoxSize.length) w = e.borderBoxSize[0].inlineSize;
+      else w = modal.getBoundingClientRect().width;
+      var flipped = modalWidthCache === null || (modalWidthCache <= NOTESTRIP_BREAKPOINT) !== (w <= NOTESTRIP_BREAKPOINT);
+      modalWidthCache = w;
+      if (flipped) syncNoteStrip();
+      syncViewRow(); applySplit();
+    }).observe(modal);
   }
 
   // PLAN_145 round 3, Part B — the drag handle between the form and the
@@ -7692,7 +7707,7 @@
       for (var i = 0; i < noteStripFolded.length; i++) noteStripFolded[i].hidden = false;
       noteStripFolded = [];
 
-      var below = modal.getBoundingClientRect().width <= NOTESTRIP_BREAKPOINT;
+      var below = (modalWidthCache !== null ? modalWidthCache : modal.getBoundingClientRect().width) <= NOTESTRIP_BREAKPOINT;
       if (!below) {
         restoreWatchNoteHome();
         noteStrip.hidden = true;
@@ -12733,15 +12748,25 @@
   }
 
   function repaintMark() {
-    yamlMarks.textContent = '';
+    // Every layout read happens before the first DOM write: a read after a
+    // write forces a whole-page layout (~75 ms on the real page), and this ran
+    // a dozen of them per caret move. The marks go into one fragment and land
+    // in a single append at the end.
+    var scrollTop = yamlPane.scrollTop, scrollLeft = yamlPane.scrollLeft;
+    var viewH = yamlPane.clientHeight;
+    var frag = document.createDocumentFragment();
     // The band is a range of compose-file lines, which mean nothing painted
     // over most companion files' text — except .env, which gets its own band
     // below: one per line the active field's value actually refers to, not a
     // compose line range. missingHostPaths() itself returns empty for a
     // companion file, so this still hides the "create folders" note rather
     // than leaving it showing over a file with no volumes at all.
-    if (fileOpen !== null && fileOpen !== '.env') { updateMissingPaths(); updateInUsePaths(); return; }
+    if (fileOpen !== null && fileOpen !== '.env') {
+      yamlMarks.textContent = '';
+      updateMissingPaths(); updateInUsePaths(); return;
+    }
     if (!LINE_H) measure();
+    var view = markView(scrollTop, scrollLeft, viewH);
 
     if (fileOpen === '.env') {
       // Search hits, bad-path underlines, clash and link marks are all
@@ -12754,11 +12779,13 @@
           if (line === undefined) return;   // this field's value does not name a variable .env defines
           var eband = document.createElement('div');
           eband.className = 'staxx-mark';
-          eband.style.top    = (PAD_T + line * LINE_H - yamlPane.scrollTop) + 'px';
+          eband.style.top    = (PAD_T + line * LINE_H - view.top) + 'px';
           eband.style.height = LINE_H + 'px';
-          yamlMarks.appendChild(eband);
+          frag.appendChild(eband);
         });
       }
+      yamlMarks.textContent = '';
+      yamlMarks.appendChild(frag);
       updateMissingPaths();
       updateInUsePaths();
       return;
@@ -12769,9 +12796,9 @@
       if (f && f.range) {
         var band = document.createElement('div');
         band.className = 'staxx-mark';
-        band.style.top    = (PAD_T + f.range.start * LINE_H - yamlPane.scrollTop) + 'px';
+        band.style.top    = (PAD_T + f.range.start * LINE_H - view.top) + 'px';
         band.style.height = ((f.range.end - f.range.start) * LINE_H) + 'px';
-        yamlMarks.appendChild(band);
+        frag.appendChild(band);
       }
     }
 
@@ -12781,9 +12808,9 @@
     if (badP && badP.line >= 0) {
       var badBand = document.createElement('div');
       badBand.className = 'staxx-mark staxx-mark--problem';
-      badBand.style.top    = (PAD_T + badP.line * LINE_H - yamlPane.scrollTop) + 'px';
+      badBand.style.top    = (PAD_T + badP.line * LINE_H - view.top) + 'px';
       badBand.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(badBand);
+      frag.appendChild(badBand);
     }
 
     // Search hits share this layer rather than a second one of their own, and
@@ -12797,21 +12824,22 @@
     // once per repaintMark() pass here rather than once per kind of mark
     // below — geometry and hit-test share one shape (markView()/paintSpots()/
     // spotAt()) rather than four near-identical copies of it.
-    var view = markView();
-    repaintHits(view);
+    repaintHits(view, frag);
 
     // Bad host paths, same layer and same reasoning. Drawn last so a path
     // mark under a search hit still shows through: the hit is a fill, the
     // path mark only an underline.
-    paintSpots(view, markedPaths(), pathMarkClass);
+    paintSpots(view, frag, markedPaths(), pathMarkClass);
     // A moved image's own underline (PLAN_61) — same layer again, drawn last
     // of all for the same reason.
-    paintSpots(view, movedSpots, 'staxx-badpath staxx-badpath--moved');
+    paintSpots(view, frag, movedSpots, 'staxx-badpath staxx-badpath--moved');
     // A clashing port or path (PLAN_65) — same layer again.
-    paintSpots(view, clashSpots, 'staxx-badpath staxx-badpath--clash');
+    paintSpots(view, frag, clashSpots, 'staxx-badpath staxx-badpath--clash');
     // A detected connection (PLAN_70 stage 2) — same layer again, drawn
     // last of all so it shows through a clash mark it happens to sit under.
-    paintSpots(view, linkSpots, 'staxx-badpath staxx-badpath--link');
+    paintSpots(view, frag, linkSpots, 'staxx-badpath staxx-badpath--link');
+    yamlMarks.textContent = '';
+    yamlMarks.appendChild(frag);
     updateMissingPaths();
     updateInUsePaths();
   }
@@ -12822,10 +12850,13 @@
   // further before its text begins. leftBase is how far into THIS layer a
   // mark box has to start to land under the first real character of a line.
   // first/last is the visible line range, plus a small margin either side.
-  function markView() {
+  // top/left are the pane's scroll offsets, read once by repaintMark() and
+  // carried here so no later step re-reads them after a DOM write.
+  function markView(top, left, viewH) {
     var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
     return {
+      top: top,
+      left: left,
       leftBase: textLeft() - markLeft,
       first: Math.floor((top - PAD_T) / LINE_H) - 2,
       last:  Math.ceil((top + viewH - PAD_T) / LINE_H) + 2
@@ -12836,18 +12867,18 @@
   // layer — the box repaintPaths/repaintMoved/repaintClash/repaintLink each
   // built by hand. cls is the class string every spot in the list gets, or a
   // function of the spot for a list (markedPaths()) whose colour varies.
-  function paintSpots(view, list, cls) {
+  function paintSpots(view, frag, list, cls) {
     for (var i = 0; i < list.length; i++) {
       var m = list[i];
       if (m.line < view.first || m.line > view.last) continue;
 
       var box = document.createElement('div');
       box.className = typeof cls === 'function' ? cls(m) : cls;
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (view.leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.top    = (PAD_T + m.line * LINE_H - view.top) + 'px';
+      box.style.left   = (view.leftBase + m.col * CHAR_W - view.left) + 'px';
       box.style.width  = (m.len * CHAR_W) + 'px';
       box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
+      frag.appendChild(box);
     }
   }
 
@@ -12871,7 +12902,7 @@
   // drawing is limited. The current hit is always drawn even if the line math
   // puts it just outside the margin, so stepping to it never looks like it
   // vanished for the instant before the scroll catches up.
-  function repaintHits(view) {
+  function repaintHits(view, frag) {
     if (!findMatches.length) return;
 
     var text = yamlPane.value;
@@ -12891,11 +12922,11 @@
 
       var box = document.createElement('div');
       box.className = 'staxx-hit' + (isCurrent ? ' staxx-hit--current' : '');
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (view.leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.top    = (PAD_T + m.line * LINE_H - view.top) + 'px';
+      box.style.left   = (view.leftBase + m.col * CHAR_W - view.left) + 'px';
       box.style.width  = (len * CHAR_W) + 'px';
       box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
+      frag.appendChild(box);
     }
   }
 
@@ -13474,6 +13505,7 @@
   // Form field -> compose pane.
   function focusField(id, reveal) {
     activeField = id;
+    caretLineDone = -1;   // something else moved the highlight; the next caret sync must redraw (syncFromCaret sets it back)
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
       rows[i].classList.toggle('staxx-fieldrow--active', rows[i].dataset.fieldRow === id);
@@ -13491,7 +13523,9 @@
       }
     }
     repaintMark();
-    syncGutter();
+    // Only a reveal moves the pane; the gutter only follows its scroll, so
+    // otherwise this read would force a layout for nothing.
+    if (reveal) syncGutter();
   }
 
   formHost.addEventListener('focusin', function (event) {
@@ -13510,12 +13544,17 @@
 
   // Compose pane -> form field.
   var caretRaf = null;
+  // The line and model the last caret sync settled on. reparse() swaps MODEL
+  // for a new object, so a repeat of both means nothing could have changed.
+  var caretLineDone = -1, caretModelDone = null;
 
   function syncFromCaret() {
     caretRaf = null;
     if (!MODEL || !MODEL.doc) return;
 
     var line = YAML.lineAtOffset(MODEL.doc, yamlPane.selectionStart);
+    if (line === caretLineDone && MODEL === caretModelDone) return;
+    caretLineDone = line; caretModelDone = MODEL;
     var id   = YAML.fieldAtLine(MODEL, line);
 
     if (!id) {
@@ -13534,6 +13573,7 @@
     }
 
     focusField(id, false);
+    caretLineDone = line;
     var row = formHost.querySelector('[data-field-row="' + cssEsc(id) + '"]');
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
@@ -17964,6 +18004,7 @@
     updateUndo();
 
     lockScroll(true);
+    restList(true);
     modal.showModal();
     // PLAN_145 round 3 — only now does the dialog have a real width to
     // measure a saved split ratio against; setView() above ran while it was
@@ -18214,6 +18255,7 @@
     // by closeEditor() above — this catches the paths that never went through
     // it, Escape among them.
     stopManage();
+    restList(false);   // every close path ends at this event, so this is the one place to wake the list
 
     // Clear the #stack= fragment openEditor() wrote, so a refresh after
     // closing lands on the list rather than reopening a stack that is no
@@ -21068,6 +21110,7 @@
       head += ' · ' + timeLeft((prog.dlTotal - prog.dlBytes) / rate);
     }
     el.querySelector('.staxx-rowprog-head').textContent = head;
+    prog.headline = head;   // the update window shows this same line, time left included
 
     // Two whole-image bars rather than a line per layer — a person wants to know how far along the pull is, not which of 23 layers is moving.
     [['dl', prog.dlPct], ['ex', prog.exPct]].forEach(function (pair) {
@@ -21129,6 +21172,11 @@
   // where this is filled in, and restoreBusy() where it survives a
   // refreshRows() table-body swap the way rowFailures already does.
   var rowJobs = {};
+
+  // PLAN_244 — the last pullProgress() result per job, kept after the job
+  // leaves `jobs` so the update window can still read it for the moment between
+  // a pull ending and the queue noticing. A few small objects per page visit.
+  var lastProgByJob = {};
 
   /* PLAN_151 — a job started from this page used to live only in the two
    * maps above, so a reload (or a second tab) forgot every job in flight:
@@ -21451,6 +21499,7 @@
           // the next tick.
           var prog = pullProgress(entry.text);
           entry.prog = prog;
+          lastProgByJob[id] = prog;
           if (prog.phase === 'start' || prog.phase === 'done') {
             entry.rows.forEach(function (row) { removeProgressOverlay(row); });
           } else {
@@ -22705,6 +22754,7 @@
   // Every visible clock, re-rendered from the timestamp already in hand —
   // no request of its own, so running this often is free.
   function tickPageClocks() {
+    if (listPaused()) return;   // the list is asleep behind the editor; catchUp() repaints on close
     Array.prototype.forEach.call(
       document.querySelectorAll('.staxx-updatepill'),
       paintPillClock
@@ -23066,7 +23116,7 @@
   // and asked for them lower — so only then do they get a row of our own,
   // inserted right before the buttons row (`#staxx-toolbar`, PLAN_139); if
   // that row is ever missing — a markup change — it falls back to sitting
-  // before `#staxx-update-queue` instead, so the information is never
+  // before `#staxx-select-bar` instead, so the information is never
   // silently lost.
   var updatesLine = document.getElementById('staxx-updates-line');
   if (!updatesLine) {
@@ -23086,9 +23136,9 @@
       if (buttonsBar && buttonsBar.parentNode) {
         buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
       } else {
-        var updateQueueEl = document.getElementById('staxx-update-queue');
-        if (updateQueueEl && updateQueueEl.parentNode) {
-          updateQueueEl.parentNode.insertBefore(statusRow, updateQueueEl);
+        var selectBarEl = document.getElementById('staxx-select-bar');
+        if (selectBarEl && selectBarEl.parentNode) {
+          selectBarEl.parentNode.insertBefore(statusRow, selectBarEl);
         }
       }
     }
@@ -23112,7 +23162,14 @@
     // The triangle is the one mark in the set that carries severity rather than
     // a subject, which is what this needs (PLAN_167 §4, Adrian 2026-09-18).
     unraidTplLine.className = 'staxx-pill staxx-pill--bad staxx-titlebar-aside';
-    unraidTplLine.href = '/Settings/staxx.settings#staxx-unraid-templates';
+    // The box lives on StaXX's own Settings window (Storage tab), not on
+    // Unraid's settings page, so the click opens that window and asks for the
+    // box to be scrolled into view once it has drawn.
+    unraidTplLine.href = '#settings';
+    unraidTplLine.addEventListener('click', function (e) {
+      e.preventDefault();
+      openSettings(null, 'storage', 'staxx-unraid-templates');
+    });
     unraidTplLine.title = 'Templates left in Unraid’s folder can rebuild the old ' +
       'container behind a taken-over stack. Open Settings to move them.';
     unraidTplLine.hidden = true;
@@ -23596,55 +23653,412 @@
    * moment nothing is running or waiting, so a tab left open afterwards
    * carries no timer for a queue that has already finished.
    */
-  var queueBar        = document.getElementById('staxx-update-queue');
   var updateQueueTimer = null;
   var queueWasLive     = false;
   // Callbacks waiting for the queue to stop being live — a bulk update's own
-  // per-stack settle functions, fed by the same poll as the page's queue bar
+  // per-stack settle functions, fed by the same poll as the bubble and window
   // rather than each running a second poll of their own. See
   // whenQueueSettled() and the drain in applyQueue()'s not-live branch.
   var queueSettled     = [];
 
+  // PLAN_244 — the bubble and window are painted from the last queue reply.
+  var lastQueue     = null;
+  var queueClock    = { server: 0, client: 0 };   // the server's `now` beside the browser's clock when it arrived
+  var queueTracked  = {};   // job ids already handed to track(), so one job never gets two trackers
+  var queueSeen     = {};   // queue id + item index -> last state seen, to mark a failure once, on the transition
+  var bubbleEl      = document.getElementById('staxx-update-bubble');
+  var uwinEl        = document.getElementById('staxx-update-window');
+  var bubbleMode    = '';   // '' (not shown) | 'live' | 'done' | 'fail'
+  var uwinOpen      = false;
+  var uwinPos       = null; // { left, top }: where it was last put, kept for the page visit
+  var uwinRows      = [];   // one { el, ... } per queue item, painted in place so a repaint never loses a hover or a click
+  var uwinQueueId   = null;
+  var uwinBuilt     = false;
+  var uwinAutoClose = false; // an all-green run is on its 5 s countdown
+  var uwinTick      = null;
+  var uwinHideTimer = null, bubbleHideTimer = null, runEndTimer = null, bubbleTextTimer = null;
+  var UWIN_AUTOCLOSE_MS = 5000;
+
+  // A running item, a waiting one, or one whose new container is still being
+  // watched all count as the run still being on.
   function queueIsLive(queue) {
     return !!(queue && queue.items && queue.items.some(function (item) {
-      return item.state === 'running' || item.state === 'waiting';
+      return item.state === 'running' || item.state === 'waiting' || item.state === 'checking';
     }));
   }
 
-  function paintUpdateQueue(queue) {
-    if (!queueBar) return;
-    // Shown only while something is running or waiting. A finished queue
-    // used to keep painting its final tally with a Stop button that had
-    // nothing left to stop, until the queue was cleared — Adrian's card of
-    // 2026-09-17, "Unknown status or notification bar". What the queue did
-    // is on the rows' own pills by then; applyQueue() already refreshes them
-    // on the transition to finished.
-    if (!queueIsLive(queue)) {
-      queueBar.hidden = true;
-      queueBar.innerHTML = '';
+  // The server's clock, carried forward by the browser's own elapsed time, so
+  // a countdown never depends on the two machines agreeing on the hour.
+  function serverNow() {
+    return queueClock.server ? queueClock.server + (Date.now() - queueClock.client) / 1000 : Date.now() / 1000;
+  }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  // "just now" / "3 minutes ago", for a time in server seconds.
+  function agoText(then) {
+    var s = Math.max(0, serverNow() - then);
+    return s < 60 ? 'just now' : plural(Math.floor(s / 60), 'minute', 'minutes') + ' ago';
+  }
+
+  // The counts the bubble and window both speak from, so they cannot disagree.
+  function runTally(queue) {
+    var t = { n: 0, done: 0, failed: 0, skipped: 0, waiting: 0, current: null, started: 0, finished: 0 };
+    ((queue && queue.items) || []).forEach(function (item) {
+      t.n++;
+      if (item.state === 'done') t.done++;
+      else if (item.state === 'failed') t.failed++;
+      else if (item.state === 'skipped') t.skipped++;
+      else if (item.state === 'waiting') t.waiting++;
+      else if (!t.current) t.current = item;
+      if (item.started && (!t.started || item.started < t.started)) t.started = item.started;
+      if (item.finished > t.finished) t.finished = item.finished;
+    });
+    if (!t.started && queue) t.started = +queue.id || 0;
+    t.settled = t.done + t.failed + t.skipped;
+    return t;
+  }
+
+  // Fades an element's words out and the new ones in, instead of swapping them.
+  function crossfadeText(el, text) {
+    if (el.textContent === text) return;
+    if (!el.textContent) { el.textContent = text; return; }
+    el.style.opacity = '0';
+    clearTimeout(bubbleTextTimer);
+    bubbleTextTimer = setTimeout(function () { el.textContent = text; el.style.opacity = ''; }, 200);
+  }
+
+  function showBubble() {
+    if (!bubbleEl) return;
+    clearTimeout(bubbleHideTimer);
+    if (bubbleEl.hidden) { bubbleEl.hidden = false; void bubbleEl.offsetWidth; }   // the reflow lets it grow from nothing
+    bubbleEl.classList.remove('staxx-ubub--out');
+  }
+
+  function hideBubble() {
+    if (!bubbleEl || bubbleEl.hidden) return;
+    bubbleMode = '';
+    bubbleEl.classList.add('staxx-ubub--out');
+    clearTimeout(bubbleHideTimer);
+    bubbleHideTimer = setTimeout(function () { bubbleEl.hidden = true; }, 500);
+  }
+
+  // Blue and spinning while the run is on, green or red once it has ended.
+  function paintUpdateBubble(mode, t) {
+    if (!bubbleEl) return;
+    var text = mode === 'live' ? 'Updating ' + Math.min(t.settled + 1, t.n) + ' of ' + t.n
+             : mode === 'done' ? 'Done, ' + t.done + ' updated'
+             : 'Done, ' + t.done + ' updated, ' + t.failed + ' failed';
+    if (mode !== bubbleMode) {
+      bubbleMode = mode;
+      bubbleEl.classList.toggle('staxx-ubub--done', mode === 'done');
+      bubbleEl.classList.toggle('staxx-ubub--fail', mode === 'fail');
+      bubbleEl.innerHTML = (mode === 'live' ? '<span class="staxx-ubub-spin" aria-hidden="true"></span>'
+        : '<span class="staxx-ubub-mark" aria-hidden="true">' + (mode === 'done' ? '✓' : '✗') + '</span>') +
+        '<span class="staxx-ubub-txt"></span>';
+      bubbleEl.querySelector('.staxx-ubub-txt').textContent = text;
+    } else {
+      crossfadeText(bubbleEl.querySelector('.staxx-ubub-txt'), text);
+    }
+    showBubble();
+  }
+
+  function buildUpdateWindow() {
+    uwinBuilt = true;
+    uwinEl.innerHTML =
+      '<div class="staxx-uwin-grip"><h4 class="staxx-uwin-title"></h4><p class="staxx-uwin-sub"></p></div>' +
+      '<div class="staxx-uwin-bar"><span class="staxx-uwin-barfill"></span></div>' +
+      '<div class="staxx-uwin-list"></div>' +
+      '<div class="staxx-uwin-foot">' +
+        '<button type="button" class="staxx-btn" data-uwin="stop">' + esc('Stop after this app') + '</button>' +
+        '<button type="button" class="staxx-btn" data-uwin="close">' + esc('Close') + '</button>' +
+      '</div>';
+
+    // Drag by the title area, never starting on a button; kept on screen.
+    var grip = uwinEl.querySelector('.staxx-uwin-grip');
+    var dx = 0, dy = 0, dragging = false;
+    grip.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) return;
+      var r = uwinEl.getBoundingClientRect();
+      dx = event.clientX - r.left;
+      dy = event.clientY - r.top;
+      dragging = true;
+      grip.setPointerCapture(event.pointerId);
+    });
+    grip.addEventListener('pointermove', function (event) {
+      if (dragging) moveUwin(event.clientX - dx, event.clientY - dy);
+    });
+    function stop(event) {
+      if (!dragging) return;
+      dragging = false;
+      try { grip.releasePointerCapture(event.pointerId); } catch (e) { /* already released */ }
+    }
+    grip.addEventListener('pointerup', stop);
+    grip.addEventListener('pointercancel', stop);
+
+    uwinEl.addEventListener('click', function (event) {
+      var btn = event.target.closest('[data-uwin]');
+      if (btn) {
+        if (btn.dataset.uwin === 'close') closeUpdateWindow();
+        else if (btn.dataset.uwin === 'stop') stopUpdateQueue(btn);
+        return;
+      }
+      var link = event.target.closest('[data-uwin-output]');
+      if (link && lastQueue && lastQueue.items) {
+        var item = lastQueue.items[+link.dataset.uwinOutput];
+        if (item) openQueueItemOutput(item);
+      }
+    });
+  }
+
+  // Inside the browser window on every side, whatever was asked for.
+  function moveUwin(left, top) {
+    var w = uwinEl.offsetWidth;
+    uwinPos = {
+      left: Math.round(Math.min(Math.max(left, 0), Math.max(0, window.innerWidth - w))),
+      top:  Math.round(Math.min(Math.max(top, 0), Math.max(0, window.innerHeight - 60)))
+    };
+    uwinEl.style.left = uwinPos.left + 'px';
+    uwinEl.style.top  = uwinPos.top + 'px';
+  }
+
+  // First open: under the toolbar row, right edges lined up (the bubble is the
+  // last thing on it). Later opens: wherever it was last left.
+  function placeUwin() {
+    if (uwinPos) { moveUwin(uwinPos.left, uwinPos.top); return; }
+    var bar = bubbleEl && bubbleEl.closest('.staxx-bar');
+    var r = bar ? bar.getBoundingClientRect() : { right: window.innerWidth - 16, bottom: 60 };
+    moveUwin(r.right - uwinEl.offsetWidth, r.bottom + 4);
+  }
+
+  function openUpdateWindow() {
+    if (!uwinEl) return;
+    if (!uwinBuilt) buildUpdateWindow();
+    uwinOpen = true;
+    clearTimeout(uwinHideTimer);
+    if (uwinEl.hidden) {
+      uwinEl.hidden = false;
+      uwinEl.classList.add('staxx-uwin--hide');
+      placeUwin();
+      void uwinEl.offsetWidth;
+    }
+    uwinEl.classList.remove('staxx-uwin--hide');
+    paintUpdateWindow();
+  }
+
+  function hideUpdateWindow() {
+    if (!uwinEl) return;
+    uwinOpen = false;
+    uwinEl.classList.add('staxx-uwin--hide');
+    clearTimeout(uwinHideTimer);
+    uwinHideTimer = setTimeout(function () { uwinEl.hidden = true; }, 260);
+  }
+
+  // Close only hides the window. A run still going carries on and the bubble
+  // reopens it; a run that has ended has nothing left to show, so the bubble
+  // goes too.
+  function closeUpdateWindow() {
+    hideUpdateWindow();
+    if (bubbleMode === 'done' || bubbleMode === 'fail') {
+      clearTimeout(runEndTimer);
+      uwinAutoClose = false;
+      setTimeout(hideBubble, 250);
+    }
+  }
+
+  function stopUpdateQueue(btn) {
+    if (btn) btn.disabled = true;
+    call('update-queue-stop', {}).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (!res.ok) { failed('Could not stop updating', res.error); return; }
+      applyQueue(res);
+    });
+  }
+
+  // "Show output" on a line: a job this page is following streams live, the
+  // way a busy pill's click does; any other is read once from the server.
+  function openQueueItemOutput(item) {
+    var entry = item.job ? jobs[item.job] : null;
+    if (entry) {
+      openLogDialog(BUSY_LABEL[entry.verb] || 'Output', entry.text || 'Working…');
+      entry.show     = true;
+      entry.shown    = entry.text || 'Working…';
+      entry.atBottom = true;
+      followScroll(item.job);
       return;
     }
+    openJobOutput({ verb: item.verb || 'update', job: item.job });
+  }
 
-    var done = 0, runningItem = null, waiting = 0, failedCount = 0;
-    queue.items.forEach(function (item) {
-      if (item.state === 'running') { runningItem = item; return; }
-      if (item.state === 'waiting') { waiting++; return; }
-      done++;
-      if (item.state === 'failed') failedCount++;
+  // The step text under an app's name for every state but running, which has
+  // the progress bars instead.
+  function queueStepText(item) {
+    if (item.state === 'waiting') return 'Waiting';
+    if (item.state === 'skipped') return 'Skipped: updating was stopped.';
+    if (item.state === 'checking') {
+      var left = Math.ceil(10 - (serverNow() - item.checkStart));
+      return left > 0 ? 'Checking it stays running · ' + left + ' s' : 'Waiting for its health check';
+    }
+    if (item.state === 'done') {
+      return item.finished ? 'Updated ' + agoText(item.finished) + ', running' : 'Updated, running';
+    }
+    return item.reason || item.error || 'This app did not finish updating.';
+  }
+
+  function buildProgBlock() {
+    var el = document.createElement('div');
+    el.className = 'staxx-uwin-prog';
+    el.innerHTML =
+      '<span class="staxx-uwin-head"></span>' +
+      '<span class="staxx-uwin-label">Download</span><span class="staxx-uwin-track"><span class="staxx-uwin-fill"></span></span><span class="staxx-uwin-info"></span>' +
+      '<span class="staxx-uwin-label">Unpack</span><span class="staxx-uwin-track"><span class="staxx-uwin-fill"></span></span><span class="staxx-uwin-info"></span>';
+    return el;
+  }
+
+  // The running app's headline and two bars, from the same pullProgress()
+  // result the row's own overlay paints (tickJobs() keeps the last one).
+  function paintQueueProg(el, item) {
+    var prog = lastProgByJob[item.job] || { phase: 'pull', layerTotal: 0, dlPct: 0, exPct: 0 };
+    // While its new container is being watched the countdown takes the
+    // headline's place (bars stay full under it), so there is only one line.
+    var checking = item.state === 'checking';
+    el.querySelector('.staxx-uwin-head').textContent = checking ? queueStepText(item) : (prog.headline || progressHeadline(prog));
+    if (checking) prog = { dlPct: 100, exPct: 100, dlBytes: prog.dlBytes, dlTotal: prog.dlTotal, exBytes: prog.exBytes, exTotal: prog.exTotal };
+    var fills = el.querySelectorAll('.staxx-uwin-fill'), infos = el.querySelectorAll('.staxx-uwin-info');
+    [[prog.dlPct, prog.dlBytes, prog.dlTotal], [prog.exPct, prog.exBytes, prog.exTotal]].forEach(function (b, i) {
+      var pct = Math.max(0, Math.min(100, b[0] || 0));
+      fills[i].style.width = pct + '%';
+      infos[i].textContent = pct + '%' + (b[2] ? ' · ' + bytes(b[1]) + ' of ' + bytes(b[2]) : '');
     });
+  }
 
-    var text = done + ' of ' + queue.items.length + ' updated';
-    if (failedCount) text += ' (' + failedCount + ' failed)';
-    if (runningItem) text += ' — updating "' + stackLabel(runningItem.stack) + '" now';
-    if (waiting) text += ', ' + waiting + ' waiting';
-    if (queue.stopped) text += '. Finishing the current stack, then stopping.';
+  function paintUpdateWindow() {
+    var queue = lastQueue;
+    if (!uwinEl || !uwinBuilt || uwinEl.hidden || !queue || !queue.items) return;
+    var t = runTally(queue);
+    var live = queueIsLive(queue);
 
-    queueBar.hidden = false;
-    queueBar.innerHTML =
-      '<span class="staxx-updatequeue-text">' + esc(text) + '</span>' +
-      (queue.stopped ? '' :
-        '<button type="button" class="staxx-btn staxx-btn--small" id="staxx-update-queue-stop">' +
-          esc('Stop') + '</button>');
+    var title, sub;
+    if (live) {
+      title = 'Updating ' + plural(t.n, 'app', 'apps');
+      var parts = [t.done + t.failed + ' done'];
+      if (t.current) parts.push('1 updating now');
+      if (t.waiting) parts.push(t.waiting + ' waiting');
+      sub = parts.join(', ') + '. Started ' + agoText(t.started) + '.' + (queue.stopped ? ' Stopping after this app.' : '');
+    } else if (t.failed) {
+      title = t.done + ' of ' + plural(t.n, 'app', 'apps') + ' updated, ' + t.failed + ' failed';
+      sub = 'Finished ' + agoText(t.finished) + '. ' +
+        (t.failed === 1 ? 'One app needs' : t.failed + ' apps need') + ' your attention.';
+    } else if (t.done === t.n) {
+      title = t.n === 1 ? '1 app updated' : 'All ' + t.n + ' apps updated';
+      var took = Math.max(0, t.finished - t.started);
+      sub = 'Finished ' + agoText(t.finished) + '. Took ' +
+        (took < 60 ? 'less than a minute' : plural(Math.round(took / 60), 'minute', 'minutes')) + '.' +
+        (uwinAutoClose ? ' This closes in 5 seconds.' : '');
+    } else {
+      title = t.done + ' of ' + plural(t.n, 'app', 'apps') + ' updated';
+      sub = 'Finished ' + agoText(t.finished) + '. Updating was stopped.';
+    }
+    var titleEl = uwinEl.querySelector('.staxx-uwin-title');
+    titleEl.textContent = title;
+    titleEl.classList.toggle('staxx-uwin-title--bad', !live && t.failed > 0);
+    uwinEl.querySelector('.staxx-uwin-sub').textContent = sub;
+    uwinEl.querySelector('.staxx-uwin-barfill').style.width = (t.n ? Math.round(100 * t.settled / t.n) : 0) + '%';
+    uwinEl.querySelector('[data-uwin="stop"]').hidden = !live || !!queue.stopped;
+
+    var list = uwinEl.querySelector('.staxx-uwin-list');
+    if (uwinQueueId !== queue.id || uwinRows.length > queue.items.length) {
+      uwinQueueId = queue.id;
+      uwinRows = [];
+      list.innerHTML = '';
+    }
+    queue.items.forEach(function (item, i) {
+      var r = uwinRows[i];
+      if (!r) {
+        var el = document.createElement('div');
+        el.innerHTML =
+          '<span class="staxx-uwin-ico" aria-hidden="true"></span><span class="staxx-uwin-name"></span>' +
+          '<button type="button" class="staxx-uwin-link" data-uwin-output="' + i + '" hidden>' + esc('Show output') + '</button>' +
+          '<span class="staxx-uwin-step"></span>';
+        r = uwinRows[i] = {
+          el: el, state: '', prog: null,
+          ico: el.children[0], name: el.children[1], link: el.children[2], step: el.children[3]
+        };
+        list.appendChild(el);
+      }
+
+      r.name.textContent = stackLabel(item.stack) + (item.service ? ' · ' + item.service : '');
+
+      if (r.state !== item.state) {
+        var was = r.state;
+        r.state = item.state;
+        r.el.className = 'staxx-uwin-row staxx-uwin-row--' + item.state;
+        r.ico.innerHTML = item.state === 'done' ? '✓'
+          : item.state === 'failed' ? '<span class="staxx-uwin-x">✗</span>'
+          : (item.state === 'running' || item.state === 'checking') ? '⟳' : '•';
+        r.link.hidden = !(item.job && (item.state === 'running' || item.state === 'checking' || item.state === 'failed'));
+        if (item.state === 'done' && was) {
+          // Once, when an app turns green; the class comes off again so the
+          // tint fades back out rather than staying on every finished line.
+          r.el.classList.add('staxx-uwin-row--flash');
+          setTimeout(function () { r.el.classList.remove('staxx-uwin-row--flash'); }, 900);
+        }
+        if (r.prog && item.state !== 'running' && item.state !== 'checking') r.prog.classList.add('staxx-uwin-prog--gone');
+      }
+
+      if (item.state === 'running' || item.state === 'checking') {
+        if (!r.prog) { r.prog = buildProgBlock(); r.el.appendChild(r.prog); }
+        r.prog.classList.remove('staxx-uwin-prog--gone');
+        paintQueueProg(r.prog, item);
+        r.step.hidden = true;
+      } else {
+        r.step.hidden = false;
+        r.step.textContent = queueStepText(item);
+      }
+    });
+  }
+
+  // Marks every item that failed on this page's watch with the row's red
+  // failure marker — once, on the change into `failed`, so a queue that had
+  // failed long before the page loaded does not repaint old news.
+  function markQueueFailures(queue) {
+    (queue.items || []).forEach(function (item, i) {
+      var key = queue.id + '#' + i;
+      var before = queueSeen[key];
+      queueSeen[key] = item.state;
+      if (item.state !== 'failed' || !before || before === 'failed' || before === 'done' || before === 'skipped') return;
+      var rows = item.service ? containerRows(item.stack, item.service) : stackRows(item.stack);
+      if (rows.length) markFailed(rows, 'update', item.job || '');
+    });
+  }
+
+  // A running item's job gets the same row tracking a single update always
+  // had — busy pill, overlay, live output — and its progress is kept for the
+  // window. Each job id is handed over once.
+  function trackQueueJobs(queue) {
+    queue.items.forEach(function (item) {
+      if (item.state !== 'running' || !item.job || queueTracked[item.job] || jobs[item.job]) return;
+      queueTracked[item.job] = true;
+      var rows = item.service ? containerRows(item.stack, item.service) : stackRows(item.stack);
+      if (rows.length) setBusy(rows, BUSY_LABEL[item.verb] || 'Updating…');
+      track(item.job, { rows: rows, verb: item.verb || 'update' });
+    });
+  }
+
+  // A run has just stopped being live: green when everything started, red when
+  // anything did not. Green closes itself 5 s on, the bubble right after; red
+  // stays until somebody has seen it and pressed Close.
+  function settleRun(queue) {
+    var t = runTally(queue);
+    paintUpdateBubble(t.failed ? 'fail' : 'done', t);
+    clearTimeout(runEndTimer);
+    if (t.failed) { uwinAutoClose = false; return; }
+    uwinAutoClose = true;
+    runEndTimer = setTimeout(function () {
+      uwinAutoClose = false;
+      hideUpdateWindow();
+      setTimeout(hideBubble, 250);
+    }, UWIN_AUTOCLOSE_MS);
   }
 
   function stopQueuePoll() {
@@ -23665,18 +24079,36 @@
   }
 
   // The one place a queue reply is applied, whichever action fetched it —
-  // starting, stopping, or the poll itself.
-  function applyQueue(queue) {
-    paintUpdateQueue(queue);
+  // starting, adding, stopping, or the poll itself. `open` is true only for a
+  // reply to something this page just asked for (Update all, a row's Update):
+  // that opens the window by itself, where a queue merely found running on
+  // load shows the bubble alone.
+  function applyQueue(res, open) {
+    var queue = res.queue;
+    if (queue) lastQueue = queue;
+    if (res.now) queueClock = { server: res.now, client: Date.now() };
+    if (queue && queue.items) markQueueFailures(queue);
+
     if (queueIsLive(queue)) {
       queueWasLive = true;
+      // A new run (or an update added to a finished one) cancels the end-of-run
+      // countdown and puts the bubble back to blue.
+      clearTimeout(runEndTimer);
+      uwinAutoClose = false;
+      trackQueueJobs(queue);
+      paintUpdateBubble('live', runTally(queue));
+      if (open) openUpdateWindow();
+      if (!uwinTick) uwinTick = setInterval(paintUpdateWindow, 1000);
+      paintUpdateWindow();
       startQueuePoll();
     } else {
       stopQueuePoll();
+      if (uwinTick) { clearInterval(uwinTick); uwinTick = null; }
       // A queue that just finished may have changed which rows carry an
       // update pill and what state their containers are in — but only on
       // the transition, not on every poll while it was already settled.
-      if (queueWasLive) { queueWasLive = false; refreshStateSoon(); }
+      if (queueWasLive) { queueWasLive = false; settleRun(queue); refreshStateSoon(); }
+      paintUpdateWindow();
       // Callbacks registered by whenQueueSettled() run after that refresh,
       // so a bulk update's own tally and row painting see the settled state.
       if (queueSettled.length) {
@@ -23696,18 +24128,15 @@
     var wasLive = queueWasLive;
     call('update-queue', {}).then(function (res) {
       if (!res.ok) return;
-      applyQueue(res.queue);
+      applyQueue(res);
       if (wasLive && !queueIsLive(res.queue)) refreshUpdates();
     });
   }
 
-  if (queueBar) {
-    queueBar.addEventListener('click', function (event) {
-      if (!event.target.closest('#staxx-update-queue-stop')) return;
-      call('update-queue-stop', {}).then(function (res) {
-        if (!res.ok) { failed('Could not stop updating', res.error); return; }
-        applyQueue(res.queue);
-      });
+  // The bubble opens and closes the window.
+  if (bubbleEl) {
+    bubbleEl.addEventListener('click', function () {
+      if (uwinOpen) hideUpdateWindow(); else openUpdateWindow();
     });
   }
 
@@ -23769,7 +24198,7 @@
       closeConfirm();
       call('update-queue-start', { scope: scope, stopped: includeStopped ? '1' : '0' }).then(function (res) {
         if (!res.ok) { failed('Could not start updating', res.error); return; }
-        applyQueue(res.queue);
+        applyQueue(res, true);
       });
     });
 
@@ -23802,14 +24231,15 @@
   // stack otherwise, the same split run() already makes. Which verb the
   // server actually runs (pull, or pull-then-up-d) is decided there, not
   // here, since only it knows whether the target container is running.
+  // The server adds it to the update queue (behind anything already running)
+  // and answers with the queue, so a single app's update gets the bubble and
+  // window too; its row goes busy once its turn starts (trackQueueJobs()).
   function applyUpdate(name, service, label) {
-    var rows = service ? containerRows(name, service) : stackRows(name);
     var fields = { name: name };
     if (service) fields.service = service;
-    startRowJob({
-      rows: rows, verb: 'update', action: 'update-apply', fields: fields,
-      failTitle: 'Could not update ' + label,
-      after: function () { refreshUpdates(name, service); refreshStateSoon(); }
+    call('update-apply', fields).then(function (res) {
+      if (!res || !res.ok) { failed('Could not update ' + label, res && res.error); return; }
+      applyQueue(res, true);
     });
   }
 
@@ -23860,7 +24290,7 @@
 
       updatesPaused = !!res.paused;
       paintPauseButton();
-      applyQueue(res.queue);
+      applyQueue(res);
     });
   }
 
@@ -28308,6 +28738,7 @@
     if (tabHistoryBtn) tabHistoryBtn.setAttribute('aria-selected', tab === 'history' ? 'true' : 'false');
     if (tabVersionsBtn) tabVersionsBtn.setAttribute('aria-selected', tab === 'versions' ? 'true' : 'false');
     manageStatePoll(tab === 'manage');
+    if (tab === 'manage' && pushOwed) catchUp();   // the list is awake again: pay what was held back
     if (tab === 'history') ensureHistoryLoaded();
     if (tab === 'versions') ensureVersionsLoaded();
   }
@@ -30315,7 +30746,12 @@
     });
   }
 
-  function openSettings(focusId) {
+  // focusId names a settings row to land on. tab names the tab to open when the
+  // target is not a row (it wins nothing over a matching row). scrollTo is the
+  // id of a box another script draws after the window opens (unraid-templates.js);
+  // it travels on the body's data-scroll-to, which is rewritten on every open so
+  // a request that was never honoured cannot scroll a later open.
+  function openSettings(focusId, tab, scrollTo) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
       if (!res.ok || !res.settings) {
@@ -30331,6 +30767,8 @@
       // this only sorts the rendered HTML into five buckets by row.tab, so
       // saving (which reads every control regardless of which pane it is in)
       // needs no change at all.
+      if (scrollTo) settingsBody.setAttribute('data-scroll-to', scrollTo);
+      else settingsBody.removeAttribute('data-scroll-to');
       settingsBody.innerHTML = SETTINGS_TABS.map(function (tab) {
         // This tab carries no settings at all — SETTINGS_ROWS has nothing
         // tagged for it — so the general path below would draw an empty
@@ -30432,14 +30870,20 @@
       // caller asking for a specific field wins over that default so
       // #settings links and signposts still land on the right pane.
       var focusRow = focusId ? SETTINGS_ROWS.filter(function (row) { return row.id === focusId; })[0] : null;
-      setSettingsTab(focusRow ? focusRow.tab : SETTINGS_TABS[0]);
+      setSettingsTab(focusRow ? focusRow.tab : (tab || SETTINGS_TABS[0]));
       settingsModal.showModal();
       // Explicit, and after showModal(), for the same reason every dialog in
       // this file sets focus by hand: the browser's own "first focusable
       // descendant" choice is never where anyone wants to land. A caller
       // asking for a specific field (e.g. the Docker Hub notice's link)
       // wins over the usual "first row" default.
-      var first = focusId ? document.getElementById(focusId) : document.getElementById(SETTINGS_ROWS[0].id);
+      // A named tab with no row to land on focuses that tab's own button: the
+      // first row sits on General, which is hidden then, and leaving focus on
+      // the General button would draw its ring beside the selected tab.
+      var first = focusId ? document.getElementById(focusId) : (tab ? null : document.getElementById(SETTINGS_ROWS[0].id));
+      if (!focusId && tab && settingsTabstrip) {
+        first = settingsTabstrip.querySelector('.staxx-tab[data-tab="' + tab + '"]');
+      }
       if (first) {
         first.focus({ preventScroll: true });
         if (focusId) first.scrollIntoView({ block: 'center' });
@@ -33350,46 +33794,33 @@
   // list. A stack with nothing waiting is not a failure, only nothing to
   // do, same as a folder update silently passing over one with no update.
   function runBulkUpdate(names) {
-    var total = names.length, doneCount = 0, failCount = 0, failedLabels = [];
+    var total = names.length;
+    // The posts go one after another (each waits only for the server's
+    // answer, never for the update itself), so the queue file is never
+    // written by two at once; the queue then runs them one stack at a time.
+    function summarise(queue) {
+      var failCount = 0, failedLabels = [];
+      ((queue && queue.items) || []).forEach(function (item) {
+        if (item.state === 'failed' && names.indexOf(item.stack) !== -1) {
+          failCount++;
+          failedLabels.push(stackLabel(item.stack));
+        }
+      });
+      paintBulkSummary('updated', total, failCount, failedLabels);
+    }
     function next(i) {
-      if (i >= total) { paintBulkSummary('updated', total, failCount, failedLabels); return; }
-      var name = names[i];
-      var rows = stackRows(name);
-      if (rows.length) setBusy(rows, 'Updating…');
-      call('update-queue-start', { scope: name, stopped: '0' }).then(function (res) {
-        if (!res.ok) {
-          if (rows.length) clearBusy(rows);
-          doneCount++;
-          paintBulkTally(doneCount, total, failCount);
-          next(i + 1);
-          return;
-        }
-        applyQueue(res.queue);
-        // Rows are looked up again here rather than reusing the `rows`
-        // captured above: a rows refresh mid-update (a live-feed message, a
-        // folder change) replaces every row element, so the rows this stack
-        // started with may already be detached by the time it settles.
-        function settle(queue) {
-          var live = stackRows(name);
-          if (live.length) clearBusy(live);
-          doneCount++;
-          var item = (queue.items || []).filter(function (it) { return it.stack === name; })[0];
-          if (item && item.state === 'failed') {
-            failCount++;
-            failedLabels.push(stackLabel(name));
-            markFailed(live, 'update', item.job || '');
-          }
-          paintBulkTally(doneCount, total, failCount);
-          next(i + 1);
-        }
-        if (queueIsLive(res.queue)) {
-          whenQueueSettled(settle);
-        } else {
-          // Nothing to update for this stack — applyQueue() above saw no
-          // transition (it was never live), so no refresh happened yet.
-          settle(res.queue);
-          refreshStateSoon();
-        }
+      if (i >= total) {
+        // Failure markers are put on the rows by applyQueue(), so all that is
+        // left here is the tally once the queue has settled.
+        if (queueIsLive(lastQueue)) whenQueueSettled(summarise);
+        else { summarise(lastQueue); refreshStateSoon(); }
+        return;
+      }
+      paintBulkTally(i, total, 0);
+      call('update-queue-start', { scope: names[i], stopped: '0' }).then(function (res) {
+        // A stack with nothing to update is not a failure, only nothing to do.
+        if (res.ok) applyQueue(res, true);
+        next(i + 1);
       });
     }
     next(0);
@@ -36489,6 +36920,7 @@
     // handler below, which is what keeps a long-hidden tab from looking
     // stale the moment it is shown again).
     if (document.hidden) return;
+    if (listPaused()) return;
     if (dockerQuiet()) return;
     // Nothing can be running, so there are no figures to collect — and the
     // two paths that ask without going through the 3s timer (returning from
@@ -36597,7 +37029,7 @@
   }
 
   function pushFallbackTick() {
-    if (document.hidden) return;   // same guard every other poller on this page uses
+    if (document.hidden || listPaused()) return;   // same guard every other poller on this page uses
     refreshState();
   }
 
@@ -36665,7 +37097,7 @@
         // forgot to close. What is owed is remembered instead and paid on the
         // way back in — see the visibilitychange handler below. 'rows' wins
         // over 'state' because it does everything the smaller one would.
-        if (document.hidden) {
+        if (document.hidden || listPaused()) {
           if (ev.data === 'rows' || !pushOwed) pushOwed = ev.data;
           return;
         }
@@ -36715,17 +37147,43 @@
   // stopped. Manage gets no poll of its own here: pollStats() already forces
   // itself while Manage is open, and its state is refreshed below only when
   // the paid message did not already cover it.
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) return;
+  function catchUp() {
     // Pay whatever arrived while nobody was looking. One refresh covers any
     // number of events missed, however long the tab sat in the background.
     var owed = pushOwed;
-    if (owed) { pushOwed = ''; pushApply(owed); }
+    // Returning to the tab with the editor still open keeps the debt for the
+    // editor's own close to pay.
+    if (owed && !listPaused()) { pushOwed = ''; pushApply(owed); }
     pollStats();
+    tickPageClocks();
     if (jobTicker) tickJobs();
     if (updateQueueTimer) pollQueueOnce();
     if (manageOpen && !owed) refreshState();
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    catchUp();
   });
+
+  // While the editor is open the list behind it stops refreshing: every
+  // mutation dirties a page of ~11,000 elements and made typing stutter.
+  // Manage shows live figures, so it keeps everything running.
+  function listPaused() { return modal.open && !manageOpen; }
+
+  // Rows off-screen behind the dialog skip rendering while it is open; the
+  // scroll is saved and put back so the list returns exactly where it was.
+  var restScroll = 0;
+  function restList(on) {
+    if (!stacksGrid) return;
+    if (on) {
+      restScroll = window.scrollY;
+      stacksGrid.classList.add('staxx-list-resting');
+    } else if (stacksGrid.classList.contains('staxx-list-resting')) {
+      stacksGrid.classList.remove('staxx-list-resting');
+      window.scrollTo(0, restScroll);
+      catchUp();
+    }
+  }
 
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.

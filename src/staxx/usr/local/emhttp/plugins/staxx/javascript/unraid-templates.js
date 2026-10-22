@@ -2,7 +2,7 @@
  * Copyright 2026, StaXX contributors.
  *
  * PLAN_165 §5: a small section injected into the Settings dialog's own
- * "Health check" pane, listing whichever Unraid templates §1 never got a
+ * Storage pane, above the leftovers box, listing whichever Unraid templates §1 never got a
  * chance to move because the stack was taken over before this plan existed,
  * with one button that moves them. Driven off the page's own
  * data-csrf/data-endpoint scaffold rather than anything private to
@@ -103,14 +103,21 @@
   // mutation but a later click inside the pane is another) never asks the
   // server twice for the same dialog.
   function loadSection() {
-    var host = document.querySelector('[data-pane="selftest"]');
+    var host = document.querySelector('[data-pane="storage"]');
     if (!host || document.getElementById('staxx-unraid-templates')) return;
 
     var placeholder = document.createElement('div');
     placeholder.className = 'staxx-field';
     placeholder.id = 'staxx-unraid-templates';
     placeholder.innerHTML = '<span>Unraid templates</span><span class="staxx-hint">Checking…</span>';
-    host.appendChild(placeholder);
+    // This file's observer and leftovers.js's fire on the same mutation in no
+    // dependable order, so sit before whichever neighbour is already there:
+    // either order ends as templates, leftovers, archive list.
+    var leftovers = document.getElementById('staxx-leftovers');
+    var archive = document.getElementById('staxx-archive-list');
+    var before = leftovers && leftovers.parentNode === host ? leftovers
+               : archive && archive.parentNode === host ? archive : null;
+    host.insertBefore(placeholder, before);
 
     call('unraid-templates', {}).then(function (res) {
       // The dialog may have been closed and reopened while this was in
@@ -127,6 +134,16 @@
     var wrap = document.createElement('div');
     wrap.innerHTML = sectionHtml(rows);
     current.replaceWith(wrap.firstChild);
+
+    // The Settings dialog can ask for this box to be shown (the red "Unraid
+    // templates to move" chip does). The request rides on the dialog body's
+    // data attribute, not a stacks.js global, and is cleared once honoured.
+    var body = document.getElementById('staxx-settings-body');
+    if (body && body.getAttribute('data-scroll-to') === 'staxx-unraid-templates') {
+      body.removeAttribute('data-scroll-to');
+      var drawn = document.getElementById('staxx-unraid-templates');
+      if (drawn) drawn.scrollIntoView({ block: 'start' });
+    }
   }
 
   function moveThemIn(btn) {

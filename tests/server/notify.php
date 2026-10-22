@@ -722,6 +722,8 @@ ok('an SVG icon is attached as a PNG drawn by resvg', $cid !== '' && ($im[$cid][
    && substr($im[$cid][2] ?? '', -4) === '.png' && strncmp($im[$cid][1] ?? '', "\x89PNG", 4) === 0);
 $n = count($im); staxx_notify_icon_cid($icEv('vec'), $im);
 ok('the same SVG is attached once', count($im) === $n);
+$im = [];
+ok('an event with no service borrows the stack\'s first icon', staxx_notify_icon_cid($icEv(''), $im) !== '');
 putenv('STAXX_RESVG_BIN='.$dir.'/no-such-resvg');
 $im = [];
 ok('no resvg gives a letter tile', staxx_notify_icon_cid($icEv('vec'), $im) === '' && $im === []);
@@ -737,6 +739,19 @@ if (!is_file($icDir.'/.staxx/big.png')) {
      && ($im[$cid][0] ?? '') === 'image/png' && $dim !== false && $dim[0] <= 96 && $dim[1] <= 96, json_encode($dim));
 }
 @exec('rm -rf '.escapeshellarg($icDir));
+
+// A retry that worked clears the failure waiting for the same stack, never the other way round.
+reset_all();
+staxx_notify_digest_add([['kind' => 'failed', 'stack' => 'Media/x', 'service' => '', 'name' => 'x']], false);
+staxx_notify_digest_add([['kind' => 'installed', 'stack' => 'Media/x', 'service' => 'x', 'name' => 'x']], false);
+$kinds = array_column(digest()['events'], 'kind');
+ok('an installed event clears the failed one for its stack', $kinds === ['installed'], json_encode($kinds));
+reset_all();
+staxx_notify_digest_add([['kind' => 'installed', 'stack' => 'Media/x', 'service' => 'x', 'name' => 'x']], false);
+staxx_notify_digest_add([['kind' => 'failed', 'stack' => 'Media/x', 'service' => '', 'name' => 'x']], false);
+$kinds = array_column(digest()['events'], 'kind');
+ok('a failure after an install keeps both', $kinds === ['installed', 'failed'], json_encode($kinds));
+reset_all();
 staxx_scan_stacks_reset(); staxx_stack_compose_map(true);
 
 /* ===== 13. PLAN_237: Urgent first, "Worth a look" in groups, stack mosaic ===== */

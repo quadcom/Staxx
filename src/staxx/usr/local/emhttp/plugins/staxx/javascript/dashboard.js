@@ -314,6 +314,13 @@
       byCell[it.c + ',' + it.r] = it;
     });
 
+    drawGrid(cols, rows, byCell);
+  }
+
+  // Sizes and draws the rows of cells. render() passes the real items; the
+  // placeholder passes none, so the same markup and sizing give the empty
+  // grid the exact shape the first reply will fill.
+  function drawGrid(cols, rows, byCell) {
     var cellPx = grid.clientWidth > 0 ? grid.clientWidth / cols : 96;
     grid.style.setProperty('--sq', Math.max(1, cellPx - 7) + 'px');
     grid.style.setProperty('--rad', ((Math.max(1, cellPx - 7)) * 22 / 96) + 'px');
@@ -344,6 +351,15 @@
     });
     if (openFolderId && !activeFolders[openFolderId]) openFolderId = null;
   }
+
+  // Empty cells at the saved shape (printed on the grid by the .page file),
+  // so the tile has its final height and cell size before dash_state answers.
+  function drawPlaceholder() {
+    drawGrid(Math.max(1, parseInt(grid.dataset.cols, 10) || 1),
+             Math.max(1, parseInt(grid.dataset.rows, 10) || 1), {});
+  }
+
+  function redraw() { if (state) render(); else drawPlaceholder(); }
 
   /* ---- polling dash_state ------------------------------------------------ */
   function fetchState() {
@@ -686,16 +702,31 @@
   }
 
   /* ---- lifecycle ---------------------------------------------------------- */
-  var resizeTimer = null;
-  window.addEventListener('resize', function () {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(render, 120);
-  });
+  // Unraid re-flows its dashboard columns after load without any window
+  // resize, so the grid's own width is watched. Redrawn synchronously so the
+  // new cell size lands before paint; height-only changes are ignored, since
+  // every redraw changes the height and would loop.
+  if (typeof ResizeObserver !== 'undefined') {
+    var lastW = grid.clientWidth;
+    new ResizeObserver(function () {
+      var w = grid.clientWidth;
+      if (w === lastW) return;
+      lastW = w;
+      redraw();
+    }).observe(grid);
+  } else {
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(redraw, 120);
+    });
+  }
 
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) fetchState();
   });
 
+  drawPlaceholder();
   fetchState();
   setInterval(fetchState, STATE_POLL);
 })();

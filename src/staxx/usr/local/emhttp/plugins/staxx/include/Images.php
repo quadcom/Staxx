@@ -714,7 +714,7 @@ function staxx_images_unused(string &$error): array {
   // once a job finishes, so a pull just started or about to start is
   // invisible to it while it runs.
   foreach ((array)(staxx_update_queue_state()['items'] ?? []) as $item) {
-    if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) {
+    if (in_array($item['state'] ?? '', ['running', 'checking', 'waiting'], true)) {
       $error = 'An update is running or queued, so cleanup was skipped. Try again once it finishes.';
       return ['ok' => false];
     }

@@ -40,6 +40,13 @@ $jsTag   = staxx_asset('javascript/dashboard.js');
 $cssTag  = staxx_asset('sheets/dashboard.css');
 $viewUrl = staxx_view_url();
 
+// The saved grid shape rides on the grid so dashboard.js can draw empty cells
+// of the final size at first paint, before the first dash_state reply.
+require_once '/usr/local/emhttp/plugins/staxx/include/Dashboard.php';
+$dashLayout = staxx_dash_layout_load();
+$dashCols   = max(1, (int)($dashLayout['cols'] ?? 1));
+$dashRows   = max(1, (int)($dashLayout['rows'] ?? 1));
+
 $editorHref = htmlspecialchars($viewUrl.'#dashboard-editor', ENT_QUOTES);
 $csrfAttr   = htmlspecialchars($csrf, ENT_QUOTES);
 
@@ -69,7 +76,7 @@ $mytiles['staxx']['column2'] = <<<TILE
 </tr>
 <tr>
 <td>
-<div class="staxx-tile-grid" id="staxx-tile-grid"></div>
+<div class="staxx-tile-grid" id="staxx-tile-grid" data-cols="{$dashCols}" data-rows="{$dashRows}"></div>
 <script src="{$jsTag}"></script>
 </td>
 </tr>

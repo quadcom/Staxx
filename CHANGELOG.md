@@ -4,6 +4,14 @@ What changed in StaXX, newest first.
 
 ---
 
+## 00.05.02 — released 2026-10-22
+
+- While apps update, a bubble at the end of the toolbar says how far along it is, and a window opens beside it showing each app in turn: Download and Unpack bars for the one updating now, then a short check that it really started and stays running. The window can be dragged aside, closed and reopened from the bubble. When every app comes up, everything turns green and the window closes by itself; if one does not, its line turns red and says why, and the window stays open until you close it. This covers Update all, a folder's Update, a few stacks picked with Select, and a single app's Update, which now wait their turn in the same line-up. It replaces the progress line that used to sit under the toolbar.
+- The summary email no longer lists an app as failed when a later try the same night updated it, and an app whose update failed shows its own icon instead of a letter.
+- The red "Unraid templates to move" button now opens StaXX's own Settings window on the Storage tab and scrolls to the list. Before, it opened Unraid's settings page, which has no way to move them. The templates list now sits above the "Left behind by Unraid Docker and Compose Manager" box.
+- The stack editor stays quick on bigger stacks. Typing or moving the cursor in the compose text no longer freezes the page for a moment each time, so the form beside it keeps up instead of jumping.
+- The StaXX tile on the Dashboard appears at the size you saved straight away, instead of starting empty and then jumping into place.
+
 ## 00.05.01 — released 2026-10-15
 
 - The summary email opens with an Urgent section for apps that crashed, keep restarting or failed their health check. The tidy-up items move to a Worth a look section at the end: stacks waiting for your review, listed by name, and apps whose image now lives at a new address, one row each showing the old and new address. A stack with several apps shows the same tiled icon as in StaXX, an app with no picture gets the same coloured letters as in StaXX, and an app whose icon is an .ico file now shows it in emails instead of a letter.

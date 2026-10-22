@@ -575,6 +575,13 @@ function staxx_notify_icon_cid(array $e, array &$images): string {
   $meta = staxx_compose_meta($file);
   if (!($meta['ok'] ?? false)) return '';
   $icon = trim((string)($meta['services'][$svc]['x']['icon'] ?? ''));
+  if ($svc === '') {
+    // A failed update is about the whole stack and carries no service: borrow the first icon the stack has.
+    foreach ($meta['services'] ?? [] as $s) {
+      $icon = trim((string)($s['x']['icon'] ?? ''));
+      if ($icon !== '') break;
+    }
+  }
 
   if (preg_match('~^\./\.staxx/([^/]+)$~', $icon, $m)) {
     $ext  = strtolower((string)pathinfo($m[1], PATHINFO_EXTENSION));
@@ -1093,13 +1100,18 @@ function staxx_notify_digest_edit(callable $fn): bool {
   return $ok;
 }
 
-/** Add events to the digest; a newer event for the same app and kind replaces the older one. */
+/**
+ * Add events to the digest; a newer event for the same app and kind replaces the older one,
+ * and an 'installed' event also clears a waiting 'failed' one for its stack (a retry that worked).
+ */
 function staxx_notify_digest_add(array $events, bool $held): void {
   staxx_notify_digest_edit(static function (array &$d) use ($events, $held): void {
+    $key = static fn(array $x): string => ($x['kind'] ?? '').'|'.($x['stack'] ?? '').'|'.($x['service'] ?? '').'|'.($x['name'] ?? '');
     foreach ($events as $e) {
       $e['held'] = $held;
-      $key = static fn(array $x): string => ($x['kind'] ?? '').'|'.($x['stack'] ?? '').'|'.($x['service'] ?? '').'|'.($x['name'] ?? '');
-      $d['events'] = array_values(array_filter($d['events'], static fn($o) => $key($o) !== $key($e)));
+      $healed = ($e['kind'] ?? '') === 'installed' ? (string)($e['stack'] ?? '') : '';
+      $d['events'] = array_values(array_filter($d['events'], static fn($o) => $key($o) !== $key($e)
+        && !($healed !== '' && ($o['kind'] ?? '') === 'failed' && ($o['stack'] ?? '') === $healed)));
       $d['events'][] = $e;
     }
   });
