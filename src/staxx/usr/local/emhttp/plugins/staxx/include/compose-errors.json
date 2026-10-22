@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-02",
+  "version": "2026-10-22",
   "entries": [
     {
       "id": "number-key",
@@ -72,6 +72,15 @@
       "title": "A port is not a number",
       "means": "One of the ports in the file is written as {port}. A port has to be a number, such as 8080, or a range of numbers. Compose cannot open a port it cannot read as a number.",
       "fix": "Find {port} in the ports list and replace it with the port number. A port line looks like \"8080:80\", with the port on the server first and the port in the container second.",
+      "docs": "https://docs.docker.com/reference/compose-file/services/#ports"
+    },
+    {
+      "id": "port-line-too-many-parts",
+      "match": "invalid IP address: (?<value>\\S+)",
+      "sample": "invalid IP address: 49152:49172",
+      "title": "A port line has too many parts",
+      "means": "Compose read {value} as the address the port should listen on. A port line has the port on the server, then the port in the container, and anything in front of those two is taken as an address. This usually happens when a range of ports is written with colons, such as \"49152:49172:49152:49172\", instead of with a dash.",
+      "fix": "Find the ports line that starts with {value}. Write a range with a dash, such as \"49152-49172:49152-49172\". If you did mean an address, use one this server has, such as \"192.168.1.10:8080:80\".",
       "docs": "https://docs.docker.com/reference/compose-file/services/#ports"
     },
     {
