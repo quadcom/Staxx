@@ -2264,11 +2264,26 @@
   // PLAN_145 round 2, Part A: the view-row toggle folds at its own width the
   // same way the note strip does, so it rides the same observer rather than
   // opening a second one against the same element.
+  // The dialog's border-box width, kept here so syncNoteStrip() never has to
+  // measure it: that runs several times inside every reparse(), straight after
+  // the DOM was written, and each getBoundingClientRect() forced a whole-page
+  // layout (~80 ms on a five-service stack). null means "not observed yet",
+  // and syncNoteStrip() then measures as before.
+  var modalWidthCache = null;
   if (window.ResizeObserver) {
     // PLAN_145 round 3: applySplit() re-clamps --staxx-split against the
     // dialog's current width, the same width this observer already exists to
     // notice a window drag or the Form/Split glide change continuously.
-    new ResizeObserver(function () { if (modal.open) { syncNoteStrip(); syncViewRow(); applySplit(); } }).observe(modal);
+    new ResizeObserver(function (entries) {
+      if (!modal.open) { modalWidthCache = null; return; }   // closed: width is 0, so don't keep it
+      var e = entries && entries[entries.length - 1], w;
+      if (e && e.borderBoxSize && e.borderBoxSize.length) w = e.borderBoxSize[0].inlineSize;
+      else w = modal.getBoundingClientRect().width;
+      var flipped = modalWidthCache === null || (modalWidthCache <= NOTESTRIP_BREAKPOINT) !== (w <= NOTESTRIP_BREAKPOINT);
+      modalWidthCache = w;
+      if (flipped) syncNoteStrip();
+      syncViewRow(); applySplit();
+    }).observe(modal);
   }
 
   // PLAN_145 round 3, Part B — the drag handle between the form and the
@@ -7692,7 +7707,7 @@
       for (var i = 0; i < noteStripFolded.length; i++) noteStripFolded[i].hidden = false;
       noteStripFolded = [];
 
-      var below = modal.getBoundingClientRect().width <= NOTESTRIP_BREAKPOINT;
+      var below = (modalWidthCache !== null ? modalWidthCache : modal.getBoundingClientRect().width) <= NOTESTRIP_BREAKPOINT;
       if (!below) {
         restoreWatchNoteHome();
         noteStrip.hidden = true;
@@ -12733,15 +12748,25 @@
   }
 
   function repaintMark() {
-    yamlMarks.textContent = '';
+    // Every layout read happens before the first DOM write: a read after a
+    // write forces a whole-page layout (~75 ms on the real page), and this ran
+    // a dozen of them per caret move. The marks go into one fragment and land
+    // in a single append at the end.
+    var scrollTop = yamlPane.scrollTop, scrollLeft = yamlPane.scrollLeft;
+    var viewH = yamlPane.clientHeight;
+    var frag = document.createDocumentFragment();
     // The band is a range of compose-file lines, which mean nothing painted
     // over most companion files' text — except .env, which gets its own band
     // below: one per line the active field's value actually refers to, not a
     // compose line range. missingHostPaths() itself returns empty for a
     // companion file, so this still hides the "create folders" note rather
     // than leaving it showing over a file with no volumes at all.
-    if (fileOpen !== null && fileOpen !== '.env') { updateMissingPaths(); updateInUsePaths(); return; }
+    if (fileOpen !== null && fileOpen !== '.env') {
+      yamlMarks.textContent = '';
+      updateMissingPaths(); updateInUsePaths(); return;
+    }
     if (!LINE_H) measure();
+    var view = markView(scrollTop, scrollLeft, viewH);
 
     if (fileOpen === '.env') {
       // Search hits, bad-path underlines, clash and link marks are all
@@ -12754,11 +12779,13 @@
           if (line === undefined) return;   // this field's value does not name a variable .env defines
           var eband = document.createElement('div');
           eband.className = 'staxx-mark';
-          eband.style.top    = (PAD_T + line * LINE_H - yamlPane.scrollTop) + 'px';
+          eband.style.top    = (PAD_T + line * LINE_H - view.top) + 'px';
           eband.style.height = LINE_H + 'px';
-          yamlMarks.appendChild(eband);
+          frag.appendChild(eband);
         });
       }
+      yamlMarks.textContent = '';
+      yamlMarks.appendChild(frag);
       updateMissingPaths();
       updateInUsePaths();
       return;
@@ -12769,9 +12796,9 @@
       if (f && f.range) {
         var band = document.createElement('div');
         band.className = 'staxx-mark';
-        band.style.top    = (PAD_T + f.range.start * LINE_H - yamlPane.scrollTop) + 'px';
+        band.style.top    = (PAD_T + f.range.start * LINE_H - view.top) + 'px';
         band.style.height = ((f.range.end - f.range.start) * LINE_H) + 'px';
-        yamlMarks.appendChild(band);
+        frag.appendChild(band);
       }
     }
 
@@ -12781,9 +12808,9 @@
     if (badP && badP.line >= 0) {
       var badBand = document.createElement('div');
       badBand.className = 'staxx-mark staxx-mark--problem';
-      badBand.style.top    = (PAD_T + badP.line * LINE_H - yamlPane.scrollTop) + 'px';
+      badBand.style.top    = (PAD_T + badP.line * LINE_H - view.top) + 'px';
       badBand.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(badBand);
+      frag.appendChild(badBand);
     }
 
     // Search hits share this layer rather than a second one of their own, and
@@ -12797,21 +12824,22 @@
     // once per repaintMark() pass here rather than once per kind of mark
     // below — geometry and hit-test share one shape (markView()/paintSpots()/
     // spotAt()) rather than four near-identical copies of it.
-    var view = markView();
-    repaintHits(view);
+    repaintHits(view, frag);
 
     // Bad host paths, same layer and same reasoning. Drawn last so a path
     // mark under a search hit still shows through: the hit is a fill, the
     // path mark only an underline.
-    paintSpots(view, markedPaths(), pathMarkClass);
+    paintSpots(view, frag, markedPaths(), pathMarkClass);
     // A moved image's own underline (PLAN_61) — same layer again, drawn last
     // of all for the same reason.
-    paintSpots(view, movedSpots, 'staxx-badpath staxx-badpath--moved');
+    paintSpots(view, frag, movedSpots, 'staxx-badpath staxx-badpath--moved');
     // A clashing port or path (PLAN_65) — same layer again.
-    paintSpots(view, clashSpots, 'staxx-badpath staxx-badpath--clash');
+    paintSpots(view, frag, clashSpots, 'staxx-badpath staxx-badpath--clash');
     // A detected connection (PLAN_70 stage 2) — same layer again, drawn
     // last of all so it shows through a clash mark it happens to sit under.
-    paintSpots(view, linkSpots, 'staxx-badpath staxx-badpath--link');
+    paintSpots(view, frag, linkSpots, 'staxx-badpath staxx-badpath--link');
+    yamlMarks.textContent = '';
+    yamlMarks.appendChild(frag);
     updateMissingPaths();
     updateInUsePaths();
   }
@@ -12822,10 +12850,13 @@
   // further before its text begins. leftBase is how far into THIS layer a
   // mark box has to start to land under the first real character of a line.
   // first/last is the visible line range, plus a small margin either side.
-  function markView() {
+  // top/left are the pane's scroll offsets, read once by repaintMark() and
+  // carried here so no later step re-reads them after a DOM write.
+  function markView(top, left, viewH) {
     var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
     return {
+      top: top,
+      left: left,
       leftBase: textLeft() - markLeft,
       first: Math.floor((top - PAD_T) / LINE_H) - 2,
       last:  Math.ceil((top + viewH - PAD_T) / LINE_H) + 2
@@ -12836,18 +12867,18 @@
   // layer — the box repaintPaths/repaintMoved/repaintClash/repaintLink each
   // built by hand. cls is the class string every spot in the list gets, or a
   // function of the spot for a list (markedPaths()) whose colour varies.
-  function paintSpots(view, list, cls) {
+  function paintSpots(view, frag, list, cls) {
     for (var i = 0; i < list.length; i++) {
       var m = list[i];
       if (m.line < view.first || m.line > view.last) continue;
 
       var box = document.createElement('div');
       box.className = typeof cls === 'function' ? cls(m) : cls;
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (view.leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.top    = (PAD_T + m.line * LINE_H - view.top) + 'px';
+      box.style.left   = (view.leftBase + m.col * CHAR_W - view.left) + 'px';
       box.style.width  = (m.len * CHAR_W) + 'px';
       box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
+      frag.appendChild(box);
     }
   }
 
@@ -12871,7 +12902,7 @@
   // drawing is limited. The current hit is always drawn even if the line math
   // puts it just outside the margin, so stepping to it never looks like it
   // vanished for the instant before the scroll catches up.
-  function repaintHits(view) {
+  function repaintHits(view, frag) {
     if (!findMatches.length) return;
 
     var text = yamlPane.value;
@@ -12891,11 +12922,11 @@
 
       var box = document.createElement('div');
       box.className = 'staxx-hit' + (isCurrent ? ' staxx-hit--current' : '');
-      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
-      box.style.left   = (view.leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.top    = (PAD_T + m.line * LINE_H - view.top) + 'px';
+      box.style.left   = (view.leftBase + m.col * CHAR_W - view.left) + 'px';
       box.style.width  = (len * CHAR_W) + 'px';
       box.style.height = LINE_H + 'px';
-      yamlMarks.appendChild(box);
+      frag.appendChild(box);
     }
   }
 
@@ -13474,6 +13505,7 @@
   // Form field -> compose pane.
   function focusField(id, reveal) {
     activeField = id;
+    caretLineDone = -1;   // something else moved the highlight; the next caret sync must redraw (syncFromCaret sets it back)
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
       rows[i].classList.toggle('staxx-fieldrow--active', rows[i].dataset.fieldRow === id);
@@ -13491,7 +13523,9 @@
       }
     }
     repaintMark();
-    syncGutter();
+    // Only a reveal moves the pane; the gutter only follows its scroll, so
+    // otherwise this read would force a layout for nothing.
+    if (reveal) syncGutter();
   }
 
   formHost.addEventListener('focusin', function (event) {
@@ -13510,12 +13544,17 @@
 
   // Compose pane -> form field.
   var caretRaf = null;
+  // The line and model the last caret sync settled on. reparse() swaps MODEL
+  // for a new object, so a repeat of both means nothing could have changed.
+  var caretLineDone = -1, caretModelDone = null;
 
   function syncFromCaret() {
     caretRaf = null;
     if (!MODEL || !MODEL.doc) return;
 
     var line = YAML.lineAtOffset(MODEL.doc, yamlPane.selectionStart);
+    if (line === caretLineDone && MODEL === caretModelDone) return;
+    caretLineDone = line; caretModelDone = MODEL;
     var id   = YAML.fieldAtLine(MODEL, line);
 
     if (!id) {
@@ -13534,6 +13573,7 @@
     }
 
     focusField(id, false);
+    caretLineDone = line;
     var row = formHost.querySelector('[data-field-row="' + cssEsc(id) + '"]');
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
