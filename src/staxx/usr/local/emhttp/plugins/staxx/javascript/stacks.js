@@ -23119,7 +23119,14 @@
     // The triangle is the one mark in the set that carries severity rather than
     // a subject, which is what this needs (PLAN_167 §4, Adrian 2026-09-18).
     unraidTplLine.className = 'staxx-pill staxx-pill--bad staxx-titlebar-aside';
-    unraidTplLine.href = '/Settings/staxx.settings#staxx-unraid-templates';
+    // The box lives on StaXX's own Settings window (Storage tab), not on
+    // Unraid's settings page, so the click opens that window and asks for the
+    // box to be scrolled into view once it has drawn.
+    unraidTplLine.href = '#settings';
+    unraidTplLine.addEventListener('click', function (e) {
+      e.preventDefault();
+      openSettings(null, 'storage', 'staxx-unraid-templates');
+    });
     unraidTplLine.title = 'Templates left in Unraid’s folder can rebuild the old ' +
       'container behind a taken-over stack. Open Settings to move them.';
     unraidTplLine.hidden = true;
@@ -30695,7 +30702,12 @@
     });
   }
 
-  function openSettings(focusId) {
+  // focusId names a settings row to land on. tab names the tab to open when the
+  // target is not a row (it wins nothing over a matching row). scrollTo is the
+  // id of a box another script draws after the window opens (unraid-templates.js);
+  // it travels on the body's data-scroll-to, which is rewritten on every open so
+  // a request that was never honoured cannot scroll a later open.
+  function openSettings(focusId, tab, scrollTo) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
       if (!res.ok || !res.settings) {
@@ -30711,6 +30723,8 @@
       // this only sorts the rendered HTML into five buckets by row.tab, so
       // saving (which reads every control regardless of which pane it is in)
       // needs no change at all.
+      if (scrollTo) settingsBody.setAttribute('data-scroll-to', scrollTo);
+      else settingsBody.removeAttribute('data-scroll-to');
       settingsBody.innerHTML = SETTINGS_TABS.map(function (tab) {
         // This tab carries no settings at all — SETTINGS_ROWS has nothing
         // tagged for it — so the general path below would draw an empty
@@ -30812,14 +30826,20 @@
       // caller asking for a specific field wins over that default so
       // #settings links and signposts still land on the right pane.
       var focusRow = focusId ? SETTINGS_ROWS.filter(function (row) { return row.id === focusId; })[0] : null;
-      setSettingsTab(focusRow ? focusRow.tab : SETTINGS_TABS[0]);
+      setSettingsTab(focusRow ? focusRow.tab : (tab || SETTINGS_TABS[0]));
       settingsModal.showModal();
       // Explicit, and after showModal(), for the same reason every dialog in
       // this file sets focus by hand: the browser's own "first focusable
       // descendant" choice is never where anyone wants to land. A caller
       // asking for a specific field (e.g. the Docker Hub notice's link)
       // wins over the usual "first row" default.
-      var first = focusId ? document.getElementById(focusId) : document.getElementById(SETTINGS_ROWS[0].id);
+      // A named tab with no row to land on focuses that tab's own button: the
+      // first row sits on General, which is hidden then, and leaving focus on
+      // the General button would draw its ring beside the selected tab.
+      var first = focusId ? document.getElementById(focusId) : (tab ? null : document.getElementById(SETTINGS_ROWS[0].id));
+      if (!focusId && tab && settingsTabstrip) {
+        first = settingsTabstrip.querySelector('.staxx-tab[data-tab="' + tab + '"]');
+      }
       if (first) {
         first.focus({ preventScroll: true });
         if (focusId) first.scrollIntoView({ block: 'center' });

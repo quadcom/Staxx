@@ -8,6 +8,7 @@ What changed in StaXX, newest first.
 
 - While apps update, a bubble at the end of the toolbar says how far along it is, and a window opens beside it showing each app in turn: Download and Unpack bars for the one updating now, then a short check that it really started and stays running. The window can be dragged aside, closed and reopened from the bubble. When every app comes up, everything turns green and the window closes by itself; if one does not, its line turns red and says why, and the window stays open until you close it. This covers Update all, a folder's Update, a few stacks picked with Select, and a single app's Update, which now wait their turn in the same line-up. It replaces the progress line that used to sit under the toolbar.
 - The summary email no longer lists an app as failed when a later try the same night updated it, and an app whose update failed shows its own icon instead of a letter.
+- The red "Unraid templates to move" button now opens StaXX's own Settings window on the Storage tab and scrolls to the list. Before, it opened Unraid's settings page, which has no way to move them. The templates list now sits above the "Left behind by Unraid Docker and Compose Manager" box.
 
 ## 00.05.01 — released 2026-10-15
 

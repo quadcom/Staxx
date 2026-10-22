@@ -11794,6 +11794,10 @@ dialog::backdrop {
   border-radius: 0.8rem;
 }
 
+/* Room above the box when it is scrolled to, so its title, which sits on the
+ * border, is not clipped at the pane's edge (the red Unraid templates chip). */
+.staxx-settings-pane > #staxx-unraid-templates { scroll-margin-top: 1.6rem; }
+
 .staxx-settings-pane > .staxx-field[data-key] > span:first-child {
   position: absolute;
   top: -0.9em;
