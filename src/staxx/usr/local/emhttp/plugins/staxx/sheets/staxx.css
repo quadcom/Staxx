@@ -2004,6 +2004,14 @@ div.title.staxx-has-titlebar {
   align-items: center;
 }
 
+/* While the stack editor is open the rows behind it skip rendering when off
+   screen; the editor's own typing no longer pays for ~11,000 hidden elements. */
+.staxx-stacks.staxx-list-resting .staxx-stack-row,
+.staxx-stacks.staxx-list-resting .staxx-folder-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 60px;
+}
+
 /* ---- Keyboard focus (treegrid roving tabindex) ---------------------------
  *
  * A row is a focus stop now (see the keyboard-navigation section of

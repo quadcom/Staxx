@@ -18004,6 +18004,7 @@
     updateUndo();
 
     lockScroll(true);
+    restList(true);
     modal.showModal();
     // PLAN_145 round 3 — only now does the dialog have a real width to
     // measure a saved split ratio against; setView() above ran while it was
@@ -18254,6 +18255,7 @@
     // by closeEditor() above — this catches the paths that never went through
     // it, Escape among them.
     stopManage();
+    restList(false);   // every close path ends at this event, so this is the one place to wake the list
 
     // Clear the #stack= fragment openEditor() wrote, so a refresh after
     // closing lands on the list rather than reopening a stack that is no
@@ -22752,6 +22754,7 @@
   // Every visible clock, re-rendered from the timestamp already in hand —
   // no request of its own, so running this often is free.
   function tickPageClocks() {
+    if (listPaused()) return;   // the list is asleep behind the editor; catchUp() repaints on close
     Array.prototype.forEach.call(
       document.querySelectorAll('.staxx-updatepill'),
       paintPillClock
@@ -28735,6 +28738,7 @@
     if (tabHistoryBtn) tabHistoryBtn.setAttribute('aria-selected', tab === 'history' ? 'true' : 'false');
     if (tabVersionsBtn) tabVersionsBtn.setAttribute('aria-selected', tab === 'versions' ? 'true' : 'false');
     manageStatePoll(tab === 'manage');
+    if (tab === 'manage' && pushOwed) catchUp();   // the list is awake again: pay what was held back
     if (tab === 'history') ensureHistoryLoaded();
     if (tab === 'versions') ensureVersionsLoaded();
   }
@@ -36916,6 +36920,7 @@
     // handler below, which is what keeps a long-hidden tab from looking
     // stale the moment it is shown again).
     if (document.hidden) return;
+    if (listPaused()) return;
     if (dockerQuiet()) return;
     // Nothing can be running, so there are no figures to collect — and the
     // two paths that ask without going through the 3s timer (returning from
@@ -37024,7 +37029,7 @@
   }
 
   function pushFallbackTick() {
-    if (document.hidden) return;   // same guard every other poller on this page uses
+    if (document.hidden || listPaused()) return;   // same guard every other poller on this page uses
     refreshState();
   }
 
@@ -37092,7 +37097,7 @@
         // forgot to close. What is owed is remembered instead and paid on the
         // way back in — see the visibilitychange handler below. 'rows' wins
         // over 'state' because it does everything the smaller one would.
-        if (document.hidden) {
+        if (document.hidden || listPaused()) {
           if (ev.data === 'rows' || !pushOwed) pushOwed = ev.data;
           return;
         }
@@ -37142,17 +37147,43 @@
   // stopped. Manage gets no poll of its own here: pollStats() already forces
   // itself while Manage is open, and its state is refreshed below only when
   // the paid message did not already cover it.
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) return;
+  function catchUp() {
     // Pay whatever arrived while nobody was looking. One refresh covers any
     // number of events missed, however long the tab sat in the background.
     var owed = pushOwed;
-    if (owed) { pushOwed = ''; pushApply(owed); }
+    // Returning to the tab with the editor still open keeps the debt for the
+    // editor's own close to pay.
+    if (owed && !listPaused()) { pushOwed = ''; pushApply(owed); }
     pollStats();
+    tickPageClocks();
     if (jobTicker) tickJobs();
     if (updateQueueTimer) pollQueueOnce();
     if (manageOpen && !owed) refreshState();
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    catchUp();
   });
+
+  // While the editor is open the list behind it stops refreshing: every
+  // mutation dirties a page of ~11,000 elements and made typing stutter.
+  // Manage shows live figures, so it keeps everything running.
+  function listPaused() { return modal.open && !manageOpen; }
+
+  // Rows off-screen behind the dialog skip rendering while it is open; the
+  // scroll is saved and put back so the list returns exactly where it was.
+  var restScroll = 0;
+  function restList(on) {
+    if (!stacksGrid) return;
+    if (on) {
+      restScroll = window.scrollY;
+      stacksGrid.classList.add('staxx-list-resting');
+    } else if (stacksGrid.classList.contains('staxx-list-resting')) {
+      stacksGrid.classList.remove('staxx-list-resting');
+      window.scrollTo(0, restScroll);
+      catchUp();
+    }
+  }
 
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.
