@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.02">
+<!ENTITY version              "00.05.03">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
