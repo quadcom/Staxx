@@ -244,9 +244,11 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
   # The apply pass is always present, check on or off: it is what presses the
   # button on a clock that reaches zero while nobody has the page open, and it
   # costs no network, so there is nothing to gate it on.
+  # Minutes 7, 22, 37, 52 rather than 0, 15, 30, 45: registries are swamped on the
+  # quarter hour by everyone else's scheduled jobs, and pulls then get turned away.
   cron_lines=(
     "# StaXX — image-update passes, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
-    "*/15 * * * * ${PLUGIN_DIR}/scripts/update-check apply &> /dev/null"
+    "7-59/15 * * * * ${PLUGIN_DIR}/scripts/update-check apply &> /dev/null"
   )
 
   # PLAN_221: the app watcher runs once a minute, and only while at least one

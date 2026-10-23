@@ -6,6 +6,8 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- An update no longer fails because a registry such as lscr.io or ghcr.io was busy for a split second. StaXX waits a minute and tries the download once more. If it still fails, the email says the registry was too busy rather than that a download limit was reached. Scheduled updates now start a few minutes past the hour, such as 3:07 instead of 3:00, when registries are less crowded.
+
 ## 00.05.02 — released 2026-10-22
 
 - While apps update, a bubble at the end of the toolbar says how far along it is, and a window opens beside it showing each app in turn: Download and Unpack bars for the one updating now, then a short check that it really started and stays running. The window can be dragged aside, closed and reopened from the bubble. When every app comes up, everything turns green and the window closes by itself; if one does not, its line turns red and says why, and the window stays open until you close it. This covers Update all, a folder's Update, a few stacks picked with Select, and a single app's Update, which now wait their turn in the same line-up. It replaces the progress line that used to sit under the toolbar.

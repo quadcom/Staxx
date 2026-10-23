@@ -96,6 +96,11 @@ function staxx_update_failure_reason(string $log, string $image): string {
   $last = substr($ref, (int)strrpos($ref, '/'));
   $tag  = strpos($last, ':') !== false ? substr($last, strrpos($last, ':') + 1) : 'latest';
 
+  // ghcr.io and lscr.io send "toomanyrequests: retry-after: ..." as a momentary busy
+  // signal, not a quota, so it must not read as a limit that resets in hours.
+  if ($has(['toomanyrequests: retry-after'])) {
+    return $reg.' was too busy for a moment and turned the download away. StaXX will try again at the next update.';
+  }
   if ($has(['toomanyrequests', '429 too many requests'])) {
     return $reg."'s download limit was reached.".($hub ? ' It resets within six hours.' : '');
   }
