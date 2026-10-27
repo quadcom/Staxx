@@ -25490,7 +25490,11 @@
   // memory, as writeIconDrop() does, so its other unsaved edits survive.
   function iconAdoptSetLine(doc, item) {
     var ok;
-    if (item.was) {
+    if (item.missing) {
+      // The old value only pointed at a lost picture, so nothing is kept
+      // in a comment.
+      ok = YAML.replaceNested(doc, null, item.service, ['x-unraid', 'icon'], item.file);
+    } else if (item.was) {
       ok = YAML.replaceNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) &&
            YAML.appendNestedComment(doc, null, item.service, ['x-unraid', 'icon'], 'was ' + item.was);
     } else {
@@ -25514,6 +25518,10 @@
       var ok = iconAdoptSetLine(doc, item);
       if (!ok) return null;   // could not write safely — skip, never force it
       savedText = YAML.serialise(doc);
+      // A missing picture fetched under the same name leaves the line as it
+      // was: the picture is back on disk and nothing needs saving (so no
+      // history entry and no summary notice for it).
+      if (item.missing && savedText === body) return null;
       return savedText;
     }).then(function (r) {
       // A read failure, a refused write or a moved fingerprint — someone
@@ -28873,12 +28881,13 @@
       // the config file by hand.
       key: 'BOOT_COPY', control: 'choice', label: 'Copies on the flash drive', tab: 'storage',
       choices: [
-        ['true',  'Keep a copy of every compose file there'],
+        ['true',  'Keep a copy of every compose file and its icons there'],
         ['false', 'Do not write copies']
       ],
       help: 'After every save, a plain copy of the stack\'s compose file is written to the flash ' +
             'drive, which Unraid already backs up on its own — with its override and its .env ' +
-            'file, if it has them, so the copy is a complete definition. Losing the data store then ' +
+            'file, if it has them, so the copy is a complete definition, and with each app\'s icon ' +
+            'picture, so a restore brings the icons back. Losing the data store then ' +
             'never means losing the definition of every container you run. Nothing else in the ' +
             'stack\'s folder is copied, and nothing is ever written back into the data store from ' +
             'the copies on its own — if the store is ever lost, StaXX offers to bring them back, and ' +

@@ -7,6 +7,8 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - An update no longer fails because a registry such as lscr.io or ghcr.io was busy for a split second. StaXX waits a minute and tries the download once more. If it still fails, the email says the registry was too busy rather than that a download limit was reached. Scheduled updates now start a few minutes past the hour, such as 3:07 instead of 3:00, when registries are less crowded.
+- The copies on the flash drive now keep each app's icon too, so bringing your stacks back after losing the data store brings their icons back with them.
+- An app whose icon picture has gone missing gets a new one found and downloaded on its own, the same way an app with no icon does. An icon that is still there is never replaced.
 
 ## 00.05.02 — released 2026-10-22
 

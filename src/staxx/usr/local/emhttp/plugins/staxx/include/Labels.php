@@ -60,7 +60,8 @@ function staxx_labels_build(string $main): array {
     // through the page's serving address, so it works wherever the store is.
     $icon = trim((string)($m['x']['icon'] ?? ''));
     $src  = '';
-    if (preg_match('#^(?:\./)?'.preg_quote(STAXX_RECORD_DIR, '#').'/([^/]+)$#', $icon, $f)) {
+    if (preg_match('#^(?:\./)?'.preg_quote(STAXX_RECORD_DIR, '#').'/([^/]+)$#', $icon, $f)
+        && !staxx_icon_file_missing($icon, $dir)) {
       $path = $dir.'/'.STAXX_RECORD_DIR.'/'.$f[1];
       $ext  = strtolower((string)pathinfo($f[1], PATHINFO_EXTENSION));
       if ($f[1][0] !== '.' && in_array($ext, STAXX_ICON_EXTS, true) && is_file($path) && !is_link($path)) {
@@ -68,8 +69,12 @@ function staxx_labels_build(string $main): array {
         $labels['net.unraid.docker.icon'] = 'file://'.$path;
       }
     } else {
-      $r = $icon !== '' ? staxx_icon_resolve($icon, $dir)
-                        : staxx_icon_resolve('', $dir, trim((string)($m['image'] ?? '')), $svc, basename($dir));
+      // A ./.staxx picture that is gone is matched like an empty value
+      // (staxx_icon_file_missing()). Icons.php alone is needed here, not
+      // StacksTable.php's staxx_service_icon(), which not every caller loads.
+      $r = $icon !== '' && !staxx_icon_file_missing($icon, $dir)
+         ? staxx_icon_resolve($icon, $dir)
+         : staxx_icon_resolve('', $dir, trim((string)($m['image'] ?? '')), $svc, basename($dir));
       if (preg_match('#^https?://#i', $r['url'])) {
         $src = $r['url'];
         $labels['net.unraid.docker.icon'] = $src;

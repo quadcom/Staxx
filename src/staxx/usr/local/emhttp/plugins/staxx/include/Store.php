@@ -265,20 +265,28 @@ function staxx_boot_restore(): array {
       continue;
     }
 
-    // The shelf holds nothing but plain files for a stack — its compose
-    // file, override and .env, whatever it happened to be named — so every
-    // regular file present is written back, rather than a fixed list of
+    // The shelf holds plain files for a stack — its compose file, override
+    // and .env, whatever it happened to be named — plus one .staxx folder of
+    // icon pictures, so every regular file present is written back (and
+    // those in .staxx into a .staxx folder), rather than a fixed list of
     // basenames that could drift from what staxx_boot_copy_stack() actually
     // wrote.
     $ok = true;
-    foreach ((array)@scandir($found['dir']) as $entry) {
-      if ($entry === '.' || $entry === '..') continue;
-      $src = $found['dir'].'/'.$entry;
-      if (!is_file($src)) continue;
-      $content = @file_get_contents($src);
-      if ($content === false || @file_put_contents($dest.'/'.$entry, $content) === false) {
-        $ok = false;
-        break;
+    $levels = [['', $found['dir'], $dest]];
+    if (is_dir($found['dir'].'/'.STAXX_RECORD_DIR)) {
+      $levels[] = ['.staxx', $found['dir'].'/'.STAXX_RECORD_DIR, $dest.'/'.STAXX_RECORD_DIR];
+    }
+    foreach ($levels as [$tag, $from, $to]) {
+      if ($tag !== '' && !is_dir($to) && !@mkdir($to, 0755, true)) { $ok = false; break; }
+      foreach ((array)@scandir($from) as $entry) {
+        if ($entry === '.' || $entry === '..') continue;
+        $src = $from.'/'.$entry;
+        if (!is_file($src)) continue;
+        $content = @file_get_contents($src);
+        if ($content === false || @file_put_contents($to.'/'.$entry, $content) === false) {
+          $ok = false;
+          break 2;
+        }
       }
     }
 
