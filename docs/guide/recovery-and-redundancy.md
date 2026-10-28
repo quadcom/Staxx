@@ -11,9 +11,9 @@ See [Versions](editor-versions.md). Both sit in the [stack editor](the-stack-edi
 
 ## If the data store is lost
 
-StaXX keeps a plain copy of every stack's compose file on the flash drive (see
+StaXX keeps a plain copy of every stack's compose file and its app icons on the flash drive (see
 [where things live](where-things-live.md)). If the data store itself is ever lost, StaXX offers to
-bring every stack back from those copies.
+bring every stack back from those copies, icons included.
 
 ![The card shown when the data store's folder is missing: StaXX cannot reach its data store, where it was, that the array may still be starting, that copies of the stacks are on the flash drive, and two buttons, Choose a new place for the data store and Show me the copies](../images/guide/recovery-and-redundancy-store-missing.png)
 

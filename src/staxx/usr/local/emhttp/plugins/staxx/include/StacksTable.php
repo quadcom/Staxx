@@ -845,9 +845,11 @@ function staxx_service_icons_for_stack(string $stack): array {
  * fetch that failed for any reason. None of those stop the walk — only the
  * cap does, and nothing here runs at all with icon lookups switched off.
  *
- * Two qualifying cases: a service with no icon at all, matched from its
- * image name (PLAN_86); and one whose icon field already holds a plain
- * `http(s)://` address (PLAN_146), which is fetched and swapped for the copy
+ * Three qualifying cases: a service with no icon at all, matched from its
+ * image name (PLAN_86); one whose icon field names a ./.staxx picture that
+ * is no longer there, matched the same way and carrying `missing` so the
+ * browser replaces the stale path without a "was" comment; and one whose
+ * icon field already holds a plain `http(s)://` address (PLAN_146), which is fetched and swapped for the copy
  * now living inside the stack. Such an item carries `was`, the address
  * exactly as the author typed it, so the browser can keep it in a comment
  * rather than dropping it.
@@ -856,7 +858,7 @@ function staxx_service_icons_for_stack(string $stack): array {
  * against (see staxx_stack_tile()), so what gets recorded is exactly what
  * the grid was already showing, never a fresh guess.
  *
- * @return array<int, array{stack:string, service:string, file:string, was?:string}>
+ * @return array<int, array{stack:string, service:string, file:string, was?:string, missing?:bool}>
  */
 function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
   $done = true;
@@ -884,7 +886,10 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
     foreach ($meta['services'] as $svc => $svcMeta) {
       $icon = trim((string)($svcMeta['x']['icon'] ?? ''));
 
-      if ($icon === '') {
+      // A hand-picked ./.staxx picture that has gone missing is matched like
+      // an empty value; one that is there is never touched.
+      $lost = $icon !== '' && staxx_icon_file_missing($icon, $s['dir']);
+      if ($icon === '' || $lost) {
         $image = trim((string)($svcMeta['image'] ?? ''));
         if ($image === '') continue;
 
@@ -902,6 +907,7 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
         $written = staxx_icon_fetch_and_write($s['dir'], $svc, '', $ref, $ref, $error);
         if ($written === '') continue;
         $item = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+        if ($lost) $item['missing'] = true;
       } elseif (preg_match('#^https?://#i', $icon)) {
         $remote  = staxx_icon_raw_url($icon);
         $failRef = 'url-'.md5($remote);
@@ -1220,10 +1226,11 @@ function staxx_icon_usable(array $icon): bool {
  * produced nothing usable (staxx_icon_usable()):
  *   1. the service's own stated icon, name only — a guess must never enter
  *      at this step, so no image/service/stack is passed
- *   2. a search from the image name, which is only ever reached when the
- *      service names nothing at step 1: staxx_icon_resolve() returns
- *      early on any non-empty stated value, before it would look at
- *      $image/$service/$stack, so this step never runs otherwise
+ *   2. a search from the image name, reached when the service names
+ *      nothing at step 1, or names a `./.staxx` picture that is no longer
+ *      there (staxx_icon_file_missing()). staxx_icon_resolve() returns
+ *      early on any other non-empty stated value, before it would look at
+ *      $image/$service/$stack, so the search is not run for those
  *   3. nothing — the caller draws initials, the floor every stack has
  *
  * @return array from staxx_icon_resolve()
@@ -1233,7 +1240,8 @@ function staxx_service_icon(string $svcIcon, string $dir,
   $icon = staxx_icon_resolve($svcIcon, $dir);
   if (staxx_icon_usable($icon)) return $icon;
 
-  return staxx_icon_resolve($svcIcon, $dir, $image, $service, $stack);
+  $stated = staxx_icon_file_missing($svcIcon, $dir) ? '' : $svcIcon;
+  return staxx_icon_resolve($stated, $dir, $image, $service, $stack);
 }
 
 /**
@@ -2642,8 +2650,8 @@ function staxx_render_rows(array $rows, bool $canRun, bool $storeReachable = tru
                         aria-haspopup="menu" aria-expanded="false"
                         title="<?= _('Container actions') ?>">
                   <?= staxx_icon_tile(
-                        staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'],
-                                              $kid['service'], $s['name']),
+                        staxx_service_icon($kid['icon'], $s['dir'], $kid['image'],
+                                           $kid['service'], $s['name']),
                         $kid['service'] !== '' ? $kid['service'] : $kid['name']) ?>
                 </button>
                 <span class="staxx-spinner"><i class="fa fa-refresh fa-spin"></i></span>

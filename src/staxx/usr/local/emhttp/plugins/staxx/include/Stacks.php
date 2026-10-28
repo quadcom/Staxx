@@ -141,6 +141,8 @@ function staxx_private_dir(string $dir): bool {
   return true;
 }
 
+define('STAXX_LOG_MARK', '@@STAXX_JOB_LOG@@');
+
 /**
  * A job the page's `job` poller can follow: its own log in STAXX_JOB_DIR
  * whose first line is "$ <shown>", then $inner detached. Returns the job id,
@@ -152,6 +154,9 @@ function staxx_spawn_job(string $shown, string $inner, string &$error): string {
   $log = STAXX_JOB_DIR.'/'.$job.'.log';
   @file_put_contents($log, '$ '.$shown."\n\n");
   @chmod($log, 0600);
+  // The log's name only exists here, so a command that has to read its own
+  // log (the pull retry in staxx_start_job) carries this marker for it.
+  $inner = str_replace(STAXX_LOG_MARK, escapeshellarg($log), $inner);
   staxx_detach($inner, $log);
   return $job;
 }
@@ -8541,10 +8546,20 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // every one of its steps (so a pull + up pair stays one set of files). The
   // line shown below leaves the generated file out: it is not the author's.
   $runFiles = $startsSomething ? staxx_run_files($file) : $files;
-  $invocations = array_map(
-    fn($step) => $cmd.' '.staxx_compose_file_args($runFiles).$profileFlags.' '.$step.' 2>&1',
-    $steps
-  );
+  // A pull is tried once more, a minute later, when the registry answered
+  // "toomanyrequests: retry-after" (ghcr.io does this for a moment at the top
+  // of the hour). Docker Hub's quota refusal reads "You have reached your pull
+  // rate limit" instead and is deliberately not matched: waiting a minute
+  // would not help it. The grep reads the job's own log, which the pull wrote
+  // to as it ran. If the retry fails too, or the failure was something else,
+  // the group exits non-zero and the `&&` chain still stops before `up -d`.
+  $invocations = array_map(function ($step) use ($cmd, $runFiles, $profileFlags) {
+    $inv = $cmd.' '.staxx_compose_file_args($runFiles).$profileFlags.' '.$step.' 2>&1';
+    if (!preg_match('/^pull(\s|$)/', $step)) return $inv;
+    return $inv.' || { grep -q '.escapeshellarg('toomanyrequests: retry-after').' '.STAXX_LOG_MARK
+      .' && echo '.escapeshellarg('The registry was busy for a moment. Trying again in a minute.')
+      .' && sleep 60 && '.$inv.'; }';
+  }, $steps);
   $chain = implode(' && ', $invocations);
 
   // A host-network service has no `ports:` for anything to check beforehand,

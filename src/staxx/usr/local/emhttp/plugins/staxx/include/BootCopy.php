@@ -33,9 +33,11 @@
  *      shelf is a person's decision, made elsewhere (PLAN_103 pass 2); this
  *      file only ever writes to, or removes from, /boot/staxx.
  *
- * History is deliberately not copied — only the compose file, its override
- * and its .env, mirroring the store's own shape. That stays beside the compose
- * file where it belongs; see PLAN_103.
+ * History is deliberately not copied — only the compose file, its override,
+ * its .env and the picture each service's `icon:` names inside the stack's
+ * .staxx folder, mirroring the store's own shape. Nothing else in .staxx
+ * travels; history stays beside the compose file where it belongs. See
+ * PLAN_103 and PLAN_250.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -189,8 +191,39 @@ function staxx_boot_write_file(string $target, string $content, string &$error):
 }
 
 /**
- * Copy one stack's compose file, with its override and .env if it has them,
- * to the shelf. A no-op returning true when the setting is off — every call site
+ * The pictures a stack's services name as their icon, as basename => source
+ * path: every `icon:` of the form `./.staxx/<file>` (or `.staxx/<file>`) that
+ * is one plain file name sitting as a regular file in the stack's own .staxx
+ * folder. A URL, a Font Awesome name or a collection name names no file here,
+ * so nothing is copied for it. Parsed the way staxx_icon_resolve() reads the
+ * same value. Returns null when the compose file could not be read, so a
+ * caller never mistakes "could not tell" for "wants none" and prunes the shelf.
+ *
+ * @return array<string,string>|null
+ */
+function staxx_boot_icon_files(string $srcDir, string $main): ?array {
+  // A fresh read: the copy runs straight after a save in the same request,
+  // and the in-process memory may still hold the file as it was before it.
+  // The on-disk cache is keyed on the contents, so this stays cheap.
+  $err  = '';
+  $meta = staxx_compose_meta($main, $err, true);
+  if (empty($meta['ok'])) return null;
+  $prefix = STAXX_RECORD_DIR.'/';
+  $out = [];
+  foreach ($meta['services'] as $svc) {
+    $icon = preg_replace('#^\./#', '', trim((string)($svc['x']['icon'] ?? '')));
+    if (strncmp($icon, $prefix, strlen($prefix)) !== 0) continue;
+    $file = substr($icon, strlen($prefix));
+    if ($file === '' || $file === '.' || $file === '..' || strpbrk($file, '/\\') !== false) continue;
+    $path = $srcDir.'/'.STAXX_RECORD_DIR.'/'.$file;
+    if (is_file($path)) $out[$file] = $path;
+  }
+  return $out;
+}
+
+/**
+ * Copy one stack's compose file, with its override, .env and service icon
+ * pictures if it has them, to the shelf. A no-op returning true when the setting is off — every call site
  * below simply calls this after its own work has already succeeded, so a
  * caller never needs its own "if enabled" check.
  *
@@ -264,6 +297,30 @@ function staxx_boot_copy_stack(string $rel, string &$error): bool {
     if (!staxx_boot_write_file($dir.'/.env', $content, $error)) return false;
   } else {
     @unlink($dir.'/.env');
+  }
+
+  // The icon pictures, so a restore brings back what the stack row shows and
+  // not just its definition. Only the pictures the services name are copied;
+  // one no longer named is removed, and the shelf's .staxx folder goes with
+  // the last of them. When the compose file could not be read (null) the
+  // shelf's pictures are left exactly as they were.
+  $icons = staxx_boot_icon_files($srcDir, $main);
+  if ($icons !== null) {
+    $iconDir = $dir.'/'.STAXX_RECORD_DIR;
+    if ($icons !== [] && !is_dir($iconDir) && !@mkdir($iconDir, 0755, true)) {
+      $error = 'Could not create "'.$iconDir.'" on the boot drive.';
+      return false;
+    }
+    foreach ($icons as $file => $path) {
+      $content = staxx_boot_read_source($path, $error);
+      if ($content === null) return false;
+      if (!staxx_boot_write_file($iconDir.'/'.$file, $content, $error)) return false;
+    }
+    foreach (is_dir($iconDir) ? (array)@scandir($iconDir) : [] as $entry) {
+      if ($entry === '.' || $entry === '..' || isset($icons[$entry])) continue;
+      @unlink($iconDir.'/'.$entry);
+    }
+    if (is_dir($iconDir)) @rmdir($iconDir); // fails quietly while it still holds a picture
   }
 
   return true;
@@ -367,6 +424,21 @@ function staxx_boot_sweep(): array {
       $envContent  = is_file($envSrc) ? @file_get_contents($envSrc) : false;
       $envExisting = is_file($envTarget) ? @file_get_contents($envTarget) : false;
       if ($envContent !== $envExisting) $stale = true;
+    }
+
+    // The icon pictures: one missing, different, or left over on the shelf.
+    if (!$stale) {
+      $icons = staxx_boot_icon_files($found['dir'], $main);
+      if ($icons !== null) {
+        $iconDir = $shelfDir.'/'.STAXX_RECORD_DIR;
+        foreach ($icons as $file => $path) {
+          $target = $iconDir.'/'.$file;
+          if (!is_file($target) || @file_get_contents($target) !== @file_get_contents($path)) { $stale = true; break; }
+        }
+        foreach ($stale || !is_dir($iconDir) ? [] : (array)@scandir($iconDir) as $entry) {
+          if ($entry !== '.' && $entry !== '..' && !isset($icons[$entry])) { $stale = true; break; }
+        }
+      }
     }
 
     if (!$stale) continue;

@@ -126,9 +126,19 @@ ok('the step runs the check with the name quoted, never raw',
    && strpos($step, "it\\'") !== false);
 
 ok('without a check the chain is unchanged',
-   staxx_job_inner('/tmp', 'true 2>&1') === 'cd \'/tmp\' && true 2>&1; echo "'.STAXX_JOB_END.' $?"');
+   staxx_job_inner('/tmp', 'true 2>&1') === 'cd \'/tmp\' && true 2>&1; rc=$?; echo "'.STAXX_JOB_END.' $rc"');
 ok('with a check the step and the wait are present',
    strpos(staxx_job_inner('/tmp', 'true 2>&1', 'CHECKSTEP'), 'sleep 5; CHECKSTEP') !== false);
+
+// The pull retry in staxx_start_job greps the job's own log through this
+// marker; prove the spawner swaps in the real path and the log is live.
+$err = '';
+$jid = staxx_spawn_job('marker', 'echo toomanyrequests: retry-after: 1ms; grep -q "toomanyrequests: retry-after" '
+  .STAXX_LOG_MARK.' && echo log-was-readable', $err);
+usleep(800000);
+$jlog = (string)@file_get_contents(STAXX_JOB_DIR.'/'.$jid.'.log');
+ok('the job log marker resolves to the live log', strpos($jlog, 'log-was-readable') !== false, $jlog);
+@unlink(STAXX_JOB_DIR.'/'.$jid.'.log');
 
 // Run it for real, with stand-in commands and the wait stripped out.
 function run_inner(string $chain, string $check): array {

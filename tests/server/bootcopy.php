@@ -126,6 +126,66 @@ ok('deleting the .env succeeds',
 ok('deleting the .env drops it from the shelf, not just the store',
    !is_file($bootEnv));
 
+/* ------------------------------------------------- icon pictures too -- */
+// PLAN_250: a service whose `icon:` is ./.staxx/<file> has that picture
+// copied; nothing else in .staxx (history), and nothing for an icon that is
+// a URL, a Font Awesome name or a collection name.
+
+$iconRel = 'zzbc-icon';
+$iconStore = $root.'/'.$iconRel;
+$iconBytes = "\x89PNG-not-a-real-picture";
+$iconCompose = "services:\n  a:\n    image: alpine:3.20\n    x-unraid:\n      icon: ./.staxx/a.png\n";
+mkdir($iconStore.'/.staxx', 0755, true);
+file_put_contents($iconStore.'/.staxx/a.png', $iconBytes);
+file_put_contents($iconStore.'/.staxx/history.json', '{"not":"copied"}');
+ok('a stack whose service names a .staxx icon saves',
+   staxx_save_stack($iconRel, $iconCompose, $note), $note);
+$shelfIcon = $bootScratch.'/stacks/'.$iconRel.'/.staxx/a.png';
+ok('the named icon picture is copied to the shelf byte for byte',
+   is_file($shelfIcon) && file_get_contents($shelfIcon) === $iconBytes);
+ok('...and nothing else from .staxx comes with it',
+   !is_file($bootScratch.'/stacks/'.$iconRel.'/.staxx/history.json'));
+
+// Rewritten without the .staxx path, the picture leaves the shelf and so does its folder.
+$iconComposeUrl = "services:\n  a:\n    image: alpine:3.20\n    x-unraid:\n      icon: https://example.com/a.png\n";
+file_put_contents($iconStore.'/compose.yaml', $iconComposeUrl);
+$iconErr = '';
+ok('copying again after the icon became a URL succeeds', staxx_boot_copy_stack($iconRel, $iconErr), $iconErr);
+ok('the picture no longer named is removed from the shelf', !is_file($shelfIcon));
+ok('...and the shelf\'s empty .staxx folder goes too',
+   !is_dir($bootScratch.'/stacks/'.$iconRel.'/.staxx'));
+
+// Other non-picture values copy nothing at all.
+foreach (['fa-cube', 'jellyfin'] as $other) {
+  file_put_contents($iconStore.'/compose.yaml',
+    "services:\n  a:\n    image: alpine:3.20\n    x-unraid:\n      icon: $other\n");
+  staxx_boot_copy_stack($iconRel, $iconErr);
+  ok("an icon of '$other' copies no picture", !is_dir($bootScratch.'/stacks/'.$iconRel.'/.staxx'));
+}
+
+// The sweep notices a picture that is missing from the shelf.
+file_put_contents($iconStore.'/compose.yaml', $iconCompose);
+staxx_boot_copy_stack($iconRel, $iconErr);
+@unlink($shelfIcon);
+staxx_scan_stacks_reset();
+$iconSweep = staxx_boot_sweep();
+ok('a sweep rewrites a stack whose icon picture is missing from the shelf',
+   in_array($iconRel, $iconSweep['written'], true) && is_file($shelfIcon));
+
+// Restore: staxx_boot_restore() skips a stack already in the store, so the
+// stack is removed from the store first and brought back from the shelf.
+@exec('rm -rf '.escapeshellarg($iconStore));
+staxx_scan_stacks_reset();
+require_once '/usr/local/emhttp/plugins/staxx/include/Store.php';
+$iconRestore = staxx_boot_restore();
+ok('restore brings the icon stack back', in_array($iconRel, $iconRestore['written'], true));
+ok('...including its .staxx icon picture, byte for byte',
+   is_file($iconStore.'/.staxx/a.png') && file_get_contents($iconStore.'/.staxx/a.png') === $iconBytes);
+// Put the shelf and store back to a plain state for what follows.
+staxx_boot_remove_stack($iconRel);
+@exec('rm -rf '.escapeshellarg($iconStore));
+staxx_scan_stacks_reset();
+
 /* --------------------------------------------------- symlinked compose -- */
 
 $linkRel = 'zzbc-link';

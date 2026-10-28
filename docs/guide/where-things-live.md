@@ -85,7 +85,7 @@ still exactly where it was.
 
 ## Copies on the flash drive
 
-Every stack's compose file, override and `.env` file is also copied to the flash drive, at
+Every stack's compose file, override, `.env` file and app icons are also copied to the flash drive, at
 `/boot/staxx/stacks/<the stack's own path>`. Unraid backs up the whole flash drive on its own, taking
 this copy with it.
 

@@ -106,6 +106,7 @@ ok('an importance that is not one of the three falls back to normal', (calls()[0
 /* ===== 2. every failure-reason row ===== */
 $rows = [
   ["Error response from daemon: toomanyrequests: You have reached your pull rate limit", 'nginx:1.2', "Docker Hub's download limit was reached. It resets within six hours."],
+  ["Error response from daemon: toomanyrequests: retry-after: 557.243µs, allowed: 44000/minute", 'lscr.io/linuxserver/mariadb:latest', 'lscr.io was too busy for a moment and turned the download away. StaXX will try again at the next update.'],
   ["429 Too Many Requests", 'ghcr.io/o/app:1', "ghcr.io's download limit was reached."],
   ["manifest unknown", 'ghcr.io/o/paperless:2.11.6', 'The tag 2.11.6 no longer exists on ghcr.io. It was removed or renamed.'],
   ["manifest for foo/bar:9 not found: manifest unknown", 'foo/bar:9', 'The tag 9 no longer exists on Docker Hub. It was removed or renamed.'],

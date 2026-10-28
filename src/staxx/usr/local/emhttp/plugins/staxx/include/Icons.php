@@ -764,6 +764,26 @@ function staxx_icon_mark_missed(string $ref): void {
 /* --------------------------------------------------------------- resolving -- */
 
 /**
+ * True when $icon is a `./.staxx/<file>` path whose file is not in $dir's
+ * .staxx folder — a hand-picked picture that has gone missing (a restored
+ * store, a deleted file). Only then may an automatic match stand in for it;
+ * a file that is there is never replaced, and a web address or a collection
+ * name that fails is not a missing file, so it is not guessed at.
+ */
+function staxx_icon_file_missing(string $icon, string $dir): bool {
+  $bare = preg_replace('#^\./#', '', trim($icon));
+  $prefix = STAXX_RECORD_DIR.'/';
+  if ($dir === '' || strncmp($bare, $prefix, strlen($prefix)) !== 0) return false;
+  $file = substr($bare, strlen($prefix));
+  if (!staxx_valid_filename($file)) return false;
+  // Gone means nothing at all at that name. A file that is there but cannot
+  // be shown (a link, an odd extension) is still the author's, so it is not
+  // missing and the automatic match never writes over it.
+  $path = $dir.'/'.STAXX_RECORD_DIR.'/'.$file;
+  return !file_exists($path) && !is_link($path);
+}
+
+/**
  * Decide what one row's icon is. Never fetches or copies anything: a
  * picture is either already sitting in the stack's own .staxx folder, or
  * loaded straight from wherever it is addressed (a pasted address, or the
