@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.05.03_dev20261024">
+<!ENTITY version              "00.05.03_dev20261028">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "73fd8d10e998444a0aff998dfa1ef531">
-<!ENTITY packageSHA256        "1156620e42081498282a2e41fa1b05312ab10aba3f390696528adcbad057642f">
+<!ENTITY packageMD5           "c3377bc9f87449ab71ab94c1df42524e">
+<!ENTITY packageSHA256        "2475dc203ffe83f31bb0adfa3950bed42cf0512f7cd84c1d0b91b7d18ddc3ce3">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,8 +37,10 @@
 >
 
 <CHANGES>
-###00.05.03_dev20261024
+###00.05.03_dev20261028
 - An update no longer fails because a registry such as lscr.io or ghcr.io was busy for a split second. StaXX waits a minute and tries the download once more. If it still fails, the email says the registry was too busy rather than that a download limit was reached. Scheduled updates now start a few minutes past the hour, such as 3:07 instead of 3:00, when registries are less crowded.
+- The copies on the flash drive now keep each app's icon too, so bringing your stacks back after losing the data store brings their icons back with them.
+- An app whose icon picture has gone missing gets a new one found and downloaded on its own, the same way an app with no icon does. An icon that is still there is never replaced.
 ###00.05.02
 - While apps update, a bubble at the end of the toolbar says how far along it is, and a window opens beside it showing each app in turn: Download and Unpack bars for the one updating now, then a short check that it really started and stays running. The window can be dragged aside, closed and reopened from the bubble. When every app comes up, everything turns green and the window closes by itself; if one does not, its line turns red and says why, and the window stays open until you close it. This covers Update all, a folder's Update, a few stacks picked with Select, and a single app's Update, which now wait their turn in the same line-up. It replaces the progress line that used to sit under the toolbar.
 - The summary email no longer lists an app as failed when a later try the same night updated it, and an app whose update failed shows its own icon instead of a letter.
@@ -537,7 +539,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.03_dev20261024-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.05.03_dev20261028-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
