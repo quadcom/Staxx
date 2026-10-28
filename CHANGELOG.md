@@ -4,6 +4,8 @@ What changed in StaXX, newest first.
 
 ---
 
+## Unreleased
+
 ## 00.05.03 — released 2026-10-27
 
 - An update no longer fails because a registry such as lscr.io or ghcr.io was busy for a split second. StaXX waits a minute and tries the download once more. If it still fails, the email says the registry was too busy rather than that a download limit was reached. Scheduled updates now start a few minutes past the hour, such as 3:07 instead of 3:00, when registries are less crowded.
