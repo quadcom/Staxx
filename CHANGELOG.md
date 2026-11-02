@@ -4,6 +4,8 @@ What changed in StaXX, newest first.
 
 ---
 
+## Unreleased
+
 ## 00.06.00 — released 2026-11-02
 
 - A new Network map button beside the legend opens a window listing every address and port your apps use. Apps with their own address on a MACVLAN or IPVLAN network are listed by address. Ports on the server's own address are in one list, sorted by number, with each app's network marked by colour. At the top it shows the next free address on each of those networks and the first eight free ports from any number you type.
