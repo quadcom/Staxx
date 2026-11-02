@@ -2582,6 +2582,28 @@
                    mine: p.path, container: t.container });
       });
     });
+    // PLAN_251 — a fixed ipv4_address another container already holds. Read
+    // straight off the text (no model helper gives it a line number): the
+    // network is the nearest less-indented key above the line. TAKEN.ips
+    // names docker's own network, which for a project-made network carries
+    // the project prefix, hence the suffix test.
+    if (TAKEN.ips && TAKEN.ips.length) {
+      lines.forEach(function (ln, i) {
+        var m = /^(\s*)ipv4_address\s*:\s*(["']?)(\d+\.\d+\.\d+\.\d+)\2/.exec(ln);
+        if (!m) return;
+        var indent = m[1].length, net = '';
+        for (var j = i - 1; j >= 0; j--) {
+          var k = /^(\s*)["']?([^\s"':#]+)["']?\s*:\s*(#.*)?$/.exec(lines[j]);
+          if (k && k[1].length < indent) { net = k[2]; break; }
+        }
+        TAKEN.ips.forEach(function (t) {
+          if (isOwn(t) || t.ip !== m[3]) return;
+          if (net && t.network !== net && t.network.slice(-(net.length + 1)) !== '_' + net) return;
+          out.push({ kind: 'ip', line: i, col: ln.indexOf(m[3]), len: m[3].length,
+                     mine: m[3], network: t.network, container: t.container });
+        });
+      });
+    }
     return out;
   }
 
@@ -3946,6 +3968,10 @@
   // by", the plain ones say "used by" — so this is two functions, not one
   // shared by both, but each still names its own site's sentence once.
   function clashSentence(c) {
+    if (c.kind === 'ip') {
+      return 'Address ' + c.mine + ' on ' + c.network + ' is already used by "' + c.container +
+        '". Open the network map to find a free one.';
+    }
     return c.kind === 'port'
       ? (c.host
           ? 'Port ' + c.mine + '/' + c.proto + ' is already held by the server itself' +
@@ -3954,6 +3980,10 @@
       : '"' + c.mine + '" is already used by "' + c.container + '".';
   }
   function clashSentenceHtml(c) {
+    if (c.kind === 'ip') {
+      return 'Address ' + esc(c.mine) + ' on ' + esc(c.network) + ' is already used by "' +
+        esc(c.container) + '". Open the network map to find a free one.';
+    }
     return c.kind === 'port'
       ? (c.host
           ? 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already held by the server itself' +
@@ -21737,6 +21767,9 @@
     // PLAN_73 — a host listener is not a container and cannot be stopped the
     // same way, so this gets its own sentence rather than the one above.
     if (hostPorts.length) warn += '<p>This will not start while the server itself is using that port.</p>';
+    if (clashes.some(function (c) { return c.kind === 'ip'; })) {
+      warn += '<p>This will not start while another app has that address.</p>';
+    }
 
     askConfirm({
       title: 'This clashes with something already running',
@@ -21808,7 +21841,10 @@
       rows: rows, verb: verb, action: 'run', fields: fields, show: show,
       failTitle: 'Could not start', failText: 'Could not start the command.',
       started: function (res) { if (show) openLogDialog(res.title || 'Output', 'Working…'); },
-      after: done
+      after: function (job) {
+        if (verb === 'up' && jobFailed(job)) explainStartFailure(name, job.text || '');
+        if (done) done(job);
+      }
     });
   }
 
@@ -25688,6 +25724,291 @@
 
   if (legendDlg) {
     onBackdropClick(legendDlg);
+  }
+
+  // PLAN_251 — the network map. Everything on it comes from one 'netmap'
+  // reply (free addresses, every address in use, every published port); the
+  // page only sorts, colours and filters it. Not cached between opens: the
+  // picture is only worth having if it is as current as the click.
+  var netmapDlg  = document.getElementById('staxx-netmap');
+  var netmapBody = document.getElementById('staxx-netmap-body');
+  var netmapData = null;
+  var netmapQuery = '';
+  var netmapFrom  = 8000;
+  var netmapShut  = {};   // macvlan group name -> true when folded closed
+
+  // Assigned to bridge networks in name order, so a network keeps its colour
+  // for as long as the same set of networks publishes ports.
+  var NETMAP_COLOURS = ['#4ea1ff', '#5fb85f', '#c77dff', '#f2c94c', '#ff6b8b',
+                        '#3fd0c9', '#a3a3ff', '#9ccc65', '#ff9e80', '#80deea'];
+
+  function ipNumber(ip) {
+    return String(ip).split('.').reduce(function (a, b) { return a * 256 + (+b || 0); }, 0);
+  }
+
+  function netmapMatch(text) {
+    return !netmapQuery || String(text).toLowerCase().indexOf(netmapQuery) !== -1;
+  }
+
+  function netmapPortNets() {
+    var seen = [];
+    netmapData.ports.forEach(function (p) { if (seen.indexOf(p.net) === -1) seen.push(p.net); });
+    return seen.sort();
+  }
+
+  function netmapDot(nets, name) {
+    var i = nets.indexOf(name);
+    return '<span class="staxx-netmap-dot" style="background:' +
+      NETMAP_COLOURS[(i < 0 ? 0 : i) % NETMAP_COLOURS.length] + '"></span>';
+  }
+
+  function netmapOwnNets() {
+    return netmapData.networks.filter(function (n) { return n.driver === 'macvlan' || n.driver === 'ipvlan'; })
+      .sort(function (a, b) { return ipNumber(String(a.subnet).split('/')[0]) - ipNumber(String(b.subnet).split('/')[0]); });
+  }
+
+  // The first eight numbers from `from` that no container publishes and the
+  // server is not listening on.
+  function netmapFreePorts(from) {
+    var used = {};
+    netmapData.ports.forEach(function (p) { used[p.port] = true; });
+    (netmapData.listening || []).forEach(function (p) { used[p] = true; });
+    var out = [];
+    for (var p = Math.max(1, from); p < 65536 && out.length < 8; p++) if (!used[p]) out.push(p);
+    return out;
+  }
+
+  function netmapPortChips() {
+    return netmapFreePorts(netmapFrom).map(function (p) {
+      return '<span class="staxx-netmap-chip">' + p + '</span>';
+    }).join('');
+  }
+
+  function netmapCardsHtml() {
+    var h = '';
+    netmapOwnNets().forEach(function (n) {
+      var f = n.nextFree;
+      h += '<div class="staxx-netmap-card"><div>Next free address on <b>' + esc(n.name) + '</b> (' + esc(n.subnet) + ')</div>' +
+        '<div class="staxx-netmap-big">' + (f ? esc(f.ip) : 'None free') + '</div>' +
+        '<div>' + n.apps.length + ' apps use this network' +
+        (f && f.checked === false ? ' · not checked on the network' : '') + '</div></div>';
+    });
+    h += '<div class="staxx-netmap-card"><div>First free ports on the server\'s own address, from ' +
+      '<input type="number" class="staxx-netmap-from" id="staxx-netmap-from" min="1" max="65535" value="' + netmapFrom + '" aria-label="Start looking from this port"></div>' +
+      '<div id="staxx-netmap-chips">' + netmapPortChips() + '</div></div>';
+    return h;
+  }
+
+  function netmapHeading(text) {
+    var ip = netmapData.hostIp ? ' – ' + esc(netmapData.hostIp) : '';
+    return '<h4 class="staxx-netmap-h">' + esc(text) + ip + '</h4>';
+  }
+
+  function netmapSectionsHtml() {
+    var searching = !!netmapQuery;
+    var h = '';
+
+    // Macvlan / ipvlan: one fold-able group per network.
+    var groups = '';
+    netmapOwnNets().forEach(function (n) {
+      var apps = n.apps.filter(function (a) { return netmapMatch(a.name) || netmapMatch(a.ip) || netmapMatch(a.stack); })
+        .sort(function (a, b) { return ipNumber(a.ip) - ipNumber(b.ip); });
+      if (searching && !apps.length) return;
+      var shut = !!netmapShut[n.name];
+      groups += '<div class="staxx-netmap-grp"><button type="button" class="staxx-netmap-gh" data-netmap-fold="' + esc(n.name) + '" aria-expanded="' + (!shut) + '">' +
+        '<i class="fa fa-caret-' + (shut ? 'right' : 'down') + '" aria-hidden="true"></i> <b>' + esc(n.name) + '</b>' +
+        '<span>' + esc(n.subnet) + ' · gateway ' + esc(n.gateway) + ' · ' + apps.length + ' apps</span></button>' +
+        (shut ? '' : '<table class="staxx-netmap-tbl"><tr><th>Address</th><th>App</th></tr>' +
+          (apps.map(function (a) { return '<tr><td>' + esc(a.ip) + '</td><td>' + esc(a.name) + '</td></tr>'; }).join('') ||
+            '<tr><td colspan="2">No apps on this network.</td></tr>') + '</table>') + '</div>';
+    });
+    if (groups) h += '<div class="staxx-netmap-sec"><h4 class="staxx-netmap-h">MACVLAN and IPVLAN networks</h4>' + groups + '</div>';
+
+    // Bridge: one table, every published port, numerically.
+    var nets = netmapPortNets();
+    var ports = netmapData.ports.filter(function (p) {
+      return netmapMatch(p.port) || netmapMatch(p.app) || netmapMatch(p.net) || netmapMatch(p.stack);
+    }).sort(function (a, b) { return (a.port - b.port) || String(a.proto).localeCompare(b.proto); });
+    if (!searching || ports.length) {
+      h += '<div class="staxx-netmap-sec"><div class="staxx-netmap-sh">' + netmapHeading('Bridge networks') +
+        '<div class="staxx-netmap-legend">' + nets.map(function (n) { return '<span>' + netmapDot(nets, n) + esc(n) + '</span>'; }).join('') + '</div></div>' +
+        '<div class="staxx-netmap-grp"><table class="staxx-netmap-tbl"><tr><th>Server port</th><th>App</th><th>Network</th><th>Port inside the app</th></tr>' +
+        (ports.map(function (p) {
+          return '<tr><td>' + esc(p.port) + (p.proto && p.proto !== 'tcp' ? ' / ' + esc(p.proto) : '') + '</td><td>' + esc(p.app) +
+            '</td><td>' + netmapDot(nets, p.net) + esc(p.net) + '</td><td>' + esc(p.inner) + '</td></tr>';
+        }).join('') || '<tr><td colspan="4">No published ports.</td></tr>') + '</table></div></div>';
+    }
+
+    // Host network: just the apps.
+    var host = (netmapData.hostApps || []).filter(function (a) { return netmapMatch(a.name) || netmapMatch(a.stack); });
+    if (host.length) {
+      h += '<div class="staxx-netmap-sec">' + netmapHeading('Host network') +
+        '<div class="staxx-netmap-grp"><table class="staxx-netmap-tbl">' +
+        host.map(function (a) { return '<tr><td>' + esc(a.name) + '</td></tr>'; }).join('') + '</table></div></div>';
+    }
+    return h || '<p>Nothing matches.</p>';
+  }
+
+  // Redraws only the sections, so the search box keeps focus and the
+  // scroll position survives a fold or a keystroke.
+  function paintNetmapSections() {
+    var box = document.getElementById('staxx-netmap-sections');
+    if (!box) return;
+    var y = netmapBody.scrollTop;
+    box.innerHTML = netmapSectionsHtml();
+    netmapBody.scrollTop = y;
+  }
+
+  function paintNetmap() {
+    netmapBody.innerHTML =
+      '<div class="staxx-netmap-cards" id="staxx-netmap-cards">' + netmapCardsHtml() + '</div>' +
+      '<div class="staxx-netmap-tools"><input type="text" class="staxx-netmap-search" id="staxx-netmap-search" ' +
+      'placeholder="Find an app, address or port" aria-label="Find an app, address or port" autocomplete="off" value="' + esc(netmapQuery) + '"></div>' +
+      '<div id="staxx-netmap-sections">' + netmapSectionsHtml() + '</div>';
+  }
+
+  function openNetmap() {
+    if (!netmapDlg) return;
+    netmapBody.innerHTML = '<p>Loading the network map…</p>';
+    if (!netmapDlg.open) netmapDlg.showModal();
+    call('netmap', {}, 60000).then(function (res) {
+      if (!res || !res.ok) {
+        netmapBody.innerHTML = '<p>' + esc((res && res.error) || 'Could not read the network map.') + '</p>';
+        return;
+      }
+      netmapData = res;
+      netmapData.networks = res.networks || [];
+      netmapData.ports = res.ports || [];
+      paintNetmap();
+    });
+  }
+
+  var netmapBtn = document.getElementById('staxx-netmap-btn');
+  if (netmapBtn) netmapBtn.addEventListener('click', openNetmap);
+
+  var netmapCloseBtn = document.getElementById('staxx-netmap-close');
+  if (netmapCloseBtn) netmapCloseBtn.addEventListener('click', function () { netmapDlg.close(); });
+
+  if (netmapDlg) {
+    onBackdropClick(netmapDlg);
+    netmapBody.addEventListener('input', function (e) {
+      if (e.target.id === 'staxx-netmap-search') {
+        netmapQuery = e.target.value.trim().toLowerCase();
+        paintNetmapSections();
+      } else if (e.target.id === 'staxx-netmap-from') {
+        netmapFrom = parseInt(e.target.value, 10) || 1;
+        var chips = document.getElementById('staxx-netmap-chips');
+        if (chips) chips.innerHTML = netmapPortChips();
+      }
+    });
+    netmapBody.addEventListener('click', function (e) {
+      var g = e.target.closest('[data-netmap-fold]');
+      if (!g) return;
+      var n = g.getAttribute('data-netmap-fold');
+      netmapShut[n] = !netmapShut[n];
+      paintNetmapSections();
+    });
+  }
+
+  // PLAN_251 — "could not start" for an address another app already holds.
+  // Reached from runNow() once a start job has failed with docker's
+  // "address already in use" on networking; anything else keeps the plain
+  // red pill and its raw log.
+  var netFailModal = null;
+  var netFailCtx = null;   // { name, clashes, busy }
+
+  function netFailDialogEl() {
+    if (netFailModal) return netFailModal;
+    netFailModal = staxxDialog({
+      id: 'netfail', cls: 'staxx-netfail',
+      buttonsHtml:
+        '<button type="button" class="staxx-btn" id="staxx-netfail-map">Show network map</button>' +
+        '<button type="button" class="staxx-btn" id="staxx-netfail-edit">Open the editor</button>' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-netfail-go"></button>',
+      busy: function () { return !!(netFailCtx && netFailCtx.busy); },
+      onClose: function () { netFailCtx = null; }
+    });
+    netFailModal.querySelector('#staxx-netfail-map').addEventListener('click', function () {
+      netFailModal.close();
+      openNetmap();
+    });
+    netFailModal.querySelector('#staxx-netfail-edit').addEventListener('click', function () {
+      var name = netFailCtx && netFailCtx.name;
+      netFailModal.close();
+      if (name) editStack(name, name);
+    });
+    netFailModal.querySelector('#staxx-netfail-go').addEventListener('click', netFailGo);
+    return netFailModal;
+  }
+
+  function netFailMsg(text) {
+    netFailDialogEl().querySelector('#staxx-netfail-msg').textContent = text || '';
+  }
+
+  // Writes each suggested address into the file one service at a time (each
+  // a single-line edit the server refuses unless exactly one line matches),
+  // then starts the stack through run() so the usual guards still apply.
+  function netFailGo() {
+    var ctx = netFailCtx;
+    if (!ctx || ctx.busy) return;
+    var todo = ctx.clashes.filter(function (c) { return c.free; });
+    var goBtn = netFailDialogEl().querySelector('#staxx-netfail-go');
+    ctx.busy = true;
+    goBtn.disabled = true;
+    netFailMsg('Changing the address…');
+    (function next(i) {
+      if (i >= todo.length) {
+        ctx.busy = false;
+        netFailModal.close();
+        run(ctx.name, 'up');
+        return;
+      }
+      var c = todo[i];
+      call('setip', { name: ctx.name, service: c.service, from: c.ip, to: c.free.ip }).then(function (res) {
+        if (!res || !res.ok) {
+          ctx.busy = false;
+          goBtn.disabled = false;
+          netFailMsg((res && res.error) || 'Could not change the address.');
+          return;
+        }
+        next(i + 1);
+      });
+    })(0);
+  }
+
+  function openNetFail(name, clashes) {
+    var dlg = netFailDialogEl();
+    netFailCtx = { name: name, clashes: clashes, busy: false };
+    dlg.querySelector('#staxx-netfail-title').textContent =
+      clashes.map(function (c) { return c.service; }).join(', ') + ' could not start';
+    var h = '<p>It is set to use an address that another app already has.</p>';
+    clashes.forEach(function (c) {
+      h += '<div class="staxx-netfail-block staxx-netfail-block--bad"><div>Its address on <b>' + esc(c.network) + '</b></div>' +
+        '<div class="staxx-netmap-big">' + esc(c.ip) + '</div>' +
+        '<div>' + (c.holder ? 'Already used by <b>' + esc(c.holder) + '</b>' : 'Already used by something else on your network') + '</div></div>';
+      if (c.free) {
+        h += '<div class="staxx-netfail-block staxx-netfail-block--good"><div>Next free address on ' + esc(c.network) + '</div>' +
+          '<div class="staxx-netmap-big">' + esc(c.free.ip) + '</div>' +
+          '<div>' + (c.free.checked === false ? 'Not checked on the network.' : 'Nothing answered at this address when StaXX checked.') + '</div></div>';
+      }
+    });
+    dlg.querySelector('#staxx-netfail-body').innerHTML = h;
+    var withFree = clashes.filter(function (c) { return c.free; });
+    var go = dlg.querySelector('#staxx-netfail-go');
+    go.textContent = withFree.length === 1 ? 'Use ' + withFree[0].free.ip + ' and start'
+      : 'Use the suggested addresses and start';
+    go.disabled = !withFree.length;
+    netFailMsg('');
+    if (!dlg.open) dlg.showModal();
+  }
+
+  // The log text is whatever the finished job collected (job.text in the
+  // done callback), so nothing is fetched twice.
+  function explainStartFailure(name, logText) {
+    if (!/address already in use/i.test(logText) || !/networking/i.test(logText)) return;
+    call('ipclash', { name: name }).then(function (res) {
+      if (res && res.ok && res.clashes && res.clashes.length) openNetFail(name, res.clashes);
+    });
   }
 
   // A short server error, not real command output, so it reads as prose in

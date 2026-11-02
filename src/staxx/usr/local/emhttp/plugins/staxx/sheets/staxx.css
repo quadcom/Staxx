@@ -5075,7 +5075,8 @@ div.title.staxx-has-titlebar {
 .staxx-confirm:not([open]),
 .staxx-settings:not([open]),
 .staxx-logdlg:not([open]),
-.staxx-legend:not([open]) {
+.staxx-legend:not([open]),
+.staxx-netmap:not([open]) {
   display: none;
   opacity: 0;
 }
@@ -5090,7 +5091,8 @@ div.title.staxx-has-titlebar {
   .staxx-confirm[open],
   .staxx-settings[open],
   .staxx-logdlg[open],
-  .staxx-legend[open] { opacity: 0; }
+  .staxx-legend[open],
+  .staxx-netmap[open] { opacity: 0; }
 }
 
 /* A separate pseudo-element with its own box, so it needs its own copy of
@@ -5104,7 +5106,8 @@ div.title.staxx-has-titlebar {
 .staxx-confirm::backdrop,
 .staxx-settings::backdrop,
 .staxx-logdlg::backdrop,
-.staxx-legend::backdrop {
+.staxx-legend::backdrop,
+.staxx-netmap::backdrop {
   background: rgba(0, 0, 0, 0.55);
   opacity: 1;
   transition: opacity var(--sm-motion) var(--sm-ease),
@@ -5121,7 +5124,8 @@ div.title.staxx-has-titlebar {
 .staxx-confirm:not([open])::backdrop,
 .staxx-settings:not([open])::backdrop,
 .staxx-logdlg:not([open])::backdrop,
-.staxx-legend:not([open])::backdrop {
+.staxx-legend:not([open])::backdrop,
+.staxx-netmap:not([open])::backdrop {
   opacity: 0;
 }
 
@@ -5135,7 +5139,8 @@ div.title.staxx-has-titlebar {
   .staxx-confirm[open]::backdrop,
   .staxx-settings[open]::backdrop,
   .staxx-logdlg[open]::backdrop,
-  .staxx-legend[open]::backdrop { opacity: 0; }
+  .staxx-legend[open]::backdrop,
+  .staxx-netmap[open]::backdrop { opacity: 0; }
 }
 
 /* ---- modal: header ---- */
@@ -17887,4 +17892,256 @@ html.staxx-noscroll body {
 .staxx-scaffold .staxx-nf .staxx-nf-input:focus {
   border-color: var(--sm-accent);
   outline: none;
+}
+
+/* ---- Network map and "could not start" (PLAN_251) -------------------------
+ *
+ * Own classes, scoped under .staxx-scaffold wherever a control is involved
+ * because Unraid resets buttons and inputs at a specificity one class cannot
+ * beat. 1rem is 10px here, so nothing is under 1.3rem. Text is the dialog's
+ * own colour (no grey), headings the accent. Fade comes from the shared
+ * "Every dialog" rules above.
+ */
+.staxx-netmap {
+  width: min(92rem, 94vw);
+  max-height: 86vh;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+  font-size: 1.3rem;
+
+  display: flex;
+  flex-direction: column;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-netmap-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.2rem 1.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+.staxx-netmap-title {
+  margin: 0;
+  flex: 1;
+  font-size: 1.7rem;
+}
+
+.staxx-netmap-title .fa {
+  color: var(--sm-accent);
+  margin-right: 0.6rem;
+}
+
+.staxx-scaffold .staxx-netmap-close {
+  flex: 0 0 auto;
+  padding: 0.2rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-size: 1.6rem;
+  line-height: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-netmap-close:hover,
+.staxx-scaffold .staxx-netmap-close:focus-visible {
+  opacity: 1;
+}
+
+.staxx-netmap-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 1.4rem;
+}
+
+.staxx-netmap-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.4rem;
+}
+
+.staxx-netmap-card,
+.staxx-netfail-block {
+  padding: 1rem 1.2rem;
+  border: 0.1rem solid var(--sm-line);
+  border-left: 0.4rem solid var(--sm-good);
+  border-radius: 0.6rem;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.staxx-netfail-block--bad {
+  border-left-color: var(--sm-danger);
+}
+
+.staxx-netmap-big {
+  margin: 0.2rem 0;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+.staxx-netmap-chip {
+  display: inline-block;
+  margin: 0.4rem 0.4rem 0 0;
+  padding: 0.1rem 0.9rem;
+  border: 0.1rem solid var(--sm-good);
+  border-radius: 1.2rem;
+  background: rgba(67, 160, 71, 0.2);
+  font-weight: 600;
+}
+
+.staxx-scaffold .staxx-netmap-from,
+.staxx-scaffold .staxx-netmap-search {
+  box-sizing: border-box;
+  height: auto;
+  margin: 0;
+  padding: 0.3rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.4rem;
+  background: var(--sm-bg);
+  color: inherit;
+  font: inherit;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-netmap-from {
+  width: 8rem;
+}
+
+.staxx-scaffold .staxx-netmap-search {
+  width: 100%;
+  padding: 0.6rem 1rem;
+}
+
+.staxx-netmap-tools {
+  margin-bottom: 1rem;
+}
+
+.staxx-netmap-sec {
+  margin: 1.2rem 0;
+}
+
+.staxx-netmap-sh {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem 1.8rem;
+  margin-bottom: 0.6rem;
+}
+
+.staxx-netmap-h {
+  margin: 0 0 0.4rem;
+  color: var(--sm-accent);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.staxx-netmap-sh .staxx-netmap-h {
+  margin: 0;
+}
+
+/* Unraid's own heading rules outrank one class and drop the weight to
+   normal, so the weight is restated at scaffold specificity. */
+.staxx-scaffold .staxx-netmap-h {
+  font-weight: 700;
+}
+
+/* showModal() hands focus to the first control, the close button, and
+   Unraid's :focus outline then rings it on every open. Keyboard focus
+   still brightens it through :focus-visible above. */
+.staxx-scaffold .staxx-netmap-close:focus {
+  outline: none;
+}
+
+/* Every network's table gets the same first column, so the addresses and
+   names line up from one group to the next. */
+.staxx-netmap-tbl th:first-child,
+.staxx-netmap-tbl td:first-child {
+  width: 16rem;
+}
+
+.staxx-netmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.6rem;
+}
+
+.staxx-netmap-legend span {
+  white-space: nowrap;
+}
+
+.staxx-netmap-dot {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.8rem;
+  border-radius: 0.3rem;
+  vertical-align: -0.15em;
+}
+
+.staxx-netmap-grp {
+  margin: 0.6rem 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.staxx-scaffold .staxx-netmap-gh {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+  width: 100%;
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border: 0;
+  border-radius: 0;
+  background: rgba(128, 128, 128, 0.14);
+  color: inherit;
+  font: inherit;
+  font-size: 1.3rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-netmap-gh:hover {
+  background: rgba(128, 128, 128, 0.24);
+}
+
+.staxx-netmap-tbl {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+}
+
+.staxx-netmap-tbl th,
+.staxx-netmap-tbl td {
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-top: 0.1rem solid var(--sm-line);
+  background: none;
+  color: inherit;
+  font-size: 1.3rem;
+  text-align: left;
+}
+
+.staxx-netmap-tbl th {
+  font-weight: 600;
+}
+
+.staxx-netfail .staxx-confirm-body p {
+  margin: 0 0 1rem;
 }

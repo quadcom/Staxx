@@ -8324,6 +8324,83 @@ function staxx_hostport_step(string $name, array $only): string {
 }
 
 /**
+ * After a start (PLAN_251): for each of this stack's containers (limited to
+ * the services in $only when given) that is restarting, or has exited with a
+ * non-zero code, print a plain block into the job log saying it stopped again
+ * and quoting the app's own last complaint, then return how many there were;
+ * the job turns that into a failed exit. A host-network container that died on
+ * a taken port is left to staxx_hostport_check(), which says more about it.
+ * $rows is injectable for the suite: a list of ['name', 'service', 'mode',
+ * 'state', 'exit', 'log'].
+ *
+ * @param  string[] $only
+ * @param  ?array   $rows
+ */
+function staxx_crash_check(string $name, array $only = [], ?array $rows = null): int {
+  if ($rows === null) {
+    $rows = [];
+    $file = staxx_find_compose_file(staxx_stack_dir($name));
+    $project = staxx_stack_project_guess($file, staxx_path_leaf($name));
+    if ($project === '') return 0;
+    $docker = escapeshellarg(staxx_docker_bin());
+    $ids = preg_split('/\s+/', trim(staxx_sh($docker.' ps -aq --filter '
+             .escapeshellarg('label=com.docker.compose.project='.$project), 10)), -1, PREG_SPLIT_NO_EMPTY);
+    $ids = array_values(array_filter($ids, fn($i) => preg_match('/^[0-9a-f]{12,64}$/', $i)));
+    if (!$ids) return 0;
+    // A real tab between the fields, as in staxx_hostport_check().
+    $fmt = implode("\t", ['{{.Name}}', '{{index .Config.Labels "com.docker.compose.service"}}',
+                          '{{.HostConfig.NetworkMode}}', '{{.State.Status}}', '{{.State.ExitCode}}', '{{.Id}}']);
+    $out = staxx_sh($docker.' inspect --format '.escapeshellarg($fmt).' '
+                    .implode(' ', array_map('escapeshellarg', $ids)), 15);
+    foreach (explode("\n", $out) as $line) {
+      $f = explode("\t", $line);
+      if (count($f) < 6) continue;
+      $rows[] = ['name' => ltrim($f[0], '/'), 'service' => $f[1], 'mode' => $f[2],
+                 'state' => $f[3], 'exit' => (int)$f[4], 'id' => $f[5], 'log' => null];
+    }
+  }
+
+  $found = 0;
+  foreach ($rows as $r) {
+    $restarting = ($r['state'] ?? '') === 'restarting';
+    if (!$restarting && !(($r['state'] ?? '') === 'exited' && (int)($r['exit'] ?? 0) !== 0)) continue;
+    if ($only && !in_array((string)($r['service'] ?? ''), $only, true)) continue;
+    $log = $r['log'] ?? staxx_sh(escapeshellarg(staxx_docker_bin()).' logs --tail 40 '
+                                 .escapeshellarg((string)$r['id']).' 2>&1', 10);
+    if (($r['mode'] ?? '') === 'host' && staxx_hostport_log_port($log) > 0) continue;
+
+    // The last line that reads like a complaint, else the last line at all.
+    $lines = array_values(array_filter(array_map(
+      fn($l) => trim(preg_replace('/\x1b\[[0-9;]*m/', '', $l)), preg_split('/\R/', $log)), 'strlen'));
+    $pick = '';
+    foreach ($lines as $l) if (preg_match('/error|fatal|failed|cannot|unable|invalid/i', $l)) $pick = $l;
+    if ($pick === '' && $lines) $pick = end($lines);
+    if (strlen($pick) > 200) $pick = substr($pick, 0, 200);
+
+    echo $r['name'].' started, then stopped again straight away'.($restarting ? ' and keeps restarting' : '').".\n";
+    echo $pick !== ''
+      ? "Its last message: '".$pick."'\nThis is the app's own complaint, not something StaXX changed. Open its log for more.\n"
+      : "It printed no message before it stopped. Open its log for more.\n";
+    $found++;
+  }
+  return $found;
+}
+
+/**
+ * The shell command that runs the crash check above for one stack, as its own
+ * `php -r` like staxx_hostport_step(). It waits five seconds first; the job
+ * has already waited five, so the look comes ten seconds after the start.
+ *
+ * @param string[] $only
+ */
+function staxx_crash_step(string $name, array $only): string {
+  return staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__DIR__.'/Stacks.php', true).'; sleep(5); '
+    .'exit(staxx_crash_check('.var_export($name, true).', '.var_export(array_values($only), true).') > 0 ? 1 : 0);'
+  ).' 2>&1';
+}
+
+/**
  * The detached shell command for a job: enter $dir, run $chain, report the
  * chain's exit code. With a $check (a host-network stack that starts
  * something) and a chain that succeeded, it waits five seconds for a bad port
@@ -8577,7 +8654,18 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   if ($starts && staxx_expose_has_assigned($name)) {
     $exposeStep = staxx_php_bin().' '.escapeshellarg(STAXX_ROOT.'/scripts/expose-sync').' '.escapeshellarg($name).' 2>&1';
   }
-  $inner = staxx_job_inner($dir, $chain, $hostSvcs ? staxx_hostport_step($name, $hostSvcs) : '', $exposeStep);
+  // After a start both looks run, one after the other; either finding
+  // something fails the job (exit 1 from the group), a crash of the check
+  // itself fails nothing. The group is a subshell so its `exit` ends only it.
+  $check = '';
+  if ($startsSomething) {
+    $check = staxx_crash_step($name, $names);
+    if ($hostSvcs) {
+      $check = '( '.staxx_hostport_step($name, $hostSvcs).'; a=$?; '.$check
+             . '; b=$?; if [ "$a" -eq 1 ] || [ "$b" -eq 1 ]; then exit 1; fi; exit 0 )';
+    }
+  }
+  $inner = staxx_job_inner($dir, $chain, $check, $exposeStep);
 
   // The log's first line is what the output panel shows above the command's
   // own output, so it has to say what actually ran — service name included,

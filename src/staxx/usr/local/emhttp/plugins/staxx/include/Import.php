@@ -367,7 +367,11 @@ function staxx_parse_ss_listeners(string $text): array {
  *   parsing with no Docker at all.
  * @return array{ports: array<int, array{port:string, proto:string, container:string}>,
  *               paths: array<int, array{path:string, container:string}>,
- *               host:  array<int, array{port:string, proto:string, addr:string, holder:string}>}
+ *               host:  array<int, array{port:string, proto:string, addr:string, holder:string}>,
+ *               ips:   array<int, array{ip:string, network:string, container:string, project:string}>}
+ *   `ips` (PLAN_251) is every address a container holds on a macvlan or ipvlan
+ *   network, for the editor's taken-address warning; like `host` it is []
+ *   when $rows is given.
  */
 function staxx_import_taken_facts(?array $rows = null): array {
   static $memo = null;
@@ -377,7 +381,7 @@ function staxx_import_taken_facts(?array $rows = null): array {
   $useMemo = $rows === null;
   if ($useMemo && $memo !== null) return $memo;
 
-  $facts = ['ports' => [], 'paths' => [], 'host' => []];
+  $facts = ['ports' => [], 'paths' => [], 'host' => [], 'ips' => []];
 
   if ($useMemo) {
     // Independent of Docker: the webGUI, sshd and anything else on the box can
@@ -388,6 +392,8 @@ function staxx_import_taken_facts(?array $rows = null): array {
 
     if (!staxx_docker_running()) return $memo = $facts;
     $rows = staxx_docker_inspect_rows();
+    require_once __DIR__.'/NetMap.php';
+    $facts['ips'] = staxx_netmap_vlan_ips();
   }
 
   // Fields 0 (id), 5 (name), 6 (ports, \x1f-separated), 7 (writable mounts,
