@@ -160,6 +160,10 @@
           "pattern": "^https?://",
           "description": "Link to the container's web interface. Supports Unraid's [IP] substitution. A literal port written in the address, e.g. http://[IP]:80/, is used as-is. A [PORT:nnnn] token is an older shape kept for files written before the port was typed in directly; its own number is not read, and StaXX instead works the port out from the service's first ports entry, taking whichever side of it actually answers: the host-facing side on a bridge network, or the container's own side on host networking or macvlan/ipvlan, where nothing is published."
         },
+        "webui-network": {
+          "type": "string",
+          "description": "Which of the service's networks the web page opens on; the network's name as written in this file. Ignored when the service is not on that network."
+        },
         "display": {
           "$ref": "#/$defs/display",
           "description": "Stored, but nothing acts on it yet. The intent is that 'advanced' will fold a sidecar such as a database behind the form's advanced toggle."

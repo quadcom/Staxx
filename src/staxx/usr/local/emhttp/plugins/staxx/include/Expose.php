@@ -437,6 +437,7 @@ function staxx_expose_target(string $rel, string $service, string &$err): ?array
 
   $s = ['name' => $rel, 'file' => $file, 'leaf' => staxx_path_leaf($rel), 'project' => ''];
   $liveIp = $mode = $driver = '';
+  $liveNet = [];
   $running = false;
   foreach (staxx_stack_containers($s) as $c) {
     if (($c['service'] !== '' ? $c['service'] : $c['name']) !== $service) continue;
@@ -446,25 +447,24 @@ function staxx_expose_target(string $rel, string $service, string &$err): ?array
     $liveIp = (string)($n['addresses'][0]['ip'] ?? '');
     $mode   = (string)($n['mode'] ?? '');
     $driver = (string)($n['driver'] ?? '');
+    $liveNet = $n;
     break;
   }
   if (!$running) $driver = staxx_expose_net_driver($svc);
 
   $hostIp = staxx_host_ip();
   $fixed  = (string)($svc['fixedIp'] ?? '');
-  $kind   = staxx_service_net_kind($svc, $mode, $driver);
+  [$address, $kind] = staxx_webui_address($svc, $hostIp, $liveIp, $mode, $driver, $liveNet);
   $assigned = $kind === 'other' && $fixed === '' && !$running;
 
   // Same rule as staxx_webui_url(), minus its need for a port.
-  $host = $assigned ? ''
-        : (($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
-          : ($fixed !== '' ? $fixed : $hostIp));
+  $host = $assigned ? '' : $address;
   if ($host === '' && !$assigned) {
     $err = 'Give this app a web page address first; the proxy forwards to it.';
     return null;
   }
 
-  $url    = staxx_webui_url($svc, $hostIp, $liveIp, $mode, $driver);
+  $url    = staxx_webui_url($svc, $hostIp, $liveIp, $mode, $driver, $liveNet);
   $scheme = $url !== '' ? strtolower((string)parse_url($url, PHP_URL_SCHEME)) : '';
   $port   = $url !== '' ? parse_url($url, PHP_URL_PORT) : null;
   return [

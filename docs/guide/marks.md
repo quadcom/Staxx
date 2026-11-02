@@ -94,6 +94,14 @@ listens on, then start it again.
 
 ![The Start failed window: four lines of Container demo-web Recreate, Recreated, Starting and Started, then "demo-web stopped straight away: it could not open port 80. Port 80 is already used by Unraid's own web page. Change the port this app listens on, then start it again.", and a Close button](../images/guide/marks-failed-start-port-log.png)
 
+About ten seconds after a start, StaXX checks the app again. If the app has stopped, or keeps
+restarting, the start shows the red warning triangle. Press it and read the last message in the log.
+That message comes from the app itself. Fix the setting it
+complains about, then start it again. Open the app's log for more. When the app printed nothing, the
+log says so.
+
+![The Start failed window: the Container lines for demo-web ending in Started, then "demo-web started, then stopped again straight away and keeps restarting.", the app's last message, and a Close button](../images/guide/marks-failed-start-crash.png)
+
 If a command's outcome is never seen by this page (most often because the browser tab was closed
 or reloaded while it was running), the row shows no chip for it at all. It settles back to showing
 whatever state the container is actually in.

@@ -1117,10 +1117,9 @@ function staxx_stack_children(array $s): array {
     // several. Each gets its own row, told apart by container name.
     if (isset($rows[$key]) && $rows[$key]['exists']) $key = $service.'/'.$c['name'];
 
-    // The list is already sorted with this server's own address first (see
-    // staxx_container_net()), so the first entry is the one worth trying —
-    // taking any other would prefer a macvlan address over one that is
-    // actually reachable from wherever this page is being read.
+    // The list is already sorted best first (see staxx_container_net()), so
+    // the first entry is the one worth trying; the full record also goes to
+    // staxx_webui_url() below, which applies the ticked network on top.
     $addr = $net[$c['id']]['addresses'][0]['ip'] ?? '';
 
     $rows[$key] = [
@@ -1137,7 +1136,8 @@ function staxx_stack_children(array $s): array {
       'icon'    => (string)($declared[$service]['x']['icon'] ?? ''),
       'webui'   => staxx_webui_url(
                      $declared[$service] ?? [], $hostIp,
-                     $addr, (string)($net[$c['id']]['mode'] ?? ''), (string)($net[$c['id']]['driver'] ?? '')
+                     $addr, (string)($net[$c['id']]['mode'] ?? ''), (string)($net[$c['id']]['driver'] ?? ''),
+                     $net[$c['id']] ?? []
                    ),
       'project' => (string)($declared[$service]['x']['project'] ?? $stackX['project'] ?? ''),
       'support' => (string)($declared[$service]['x']['support'] ?? $stackX['support'] ?? ''),
@@ -2837,7 +2837,7 @@ function staxx_state_snapshot(): array {
       $rec   = staxx_container_net()[$c['id']] ?? [];
       $webui = staxx_webui_url(
         $declared[$service] ?? [], $hostIp,
-        (string)($rec['addresses'][0]['ip'] ?? ''), (string)($rec['mode'] ?? ''), (string)($rec['driver'] ?? '')
+        (string)($rec['addresses'][0]['ip'] ?? ''), (string)($rec['mode'] ?? ''), (string)($rec['driver'] ?? ''), $rec
       );
       $webuiById[$c['id']] = $webui;
 

@@ -991,7 +991,7 @@ function staxx_detail_webui_probe(
   $probeService = $service; $probeService['x']['webui'] = $candidate;
   $resolved = staxx_webui_url(
     $probeService, staxx_host_ip(),
-    (string)($net['addresses'][0]['ip'] ?? ''), (string)($net['mode'] ?? ''), (string)($net['driver'] ?? '')
+    (string)($net['addresses'][0]['ip'] ?? ''), (string)($net['mode'] ?? ''), (string)($net['driver'] ?? ''), $net
   );
   if ($resolved !== '' && staxx_webui_try($resolved)) {
     $why .= ' A quick check just now found something answering there.';

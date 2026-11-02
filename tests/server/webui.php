@@ -222,6 +222,69 @@ ok("network_mode: none reads as bridge — there is no link either way",
    staxx_webui_url(svc('http://[IP]:[PORT:8096]/', '', $port, 'none'), $hostIp)
      === 'http://10.0.0.5:15114/');
 
+/* ------------------------------ two networks (PLAN_252): which address -- */
+
+/* A container record as staxx_container_net() hands it over, sorted best
+ * first: entry = [ip, net name, driver]. */
+function liveNet(array $entries, string $project = 'mattermost'): array {
+  $addresses = [];
+  foreach ($entries as [$ip, $net, $driver]) {
+    $addresses[] = ['ip' => $ip, 'label' => $ip, 'ports' => [], 'net' => $net, 'driver' => $driver];
+  }
+  return ['addresses' => $addresses, 'project' => $project];
+}
+$lanA = '10.77.2.68';
+$lanB = '10.77.0.68';
+$web  = ['target' => '8065', 'published' => ''];
+
+// Mattermost as measured: macvlan br0.2 plus the stack's private bridge, the
+// private one sorting first by network name. No published port.
+$mm = liveNet([[$lanA, 'br0.2', 'macvlan'], ['172.27.0.3', 'mattermost_mattermost-internal', 'bridge']]);
+ok('macvlan + private bridge: the macvlan address, never the 172.x one',
+   staxx_webui_url(svc('http://[IP]:8065/', '', $web), $hostIp, $lanA, 'br0.2', 'macvlan', $mm)
+     === 'http://10.77.2.68:8065/');
+
+$mmFirst = liveNet([['172.27.0.3', 'appnet', 'bridge'], [$lanA, 'br0.2', 'macvlan']]);
+ok('the private bridge sorting first (main network) still does not win',
+   staxx_webui_url(svc('http://[IP]:8065/', '', $web), $hostIp, '172.27.0.3', 'appnet', 'bridge', $mmFirst)
+     === 'http://10.77.2.68:8065/');
+
+ok('a bridge-only record with nothing published: the server address, not 172.x',
+   staxx_webui_url(svc('http://[IP]:[PORT:80]/', '', ['target' => '80', 'published' => '8080']), $hostIp,
+                   '172.17.0.2', 'bridge', 'bridge', liveNet([['172.17.0.2', 'bridge', 'bridge']]))
+     === 'http://10.0.0.5:8080/');
+
+// Two macvlan networks.
+$two = liveNet([[$lanB, 'br0', 'macvlan'], [$lanA, 'br0.2', 'macvlan']]);
+ok('two macvlan networks, no tick, no fixed address: the first by network name',
+   staxx_webui_url(svc('http://[IP]:8065/', '', $web), $hostIp, $lanB, 'br0', 'macvlan', $two)
+     === 'http://10.77.0.68:8065/');
+
+ok('two macvlan networks: the one matching the file\'s fixed address wins',
+   staxx_webui_url(svc('http://[IP]:8065/', $lanA, $web), $hostIp, $lanB, 'br0', 'macvlan', $two)
+     === 'http://10.77.2.68:8065/');
+
+$ticked = svc('http://[IP]:8065/', '', $web);
+$ticked['webuiNets'] = ['br0.2'];
+ok('two macvlan networks, tick on the second: the ticked network\'s address',
+   staxx_webui_url($ticked, $hostIp, $lanB, 'br0', 'macvlan', $two) === 'http://10.77.2.68:8065/');
+
+$ticked['webuiNets'] = ['internal'];
+ok('a tick on a bridge network (file name, project-prefixed in Docker) goes through the server, never the private ip',
+   staxx_webui_url($ticked, $hostIp, $lanA, 'br0.2', 'macvlan',
+                   liveNet([[$lanA, 'br0.2', 'macvlan'], ['172.27.0.3', 'mattermost_internal', 'bridge']]))
+     === 'http://'.$hostIp.':8065/');
+
+$ticked['webuiNets'] = ['gone', 'mattermost_gone'];
+ok('a tick on a network the container is not on is ignored: the automatic rule applies',
+   staxx_webui_url($ticked, $hostIp, $lanB, 'br0', 'macvlan', $two) === 'http://10.77.0.68:8065/');
+
+// Single-network cases keep their old answer with a record passed too.
+ok('single macvlan network with its record: unchanged',
+   staxx_webui_url(svc('http://[IP]:[PORT:80]/', '', ['target' => '80', 'published' => '']), $hostIp,
+                   '10.77.0.20', 'my_net', 'macvlan', liveNet([['10.77.0.20', 'my_net', 'macvlan']]))
+     === 'http://10.77.0.20:80/');
+
 /* ---------------------------------------- staxx_service_net_kind() itself -- */
 
 ok('driver beats mode beats the file',

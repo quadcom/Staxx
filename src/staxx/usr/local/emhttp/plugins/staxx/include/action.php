@@ -51,6 +51,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CA.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/NetMap.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
@@ -265,6 +266,7 @@ $staxxSafeWithoutStore = [
   'images', 'tags', 'hub-search', 'image-facts',
   'ca-refresh', 'ca-search', 'ca-home', 'ca-app',
   'probe', 'webui-test', 'ping', 'environment',
+  'netmap',
   'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash', 'crypt-recipe',
   // PLAN_97 Phase 2 — the first-run dialog's own actions. These are how a
   // store gets chosen in the first place, so they have to work before one
@@ -2342,6 +2344,27 @@ switch ($action) {
    */
   case 'networks':
     staxx_reply(['ok' => true, 'networks' => staxx_docker_networks_with_subnets()]);
+
+  /* ---- the Network map window (PLAN_251) ----
+   *
+   * Read-only; takes no parameters and needs no store (it reads Docker and
+   * the server, not a stack's folder), so it is on the safe list above.
+   */
+  case 'netmap':
+    staxx_reply(['ok' => true] + staxx_netmap());
+
+  /* ---- which of a stack's fixed addresses are already taken ---- */
+  case 'ipclash':
+    staxx_need_stack($name);
+    staxx_reply(['ok' => true, 'clashes' => staxx_ip_clash($name)]);
+
+  /* ---- swap one service's fixed address, undoably (PLAN_251) ---- */
+  case 'setip':
+    staxx_need_stack($name);
+    $setIpError = staxx_set_service_ip($name, (string)($_POST['service'] ?? ''),
+                                       (string)($_POST['from'] ?? ''), (string)($_POST['to'] ?? ''));
+    if ($setIpError !== '') staxx_fail($setIpError);
+    staxx_reply(['ok' => true]);
 
   /* ---- images this server's docker has already pulled ----
    *

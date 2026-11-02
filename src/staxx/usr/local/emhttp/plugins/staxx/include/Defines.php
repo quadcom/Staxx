@@ -1993,8 +1993,8 @@ function staxx_docker_ps_raw(): array {
  * callers used to run this same pass separately, once each, on every
  * render and every refresh.
  *
- * Field order: {{.Id}}, {{.HostConfig.NetworkMode}}, the container's own IP
- * list, the published port bindings, the exposed ports (these five are
+ * Field order: {{.Id}}, {{.HostConfig.NetworkMode}}, the container's own
+ * addresses as `network=address,` per attached network, the published port bindings, the exposed ports (these five are
  * staxx_container_net()'s own template, unchanged), then {{.Name}}, the
  * port map with `\x1f` separators, the writable bind mounts with `\x1f`,
  * the compose project `with` label (these four are
@@ -2029,7 +2029,7 @@ function staxx_docker_inspect_rows(): array {
 
   $tab = "\t";
   $fmt = '{{.Id}}'.$tab.'{{.HostConfig.NetworkMode}}'.$tab
-       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$v.IPAddress}},{{end}}'.$tab
+       . '{{range $k, $v := index .NetworkSettings "Networks"}}{{$k}}={{$v.IPAddress}},{{end}}'.$tab
        . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}'.$tab
        . '{{range $p, $v := index .Config "ExposedPorts"}}{{$p}},{{end}}'.$tab
        . '{{.Name}}'.$tab

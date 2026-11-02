@@ -500,6 +500,11 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
               title="<?= _('What the marks mean') ?>" aria-label="<?= _('What the marks mean') ?>">
         <i class="fa fa-th-list" aria-hidden="true"></i>
       </button>
+      <!-- PLAN_251 — opens the network map (#staxx-netmap, filled by script). -->
+      <button type="button" class="staxx-btn staxx-legend-btn" id="staxx-netmap-btn"
+              title="<?= _('Network map') ?>" aria-label="<?= _('Network map') ?>">
+        <i class="fa fa-sitemap" aria-hidden="true"></i>
+      </button>
       <!-- PLAN_78 — toggles selection mode; the marks it puts on every row
            and folder header, and the bar of verbs directly below this row,
            are both painted entirely by stacks.js. -->
@@ -1769,6 +1774,20 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
 
     <div class="staxx-legend-body" id="staxx-legend-body"></div>
 
+  </dialog>
+
+  <!-- PLAN_251 — the network map: free addresses and ports, every address and
+       published port in use. Built by openNetmap() in stacks.js from the
+       'netmap' reply; same fade and close recipe as the legend above. -->
+  <dialog class="staxx-netmap" id="staxx-netmap" aria-labelledby="staxx-netmap-title">
+    <div class="staxx-netmap-head">
+      <h3 class="staxx-netmap-title" id="staxx-netmap-title"><i class="fa fa-sitemap" aria-hidden="true"></i> <?= _('Network map') ?></h3>
+      <button type="button" class="staxx-netmap-close" id="staxx-netmap-close"
+              title="<?= _('Close') ?>" aria-label="<?= _('Close') ?>">
+        <i class="fa fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="staxx-netmap-body" id="staxx-netmap-body"></div>
   </dialog>
 
 </div>
