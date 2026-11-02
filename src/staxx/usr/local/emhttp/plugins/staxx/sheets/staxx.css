@@ -12097,6 +12097,8 @@ dialog::backdrop {
   flex-wrap: wrap;
   gap: 0 2.2rem;
 }
+/* The network-row tick (PLAN_252) sits under a box, so it needs the page's 13px floor. */
+.staxx-scaffold .staxx-tickopt.staxx-webuinet { font-size: 1.3rem; }
 .staxx-tickopt {
   display: inline-flex;
   align-items: center;

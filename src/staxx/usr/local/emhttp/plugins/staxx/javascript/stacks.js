@@ -4749,6 +4749,78 @@
     return (pair && pair.value && pair.value.pairs) ? pair.value.pairs['x-unraid'] : null;
   }
 
+  // PLAN_252 — "Web page opens here" on a service's own network rows. The
+  // answer is stored as x-unraid.webui-network, the network's name exactly as
+  // the file writes it; the server reads it when it picks the address the web
+  // button opens (compose ignores x- keys, so the file still runs anywhere).
+  function webuiNetOf(doc, service) {
+    var xu = svcXuMap(doc, service);
+    var p = xu && xu.value && xu.value.pairs ? xu.value.pairs['webui-network'] : null;
+    return p && p.value && p.value.kind === 'scalar' ? String(p.value.value) : '';
+  }
+
+  // Only a service with a web page port gets the tick; without one there is
+  // no web button for the tick to steer.
+  function hasWebuiPort(service) {
+    return !!findFieldBy(function (g) {
+      return g.service === service && g.binder === 'setting' && g.target === 'x-unraid.webui' &&
+             !g.absent && g.parts.value && String(g.parts.value.value).trim() !== '';
+    });
+  }
+
+  // The names of the networks a service's own rows list, in file order.
+  function serviceNetNames(service) {
+    var names = [];
+    MODEL.fields.forEach(function (g) {
+      if (g.service === service && g.binder === 'list' && g.listKey === 'networks' &&
+          g.parts.value && g.parts.value.value) names.push(String(g.parts.value.value));
+    });
+    return names;
+  }
+
+  // Sets (name given) or clears (name empty) the key, one copy only. Clearing
+  // splices the key's own lines out instead of calling YAML.removeKey(): that
+  // one lets an x-unraid block holding nothing but this key collapse away,
+  // and with it the scaffold's comments (removeKey's floor counts real keys,
+  // and a comment is not one). Returns false when the file cannot take it.
+  function writeWebuiNetOnDoc(doc, service, name) {
+    var xu = svcXuMap(doc, service);
+    var old = xu && xu.value && xu.value.pairs ? xu.value.pairs['webui-network'] : null;
+    if (old) {
+      if (name && old.value && old.value.kind === 'scalar') {
+        return YAML.replaceNested(doc, null, service, ['x-unraid', 'webui-network'], name);
+      }
+      YAML.splice(doc, old.leadStart, old.end - old.leadStart, []);
+      if (!name) return true;
+    } else if (!name) {
+      return true;
+    }
+    return YAML.addNested(doc, null, service, ['x-unraid', 'webui-network'], name) >= 0;
+  }
+
+  // The tick, drawn on one network row; plus, on the service's first network
+  // row only, the line saying the key names a network the app has left.
+  function webuiNetTickHtml(f) {
+    if (!f.service || !f.parts.value || !f.parts.value.value) return '';
+    if (!hasWebuiPort(f.service)) return '';
+    var net = String(f.parts.value.value);
+    var set = webuiNetOf(MODEL.doc, f.service);
+    var out = '<label class="staxx-tickopt staxx-flagopt staxx-webuinet"><input type="checkbox" ' +
+              'data-webui-net="' + esc(net) + '" data-service="' + esc(f.service) + '"' +
+              (set === net ? ' checked' : '') + '>' +
+              '<svg class="staxx-tickmark staxx-tickmark--tick" viewBox="0 0 16 16" aria-hidden="true">' +
+              '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
+              '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
+              '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
+              '<span class="staxx-tickword">Web page opens here</span></label>';
+    var names = serviceNetNames(f.service);
+    if (set && names.indexOf(set) < 0 && names[0] === net) {
+      out += '<p class="staxx-fieldnote">The web page was set to open on ' + esc(set) +
+             ', which this app is not on any more.</p>';
+    }
+    return out;
+  }
+
   // The stack's own x-unraid map, at the document root.
   function rootXuMap(doc) {
     return doc && doc.root && doc.root.kind === 'map' ? doc.root.pairs['x-unraid'] : null;
@@ -5160,7 +5232,7 @@
   // Returns HTML, '' when there is nothing to show yet.
   function exposeWhereHtml(svcName, which) {
     if (!MODEL) return '';
-    var domain = '', port = '', fixed = '', netName = '', mode = '';
+    var domain = '', port = '', fixed = '', netName = '', mode = '', rows = [];
     MODEL.fields.forEach(function (f) {
       if (f.service !== svcName || !f.parts) return;
       var v = f.absent || !f.parts.value ? '' : String(f.parts.value.value || '').trim();
@@ -5168,11 +5240,27 @@
       else if (f.target === 'x-unraid.webui') port = v;
       else if (f.target === 'network_mode') mode = v;
       else if (f.binder === 'list' && f.listKey === 'networks') {
-        if (!netName) netName = v;
-        var ip = f.parts.ipv4_address ? String(f.parts.ipv4_address.value || '').trim() : '';
-        if (!fixed && ip) fixed = ip;
+        rows.push({ name: v, ip: f.parts.ipv4_address ? String(f.parts.ipv4_address.value || '').trim() : '' });
       }
     });
+    // The same choice the web button makes (PLAN_252): the ticked network
+    // first, then one with an address of its own on the LAN. A fixed address
+    // on a private bridge network is never one to send people to, so it no
+    // longer wins just by being written first.
+    var ticked = webuiNetOf(MODEL.doc, svcName), lanDriver = function (n) {
+      // Docker's name for a network the stack creates carries the project
+      // prefix, but those are never macvlan/ipvlan here, so the file's name
+      // is the right key for every network this test cares about.
+      return netDriver[n] === 'macvlan' || netDriver[n] === 'ipvlan';
+    };
+    var pick = rows.filter(function (r) { return ticked && r.name === ticked; })[0]
+      || rows.filter(function (r) { return r.ip && lanDriver(r.name); })[0]
+      || rows.filter(function (r) { return lanDriver(r.name); })[0]
+      || rows[0];
+    if (pick) {
+      netName = pick.name;
+      if (pick.ip && (lanDriver(pick.name) || !(pick.name in netDriver))) fixed = pick.ip;
+    }
     if (!domain) return '';
     var parts = exposeParts(svcName);
     if (which === 'npm' ? !parts.nginxOn : !parts.dnsOn) return '';
@@ -6725,6 +6813,7 @@
       // its own whenever f.from names a namespace the file declares.
       bits.push(boxHtml(f, index, 'value', 'value', f.tool));
       bits.push(noteBoxHtml(f, index));
+      if (f.listKey === 'networks' && f.from === 'networks') bits.push(webuiNetTickHtml(f));
 
       // A networks: map entry's own settings beyond its name (fixed IP,
       // priority...), or a long-form secrets:/configs: entry's target/uid/
@@ -10019,6 +10108,27 @@
 
     removeRow(f, 'Removed the empty ' + f.binder + ' entry. ' +
                  'Undo is at the bottom if that was wrong.');
+  });
+
+  // PLAN_252 — the "Web page opens here" tick. A choice, not a keystroke, so
+  // it writes at once. One per service: ticking sets the key (replacing any
+  // other network's), unticking removes it.
+  formHost.addEventListener('change', function (event) {
+    var box = event.target;
+    if (box.dataset.webuiNet === undefined || !MODEL) return;
+    var svc = box.dataset.service, net = box.dataset.webuiNet;
+    flushPending();
+    pushUndo(box.checked ? 'opening the web page of "' + svc + '" on ' + net
+                         : 'no longer choosing the web page network of "' + svc + '"');
+    if (!writeWebuiNetOnDoc(MODEL.doc, svc, box.checked ? net : '')) {
+      dropUndo();
+      setYamlStatus('That cannot be written here — set x-unraid: webui-network in the Compose view instead.');
+      box.checked = !box.checked;
+      return;
+    }
+    structuralEdit(-1, box.checked
+      ? 'The web page of "' + svc + '" now opens on ' + net + '. Undo is at the bottom if that was wrong.'
+      : 'The web page of "' + svc + '" no longer has a chosen network. Undo is at the bottom if that was wrong.');
   });
 
   // Ticking or unticking a section. Not a value commit — a bare tick writes

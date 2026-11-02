@@ -365,7 +365,19 @@ service's own `update` block.
 
 | Token        | Replaced with                                                        |
 |--------------|-----------------------------------------------------------------------|
-| `[IP]`       | The server's address, or a service's own fixed address when it has one |
+| `[IP]`       | The service's own address on a MACVLAN or IPVLAN network when it has one, otherwise the server's address |
+
+A service on more than one network is opened on its own address on a MACVLAN or IPVLAN network, never
+on a private network that only its own stack can reach. To choose the network yourself, tick "Web page
+opens here" on that network in the form, which writes:
+
+```yaml
+x-unraid:
+  webui: "http://[IP]:8065/"
+  webui-network: br0.2      # the network's name as written in this file
+```
+
+A `webui-network` naming a network the service is no longer on is ignored.
 
 **The port written in the address is the port the web button opens.** The form's "Web page port"
 box is that number — type 80 in the box and the button opens port 80. Leave the box empty and the

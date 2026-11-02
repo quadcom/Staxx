@@ -1758,7 +1758,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 9;   // 9: a profiled service's own fields are read too (PLAN_178 F5)
+const STAXX_META_VERSION = 10;   // 10: a service's `webuiNets` (PLAN_252); 9: a profiled service's own fields are read too (PLAN_178 F5)
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1923,9 +1923,18 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     $meta['ok'] = $yaml !== '';
   }
 
+  // Top-level `networks.<key>.name:` — the Docker name a file's network key
+  // really has (compose config writes it out resolved, project prefix and
+  // all), kept for resolving a service's `webui-network` tick below.
+  $netNames = [];
+
   foreach (staxx_yaml_flatten($yaml) as $path => $value) {
     $parts = explode("\0", $path);
 
+    if ($parts[0] === 'networks' && count($parts) === 3 && $parts[2] === 'name' && $value !== '') {
+      $netNames[$parts[1]] = $value;
+      continue;
+    }
     if ($parts[0] === 'x-unraid' && count($parts) === 2) {
       $meta['x'][$parts[1]] = $value;
       continue;
@@ -2008,6 +2017,16 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
       $meta['services'][$service]['build'] = true;
     }
   }
+
+  // The Docker names a service's ticked "web page opens here" network can go
+  // by: the name as the file writes it, and what compose resolved it to.
+  // Only present when the service has the tick.
+  foreach ($meta['services'] as $service => &$svc) {
+    $tick = trim((string)($svc['x']['webui-network'] ?? ''));
+    if ($tick === '') continue;
+    $svc['webuiNets'] = array_values(array_unique(array_filter([$tick, $netNames[$tick] ?? ''])));
+  }
+  unset($svc);
 
   // A separate pass: ports live in a sequence, which the flattener above
   // never sees at all (see staxx_first_ports()'s own comment for why).
@@ -2516,6 +2535,77 @@ function staxx_webui_literal_port(string $address): string {
 }
 
 /**
+ * Which of a container's addresses a service's web page should use, when it
+ * has more than one on different networks; null leaves the choice to the
+ * caller's single-address rule (the server's own address, or the fixed one).
+ *
+ * Best first: the ticked network (`x-unraid.webui-network`, resolved to
+ * Docker's name by staxx_compose_meta() as `webuiNets`, with the compose
+ * project prefix tried too); else an address on a macvlan or ipvlan network,
+ * and with several the one matching the file's fixed address, else the first
+ * (the list is sorted by network name). A bridge address is never picked
+ * here: unpublished, it is a private 172.x nothing outside can reach.
+ *
+ * @param array $service one entry of staxx_compose_meta()['services']
+ * @param array $liveNet staxx_container_net()[id]
+ * @return ?array{ip:string,net:string,driver:string}
+ */
+function staxx_webui_pick(array $service, array $liveNet): ?array {
+  $addrs = (array)($liveNet['addresses'] ?? []);
+  if (!$addrs) return null;
+
+  $names = (array)($service['webuiNets'] ?? []);
+  if ($names) {
+    $project = (string)($liveNet['project'] ?? '');
+    if ($project !== '') foreach ($names as $n) $names[] = $project.'_'.$n;
+    foreach ($addrs as $a) {
+      if (($a['net'] ?? '') === '' || ($a['ip'] ?? '') === '' || !in_array($a['net'], $names, true)) continue;
+      // A tick on a bridge-type network means "through the server", since an
+      // unpublished bridge address is private: the caller sends it to the
+      // server's own address and published port rather than to this ip.
+      return in_array($a['driver'] ?? '', ['macvlan', 'ipvlan'], true) ? $a : ['ip' => '', 'net' => $a['net'], 'driver' => 'bridge'];
+    }
+  }
+
+  $fixedIp = (string)($service['fixedIp'] ?? '');
+  $lan = array_values(array_filter($addrs, fn($a) =>
+    in_array($a['driver'] ?? '', ['macvlan', 'ipvlan'], true) && ($a['ip'] ?? '') !== ''));
+  foreach ($lan as $a) {
+    if ($fixedIp !== '' && $a['ip'] === $fixedIp) return $a;
+  }
+  return $lan[0] ?? null;
+}
+
+/**
+ * The host part of a service's web address and the kind of network it
+ * resolved on, shared by the web button (staxx_webui_url()) and the reverse
+ * proxy's forward target so the two cannot disagree.
+ *
+ * @return array{0:string,1:string} [address, kind as staxx_service_net_kind() names it]
+ */
+function staxx_webui_address(
+  array $service, string $hostIp, string $liveIp, string $liveMode, string $liveDriver, array $liveNet = []
+): array {
+  $fixedIp = (string)($service['fixedIp'] ?? '');
+  $kind    = staxx_service_net_kind($service, $liveMode, $liveDriver);
+
+  // A picked address is the container's own on a network the page can be
+  // reached through, so it is read like a macvlan one: container-side port.
+  $pick = staxx_webui_pick($service, $liveNet);
+  if ($pick !== null && $pick['ip'] === '') return [$hostIp, 'bridge'];
+  if ($pick !== null) { $kind = 'other'; $liveIp = $pick['ip']; }
+
+  // The live address is only ever worth taking on a network that gives the
+  // container an address of its own. A bridge container's live address is a
+  // published binding, which is this server — and if that binding names one
+  // interface rather than all of them, it can be 127.0.0.1, which would send
+  // the link to a loopback that answers nowhere but the server itself.
+  $address = ($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
+           : ($fixedIp !== '' ? $fixedIp : $hostIp);
+  return [$address, $kind];
+}
+
+/**
  * The address that opens a service's own web page, or '' when there is none
  * to open.
  *
@@ -2545,35 +2635,31 @@ function staxx_webui_literal_port(string $address): string {
  * names its own host, such as `https://app.example.com/`, opens as written:
  * the scheme's default port applies.
  *
- * The address itself: a running container's own address, but only on a
- * macvlan or ipvlan network, which is the only case where the container has
- * one worth having — and only the live container can supply it, since DHCP
- * means the file may not even mention one. Failing that, the fixed address
- * written into the file, if any. Failing that, this server's address.
+ * The address itself: the live container's address on the network the author
+ * ticked ("Web page opens here"), else its address on a macvlan or ipvlan
+ * network, which is the only kind worth having — and only the live container
+ * can supply it, since DHCP means the file may not even mention one. Failing
+ * that, the fixed address written into the file, if any. Failing that, this
+ * server's address. An address on a bridge network that nothing publishes is
+ * private to the host and is never chosen.
  *
  * @param array  $service    one entry of staxx_compose_meta()['services']
  * @param string $hostIp     staxx_host_ip()
  * @param string $liveIp     staxx_container_net()[id]['addresses'][0]['ip'], or '' when none
  * @param string $liveMode   staxx_container_net()[id]['mode'], or '' when none
  * @param string $liveDriver staxx_container_net()[id]['driver'], or '' when none
+ * @param array  $liveNet    the whole staxx_container_net()[id] record; lets the tick and a
+ *                           second macvlan network be told apart. [] keeps the single-address rule.
  */
 function staxx_webui_url(
   array $service, string $hostIp,
-  string $liveIp = '', string $liveMode = '', string $liveDriver = ''
+  string $liveIp = '', string $liveMode = '', string $liveDriver = '',
+  array $liveNet = []
 ): string {
   $raw = trim((string)($service['x']['webui'] ?? ''));
   if ($raw === '') return '';
 
-  $fixedIp = (string)($service['fixedIp'] ?? '');
-  $kind    = staxx_service_net_kind($service, $liveMode, $liveDriver);
-
-  // The live address is only ever worth taking on a network that gives the
-  // container an address of its own. A bridge container's live address is a
-  // published binding, which is this server — and if that binding names one
-  // interface rather than all of them, it can be 127.0.0.1, which would send
-  // the link to a loopback that answers nowhere but the server itself.
-  $address = ($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
-           : ($fixedIp !== '' ? $fixedIp : $hostIp);
+  [$address, $kind] = staxx_webui_address($service, $hostIp, $liveIp, $liveMode, $liveDriver, $liveNet);
 
   $usesIp = strpos($raw, '[IP]') !== false;
   if ($usesIp) {
@@ -2727,7 +2813,7 @@ function staxx_webui_for(string $rel, string $service, string &$error): string {
   $net  = staxx_container_net()[$container['id']] ?? [];
   $url  = staxx_webui_url(
     $meta['services'][$service], staxx_host_ip(),
-    (string)($net['addresses'][0]['ip'] ?? ''), (string)($net['mode'] ?? ''), (string)($net['driver'] ?? '')
+    (string)($net['addresses'][0]['ip'] ?? ''), (string)($net['mode'] ?? ''), (string)($net['driver'] ?? ''), $net
   );
 
   if ($url === '') {
@@ -2815,7 +2901,12 @@ function staxx_network_drivers(): array {
  * was published, this is a guess from the image's declared ports" apart from
  * "this is a real forwarded port", without re-deriving it from the addresses.
  *
- * @return array<string, array{mode:string, driver:string, exposed:string[], published:bool, addresses:array<int,array{ip:string, ports:string[]}>}>
+ * Addresses are ordered best first (macvlan/ipvlan, then this server's own,
+ * then unpublished bridge addresses); each carries the `net` it is on ('' for
+ * this server's own address) and that network's `driver`. `project` is the
+ * compose project label, for resolving a stack file's network name.
+ *
+ * @return array<string, array{mode:string, driver:string, exposed:string[], published:bool, project:string, addresses:array<int,array{ip:string, label:string, ports:string[], net:string, driver:string}>}>
  */
 function staxx_container_net(): array {
   static $net = null;
@@ -2832,6 +2923,23 @@ function staxx_container_net(): array {
   // "end" field) recorded there rather than twice.
   foreach (staxx_docker_inspect_rows() as $c) {
     [$id, $mode, $ips, $bindings, $exposed] = $c;
+    $project = $c[8];
+
+    // Field 2 is `network=address,` per attached network. A network is kept
+    // with its address so the choice between two of them can be made by what
+    // each network is, not by how the address happens to sort as text.
+    $nets = [];
+    foreach (explode(',', $ips) as $pair) {
+      $pair = trim($pair);
+      if ($pair === '') continue;
+      $eq   = strpos($pair, '=');
+      $name = $eq === false ? '' : substr($pair, 0, $eq);
+      $ip   = $eq === false ? $pair : substr($pair, $eq + 1);
+      // Docker prints the literal string "invalid IP" for a container whose
+      // address is unset. It is not an address and must not be shown.
+      if ($ip === '' || $ip === 'invalid IP') continue;
+      $nets[$name] = $ip;
+    }
 
     // ---- ports forwarded from this server ----
     $byIp = [];
@@ -2877,18 +2985,8 @@ function staxx_container_net(): array {
     // actually answers on — is filled in afterwards by
     // staxx_address_webui_override(), which is why `exposed` is still kept
     // above regardless of this.
-    if (!$byIp) {
-      if ($mode === 'host') {
-        if ($hostIp !== '') $byIp[$hostIp] = [];
-      } else {
-        foreach (explode(',', $ips) as $ip) {
-          $ip = trim($ip);
-          // Docker prints the literal string "invalid IP" for a container whose
-          // address is unset. It is not an address and must not be shown.
-          if ($ip === '' || $ip === 'invalid IP') continue;
-          $byIp[$ip] = [];
-        }
-      }
+    if (!$byIp && $mode === 'host') {
+      if ($hostIp !== '') $byIp[$hostIp] = [];
     }
 
     // What goes in front of the ports.
@@ -2905,10 +3003,15 @@ function staxx_container_net(): array {
     // Anything else, Unraid's br0.x macvlan networks above all, gives the
     // container a real address of its own. That address IS the surprising part
     // and is exactly what you would type, so there it leads.
-    $driver = staxx_network_drivers()[$mode] ?? '';
+    $drivers = staxx_network_drivers();
+    $driver  = $drivers[$mode] ?? '';
     $onHostAddress = in_array($driver, ['bridge', 'host'], true)
                   || in_array($mode, ['default', 'bridge', 'host'], true);
+    $isLan = fn(string $d) => in_array($d, ['macvlan', 'ipvlan'], true);
 
+    // Each entry also records the network it is on and that network's driver
+    // ('' for this server's own address), so the web button can choose
+    // between addresses without re-deriving which is which.
     $addresses = [];
     foreach ($byIp as $ip => $ports) {
       $list = array_keys($ports);
@@ -2919,18 +3022,53 @@ function staxx_container_net(): array {
       // the same reason, whatever kind of network produced it.
       $useName = $onHostAddress || ($hostIp !== '' && $ip === $hostIp);
 
+      // A published binding is this server's address, reached through the
+      // container's bridge network; with a macvlan network beside it the main
+      // network's name would mislead, so the bridge network is named instead.
+      $label = $mode;
+      if ($isLan($driver)) {
+        foreach (array_keys($nets) as $n) {
+          if (!$isLan($drivers[$n] ?? '')) { $label = $n; break; }
+        }
+      }
+
       $addresses[] = [
-        'ip'    => (string)$ip,
-        'label' => $useName ? $mode : (string)$ip,
-        'ports' => array_map('strval', $list),
+        'ip'     => (string)$ip,
+        'label'  => $useName ? $label : (string)$ip,
+        'ports'  => array_map('strval', $list),
+        'net'    => '',
+        'driver' => '',
       ];
     }
 
-    // The server's own address first — it is the one that usually works from
-    // wherever you are reading this.
-    usort($addresses, function ($a, $b) use ($hostIp) {
-      $rank = fn($x) => $x['ip'] === $hostIp ? 0 : 1;
-      return $rank($a) <=> $rank($b) ?: strcmp($a['label'], $b['label']);
+    // The container's own address on each network: every network when nothing
+    // is published, and only the macvlan/ipvlan ones when a binding already
+    // stands for the bridge side (a mixed container's real address is worth
+    // showing beside it). A bridge-type address is labelled with its network's
+    // name; with one network, that is the container's mode as it always was.
+    foreach ($nets as $name => $ip) {
+      if ($mode === 'host') continue;
+      $nd  = $drivers[$name] ?? '';
+      $lan = $isLan($nd);
+      if ($published && !$lan) continue;
+      $bridgey = in_array($nd, ['bridge', 'host'], true) || in_array($name, ['default', 'bridge', 'host'], true);
+      $useName = $bridgey || ($hostIp !== '' && $ip === $hostIp);
+      $addresses[] = [
+        'ip'     => $ip,
+        'label'  => $useName ? (count($nets) === 1 ? $mode : $name) : $ip,
+        'ports'  => [],
+        'net'    => $name,
+        'driver' => $nd,
+      ];
+    }
+
+    // Best first: an address on a macvlan/ipvlan network (the container's own,
+    // reachable from the LAN), then this server's own address, then a
+    // bridge-type address that nothing publishes. Ties go by network name,
+    // then label, so the order is stable.
+    usort($addresses, function ($a, $b) use ($hostIp, $isLan) {
+      $rank = fn($x) => $isLan($x['driver']) ? 0 : ($x['ip'] === $hostIp ? 1 : 2);
+      return $rank($a) <=> $rank($b) ?: strcmp($a['net'], $b['net']) ?: strcmp($a['label'], $b['label']);
     });
 
     $exposedList = array_keys($exposedPorts);
@@ -2941,6 +3079,7 @@ function staxx_container_net(): array {
       'driver'    => $driver,
       'exposed'   => array_map('strval', $exposedList),
       'published' => $published,
+      'project'   => $project,
       'addresses' => $addresses,
     ];
   }
