@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.06.00">
+<!ENTITY version              "00.06.00_dev20261102">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "b6d99cb14b776abd196a29fb48ec2658">
-<!ENTITY packageSHA256        "23772f72c05cd5b76c93d997b3ddef3c68293c81bda193d74d1556d576d9614e">
+<!ENTITY packageMD5           "992dbd6f250471c680d350e224f478d0">
+<!ENTITY packageSHA256        "3902ad5530afac83043f65f7513c51b8a0fd430cced3be01bc616991d1699576">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,9 +37,11 @@
 >
 
 <CHANGES>
-###00.05.04_dev20261102
+###00.06.00_dev20261102
 - A new Network map button beside the legend opens a window listing every address and port your apps use. Apps with their own address on a MACVLAN or IPVLAN network are listed by address. Ports on the server's own address are in one list, sorted by number, with each app's network marked by colour. At the top it shows the next free address on each of those networks and the first eight free ports from any number you type.
+- The network map's list of ports on the server now includes every port Unraid itself and host-network apps are using, sorted in with the bridge apps' ports, so all of them can be checked in one place. A stopped host-network app shows the ports it expects to use. When two apps want the same port, both rows turn red and say which other app uses it.
 - When an app cannot start because another app already has its fixed address, StaXX says which address and which app has it, and offers the next free address. One click puts that address in the file, which can be undone from the stack's history, and starts the app. The editor also warns about a taken address before you start.
+- An app on more than one network now opens its web page on its own address on your LAN, not on the private address it uses to talk to the rest of its stack, which nothing outside could reach. The Address column lists the LAN address first and names the private network instead of showing its address. To pick the network yourself, tick "Web page opens here" on one of the app's networks in the editor; this adds a `webui-network` line to the app's `x-unraid` section, which Docker ignores.
 - When an app starts and then stops again straight away, or keeps restarting, the start now shows as failed, and its output ends with the app's own last error message, so you can see why without digging through its log.
 ###00.05.03
 - An update no longer fails because a registry such as lscr.io or ghcr.io was busy for a split second. StaXX waits a minute and tries the download once more. If it still fails, the email says the registry was too busy rather than that a download limit was reached. Scheduled updates now start a few minutes past the hour, such as 3:07 instead of 3:00, when registries are less crowded.
@@ -543,7 +545,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.05.04_dev20261102-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.06.00_dev20261102-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
