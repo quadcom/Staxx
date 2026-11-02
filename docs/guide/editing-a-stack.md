@@ -1,6 +1,6 @@
 # Editing a stack
 
-<!-- index: 40 | changing a setting and saving it, tidying a file into StaXX's layout, being offered a health check, and ports on a container with its own address. -->
+<!-- index: 40 | changing a setting and saving it, tidying a file into StaXX's layout, being offered a health check, ports on a container with its own address, an address already used by another app, and choosing where the web page opens. -->
 
 [StaXX guide](README.md) › Editing a stack
 
@@ -122,6 +122,30 @@ for your own reference. Nothing in it ever runs.
 
 **Moving a service onto one of those networks** asks first, and comments the ports out in the same
 step. **Moving it back off** offers to bring the ports back live, exactly as they were written.
+
+## An address already used by another app
+
+If you give a service a fixed address on a network and another app already uses it, StaXX warns you in the form:
+
+*Address 192.0.2.50 on lan_net is already used by "photos". Open the network map to find a free one.*
+
+![The stack editor with the br0.2 network row opened to show a fixed IPv4 address of 192.168.2.69, and a warning below: Address 192.168.2.69 on br0.2 is already used by "RustDeskServer-AiO". Open the network map to find a free one.](../images/guide/editing-a-stack-address-used.png)
+
+Give the service a free address before you start it. The [Network map](network-map.md) shows which addresses are taken and which are free.
+
+## Choosing where the web page opens
+
+An app on more than one network opens its web page on its own address on your LAN. To choose a different network, tick **Web page opens here** on that network's row.
+
+![The Networks group in the stack editor: the br0.2 row with Web page opens here ticked, and the mattermost-internal row below it with the tick left off](../images/guide/editing-a-stack-web-page-opens-here.png)
+
+1. Open the service's network rows.
+2. Tick **Web page opens here** on the network you want.
+3. Press **Save**.
+
+The tick appears only on a service that has a web page port, and only one network per service can hold it. Untick it to go back to the automatic choice. Ticking a private network sends the web page through the server's own address.
+
+If the ticked network is no longer one of the app's networks, a note says so under its first network row.
 
 ## Port and path clashes
 

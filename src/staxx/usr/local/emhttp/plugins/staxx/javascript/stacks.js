@@ -4805,13 +4805,11 @@
     if (!hasWebuiPort(f.service)) return '';
     var net = String(f.parts.value.value);
     var set = webuiNetOf(MODEL.doc, f.service);
-    var out = '<label class="staxx-tickopt staxx-flagopt staxx-webuinet"><input type="checkbox" ' +
+    var out = '<label class="staxx-tickopt staxx-webuinet"><input type="checkbox" ' +
               'data-webui-net="' + esc(net) + '" data-service="' + esc(f.service) + '"' +
               (set === net ? ' checked' : '') + '>' +
               '<svg class="staxx-tickmark staxx-tickmark--tick" viewBox="0 0 16 16" aria-hidden="true">' +
               '<path d="M2.5 8.6 L6.2 12.3 L13.5 3.7"></path></svg>' +
-              '<svg class="staxx-tickmark staxx-tickmark--cross" viewBox="0 0 16 16" aria-hidden="true">' +
-              '<path d="M4 4 L12 12 M12 4 L4 12"></path></svg>' +
               '<span class="staxx-tickword">Web page opens here</span></label>';
     var names = serviceNetNames(f.service);
     if (set && names.indexOf(set) < 0 && names[0] === net) {
@@ -25860,16 +25858,21 @@
     return !netmapQuery || String(text).toLowerCase().indexOf(netmapQuery) !== -1;
   }
 
+  // Docker networks by name first, then the two that are not Docker networks.
+  // Their colours are fixed, so adding a Docker network never recolours them.
+  var NETMAP_FIXED = { host: '#ffffff', Unraid: '#90a4ae' };
+
   function netmapPortNets() {
     var seen = [];
     netmapData.ports.forEach(function (p) { if (seen.indexOf(p.net) === -1) seen.push(p.net); });
-    return seen.sort();
+    var rank = function (n) { return n === 'host' ? 1 : n === 'Unraid' ? 2 : 0; };
+    return seen.sort(function (x, y) { return (rank(x) - rank(y)) || (x < y ? -1 : x > y ? 1 : 0); });
   }
 
   function netmapDot(nets, name) {
     var i = nets.indexOf(name);
-    return '<span class="staxx-netmap-dot" style="background:' +
-      NETMAP_COLOURS[(i < 0 ? 0 : i) % NETMAP_COLOURS.length] + '"></span>';
+    return '<span class="staxx-netmap-dot" style="background:' + (NETMAP_FIXED[name] ||
+      NETMAP_COLOURS[(i < 0 ? 0 : i) % NETMAP_COLOURS.length]) + '"></span>';
   }
 
   function netmapOwnNets() {
@@ -25934,27 +25937,37 @@
     });
     if (groups) h += '<div class="staxx-netmap-sec"><h4 class="staxx-netmap-h">MACVLAN and IPVLAN networks</h4>' + groups + '</div>';
 
-    // Bridge: one table, every published port, numerically.
+    // Every port on the server's address, bridge, host and Unraid's own,
+    // in one table. A server port + protocol held by two apps is a clash.
     var nets = netmapPortNets();
-    var ports = netmapData.ports.filter(function (p) {
+    var all = netmapData.ports;
+    var ports = all.filter(function (p) {
       return netmapMatch(p.port) || netmapMatch(p.app) || netmapMatch(p.net) || netmapMatch(p.stack);
-    }).sort(function (a, b) { return (a.port - b.port) || String(a.proto).localeCompare(b.proto); });
+    });
     if (!searching || ports.length) {
-      h += '<div class="staxx-netmap-sec"><div class="staxx-netmap-sh">' + netmapHeading('Bridge networks') +
+      h += '<div class="staxx-netmap-sec"><div class="staxx-netmap-sh">' + netmapHeading('Ports on the server') +
         '<div class="staxx-netmap-legend">' + nets.map(function (n) { return '<span>' + netmapDot(nets, n) + esc(n) + '</span>'; }).join('') + '</div></div>' +
         '<div class="staxx-netmap-grp"><table class="staxx-netmap-tbl"><tr><th>Server port</th><th>App</th><th>Network</th><th>Port inside the app</th></tr>' +
         (ports.map(function (p) {
-          return '<tr><td>' + esc(p.port) + (p.proto && p.proto !== 'tcp' ? ' / ' + esc(p.proto) : '') + '</td><td>' + esc(p.app) +
-            '</td><td>' + netmapDot(nets, p.net) + esc(p.net) + '</td><td>' + esc(p.inner) + '</td></tr>';
-        }).join('') || '<tr><td colspan="4">No published ports.</td></tr>') + '</table></div></div>';
-    }
-
-    // Host network: just the apps.
-    var host = (netmapData.hostApps || []).filter(function (a) { return netmapMatch(a.name) || netmapMatch(a.stack); });
-    if (host.length) {
-      h += '<div class="staxx-netmap-sec">' + netmapHeading('Host network') +
-        '<div class="staxx-netmap-grp"><table class="staxx-netmap-tbl">' +
-        host.map(function (a) { return '<tr><td>' + esc(a.name) + '</td></tr>'; }).join('') + '</table></div></div>';
+          var others = [];
+          all.forEach(function (q) {
+            if (q !== p && q.port === p.port && q.proto === p.proto && q.app !== p.app && others.indexOf(q.app) === -1) others.push(q.app);
+          });
+          return '<tr' + (others.length ? ' class="staxx-netmap-clash"' : '') + '><td>' + esc(p.port) + (p.proto && p.proto !== 'tcp' ? ' / ' + esc(p.proto) : '') +
+            '</td><td>' + esc(p.app) + (p.expected ? ' <span class="staxx-netmap-exp">expected</span>' : '') +
+            (others.length ? '<div class="staxx-netmap-also">also used by ' + others.map(esc).join(', ') + '</div>' : '') +
+            '</td><td>' + netmapDot(nets, p.net) + esc(p.net) + '</td><td>' + (p.inner == null ? '—' : esc(p.inner)) + '</td></tr>';
+        }).join('') || '<tr><td colspan="4">No ports in use.</td></tr>') + '</table></div>';
+      // A host-network app with no row above has no known port yet.
+      var withRows = {};
+      all.forEach(function (p) { withRows[p.app] = true; });
+      var unknown = (netmapData.hostApps || []).filter(function (a) {
+        return !withRows[a.name] && (netmapMatch(a.name) || netmapMatch(a.stack));
+      });
+      if (unknown.length) h += '<p class="staxx-netmap-note">' + unknown.map(function (a) {
+        return esc(a.name) + ' — ports not known until it runs';
+      }).join('<br>') + '</p>';
+      h += '</div>';
     }
     return h || '<p>Nothing matches.</p>';
   }

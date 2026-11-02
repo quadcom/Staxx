@@ -288,7 +288,7 @@ function staxx_import_all_containers(): array {
 
 /**
  * PLAN_73 — turns raw `ss -ltunpH` text into host-listener facts, one per
- * line: {port, proto, addr, holder}. A small pure function, deliberately
+ * line: {port, proto, addr, holder, pid}. A small pure function, deliberately
  * separate from the shell call, so canned output can be fed to it in a test
  * without a real socket in sight.
  *
@@ -300,7 +300,7 @@ function staxx_import_all_containers(): array {
  * as root, so it usually does) and '' otherwise, meaning "the server itself"
  * with nothing more specific to say — never guessed.
  *
- * @return array<int, array{port:string, proto:string, addr:string, holder:string}>
+ * @return array<int, array{port:string, proto:string, addr:string, holder:string, pid:int}>
  */
 function staxx_parse_ss_listeners(string $text): array {
   $out = [];
@@ -330,14 +330,16 @@ function staxx_parse_ss_listeners(string $text): array {
     // (root can always; this page runs as root). "users:((\"nginx\",..." —
     // never invent a name when it is missing.
     $holder = '';
+    $pid = 0;   // lets the network map tell a container's process from the server's own
     $last = end($cols);
     if (is_string($last) && strpos($last, 'users:') === 0
-        && preg_match('/\(\("([^"]+)"/', $last, $pm)) {
+        && preg_match('/\(\("([^"]+)",pid=(\d+)/', $last, $pm)) {
       $holder = $pm[1];
+      $pid = (int)$pm[2];
     }
     if ($holder === 'docker-proxy') continue;   // a container's own port, counted already
 
-    $out[] = ['port' => $port, 'proto' => $proto, 'addr' => $addr, 'holder' => $holder];
+    $out[] = ['port' => $port, 'proto' => $proto, 'addr' => $addr, 'holder' => $holder, 'pid' => $pid];
   }
   return $out;
 }

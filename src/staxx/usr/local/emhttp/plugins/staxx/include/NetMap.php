@@ -154,12 +154,71 @@ function staxx_netmap_next_free(string $cidr, array $used, int $maxPings = 6): ?
   return null;
 }
 
+/** What Unraid's own programs are called on the ports list; others show their own name. */
+function staxx_netmap_service_name(string $holder): string {
+  static $names = [
+    'nginx' => 'web page', 'emhttpd' => 'web page', 'sshd' => 'SSH', 'inetd' => 'Telnet',
+    'smbd' => 'file sharing', 'nmbd' => 'file sharing', 'ntpd' => 'time service',
+    'rsyslogd' => 'system log', 'upsd' => 'UPS service',
+    'wsdd2' => 'network discovery', 'avahi-daemon' => 'network discovery',
+  ];
+  return $names[$holder] ?? ($holder !== '' ? $holder : 'system');
+}
+
+/**
+ * The ports list's rows that are not published bridge ports (pure, so canned
+ * input can test it): every listening socket, plus what a stopped
+ * host-network app says it will use. Nothing is filtered by port number.
+ *
+ * $listeners is staxx_parse_ss_listeners() output (docker-proxy already gone);
+ * $pidCid maps a listener's pid to the 64-hex id of the container it runs in
+ * ('' or missing: the server's own process); $hostById maps a host-network
+ * container's id to {name, stack, running, declared:[{port, proto}]}.
+ * A process in any other container is skipped: it is not on the server's
+ * address. Same port, protocol and app (IPv4 and IPv6) fold into one row.
+ *
+ * @return array<int, array{port:int, proto:string, app:string, stack:string, net:string, inner:null, expected:bool}>
+ */
+function staxx_netmap_server_ports(array $listeners, array $pidCid, array $hostById): array {
+  $rows = [];
+  $add = function (int $port, string $proto, string $app, string $stack, string $net, bool $expected) use (&$rows): void {
+    $rows[$port.'/'.$proto.'/'.$app] = ['port' => $port, 'proto' => $proto, 'app' => $app, 'stack' => $stack,
+                                        'net' => $net, 'inner' => null, 'expected' => $expected];
+  };
+  foreach ($listeners as $l) {
+    $port = (int)$l['port'];
+    $cid  = (string)($pidCid[(int)($l['pid'] ?? 0)] ?? '');
+    if ($cid === '') {
+      $add($port, $l['proto'], 'Unraid · '.staxx_netmap_service_name((string)$l['holder']), '', 'Unraid', false);
+    } elseif (isset($hostById[$cid])) {
+      $add($port, $l['proto'], $hostById[$cid]['name'], $hostById[$cid]['stack'], 'host', false);
+    }
+  }
+  foreach ($hostById as $h) {
+    if ($h['running']) continue;
+    foreach ($h['declared'] as $d) {
+      $k = $d['port'].'/'.$d['proto'].'/'.$h['name'];
+      if (!isset($rows[$k])) $add($d['port'], $d['proto'], $h['name'], $h['stack'], 'host', true);
+    }
+  }
+  return array_values($rows);
+}
+
+/** Joins the two port lists, sorted by port then app (then protocol). */
+function staxx_netmap_merge_ports(array $bridge, array $server): array {
+  $all = array_merge($bridge, $server);
+  usort($all, fn($a, $b) => [$a['port'], $a['app'], $a['proto']] <=> [$b['port'], $b['app'], $b['proto']]);
+  return $all;
+}
+
 /**
  * The whole map for the Network map window.
  *
  * Networks with no container on them are left out unless they are macvlan or
- * ipvlan (those always get a next free address). `ports` is every published
- * host port; `listening` is what the server itself listens on beyond Docker.
+ * ipvlan (those always get a next free address). `ports` is every port on the
+ * server's address: published bridge ports, what host-network apps and
+ * Unraid's own programs listen on, and a stopped host app's declared ports
+ * (expected:true); `listening` is the bare list of numbers anything listens on.
  */
 function staxx_netmap(): array {
   $stackOf = staxx_netmap_project_stacks();
@@ -193,10 +252,20 @@ function staxx_netmap(): array {
 
   $ports = [];
   $hostApps = [];
+  $hostById = [];   // full container id => host-network app, for the ports it holds
   foreach (staxx_docker_inspect_rows() as $c) {
     $name = ltrim($c[5], '/');
     $mode = $c[1];
-    if ($mode === 'host') { $hostApps[] = ['name' => $name, 'stack' => $stackFor($name)]; continue; }
+    if ($mode === 'host') {
+      $hostApps[] = ['name' => $name, 'stack' => $stackFor($name)];
+      $declared = [];
+      foreach (explode(',', $c[4]) as $p) {
+        if (!preg_match('/^(\d+)\/(tcp|udp)$/', $p, $m)) continue;
+        $declared[] = ['port' => (int)$m[1], 'proto' => $m[2]];
+      }
+      $hostById[$c[0]] = ['name' => $name, 'stack' => $stackFor($name), 'running' => false, 'declared' => $declared];
+      continue;
+    }
     if ($mode === 'none' || strpos($mode, 'container:') === 0) continue;
     $net  = $mode === 'default' ? 'bridge' : $mode;
     $seen = [];   // "0.0.0.0" and "::" bindings repeat the same port
@@ -207,16 +276,33 @@ function staxx_netmap(): array {
       if (!ctype_digit($host) || !ctype_digit($inner) || isset($seen[$host.'/'.$proto])) continue;
       $seen[$host.'/'.$proto] = true;
       $ports[] = ['port' => (int)$host, 'proto' => $proto, 'app' => $name,
-                  'stack' => $stackFor($name), 'net' => $net, 'inner' => (int)$inner];
+                  'stack' => $stackFor($name), 'net' => $net, 'inner' => (int)$inner, 'expected' => false];
     }
   }
-  usort($ports, fn($a, $b) => [$a['port'], $a['proto'], $a['app']] <=> [$b['port'], $b['proto'], $b['app']]);
   usort($hostApps, fn($a, $b) => strnatcasecmp($a['name'], $b['name']));
 
+  // One look at everything listening: the free-ports card uses the bare
+  // numbers, the ports list also needs who holds each.
+  $listeners = staxx_parse_ss_listeners(staxx_sh('ss -ltunpH', 5));
   $listening = [];
-  foreach (staxx_parse_ss_listeners(staxx_sh('ss -ltunpH', 5)) as $l) $listening[(int)$l['port']] = true;
+  foreach ($listeners as $l) $listening[(int)$l['port']] = true;
   $listening = array_keys($listening);
   sort($listening);
+
+  if ($hostById) {
+    $docker = escapeshellarg(staxx_docker_bin());
+    foreach (explode("\n", staxx_sh($docker.' ps -q --no-trunc --filter network=host', 10)) as $id) {
+      if (isset($hostById[trim($id)])) $hostById[trim($id)]['running'] = true;
+    }
+  }
+  $pidCid = [];   // pid => container id ('' when the process is the server's own)
+  foreach ($listeners as $l) {
+    $pid = (int)$l['pid'];
+    if ($pid > 0 && !isset($pidCid[$pid])) {
+      $pidCid[$pid] = preg_match('/[0-9a-f]{64}/', (string)@file_get_contents('/proc/'.$pid.'/cgroup'), $m) ? $m[0] : '';
+    }
+  }
+  $ports = staxx_netmap_merge_ports($ports, staxx_netmap_server_ports($listeners, $pidCid, $hostById));
 
   return ['hostIp' => staxx_netmap_host_ip(), 'networks' => $networks, 'ports' => $ports,
           'hostApps' => $hostApps, 'listening' => $listening];

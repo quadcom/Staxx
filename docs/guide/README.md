@@ -40,10 +40,13 @@ This guide is written in English only.
   row.
 - **[Row marks and icons](marks.md)** — a quick key to every mark and colour on the stacks page:
   what each one means and what to do about it.
+- **[Network map](network-map.md)** — finding a free address or port, and what to do when an app's
+  address is already taken
 - **[File locations and the data store](where-things-live.md)** — what is in the data store, what is
   on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page.
 - **[Editing a stack](editing-a-stack.md)** — changing a setting and saving it, tidying a file into
-  StaXX's layout, being offered a health check, and ports on a container with its own address.
+  StaXX's layout, being offered a health check, ports on a container with its own address, an
+  address already used by another app, and choosing where the web page opens.
 - **[Health checks](health-checks.md)** — what a health check is, how to have StaXX work one out
   from the running chip or the editor, what the offer shows, and what the chip's colour says
   afterwards.

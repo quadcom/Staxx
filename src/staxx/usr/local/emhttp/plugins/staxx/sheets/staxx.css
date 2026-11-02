@@ -7113,7 +7113,8 @@ div.title.staxx-has-titlebar {
 .staxx-fieldrow > .staxx-fieldnote,
 .staxx-fieldrow > .staxx-fieldhint,
 .staxx-fieldrow > .staxx-devmore,
-.staxx-fieldrow > .staxx-advice {
+.staxx-fieldrow > .staxx-advice,
+.staxx-fieldrow > .staxx-webuinet {
   grid-column: 1 / -1;
 }
 
@@ -12098,7 +12099,9 @@ dialog::backdrop {
   gap: 0 2.2rem;
 }
 /* The network-row tick (PLAN_252) sits under a box, so it needs the page's 13px floor. */
-.staxx-scaffold .staxx-tickopt.staxx-webuinet { font-size: 1.3rem; }
+/* Its own line under the network row, left-aligned and on one line, so the
+   label never wraps into the narrow column beside the boxes. */
+.staxx-scaffold .staxx-tickopt.staxx-webuinet { font-size: 1.3rem; justify-self: start; white-space: nowrap; margin-top: 0.4rem; }
 .staxx-tickopt {
   display: inline-flex;
   align-items: center;
@@ -18093,6 +18096,35 @@ html.staxx-noscroll body {
   margin-right: 0.8rem;
   border-radius: 0.3rem;
   vertical-align: -0.15em;
+}
+
+.staxx-scaffold .staxx-netmap-tbl tr.staxx-netmap-clash td {
+  background: rgba(226, 91, 79, 0.18);
+}
+
+.staxx-scaffold .staxx-netmap-tbl tr.staxx-netmap-clash td:first-child {
+  box-shadow: inset 0.3rem 0 0 #e25b4f;
+}
+
+.staxx-scaffold .staxx-netmap-also {
+  margin-top: 0.2rem;
+  color: #ff8a80;
+  font-size: 1.3rem;
+}
+
+.staxx-scaffold .staxx-netmap-exp {
+  margin-left: 0.6rem;
+  padding: 0 0.7rem;
+  border: 0.1rem solid #6b645a;
+  border-radius: 1rem;
+  color: #fff;
+  font-size: 1.3rem;
+  font-style: italic;
+}
+
+.staxx-scaffold .staxx-netmap-note {
+  margin: 0.6rem 0 0;
+  font-size: 1.3rem;
 }
 
 .staxx-netmap-grp {
