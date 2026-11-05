@@ -21171,17 +21171,22 @@
   // breakpoint (PLAN_128) the same cell instead spans the top of the card in
   // full, icon included, so the sheet switches from the left offset to the
   // top one — both are written here on every repaint so the query only has
-  // to pick which one it wants.
+  // to pick which one it wants. The right edge is read from the address
+  // cell so the overlay stops there and the stats columns stay clear.
   function progressOverlayOffsets(row) {
     var nameCell = row.querySelector('.staxx-cell--name');
+    var addrCell = row.querySelector('.staxx-cell--address');
     var rect = nameCell ? nameCell.getBoundingClientRect() : null;
-    return { left: (rect ? rect.width : 0) + 'px', top: (rect ? rect.height : 0) + 'px' };
+    var right = addrCell ? row.getBoundingClientRect().right - addrCell.getBoundingClientRect().right : 0;
+    if (!(right > 0)) right = 0;
+    return { left: (rect ? rect.width : 0) + 'px', top: (rect ? rect.height : 0) + 'px', right: right + 'px' };
   }
 
   function applyProgressOverlayOffsets(el, row) {
     var off = progressOverlayOffsets(row);
     el.style.setProperty('--staxx-rowprog-left', off.left);
     el.style.setProperty('--staxx-rowprog-top', off.top);
+    el.style.setProperty('--staxx-rowprog-right', off.right);
   }
 
   // Turns a seconds estimate into the wording the download bar's info

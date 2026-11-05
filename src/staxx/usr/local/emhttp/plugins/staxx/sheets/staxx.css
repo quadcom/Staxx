@@ -1501,7 +1501,8 @@ div.title.staxx-has-titlebar {
  * left edge is a custom property rather than a fixed offset: stacks.js reads
  * the name cell's own width (auto, so it moves with the longest name on
  * screen — see the grid-template-columns comment above) and writes it there
- * every time the overlay repaints.
+ * every time the overlay repaints. The right edge comes from the address
+ * cell the same way, so the overlay never reaches the stats columns.
  *
  * position: relative on .staxx-row is safe here for the reason .staxx-
  * row--leave already relies on above: rows use outline, never border, for
@@ -1523,8 +1524,8 @@ div.title.staxx-has-titlebar {
   top: 0;
   bottom: 0;
   left: var(--staxx-rowprog-left, 0);
-  right: 0;
-  max-width: 72rem;   /* Not the full row: the bars read better short, and the stats on the right stay visible. */
+  right: var(--staxx-rowprog-right, 0);
+  max-width: 72rem;   /* The overlay already ends at the address column; the cap only keeps the bars short when that column is very wide. */
   /* One grid for both bars: the figures share the auto column, so it takes the widest of the two and the tracks come out the same length whatever each says. */
   display: grid;
   grid-template-columns: 6rem 1fr auto;
@@ -1623,6 +1624,7 @@ div.title.staxx-has-titlebar {
 @container staxx-table (max-width: 130rem) {
   .staxx-scaffold .staxx-rowprog {
     left: 0;
+    right: 0;
     top: var(--staxx-rowprog-top, 0);
     border-radius: 0 0 0.8rem 0.8rem;   /* matches the card's own corners */
   }
