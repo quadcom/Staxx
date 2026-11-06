@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.06.01">
+<!ENTITY version              "00.06.01_dev20261106">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "a65783c435b90a930fb98b8b07535b04">
-<!ENTITY packageSHA256        "d9abde4ad2108f8023a9ec7fc78f0aef7655f5672b446a661e42d135fd0400a2">
+<!ENTITY packageMD5           "c80efcad39e8ba2545232d7ec60d9dd6">
+<!ENTITY packageSHA256        "8b780334a68f9060c03cbf39380efc9a053b99217030f2a6155a6ba2a2babb9f">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,8 @@
 >
 
 <CHANGES>
+###00.06.01_dev20261106
+- The download and unpack bars shown while an app is pulled or recreated no longer cover the CPU figure on wide screens. They now stop at the end of the Address column.
 ###00.06.00
 - A new Network map button beside the legend opens a window listing every address and port your apps use. Apps with their own address on a MACVLAN or IPVLAN network are listed by address. Ports on the server's own address are in one list, sorted by number, with each app's network marked by colour. At the top it shows the next free address on each of those networks and the first eight free ports from any number you type.
 - The network map's list of ports on the server now includes every port Unraid itself and host-network apps are using, sorted in with the bridge apps' ports, so all of them can be checked in one place. A stopped host-network app shows the ports it expects to use. When two apps want the same port, both rows turn red and say which other app uses it.
@@ -545,7 +547,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.06.00-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.06.01_dev20261106-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
