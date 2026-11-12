@@ -25789,12 +25789,12 @@
   // PLAN_181 Part D — the storage alert's "Review stored images" link opens
   // both halves of what it is pointing at: the Storage tab (where the two
   // alert thresholds and the Scan stored images button live) behind it, and
-  // the scan window itself on top, the same layering openBackupDialog() uses
-  // over Settings.
+  // the scan window itself on top. The scan window waits for Settings because
+  // Settings only opens once the server answers; opening the scan window first
+  // left it underneath.
   var storageAlertReviewBtn = document.getElementById('staxx-storage-alert-review');
   if (storageAlertReviewBtn) storageAlertReviewBtn.addEventListener('click', function () {
-    openSettings('staxx-setting-images-cleanup');
-    openImagesDialog();
+    (openSettings('staxx-setting-images-cleanup') || Promise.resolve()).then(openImagesDialog);
   });
 
   // PLAN_186 — "Check your backup" on the notice telling someone their
@@ -31211,7 +31211,7 @@
   // a request that was never honoured cannot scroll a later open.
   function openSettings(focusId, tab, scrollTo) {
     if (!settingsModal) return;
-    call('settings', {}).then(function (res) {
+    return call('settings', {}).then(function (res) {
       if (!res.ok || !res.settings) {
         failed('Could not open Settings', res.error || 'The server did not return anything usable.');
         return;
@@ -32504,7 +32504,9 @@
     imagesCancel.textContent = 'Cancel';
     imagesRemove.hidden = true;
     imagesBody.innerHTML = '<p class="staxx-hint">Checking…</p>';
-    if (!imagesModal.open) imagesModal.showModal();
+    // A window already open behind Settings would otherwise stay hidden and the button would seem to do nothing.
+    if (imagesModal.open) imagesModal.close();
+    imagesModal.showModal();
     call('images_unused', {}, 30000).then(function (res) {
       if (!imagesModal.open) return;
       if (!res.ok) {

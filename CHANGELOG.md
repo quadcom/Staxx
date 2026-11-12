@@ -7,6 +7,7 @@ What changed in StaXX, newest first.
 ## Unreleased
 
 - The download and unpack bars shown while an app is pulled or recreated no longer cover the CPU figure on wide screens. They now stop at the end of the Address column.
+- The Scan stored images window now always opens on top of Settings. Before, after following the storage warning's link, it could open hidden behind Settings, and the button seemed to do nothing until Settings was closed.
 
 ## 00.06.00 — released 2026-11-02
 
