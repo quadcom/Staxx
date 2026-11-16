@@ -6,6 +6,7 @@ What changed in StaXX, newest first.
 
 ## Unreleased
 
+- A picture link dragged from a GitHub page onto an app's icon now shows straight away, without waiting for Save.
 - The download and unpack bars shown while an app is pulled or recreated no longer cover the CPU figure on wide screens. They now stop at the end of the Address column.
 - The Scan stored images window now always opens on top of Settings. Before, after following the storage warning's link, it could open hidden behind Settings, and the button seemed to do nothing until Settings was closed.
 - On a phone, the feedback window now always shows the Bug Report / Feature Requests / Improvements choice, so a report can be sent. Before, the choice could be hidden, and it could scroll out of sight when the keyboard opened.

@@ -25520,6 +25520,14 @@
     return dot === -1 ? '' : clean.slice(dot + 1).toLowerCase();
   }
 
+  // A file link dragged off a GitHub page is the /blob/ page, not the picture;
+  // the tile would fail to load it. Mirrors staxx_icon_raw_url() in
+  // include/Icons.php — keep the two in step.
+  function iconRawUrl(address) {
+    return address.replace(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/(?:blob|raw)\/(.+)$/i,
+      'https://raw.githubusercontent.com/$1/$2/$3');
+  }
+
   function handleIconDrop(node, dt) {
     var service = iconDropServiceOf(node);
     if (!service) return;
@@ -25581,7 +25589,7 @@
       return;
     }
 
-    var address = (dt.getData('text/uri-list') || dt.getData('text/plain') || '').trim().split('\n')[0].trim();
+    var address = iconRawUrl((dt.getData('text/uri-list') || dt.getData('text/plain') || '').trim().split('\n')[0].trim());
     if (!address) { iconDropRefuse(node, 'Not a picture'); return; }
     if (!/^https:\/\//i.test(address)) { iconDropRefuse(node, 'That address is not secure'); return; }
     if (ICON_DROP_EXTS.indexOf(iconDropAddressExt(address)) === -1) {
