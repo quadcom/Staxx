@@ -16930,7 +16930,8 @@ dialog::backdrop {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  border: 0.1rem solid var(--sm-line);
+  /* A thin orange edge so the window reads as sitting on top of the page (Adrian, 2026-11-16). */
+  border: 0.1rem solid color-mix(in srgb, var(--sm-accent) 70%, transparent);
   border-radius: var(--sm-radius);
   background: var(--background-color, #1c1c1c);
   color: var(--text-color, #e0e0e0);
@@ -17065,6 +17066,8 @@ dialog::backdrop {
     visibility 0s;
 }
 
+.staxx-scaffold .staxx-bugwin--min .staxx-bugwin-kinds { display: none; }
+
 .staxx-scaffold .staxx-bugwin--min .staxx-confirm-body,
 .staxx-scaffold .staxx-bugwin--min .staxx-confirm-foot {
   max-height: 0;
@@ -17077,6 +17080,61 @@ dialog::backdrop {
   visibility: hidden;
   transition-property: max-height, opacity, padding, border-color, visibility;
   transition-delay: 0s, 0s, 0s, 0s, var(--sm-motion-slow);
+}
+
+/* The feedback form only (the problem window shares these classes and keeps
+   its cap and scroll). No height cap and no inner scroll (Adrian, 2026-11-16):
+   the window grows to its content and is dragged when taller than the screen.
+   The large body max-height never limits the form; it only lets the minimise
+   fold animate. The :not() adds specificity, so the minimised state is
+   restated below to keep winning. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) {
+  /* Never taller than the screen; feedback.js slides the window up as it grows,
+     and once it fills the screen the message box (not the form) scrolls. */
+  max-height: calc(100vh - 1.6rem);
+  max-height: calc(100dvh - 1.6rem);
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-head,
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-kinds,
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot {
+  flex-shrink: 0;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Last resort for a screen too short even for the smallest message box. */
+  overflow-y: auto;
+  max-height: 300vh;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-view:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Only the message box absorbs the squeeze: title, labels and details keep their height. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-view > :not(.staxx-bugwin-editor) {
+  flex-shrink: 0;
+}
+
+/* Starts 26rem tall and grows with its text; on a short screen the floor drops
+   towards 12rem so the box can shrink to fit the capped window and scroll. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-editor {
+  flex: 0 1 auto;
+  min-height: 26rem;
+  min-height: min(26rem, max(12rem, calc(100dvh - 40rem)));
+  overflow-y: auto;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin).staxx-bugwin--min .staxx-confirm-body {
+  max-height: 0;
+  overflow: hidden;
 }
 
 /* A step change fades the new step in. */
@@ -17094,6 +17152,48 @@ dialog::backdrop {
 .staxx-scaffold .staxx-bugwin .staxx-confirm-foot .staxx-buttons {
   margin-left: auto;
   align-items: center;
+}
+
+/* Feedback form footer (Adrian, 2026-11-16: "split apart the submit from cancel
+   buttons"): a column, so the status text sits on its own line above the
+   buttons and Cancel / Send never stack on the right of it. The problem window
+   keeps the shared footer. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.8rem;
+}
+
+/* An empty message takes no space, so the footer has no blank gap. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-confirm-msg:empty {
+  display: none;
+}
+
+/* Cancel at the left edge, Send at the right, side by side. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-buttons {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0;
+}
+
+/* Sent state: Send is hidden, so Close alone goes to the right edge. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-buttons:has(> [hidden]) {
+  justify-content: flex-end;
+}
+
+/* The discard question on its own full-width line, then Keep writing left and
+   Discard report right. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-buttons:has(> .staxx-bugwin-ask) {
+  flex-wrap: wrap;
+  row-gap: 0.8rem;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot .staxx-bugwin-ask {
+  flex: 0 0 100%;
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-confirm-msg {
@@ -17117,7 +17217,40 @@ dialog::backdrop {
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds {
   display: flex;
   justify-content: center;
+  flex-shrink: 0;
   margin: 0 0 1.2rem;
+  padding: 0 1.4rem;
+  /* Lets the buttons below react to this row's own width, not the viewport's. */
+  container: staxx-bugwin-kinds / inline-size;
+}
+
+/* The editor hides its own .staxx-views at 990px and below. This window is moved
+   inside the editor's dialog and reuses that class for its kind buttons, so the
+   same rule hid them and a phone could never send a report (PLAN_254). One row
+   when it fits; the container query below stacks them when it does not. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views {
+  display: inline-flex;
+  justify-content: center;
+}
+
+/* PX on purpose: the webGUI root is 10px, so rem would not mean what it says here.
+   Below this the three labels no longer fit side by side, so they stack. */
+@container staxx-bugwin-kinds (max-width: 480px) {
+  .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views .staxx-viewbtn {
+    border-right: 0;
+    border-bottom: 0.1rem solid var(--sm-line);
+    text-align: center;
+  }
+
+  .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views .staxx-viewbtn:last-child {
+    border-bottom: 0;
+  }
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-viewbtn {
@@ -17152,9 +17285,8 @@ dialog::backdrop {
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-editor {
+  /* Grows with its content instead of scrolling (Adrian, 2026-11-16); the window is dragged when taller than the screen. */
   min-height: 26rem;
-  max-height: 55vh;
-  overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
