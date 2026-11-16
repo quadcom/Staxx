@@ -10,7 +10,7 @@ tabs, views and buttons — see [the stack editor](the-stack-editor.md).
 ## Changing a setting
 
 1. Click the stack to open it.
-2. Change a box, tick a section on or off, or type a note under a box.
+2. Change a box, tick a section on or off, or add a note under a box.
 3. Fill in any box outlined in red before you save — it is required.
 4. Press **Save**. Only the lines you changed are rewritten; everything else survives untouched.
 
@@ -25,11 +25,14 @@ and a one-line explanation:
 
 ## The note under a box
 
-![The Container section of the form, with a sentence typed into the Notes box beside the Image setting](../images/guide/editing-a-stack-notes.png)
+![The Container section of the form, with a note in small italic text right under the Image box](../images/guide/editing-a-stack-notes.png)
 
-Most boxes carry a smaller box underneath labelled **Notes**. That is the actual comment written on
-that line in the file. Type a sentence and it is written back as the comment on that exact line,
-nowhere else. Leave it blank and no comment is written at all.
+A note sits as a small line of text right under its box. That is the actual comment written on that
+line in the file.
+
+To add one, click into the setting, then click **+ add a note** under its box and type a sentence.
+It is written back as the comment on that exact line, nowhere else. Leave it blank and no comment is
+written at all.
 
 ## Secret and required
 
