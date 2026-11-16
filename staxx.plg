@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.06.01_dev20261113">
+<!ENTITY version              "00.06.01_dev20261116">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "2c53db7fd59e9624e6c46b47f1753b93">
-<!ENTITY packageSHA256        "73f0a49fc5009da7adc2085e7323ae8dd1e56adb26dc5ac04dce3ac3768bc682">
+<!ENTITY packageMD5           "21bc8f43575cf149df5265de72bcc6af">
+<!ENTITY packageSHA256        "649cebee416f4a08da83d2b2247b5e1984dffc2247c37b2ac15ddf0646e62344">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,9 +37,15 @@
 >
 
 <CHANGES>
-###00.06.01_dev20261113
+###00.06.01_dev20261116
+- A picture link dragged from a GitHub page onto an app's icon now shows straight away, without waiting for Save.
 - The download and unpack bars shown while an app is pulled or recreated no longer cover the CPU figure on wide screens. They now stop at the end of the Address column.
 - The Scan stored images window now always opens on top of Settings. Before, after following the storage warning's link, it could open hidden behind Settings, and the button seemed to do nothing until Settings was closed.
+- On a phone, the feedback window now always shows the Bug Report / Feature Requests / Improvements choice, so a report can be sent. Before, the choice could be hidden, and it could scroll out of sight when the keyboard opened.
+- The feedback window now opens in the middle of the screen, has a thin orange edge so it stands out from the page, and grows with what you write instead of scrolling inside itself.
+- The stack editor has much more room on a phone. Sanitise, Password, Fill in details and Outline sit behind one ⋯ button beside Close; the messages under the compose file fold into one line you tap to open; and a minimised feedback window shrinks to its round button, with an orange dot while your draft waits.
+- A note on a setting is now a small line of text right under its value, on every screen size. Empty notes stay out of the way until you click into the setting, where "+ add a note" appears.
+- On narrow screens the "When to update" box no longer leaves a large empty gap under its last line.
 ###00.06.00
 - A new Network map button beside the legend opens a window listing every address and port your apps use. Apps with their own address on a MACVLAN or IPVLAN network are listed by address. Ports on the server's own address are in one list, sorted by number, with each app's network marked by colour. At the top it shows the next free address on each of those networks and the first eight free ports from any number you type.
 - The network map's list of ports on the server now includes every port Unraid itself and host-network apps are using, sorted in with the bridge apps' ports, so all of them can be checked in one place. A stopped host-network app shows the ports it expects to use. When two apps want the same port, both rows turn red and say which other app uses it.
@@ -548,7 +554,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.06.01_dev20261113-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.06.01_dev20261116-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
