@@ -514,6 +514,7 @@
     if (on === minimised) return;
     minimised = on;
     formWin.classList.toggle('staxx-bugwin--min', on);
+    bugBtn.classList.toggle('staxx-bug-btn--draft', on);   // phones: the dot says a draft waits behind the button
     icon.className = on ? 'fa fa-chevron-down' : 'fa fa-chevron-up';
     minBtn.title = on ? 'Restore' : 'Minimise';
     minBtn.setAttribute('aria-label', minBtn.title);

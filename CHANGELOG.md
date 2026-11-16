@@ -10,6 +10,9 @@ What changed in StaXX, newest first.
 - The Scan stored images window now always opens on top of Settings. Before, after following the storage warning's link, it could open hidden behind Settings, and the button seemed to do nothing until Settings was closed.
 - On a phone, the feedback window now always shows the Bug Report / Feature Requests / Improvements choice, so a report can be sent. Before, the choice could be hidden, and it could scroll out of sight when the keyboard opened.
 - The feedback window now opens in the middle of the screen, has a thin orange edge so it stands out from the page, and grows with what you write instead of scrolling inside itself.
+- The stack editor has much more room on a phone. Sanitise, Password, Fill in details and Outline sit behind one ⋯ button beside Close; the messages under the compose file fold into one line you tap to open; and a minimised feedback window shrinks to its round button, with an orange dot while your draft waits.
+- A note on a setting is now a small line of text right under its value, on every screen size. Empty notes stay out of the way until you click into the setting, where "+ add a note" appears.
+- On narrow screens the "When to update" box no longer leaves a large empty gap under its last line.
 
 ## 00.06.00 — released 2026-11-02
 

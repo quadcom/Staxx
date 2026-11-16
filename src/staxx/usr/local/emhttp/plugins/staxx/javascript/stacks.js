@@ -708,6 +708,40 @@
   // offer and the author's-example field notes once the dialog is narrower
   // than a desktop. See syncNoteStrip() below for what it holds.
   var noteStrip = document.getElementById('staxx-notestrip');
+  // PLAN_255 B — on phones the footer's messages fold behind one toggle so the
+  // code keeps the height (the fold itself is CSS, ≤990px only). The count is
+  // refreshed by an observer on the items' `hidden` flags rather than by a call
+  // from each place that shows or fills one — there are a dozen, and some
+  // live in other files' flows. attributeFilter keeps it quiet; the toggle's
+  // own changes are ignored so it cannot trigger itself.
+  var msgFoot = errorBox && errorBox.parentNode;
+  var msgToggle = document.createElement('button');
+  msgToggle.type = 'button';
+  msgToggle.className = 'staxx-msgfold';
+  msgToggle.hidden = true;
+  function syncMsgFold() {
+    if (!msgFoot) return;
+    var n = 0;
+    ['staxx-missing', 'staxx-watch-note', 'staxx-link-note', 'staxx-notestrip'].forEach(function (id) {
+      var e = document.getElementById(id);
+      // The watch note lives inside the strip while folded; the strip counts as one.
+      if (e && !e.hidden && !(id === 'staxx-watch-note' && noteStrip && noteStrip.contains(e))) n++;
+    });
+    var open = msgFoot.classList.contains('staxx-msgfold--open');
+    var text = (open ? '▾ ' : '▸ ') + n + (n === 1 ? ' message' : ' messages') + ' about this file';
+    if (msgToggle.textContent !== text) msgToggle.textContent = text;
+    if (msgToggle.hidden !== (n === 0)) msgToggle.hidden = (n === 0);
+  }
+  if (msgFoot) {
+    msgFoot.insertBefore(msgToggle, msgFoot.firstChild);
+    msgToggle.addEventListener('click', function () {
+      msgFoot.classList.toggle('staxx-msgfold--open');
+      syncMsgFold();
+    });
+    new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) if (muts[i].target !== msgToggle) { syncMsgFold(); return; }
+    }).observe(msgFoot, { attributes: true, attributeFilter: ['hidden'], childList: true, subtree: true });
+  }
   // PLAN_106 phase 4: latches true the first time this editor session's
   // reparse() finds a flagged dollar sign, so the modal is offered once per
   // open rather than reopening itself on every keystroke reparse() already
@@ -1061,34 +1095,34 @@
   // The caption text named per group; container has no trailing blank for a ×
   // column, since it never grows one.
   var CAPTIONS = {
-    container: ['setting', 'value', 'Notes'],
+    container: ['setting', 'value', ''],
     // Ports are captioned in single words where mounts get phrases: the two
     // boxes hold a five-digit number, so the columns are narrow and anything
     // longer wrapped the heading onto a second line. The fuller wording is
     // still what a screen reader hears — see the hints passed to boxHtml().
-    port:      ['Host', 'Container', 'protocol', 'Notes'],
+    port:      ['Host', 'Container', 'protocol', ''],
     // Two headings only: a mount is a two-line row now (see
     // .staxx-formgroup--volumes), and its second line has no caption above
     // it. The note box there names itself through its hint; the mode box
     // beside it needs no name, since its options read "read and write" and
     // "read-only" already.
     volume:    ['path on the server', 'path in the container'],
-    device:    ['device', 'Notes'],
-    env:       ['variable name', 'value', 'Notes'],
-    label:     ['label name', 'value', 'Notes'],
-    health:    ['setting', 'value', 'Notes'],
-    resources: ['setting', 'value', 'Notes'],
-    build:     ['setting', 'value', 'Notes'],
+    device:    ['device', ''],
+    env:       ['variable name', 'value', ''],
+    label:     ['label name', 'value', ''],
+    health:    ['setting', 'value', ''],
+    resources: ['setting', 'value', ''],
+    build:     ['setting', 'value', ''],
     // Short form only this phase — one box per dependency, the same shape as
     // any other dynamic list. The three-column shape phase 1 wrote here was
     // for the long form's name/condition pair, which does not exist yet.
-    depends:   ['service', 'Notes'],
-    logging:   ['setting', 'value', 'Notes'],
-    advanced:  ['setting', 'value', 'Notes'],
+    depends:   ['service', ''],
+    logging:   ['setting', 'value', ''],
+    advanced:  ['setting', 'value', ''],
     // PLAN_176 — the Proxy and DNS group reuses Container's own three
     // headings; its own head carries the Enabled switch instead of a
     // fourth column.
-    expose:    ['setting', 'value', 'Notes']
+    expose:    ['setting', 'value', '']
   };
 
   // Where a field lands. `fixed` wins outright, even over `locked` — that is
@@ -1195,7 +1229,7 @@
       head[i] = (longForm || !shortForm)
         ? { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--pair',
             add: 'depends', flag: 'depends',
-            cols: ['service', 'wait until', 'Notes'] }
+            cols: ['service', 'wait until', ''] }
         : { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--single',
             add: 'list:depends_on', flag: 'depends' };
       break;
@@ -1208,7 +1242,7 @@
       for (i = 0; i < head.length; i++) {
         if (head[i].key !== 'port') continue;
         head[i] = { key: 'port', heading: 'Ports', cls: 'staxx-formgroup--mapped staxx-formgroup--ports',
-                    add: 'port', flag: 'port', cols: ['', 'Container', 'protocol', 'Notes'] };
+                    add: 'port', flag: 'port', cols: ['', 'Container', 'protocol', ''] };
         break;
       }
     }
@@ -3533,7 +3567,7 @@
   // set only for a declared network's name box (see fieldHtml's declared
   // branch) so the input/change listeners can route it away from the
   // ordinary debounce-and-setPart path and into YAML.renameDeclared instead.
-  function boxHtml(f, index, which, hint, tool, head, noChoice, rename) {
+  function boxHtml(f, index, which, hint, tool, head, noChoice, rename, withNote) {
     var p = f.parts[which];
     if (!p) return '';
     // Absent counts as writable — typing into an empty Container slot is what
@@ -3680,6 +3714,8 @@
                  : '') +
                xHtml +
              '</div>' +
+             // PLAN_255 C: a single-value row's note sits inside its value box.
+             (withNote ? noteBoxHtml(f, index) : '') +
              '<span class="staxx-boxhint">' + esc(hint) + '</span>' +
            '</div>';
   }
@@ -3702,12 +3738,15 @@
   // The note box is identical wherever it appears, so it is built once rather
   // than four times over.
   function noteBoxHtml(f, index) {
-    return '<label class="staxx-box staxx-box--note">' +
+    // PLAN_255 C: drawn as a small line under the value, not a box of its own.
+    // An empty note carries --note-empty so the stylesheet can hide it until
+    // its row has focus; a note with text is never hidden (rule 2).
+    return '<label class="staxx-box staxx-box--note' + (f.note ? '' : ' staxx-box--note-empty') + '">' +
              '<input type="text" class="staxx-input" data-row="' + index + '"' +
                    ' data-note="1" value="' + esc(f.note) + '"' +
+                   ' placeholder="+ add a note" aria-label="Notes"' +
                    ' spellcheck="false"' + NOFILL +
                    (f.commentSpot ? '' : ' disabled') + '>' +
-             '<span class="staxx-boxhint">Notes</span>' +
            '</label>';
   }
 
@@ -6680,7 +6719,6 @@
       // named by a label column because a single box on its own could not
       // say what it holds.
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
-      bits.push(boxHtml(f, index, 'value', 'value'));
       // The web page port has nowhere to put a note until the address line
       // it lives on exists, so its Notes box would be a box that can never
       // be typed in. Drawn only when it can hold something — writable, or
@@ -6688,7 +6726,7 @@
       // the empty column instead of sitting a track further out.
       var webui    = f.target === 'x-unraid.webui';
       var showNote = !webui || !!(f.commentSpot || f.note);
-      if (showNote) bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'value', '', '', false, '', showNote));
       // The web page port is the one Container row the WebUI button actually
       // follows (PLAN_51) — filled in, the button opens this port; cleared,
       // it turns off. Said here rather than left for the button to explain
@@ -6802,15 +6840,13 @@
                 f.binder === 'label' ? 'label name' : 'variable name'));
       // Nearly every image takes one of these, and it has to be an IANA
       // name — getting it wrong is quiet, and every log line is hours out.
-      bits.push(boxHtml(f, index, 'value', 'value', isTzField(f) ? 'tz' : ''));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'value', isTzField(f) ? 'tz' : '', '', false, '', true));
     } else if (f.binder === 'list') {
       // A plain list entry is one whole value with no second half to pair it
       // with — networks, secrets, configs, depends_on and the rest, all of
       // which share this one shape. boxHtml() turns it into a dropdown on
       // its own whenever f.from names a namespace the file declares.
-      bits.push(boxHtml(f, index, 'value', 'value', f.tool));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'value', f.tool, '', false, '', true));
       if (f.listKey === 'networks' && f.from === 'networks') bits.push(webuiNetTickHtml(f));
 
       // A networks: map entry's own settings beyond its name (fixed IP,
@@ -6873,8 +6909,7 @@
       } else {
         bits.push(declNameHtml(f, index));
       }
-      bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting'));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting', '', '', false, '', true));
 
       var foldIdx = foldFieldsFor(f);
       if (foldIdx.length) {
@@ -6890,8 +6925,7 @@
       // services, written through its key) beside its condition — restart and
       // required fold away below, same shape as a declaration's own extras.
       bits.push(boxHtml(f, index, 'name', 'service name'));
-      bits.push(boxHtml(f, index, 'value', 'when it counts as ready'));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'when it counts as ready', '', '', false, '', true));
 
       var depFoldIdx = foldFieldsFor(f);
       if (depFoldIdx.length) {
@@ -7054,8 +7088,8 @@
     // would otherwise show — depends_on's long form needs a third column
     // CAPTIONS' static 'depends' row does not carry (see groupsForService).
     var cols = grp.cols || CAPTIONS[grp.key] ||
-               (grp.cls === 'staxx-formgroup--single' ? ['value', 'Notes'] : null) ||
-               (declared ? ['name', 'setting', 'Notes'] : null);
+               (grp.cls === 'staxx-formgroup--single' ? ['value', ''] : null) ||
+               (declared ? ['name', 'setting', ''] : null);
     if (!cols) return '';
     var bits = ['<div class="staxx-caption" aria-hidden="true">'];
     // Ports alone carry a leading grip column (PLAN_40) with nothing to name
@@ -9975,6 +10009,17 @@
     var rm = grp.querySelector('.staxx-expose-remove');
     if (rm) rm.hidden = none;
   });
+
+  // PLAN_255 C: keep an empty note's --note-empty class in step with what is
+  // typed, so the stylesheet shows it only while its row has focus. Delegated,
+  // so rows added later need nothing of their own.
+  function syncNoteEmpty(event) {
+    var el = event.target;
+    if (!el.dataset || el.dataset.note === undefined || !el.parentNode) return;
+    el.parentNode.classList.toggle('staxx-box--note-empty', el.value === '');
+  }
+  formHost.addEventListener('input', syncNoteEmpty);
+  formHost.addEventListener('focusout', syncNoteEmpty);
 
   formHost.addEventListener('input', function (event) {
     if (!event.target.dataset.row) return;
@@ -17999,6 +18044,7 @@
     // renderTabs() below draws the bare compose tab and leaves it at that).
     resetFileTabs();
     dollarModalOffered = false;   // a fresh session gets its own one-time offer
+    if (msgFoot) { msgFoot.classList.remove('staxx-msgfold--open'); syncMsgFold(); }   // PLAN_255 B: messages start folded
     hideYamlNotice(); // ditto for a previous Tidy result — a caller wanting one shown re-shows it below
 
     // Yesterday's history is meaningless against today's stack — bumping the
@@ -25809,6 +25855,46 @@
   // Add a blank stack, From Apps and Import now live inside buildAddMenu()
   // (PLAN_173) — the toolbar's own #staxx-add-btn opens that through the
   // shared #staxx-menu rather than each keeping its own click listener.
+
+  // PLAN_255 A: the phone-width "⋯" menu. Each item clicks the real, hidden
+  // control. stopPropagation + setTimeout are both needed: the same click
+  // would otherwise bubble to the page, count as an outside click and shut
+  // the Password panel / Outline menu the moment it opened.
+  (function () {
+    var moreBtn  = document.getElementById('staxx-moretools-btn');
+    var moreMenu = document.getElementById('staxx-moretools');
+    if (!moreBtn || !moreMenu) return;
+    function closeMore() {
+      moreMenu.hidden = true;
+      moreBtn.setAttribute('aria-expanded', 'false');
+    }
+    function openMore() {
+      Array.prototype.forEach.call(moreMenu.querySelectorAll('.staxx-moretools-item'), function (item) {
+        var real = document.getElementById(item.getAttribute('data-target'));
+        item.disabled = !real || real.disabled;
+        item.title = real ? real.title : '';
+        if (real && real.type === 'checkbox') item.setAttribute('aria-checked', real.checked ? 'true' : 'false');
+      });
+      moreMenu.hidden = false;
+      moreBtn.setAttribute('aria-expanded', 'true');
+    }
+    moreBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (moreMenu.hidden) openMore(); else closeMore();
+    });
+    moreMenu.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var item = e.target.closest('.staxx-moretools-item');
+      if (!item || item.disabled) return;
+      var real = document.getElementById(item.getAttribute('data-target'));
+      closeMore();
+      if (real) setTimeout(function () { real.click(); }, 0);
+    });
+    document.addEventListener('click', function () { if (!moreMenu.hidden) closeMore(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !moreMenu.hidden) { closeMore(); moreBtn.focus(); }
+    });
+  })();
 
   document.getElementById('staxx-modal-close').addEventListener('click', function () {
     confirmDiscard().then(function (go) { if (go) closeEditor(); });
