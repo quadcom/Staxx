@@ -7009,6 +7009,17 @@ div.title.staxx-has-titlebar {
    over the rows beneath it. The label may wrap in the 12rem label track. */
 .staxx-scaffold .staxx-fieldrow--exposesub .staxx-fieldlabel { font-weight: 700; }
 
+/* PLAN_258 — HTTP/2 and QUIC switches */
+/* A switch that cannot be used (HTTP/2 without a certificate, QUIC always) is
+   dimmed and ignores the pointer; the Nginx dim above stacks on top of it. */
+.staxx-scaffold .staxx-fieldrow--quic .staxx-switch,
+.staxx-scaffold .staxx-switch--inert,
+.staxx-scaffold .staxx-fieldrow--exposeswitch input[data-expose-http2]:disabled ~ .staxx-switch-track,
+.staxx-scaffold .staxx-fieldrow--exposeswitch input[data-expose-http2]:disabled ~ .staxx-switch-text {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* Both parts off with a domain set: the same danger red as other faults. */
 .staxx-scaffold .staxx-expose-warn {
   color: #f85149;

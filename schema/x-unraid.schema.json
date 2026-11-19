@@ -207,6 +207,10 @@
           "default": true,
           "description": "Nginx Proxy Manager's 'Websockets Support' switch. Absent means on, the same as a freshly-adopted host that already had it on keeps meaning on without a line being written for it — so turning this back on removes the key rather than writing true, and only off is ever spelled out."
         },
+        "http2": {
+          "type": "boolean",
+          "description": "Nginx Proxy Manager's HTTP/2 Support switch. Absent means StaXX leaves it as Proxy Manager has it (a new entry starts off); true or false sets it on Apply. Works only with a certificate."
+        },
         "enabled": {
           "type": "boolean",
           "default": true,

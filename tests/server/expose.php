@@ -107,7 +107,7 @@ ok('cert_resolve: two matches are refused', $id === 0 && strpos($err, 'More than
 /* -------------------------------------------------- staxx_npm_host_payload */
 
 $target = ['scheme' => 'http', 'host' => '192.168.1.5', 'port' => 8080];
-$config = ['domain' => 'app.example.com', 'websockets' => true];
+$config = ['domain' => 'app.example.com', 'websockets' => true, 'http2' => null];
 
 $create = staxx_npm_host_payload($target, $config, 0, [], 'Media/app', true);
 ok('host_payload: create adds access_list_id', array_key_exists('access_list_id', $create));
@@ -130,14 +130,35 @@ ok('host_payload: meta is the current meta plus staxx',
 
 $noCert = staxx_npm_host_payload($target, $config, 0, [], 'Media/app', false);
 ok('host_payload: ssl_forced is off with no certificate', $noCert['ssl_forced'] === false);
-ok('host_payload: update never sends http2_support without a certificate', !array_key_exists('http2_support', $noCert));
-
 $withCert = staxx_npm_host_payload($target, $config, 5, [], 'Media/app', false);
 ok('host_payload: ssl_forced is on with a certificate', $withCert['ssl_forced'] === true);
-ok('host_payload: update never sends http2_support with a certificate', !array_key_exists('http2_support', $withCert));
 
-$createCert = staxx_npm_host_payload($target, $config, 5, [], 'Media/app', true);
-ok('host_payload: create sends http2_support off even with a certificate', ($createCert['http2_support'] ?? null) === false);
+// HTTP/2 (expose.http2): null = absent, true/false = the file's own value.
+$h2 = fn($v, int $cert, bool $forCreate) => staxx_npm_host_payload($target, ['http2' => $v] + $config, $cert, [], 'Media/app', $forCreate);
+ok('http2 absent: update never sends it, with or without a certificate',
+   !array_key_exists('http2_support', $h2(null, 5, false)) && !array_key_exists('http2_support', $h2(null, 0, false)));
+ok('http2 absent: create sends false', $h2(null, 5, true)['http2_support'] === false && $h2(null, 0, true)['http2_support'] === false);
+ok('http2 true with a certificate: update and create send true',
+   $h2(true, 5, false)['http2_support'] === true && $h2(true, 5, true)['http2_support'] === true);
+ok('http2 false with a certificate: update and create send false',
+   $h2(false, 5, false)['http2_support'] === false && $h2(false, 5, true)['http2_support'] === false);
+foreach ([true, false] as $v) {
+  ok('http2 '.json_encode($v).' with no certificate: update never sends it, create sends false',
+     !array_key_exists('http2_support', $h2($v, 0, false)) && $h2($v, 0, true)['http2_support'] === false);
+}
+
+// The diff line: only when the key is set, a certificate is in play and the host differs.
+$h2diff = function($v, int $cert, bool $hostOn): array {
+  $host = ['forward_host' => '192.168.1.5', 'forward_port' => 8080, 'forward_scheme' => 'http',
+           'certificate_id' => $cert, 'allow_websocket_upgrade' => true, 'http2_support' => $hostOn];
+  return staxx_npm_diff($host, ['scheme' => 'http', 'host' => '192.168.1.5', 'port' => 8080], $cert,
+    ['http2' => $v, 'websockets' => true], [['id' => 5, 'nice_name' => 'c']]);
+};
+ok('http2 diff: absent adds no line', $h2diff(null, 5, true) === [] && $h2diff(null, 5, false) === []);
+ok('http2 diff: host on, file false', $h2diff(false, 5, true) === ['HTTP/2 on, will become off']);
+ok('http2 diff: host off, file true', $h2diff(true, 5, false) === ['HTTP/2 off, will become on']);
+ok('http2 diff: matching value adds no line', $h2diff(true, 5, true) === [] && $h2diff(false, 5, false) === []);
+ok('http2 diff: no certificate adds no line', $h2diff(true, 0, false) === []);
 
 /* --------------------------------------------- staxx_expose_plan_service --
  * Every case below is fed made-up NPM hosts and Pi-hole records — nothing
@@ -146,7 +167,7 @@ ok('host_payload: create sends http2_support off even with a certificate', ($cre
 
 $rel     = 'Media/zzexposesuite';
 $service = 'sonarr';
-$domCfg  = ['domain' => 'sonarr.tld', 'certificate' => '', 'dns' => false, 'websockets' => true, 'enabled' => true];
+$domCfg  = ['domain' => 'sonarr.tld', 'certificate' => '', 'dns' => false, 'websockets' => true, 'http2' => null, 'enabled' => true];
 $target2 = ['scheme' => 'http', 'host' => '192.168.1.5', 'port' => 8989];
 $dnsIp   = '192.168.1.2'; // NPM's own address, for the Pi-hole cases below
 
@@ -219,14 +240,14 @@ ok('plan_service: a Pi-hole record at another address is replaced',
 
 $err = '';
 $steps = staxx_expose_plan_service('DEV/x', 'off', ['domain' => 'off.example.com', 'certificate' => '',
-  'dns' => false, 'websockets' => true, 'enabled' => false],
+  'dns' => false, 'websockets' => true, 'http2' => null, 'enabled' => false],
   ['scheme' => 'http', 'host' => '10.0.0.1', 'port' => 80], [], [], [], '', [], $err);
 ok('plan_service: switched off with no entry yet needs nothing, and creates nothing',
    $err === '' && count($steps) === 1 && $steps[0]['op'] === 'none', json_encode($steps));
 
 // PLAN_238: Pi-hole only (Nginx off, DNS on). The record points at the app's
 // own host, which the caller passes in as $dnsIp, never at NPM.
-$piOnly = ['domain' => 'sonarr.tld', 'certificate' => '', 'dns' => true, 'websockets' => true, 'enabled' => false];
+$piOnly = ['domain' => 'sonarr.tld', 'certificate' => '', 'dns' => true, 'websockets' => true, 'http2' => null, 'enabled' => false];
 $appIp  = '192.168.1.5'; // $target2['host']
 $err = '';
 $steps = staxx_expose_plan_service($rel, $service, $piOnly, $target2, [], [], [], $appIp, [], $err);
@@ -301,6 +322,12 @@ ok('expose_config: the text "true" switches DNS name on', $c !== null && $c['dns
 $c = staxx_expose_config(['expose.domain' => 'a.example.com']);
 ok('expose_config: absent Enabled and WebSockets mean on, absent DNS name means off',
    $c['enabled'] === true && $c['websockets'] === true && $c['dns'] === false, json_encode($c));
+$c = staxx_expose_config(['expose.domain' => 'a.example.com']);
+ok('expose_config: absent expose.http2 reads as null', $c['http2'] === null, json_encode($c));
+$c = staxx_expose_config(['expose.domain' => 'a.example.com', 'expose.http2' => 'true']);
+ok('expose_config: expose.http2 true reads as true', $c['http2'] === true, json_encode($c));
+$c = staxx_expose_config(['expose.domain' => 'a.example.com', 'expose.http2' => 'false']);
+ok('expose_config: the text "false" reads expose.http2 as false', $c['http2'] === false, json_encode($c));
 ok('expose_config: no domain means no proxy entry at all', staxx_expose_config(['expose.dns' => 'true']) === null);
 
 /* ------------------------------------------------------ staxx_expose_http */
@@ -374,7 +401,7 @@ if (getenv('STAXX_EXPOSE_LIVE') !== '1') {
 
     if ($token !== '') {
       $liveTarget = ['scheme' => 'http', 'host' => '127.0.0.1', 'port' => 9];
-      $liveConfig = ['domain' => $domain, 'websockets' => true];
+      $liveConfig = ['domain' => $domain, 'websockets' => true, 'http2' => null];
       $staxxMeta  = 'expose-suite/probe';
 
       $payload = staxx_npm_host_payload($liveTarget, $liveConfig, 0, [], $staxxMeta, true);

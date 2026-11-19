@@ -5370,7 +5370,30 @@
       document.querySelectorAll('[data-expose-status]').forEach(function (el) {
         el.innerHTML = exposeStatusHtml(el.dataset.exposeStatus);
       });
+      // An HTTP/2 switch whose file has no key shows Proxy Manager's own
+      // value, which is only known now. One the file already answers
+      // (data-expose-http2-file) is left as the file says.
+      document.querySelectorAll('input[data-expose-http2]:not([data-expose-http2-file])').forEach(function (cb) {
+        cb.checked = exposeHttp2Live(cb.dataset.exposeHttp2);
+      });
     }).catch(function () { /* the row just stays on "Checking…" */ });
+  }
+
+  // Proxy Manager's current HTTP/2 value for one service, as expose-check
+  // reported it; null (no entry yet) or no answer yet reads as off.
+  function exposeHttp2Live(svcName) {
+    var entry = exposeCheckCache && exposeCheckCache[svcName];
+    return !!(entry && entry.http2Now === true);
+  }
+
+  // The HTTP/2 row's enabled state follows the certificate and the domain:
+  // HTTP/2 only works over https, and the schema wants a domain. Called after
+  // either box changes without a redraw. The QUIC row is never enabled.
+  function syncExposeHttp2(grp) {
+    var domBox = grp.querySelector('.staxx-groupbody .staxx-fieldrow input[data-part="value"]');
+    var certSel = grp.querySelector('select[data-expose-cert]');
+    var none = !domBox || domBox.value.trim() === '' || !certSel || certSel.value === '';
+    grp.querySelectorAll('input[data-expose-http2]').forEach(function (cb) { cb.disabled = none; });
   }
 
   function exposeStatusHtml(svcName) {
@@ -5430,8 +5453,8 @@
       by[f.target.split('.').pop()] = { f: f, idx: idx };
     });
     var domain = by.domain, cert = by.certificate, ws = by.websockets,
-        dns = by.dns, enabled = by.enabled;
-    // harvestExpose() (compose-model.js) always offers all five, so this
+        dns = by.dns, enabled = by.enabled, http2 = by.http2;
+    // harvestExpose() (compose-model.js) always offers all six, so this
     // only trips if that ever changes underneath this — refuse to draw a
     // half-wired group rather than throw reading .idx off undefined.
     if (!domain || !enabled) return '';
@@ -5478,6 +5501,26 @@
                       ' staxx-fieldrow--exposesub'));
       if (cert) out.push(tagged(exposeCertRowHtml(cert.f, cert.idx, inert), dimNginx));
       if (ws) out.push(tagged(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert), dimNginx));
+      if (http2) {
+        // Three states, unlike WebSockets: the file's true/false when the key
+        // is there, otherwise Proxy Manager's own value (redrawn once
+        // expose-check answers). Inert without a certificate, since HTTP/2
+        // only runs over https.
+        var h2Val  = http2.f.absent ? '' : http2.f.parts.value.value;
+        var h2On   = (h2Val === 'true' || h2Val === 'false') ? h2Val === 'true' : exposeHttp2Live(svc.name);
+        var h2Attr = ' data-expose-http2="' + esc(svc.name) + '"' + (h2Val === '' ? '' : ' data-expose-http2-file');
+        var noCert = String(cert && cert.f.parts.value ? cert.f.parts.value.value : '').trim() === '';
+        out.push(tagged(exposeSwitchRowHtml(http2.f, http2.idx, 'HTTP/2', 'Allow HTTP/2', h2On, inert || noCert)
+                          .replace('<input type="checkbox"', '<input type="checkbox"' + h2Attr), dimNginx));
+      }
+      // QUIC: drawn off and unclickable, with no field behind it, until a
+      // Proxy Manager that supports it is in use.
+      out.push('<div class="staxx-fieldrow staxx-fieldrow--exposeswitch staxx-fieldrow--quic' + dimNginx + '">' +
+               '<span class="staxx-fieldlabel">QUIC</span>' +
+               '<label class="staxx-switch"><input type="checkbox" disabled data-expose-quic aria-label="QUIC">' +
+               '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+               '<span class="staxx-switch-text">Allow QUIC</span></label>' +
+               '<span class="staxx-boxgap" aria-hidden="true"></span></div>');
     }
     if (dns && PIHOLE_CONFIGURED) {
       out.push(tagged(exposeSwitchRowHtml(dns.f, dns.idx, 'Pi-hole', 'Enabled', dnsOn, inert, svc.name + '|dns'),
@@ -10005,9 +10048,19 @@
     if (!grp || event.target.type !== 'text' || event.target.dataset.part !== 'value') return;
     if (event.target.closest('.staxx-fieldrow') !== grp.querySelector('.staxx-groupbody .staxx-fieldrow')) return;
     var none = event.target.value.trim() === '';
-    grp.querySelectorAll('select[data-expose-cert], input[type=checkbox]').forEach(function (c) { c.disabled = none; });
+    grp.querySelectorAll('select[data-expose-cert], input[type=checkbox]:not([data-expose-http2]):not([data-expose-quic])')
+      .forEach(function (c) { c.disabled = none; });
+    syncExposeHttp2(grp);
     var rm = grp.querySelector('.staxx-expose-remove');
     if (rm) rm.hidden = none;
+  });
+
+  // Choosing or clearing the certificate makes HTTP/2 usable or inert at once.
+  formHost.addEventListener('change', function (event) {
+    var t = event.target;
+    if (!t.matches || !t.matches('select[data-expose-cert]')) return;
+    var grp = t.closest('.staxx-formgroup--expose');
+    if (grp) syncExposeHttp2(grp);
   });
 
   // PLAN_255 C: keep an empty note's --note-empty class in step with what is
@@ -29776,6 +29829,13 @@
       block: 'npm-access', sublabel: 'Password'
     },
     {
+      // Drawn off and unclickable; nothing is saved (see the 'inert' guards
+      // in settingsDirty()/saveSettings()). Stays until a Proxy Manager with
+      // QUIC is in use.
+      outer: 'proxy-dns', key: 'NPM_QUIC', control: 'inert', label: 'QUIC', tab: 'registries',
+      block: 'npm-access', sublabel: 'QUIC'
+    },
+    {
       outer: 'proxy-dns', key: 'PIHOLE_URL', control: 'text', label: 'Pi-hole address', tab: 'registries',
       block: 'pihole-access', sublabel: 'Address', placeholder: 'http://192.168.1.30'
     },
@@ -29951,6 +30011,11 @@
       // once the panel is open, not a value settingsControlValue() can read
       // off an input. Skipped by settingsDirty() and saveSettings() below.
       return '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+    } else if (row.control === 'inert') {
+      return '<label class="staxx-switch staxx-switch--inert"><input type="checkbox" role="switch" id="' + row.id +
+             '" disabled aria-label="' + esc(row.label) + '">' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(row.label) + '</span></label>';
     } else if (row.control === 'toggle') {
       // A checkbox rather than a select, so the two stored values never
       // appear as option text — data-on/data-off is all settingsControlValue()
@@ -30881,7 +30946,7 @@
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
-      if (row.control === 'readout' || row.control === 'action') return false;   // nothing to save, so never dirty
+      if (row.control === 'readout' || row.control === 'action' || row.control === 'inert') return false;   // nothing to save, so never dirty
       return settingsControlValue(row) !== settingsOpenValues[row.key];
     });
   }
@@ -31477,7 +31542,7 @@
 
     var fields = {};
     SETTINGS_ROWS.forEach(function (row) {
-      if (row.control === 'readout' || row.control === 'action') return;   // a report, not a setting
+      if (row.control === 'readout' || row.control === 'action' || row.control === 'inert') return;   // a report or a placeholder, not a setting
       fields[row.key] = settingsControlValue(row);
     });
 
