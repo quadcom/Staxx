@@ -130,11 +130,14 @@ ok('host_payload: meta is the current meta plus staxx',
 
 $noCert = staxx_npm_host_payload($target, $config, 0, [], 'Media/app', false);
 ok('host_payload: ssl_forced is off with no certificate', $noCert['ssl_forced'] === false);
-ok('host_payload: http2_support is off with no certificate', $noCert['http2_support'] === false);
+ok('host_payload: update never sends http2_support without a certificate', !array_key_exists('http2_support', $noCert));
 
 $withCert = staxx_npm_host_payload($target, $config, 5, [], 'Media/app', false);
 ok('host_payload: ssl_forced is on with a certificate', $withCert['ssl_forced'] === true);
-ok('host_payload: http2_support is on with a certificate', $withCert['http2_support'] === true);
+ok('host_payload: update never sends http2_support with a certificate', !array_key_exists('http2_support', $withCert));
+
+$createCert = staxx_npm_host_payload($target, $config, 5, [], 'Media/app', true);
+ok('host_payload: create sends http2_support off even with a certificate', ($createCert['http2_support'] ?? null) === false);
 
 /* --------------------------------------------- staxx_expose_plan_service --
  * Every case below is fed made-up NPM hosts and Pi-hole records — nothing

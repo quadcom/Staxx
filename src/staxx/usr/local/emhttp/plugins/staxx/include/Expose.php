@@ -550,7 +550,8 @@ function staxx_npm_cert_name(array $certs, int $id): string {
  * not re-sent, so the caller must pass the host's own current meta in.
  * `$forCreate` adds the fields a create needs a value for but an update
  * must never touch (access_list_id, caching, advanced_config, locations,
- * hsts) — see "Entries that already exist", the Plex test case.
+ * hsts, HTTP/2 — a create starts with HTTP/2 off, an update leaves whatever
+ * the host has) — see "Entries that already exist", the Plex test case.
  */
 function staxx_npm_host_payload(array $target, array $config, int $certId, array $currentMeta, string $staxxMeta, bool $forCreate): array {
   $hasCert = $certId > 0;
@@ -564,7 +565,6 @@ function staxx_npm_host_payload(array $target, array $config, int $certId, array
     'forward_port'            => $target['port'],
     'certificate_id'          => $certId,
     'ssl_forced'               => $hasCert,
-    'http2_support'            => $hasCert,
     'block_exploits'           => true,
     'allow_websocket_upgrade'  => $config['websockets'],
     'meta'                     => $meta,
@@ -577,6 +577,7 @@ function staxx_npm_host_payload(array $target, array $config, int $certId, array
       'locations'       => [],
       'hsts_enabled'    => false,
       'hsts_subdomains' => false,
+      'http2_support'   => false,
     ];
   }
   return $payload;
