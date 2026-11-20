@@ -9,7 +9,7 @@ StaXXCrypt hashing container, and the Proxy and DNS connection to Nginx Proxy Ma
 also holds the Error explanations switch and your connection to the feedback board.
 
 ![The Integrations tab in full: the Docker Hub access box with its Username and Access token fields, the Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box with its dropdown, its state line, the four password formats each marked passes, the What is inside it list and the Show the recipe link](../images/guide/settings-registries-tab.png)
-![The lower part of the Integrations tab: the Proxy and DNS box holding the Nginx Proxy Manager box, the Pi-hole box, the Allow insecure connections switch and the Test connection button, then the Error explanations switch, and the Feedback board box reading Connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
+![The lower part of the Integrations tab: the Proxy and DNS box holding the Nginx Proxy Manager box with a greyed-out QUIC switch, the Pi-hole box, the Allow insecure connections switch and the Test connection button, then the Error explanations switch, and the Feedback board box reading Connected as Alex with a Disconnect button](../images/guide/settings-integrations-proxy.png)
 
 ## Docker Hub access
 
@@ -50,6 +50,7 @@ These four settings connect StaXX to Nginx Proxy Manager and Pi-hole. See
 | Nginx Proxy Manager address | The address of Nginx Proxy Manager's admin page, the one on port 81. With it filled in, you can give an app a domain name in the editor and StaXX adds its proxy entry. |
 | Nginx Proxy Manager email | The email you sign in to Nginx Proxy Manager with. |
 | Nginx Proxy Manager password | The password you sign in to Nginx Proxy Manager with. |
+| QUIC | Not available yet. It stays off. |
 
 ### Pi-hole
 
