@@ -118,10 +118,11 @@ with the messages set in Settings.
 
 ## What sits on a row
 
-![A Volumes group with two rows: the column captions above the boxes, a folder button to browse the server, a read and write dropdown, and a Notes box with its caption underneath](../images/guide/the-stack-editor-row-parts.png)
+![A Volumes group with two rows: the column captions above the boxes, a folder button to browse the server, a read-only dropdown with a short note in small italic text beside it, and a read and write dropdown](../images/guide/the-stack-editor-row-parts.png)
 
 | Part | What it is |
 |---|---|
+| Your note | Small italic text under a box: the comment on that line of the file. Click into the setting, then **+ add a note**, to write one. See [the note under a box](editing-a-stack.md#the-note-under-a-box). |
 | Note under a box | A sentence explaining what the file already says, or a warning about it. |
 | Help mark | A small circled "i" beside a label. Click it to open a floating window about that setting. |
 | Remove | A cross at the end of a row. Removes that one entry. |

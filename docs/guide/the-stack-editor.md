@@ -52,15 +52,15 @@ Turn Sanitise off to open History. Versions stays available with Sanitise on.
 
 ## On a phone or a narrow window
 
-![The editor on a phone: Edit stack with Close in the top-right corner, the stack name line, then Sanitise, Password, Fill in details and Outline, the four tabs, a Show the compose file switch at the top of the form, and at the foot a folded line reading 1 note above the Save buttons](../images/guide/the-stack-editor-phone.png)
+![The editor on a phone: Edit stack with the ⋯ button and Close in the top-right corner, the stack name line, the four tabs, a Show the compose file switch, the compose file filling the screen, and at the foot a folded line reading 1 message about this file above the Save buttons](../images/guide/the-stack-editor-phone.png)
 
 Below desktop width the editor rearranges itself rather than shrinking:
 
 | Part | What changes |
 |---|---|
-| Header | Two lines: the title and the stack name, then the tools. On a phone, **Close** sits in the top-right corner. |
+| Header | The title, with **⋯** and **Close** in the top-right corner, then the stack name. **Sanitise**, **Password**, **Fill in details** and **Outline** are under **⋯**. |
 | Views | Use the **Show the compose file** switch at the top of the Configure tab to swap the form for the raw file and back. |
-| Notes | Advice — the details-found offer and the "author's published example also sets…" lines — folds into one line at the foot reading *N notes*. Tap it to read them, and the cross to fold them away again. Warnings that need an answer, such as a folder that does not exist yet, stay in full. |
+| Messages | The warnings, advice and notes shown under the file fold into one line at the foot reading **N messages about this file**. Tap it to read them, and tap it again to fold them away. |
 
 ## Messages you may see
 

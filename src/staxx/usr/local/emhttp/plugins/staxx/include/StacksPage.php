@@ -762,6 +762,29 @@ $firstRunJsFile = STAXX_ROOT.'/javascript/first-run.js';
           <button type="button" class="staxx-viewbtn staxx-viewbtn--split" data-view="split" aria-pressed="true"><?= _('Split') ?></button>
           <button type="button" class="staxx-viewbtn" data-view="yaml"  aria-pressed="false"><?= _('Compose') ?></button>
         </div>
+        <!-- PLAN_255 A: phones only (CSS hides it above 990px). The four tool
+             buttons hide there and this menu clicks the real ones, so the
+             panels they open keep working untouched. -->
+        <button type="button" class="staxx-btn staxx-moretools-btn" id="staxx-moretools-btn"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-label="<?= _('More tools') ?>" title="<?= _('More tools') ?>">
+          <i class="fa fa-ellipsis-h" aria-hidden="true"></i>
+        </button>
+        <div class="staxx-moretools" id="staxx-moretools" role="menu" hidden>
+          <button type="button" class="staxx-moretools-item" role="menuitemcheckbox" aria-checked="false" data-target="staxx-sanitise">
+            <i class="fa fa-eye-slash" aria-hidden="true"></i> <span><?= _('Sanitise') ?></span>
+            <i class="fa fa-check staxx-moretools-tick" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="staxx-moretools-item" role="menuitem" data-target="staxx-pwgen-btn">
+            <i class="fa fa-key" aria-hidden="true"></i> <span><?= _('Password') ?></span>
+          </button>
+          <button type="button" class="staxx-moretools-item" role="menuitem" data-target="staxx-detail-btn">
+            <i class="fa fa-magic" aria-hidden="true"></i> <span><?= _('Fill in details') ?></span>
+          </button>
+          <button type="button" class="staxx-moretools-item" role="menuitem" data-target="staxx-outline-btn">
+            <i class="fa fa-list-ul" aria-hidden="true"></i> <span><?= _('Outline') ?></span>
+          </button>
+        </div>
         <button type="button" class="staxx-btn" id="staxx-modal-close">
           <i class="fa fa-times"></i> <?= _('Close') ?>
         </button>

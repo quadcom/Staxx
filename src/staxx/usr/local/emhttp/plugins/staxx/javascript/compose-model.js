@@ -2170,6 +2170,7 @@
     if (t.target === 'x-unraid.expose.domain')      return 'Domain name';
     if (t.target === 'x-unraid.expose.certificate')  return 'Certificate';
     if (t.target === 'x-unraid.expose.websockets')   return 'WebSockets';
+    if (t.target === 'x-unraid.expose.http2')        return 'HTTP/2';
     if (t.target === 'x-unraid.expose.dns')          return 'DNS name';
     if (t.target === 'x-unraid.expose.enabled')      return 'Enabled';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
@@ -2253,7 +2254,7 @@
     // a tail word it knows, and the value-sniffing fallback further down
     // would miss an absent one entirely (there is no value yet to sniff).
     if (t.target === 'x-unraid.expose.websockets' || t.target === 'x-unraid.expose.dns' ||
-        t.target === 'x-unraid.expose.enabled') return 'boolean';
+        t.target === 'x-unraid.expose.enabled' || t.target === 'x-unraid.expose.http2') return 'boolean';
     if (t.binder === 'volume' || t.binder === 'device') return 'path';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].type) return KEYS[t.target].type;
     if (t.binder === 'list') return (KEYS[t.listKey] && KEYS[t.listKey].type) || 'text';
@@ -2859,10 +2860,13 @@
   // ['x-unraid', 'expose', <key>] — the same depth-3 shape update.mode and
   // update.delay already write through addNested()/removeKey(), so no
   // change to either was needed to read or write these.
-  // Titles and boolean-ness for these five live in inferTitle()/inferType()
+  // Titles and boolean-ness for these six live in inferTitle()/inferType()
   // (named explicitly by target, the same way x-unraid.webui and
   // x-unraid.update.* are) — this table only drives which keys are walked.
-  var EXPOSE_LEAVES = ['domain', 'certificate', 'websockets', 'dns', 'enabled'];
+  // http2 is the one switch here with three states (absent, true, false): absent
+  // means "leave Proxy Manager's own setting", so setPart() writes it
+  // explicitly both ways and never removes the key on 'true'.
+  var EXPOSE_LEAVES = ['domain', 'certificate', 'websockets', 'http2', 'dns', 'enabled'];
 
   function harvestExpose(serviceMap, lines) {
     var out = [];

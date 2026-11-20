@@ -357,6 +357,8 @@ function staxx_expose_config(array $svcX): ?array {
     'certificate' => isset($svcX['expose.certificate']) ? trim((string)$svcX['expose.certificate']) : '',
     'dns'         => $flag('expose.dns', false),
     'websockets'  => $flag('expose.websockets', true),
+    // null = the key is absent: StaXX leaves Proxy Manager's HTTP/2 switch as it is.
+    'http2'       => array_key_exists('expose.http2', $svcX) ? $flag('expose.http2', false) : null,
     'enabled'     => $flag('expose.enabled', true),
   ];
 }
@@ -550,7 +552,12 @@ function staxx_npm_cert_name(array $certs, int $id): string {
  * not re-sent, so the caller must pass the host's own current meta in.
  * `$forCreate` adds the fields a create needs a value for but an update
  * must never touch (access_list_id, caching, advanced_config, locations,
- * hsts) — see "Entries that already exist", the Plex test case.
+ * hsts, HTTP/2 — a create starts with HTTP/2 off, an update leaves whatever
+ * the host has) — see "Entries that already exist", the Plex test case.
+ * HTTP/2 is the one exception: when the file sets expose.http2 and a
+ * certificate is chosen, that value is sent on create and update alike. With
+ * the key absent an update never sends it; with no certificate (HTTP/2 needs
+ * HTTPS) an update never sends it and a create sends false.
  */
 function staxx_npm_host_payload(array $target, array $config, int $certId, array $currentMeta, string $staxxMeta, bool $forCreate): array {
   $hasCert = $certId > 0;
@@ -564,7 +571,6 @@ function staxx_npm_host_payload(array $target, array $config, int $certId, array
     'forward_port'            => $target['port'],
     'certificate_id'          => $certId,
     'ssl_forced'               => $hasCert,
-    'http2_support'            => $hasCert,
     'block_exploits'           => true,
     'allow_websocket_upgrade'  => $config['websockets'],
     'meta'                     => $meta,
@@ -577,8 +583,11 @@ function staxx_npm_host_payload(array $target, array $config, int $certId, array
       'locations'       => [],
       'hsts_enabled'    => false,
       'hsts_subdomains' => false,
+      'http2_support'   => false,
     ];
   }
+  $http2 = $config['http2'] ?? null;
+  if ($http2 !== null && $hasCert) $payload['http2_support'] = $http2;
   return $payload;
 }
 
@@ -783,6 +792,16 @@ function staxx_npm_diff(array $host, array $target, int $certId, array $config, 
   $oldWs = !empty($host['allow_websocket_upgrade']);
   if ($oldWs !== $config['websockets']) {
     $diffs[] = 'WebSockets '.($oldWs ? 'on' : 'off').', will become '.($config['websockets'] ? 'on' : 'off');
+  }
+
+  // Only when the file sets it and a certificate is in play: that is the only
+  // case the payload sends http2_support for an existing entry.
+  $http2 = $config['http2'] ?? null;
+  if ($http2 !== null && $certId > 0) {
+    $oldH2 = !empty($host['http2_support']);
+    if ($oldH2 !== $http2) {
+      $diffs[] = 'HTTP/2 '.($oldH2 ? 'on' : 'off').', will become '.($http2 ? 'on' : 'off');
+    }
   }
 
   return $diffs;
@@ -991,7 +1010,7 @@ function staxx_expose_apply_step(
  * it is early, and staxx_expose_sync_started() fills it in after the start.
  *
  * @param string[] $only when not empty, only these services are worked on
- * @return array<string, array{steps?:array, refusal?:string, waiting?:string}>
+ * @return array<string, array{steps?:array, refusal?:string, waiting?:string, http2Now:?bool}>
  */
 function staxx_expose_run(string $rel, bool $apply, string &$err, array $only = []): array {
   $err = '';
@@ -1107,6 +1126,16 @@ function staxx_expose_run(string $rel, bool $apply, string &$err, array $only = 
     staxx_expose_json_write($rel, $records);
     $out[$svcName] = ['steps' => $applied, 'open' => $open];
   }
+
+  // Every entry (steps, refusal or waiting) also says what Proxy Manager's
+  // HTTP/2 switch is for the service's existing entry, so the editor can draw
+  // the switch when the file has no expose.http2. null: no entry yet, or
+  // Proxy Manager was not consulted.
+  foreach ($out as $svcName => &$entry) {
+    $h = $hosts !== [] ? staxx_npm_find_host($hosts, $configs[$svcName]['domain']) : null;
+    $entry['http2Now'] = $h !== null ? !empty($h['http2_support']) : null;
+  }
+  unset($entry);
 
   if ($needsDns) staxx_pihole_logout($piUrl, $piHeaders);
   return $out;

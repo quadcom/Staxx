@@ -1501,7 +1501,8 @@ div.title.staxx-has-titlebar {
  * left edge is a custom property rather than a fixed offset: stacks.js reads
  * the name cell's own width (auto, so it moves with the longest name on
  * screen — see the grid-template-columns comment above) and writes it there
- * every time the overlay repaints.
+ * every time the overlay repaints. The right edge comes from the address
+ * cell the same way, so the overlay never reaches the stats columns.
  *
  * position: relative on .staxx-row is safe here for the reason .staxx-
  * row--leave already relies on above: rows use outline, never border, for
@@ -1523,8 +1524,8 @@ div.title.staxx-has-titlebar {
   top: 0;
   bottom: 0;
   left: var(--staxx-rowprog-left, 0);
-  right: 0;
-  max-width: 72rem;   /* Not the full row: the bars read better short, and the stats on the right stay visible. */
+  right: var(--staxx-rowprog-right, 0);
+  max-width: 72rem;   /* The overlay already ends at the address column; the cap only keeps the bars short when that column is very wide. */
   /* One grid for both bars: the figures share the auto column, so it takes the widest of the two and the tracks come out the same length whatever each says. */
   display: grid;
   grid-template-columns: 6rem 1fr auto;
@@ -1623,6 +1624,7 @@ div.title.staxx-has-titlebar {
 @container staxx-table (max-width: 130rem) {
   .staxx-scaffold .staxx-rowprog {
     left: 0;
+    right: 0;
     top: var(--staxx-rowprog-top, 0);
     border-radius: 0 0 0.8rem 0.8rem;   /* matches the card's own corners */
   }
@@ -5330,6 +5332,123 @@ div.title.staxx-has-titlebar {
   }
 }
 
+/* PLAN_255 A — tools behind a ⋯ menu on phones
+   Sanitise, Password, Fill in details and Outline took two rows above the
+   tabs. At phone width they hide and the ⋯ menu clicks the real controls.
+   The wrappers become display: contents so the Password panel and the
+   Outline menu stay in the DOM and open full width under the title row,
+   anchored to the head. PX ON PURPOSE (a media query's rem is 16px). */
+.staxx-scaffold .staxx-moretools-btn,
+.staxx-scaffold .staxx-moretools {
+  display: none;
+}
+
+@media (max-width: 990px) {
+  .staxx-modal-head {
+    position: relative;
+  }
+
+  .staxx-modal-tools,
+  .staxx-pwgenwrap,
+  .staxx-outlinewrap {
+    display: contents;
+  }
+
+  .staxx-modal .staxx-sanitise,
+  .staxx-modal #staxx-pwgen-btn,
+  .staxx-modal #staxx-detail-btn,
+  .staxx-modal #staxx-outline-btn {
+    display: none;
+  }
+
+  .staxx-scaffold .staxx-moretools-btn {
+    display: inline-flex;
+    align-items: center;
+    margin-left: auto;
+    font-size: 1.4rem;
+    color: #fff;
+  }
+
+  .staxx-modal #staxx-pwgen,
+  .staxx-modal #staxx-outline {
+    position: absolute;
+    top: 4.8rem;
+    left: 1.2rem;
+    right: 1.2rem;
+    width: auto;
+    max-width: none;
+    z-index: 30;
+  }
+
+  .staxx-scaffold .staxx-moretools:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 4.8rem;
+    right: 1.2rem;
+    min-width: 20rem;
+    z-index: 31;
+    padding: 0.4rem;
+    background: var(--background-color, #1c1c1c);
+    border: 0.1rem solid var(--sm-line);
+    border-radius: 0.8rem;
+    box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.5);
+  }
+
+  .staxx-scaffold .staxx-moretools-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    margin: 0;
+    padding: 1rem 1.2rem;
+    font: inherit;
+    font-size: 1.4rem;
+    color: #fff;
+    background: transparent;
+    border: 0;
+    border-radius: 0.6rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .staxx-scaffold .staxx-moretools-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .staxx-scaffold .staxx-moretools-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .staxx-scaffold .staxx-moretools-item span {
+    flex: 1;
+  }
+
+  .staxx-moretools-tick {
+    visibility: hidden;
+  }
+
+  .staxx-scaffold .staxx-moretools-item[aria-checked="true"] .staxx-moretools-tick {
+    visibility: visible;
+  }
+}
+
+/* Below 60rem Close is absolute at the corner, so the ⋯ button sits beside it
+   the same way, and the title leaves room for both. */
+@container staxx-modal (max-width: 60rem) {
+  .staxx-scaffold .staxx-moretools-btn {
+    position: absolute;
+    top: 0.8rem;
+    right: 9.2rem;
+    margin-left: 0;
+  }
+
+  .staxx-modal-title {
+    padding-right: 13rem;
+  }
+}
+
 /* Below 60rem, only the corner Close is left here — the view switch moved to
    the 990px window step above, and the Part 3 two-way button styling that
    used to sit here is gone with it: .staxx-views is display:none by then, so
@@ -6889,6 +7008,17 @@ div.title.staxx-has-titlebar {
    the tool and carries its own Enabled switch; bold marks it as a sub-heading
    over the rows beneath it. The label may wrap in the 12rem label track. */
 .staxx-scaffold .staxx-fieldrow--exposesub .staxx-fieldlabel { font-weight: 700; }
+
+/* PLAN_258 — HTTP/2 and QUIC switches */
+/* A switch that cannot be used (HTTP/2 without a certificate, QUIC always) is
+   dimmed and ignores the pointer; the Nginx dim above stacks on top of it. */
+.staxx-scaffold .staxx-fieldrow--quic .staxx-switch,
+.staxx-scaffold .staxx-switch--inert,
+.staxx-scaffold .staxx-fieldrow--exposeswitch input[data-expose-http2]:disabled ~ .staxx-switch-track,
+.staxx-scaffold .staxx-fieldrow--exposeswitch input[data-expose-http2]:disabled ~ .staxx-switch-text {
+  opacity: 0.45;
+  pointer-events: none;
+}
 
 /* Both parts off with a domain set: the same danger red as other faults. */
 .staxx-scaffold .staxx-expose-warn {
@@ -12291,6 +12421,9 @@ dialog::backdrop {
 @media (max-width: 45rem) {
   .staxx-upd-row { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
   .staxx-upd-sub { justify-content: flex-start; }
+  /* The note's `flex: 1 1 20rem` is a width beside the options; in a column the
+   * same basis becomes a 200px height for a one-line note. */
+  .staxx-upd-note { flex: 0 0 auto; }
 }
 
 /* PLAN_150 phase 5 — the row menu's own Updates / Notify me rows. Laid out
@@ -16928,7 +17061,8 @@ dialog::backdrop {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  border: 0.1rem solid var(--sm-line);
+  /* A thin orange edge so the window reads as sitting on top of the page (Adrian, 2026-11-16). */
+  border: 0.1rem solid color-mix(in srgb, var(--sm-accent) 70%, transparent);
   border-radius: var(--sm-radius);
   background: var(--background-color, #1c1c1c);
   color: var(--text-color, #e0e0e0);
@@ -17063,6 +17197,8 @@ dialog::backdrop {
     visibility 0s;
 }
 
+.staxx-scaffold .staxx-bugwin--min .staxx-bugwin-kinds { display: none; }
+
 .staxx-scaffold .staxx-bugwin--min .staxx-confirm-body,
 .staxx-scaffold .staxx-bugwin--min .staxx-confirm-foot {
   max-height: 0;
@@ -17075,6 +17211,61 @@ dialog::backdrop {
   visibility: hidden;
   transition-property: max-height, opacity, padding, border-color, visibility;
   transition-delay: 0s, 0s, 0s, 0s, var(--sm-motion-slow);
+}
+
+/* The feedback form only (the problem window shares these classes and keeps
+   its cap and scroll). No height cap and no inner scroll (Adrian, 2026-11-16):
+   the window grows to its content and is dragged when taller than the screen.
+   The large body max-height never limits the form; it only lets the minimise
+   fold animate. The :not() adds specificity, so the minimised state is
+   restated below to keep winning. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) {
+  /* Never taller than the screen; feedback.js slides the window up as it grows,
+     and once it fills the screen the message box (not the form) scrolls. */
+  max-height: calc(100vh - 1.6rem);
+  max-height: calc(100dvh - 1.6rem);
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-head,
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-kinds,
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot {
+  flex-shrink: 0;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Last resort for a screen too short even for the smallest message box. */
+  overflow-y: auto;
+  max-height: 300vh;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-view:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Only the message box absorbs the squeeze: title, labels and details keep their height. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-view > :not(.staxx-bugwin-editor) {
+  flex-shrink: 0;
+}
+
+/* Starts 26rem tall and grows with its text; on a short screen the floor drops
+   towards 12rem so the box can shrink to fit the capped window and scroll. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-bugwin-editor {
+  flex: 0 1 auto;
+  min-height: 26rem;
+  min-height: min(26rem, max(12rem, calc(100dvh - 40rem)));
+  overflow-y: auto;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin).staxx-bugwin--min .staxx-confirm-body {
+  max-height: 0;
+  overflow: hidden;
 }
 
 /* A step change fades the new step in. */
@@ -17092,6 +17283,48 @@ dialog::backdrop {
 .staxx-scaffold .staxx-bugwin .staxx-confirm-foot .staxx-buttons {
   margin-left: auto;
   align-items: center;
+}
+
+/* Feedback form footer (Adrian, 2026-11-16: "split apart the submit from cancel
+   buttons"): a column, so the status text sits on its own line above the
+   buttons and Cancel / Send never stack on the right of it. The problem window
+   keeps the shared footer. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.8rem;
+}
+
+/* An empty message takes no space, so the footer has no blank gap. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-confirm-msg:empty {
+  display: none;
+}
+
+/* Cancel at the left edge, Send at the right, side by side. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-buttons {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0;
+}
+
+/* Sent state: Send is hidden, so Close alone goes to the right edge. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-buttons:has(> [hidden]) {
+  justify-content: flex-end;
+}
+
+/* The discard question on its own full-width line, then Keep writing left and
+   Discard report right. */
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot > .staxx-buttons:has(> .staxx-bugwin-ask) {
+  flex-wrap: wrap;
+  row-gap: 0.8rem;
+}
+
+.staxx-scaffold .staxx-bugwin-float:not(.staxx-probwin) .staxx-confirm-foot .staxx-bugwin-ask {
+  flex: 0 0 100%;
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-confirm-msg {
@@ -17115,7 +17348,40 @@ dialog::backdrop {
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds {
   display: flex;
   justify-content: center;
+  flex-shrink: 0;
   margin: 0 0 1.2rem;
+  padding: 0 1.4rem;
+  /* Lets the buttons below react to this row's own width, not the viewport's. */
+  container: staxx-bugwin-kinds / inline-size;
+}
+
+/* The editor hides its own .staxx-views at 990px and below. This window is moved
+   inside the editor's dialog and reuses that class for its kind buttons, so the
+   same rule hid them and a phone could never send a report (PLAN_254). One row
+   when it fits; the container query below stacks them when it does not. */
+.staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views {
+  display: inline-flex;
+  justify-content: center;
+}
+
+/* PX on purpose: the webGUI root is 10px, so rem would not mean what it says here.
+   Below this the three labels no longer fit side by side, so they stack. */
+@container staxx-bugwin-kinds (max-width: 480px) {
+  .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views .staxx-viewbtn {
+    border-right: 0;
+    border-bottom: 0.1rem solid var(--sm-line);
+    text-align: center;
+  }
+
+  .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-views .staxx-viewbtn:last-child {
+    border-bottom: 0;
+  }
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-kinds .staxx-viewbtn {
@@ -17150,9 +17416,8 @@ dialog::backdrop {
 }
 
 .staxx-scaffold .staxx-bugwin .staxx-bugwin-editor {
+  /* Grows with its content instead of scrolling (Adrian, 2026-11-16); the window is dragged when taller than the screen. */
   min-height: 26rem;
-  max-height: 55vh;
-  overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -18178,4 +18443,137 @@ html.staxx-noscroll body {
 
 .staxx-netfail .staxx-confirm-body p {
   margin: 0 0 1rem;
+}
+
+/* PLAN_255 B — phones (≤990px): the editor's footer messages fold behind one
+ * toggle so the code keeps the height, and a minimised feedback window shrinks
+ * to the round button with a dot. Above 990px none of this applies. */
+.staxx-scaffold .staxx-msgfold { display: none; }
+
+@media (max-width: 990px) {
+  /* Specificity restated: Unraid resets every button at a level one class loses to. */
+  .staxx-scaffold .staxx-msgfold {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 0.8rem;
+    padding: 0.8rem 1.2rem;
+    border: 0;
+    border-left: 0.4rem solid var(--sm-accent);
+    border-radius: 0.3rem;
+    background: var(--sm-fill, color-mix(in srgb, var(--sm-accent) 14%, transparent));
+    color: #fff;
+    font-family: inherit;
+    font-size: 1.3rem;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+  }
+  .staxx-scaffold .staxx-msgfold[hidden] { display: none; }
+
+  /* Folded: the items stay in the DOM (their code still fills them), just not drawn. */
+  .staxx-scaffold .staxx-modal-foot:not(.staxx-msgfold--open) #staxx-missing,
+  .staxx-scaffold .staxx-modal-foot:not(.staxx-msgfold--open) #staxx-watch-note,
+  .staxx-scaffold .staxx-modal-foot:not(.staxx-msgfold--open) #staxx-link-note,
+  .staxx-scaffold .staxx-modal-foot:not(.staxx-msgfold--open) #staxx-notestrip { display: none; }
+
+  .staxx-scaffold .staxx-modal-foot.staxx-msgfold--open {
+    max-height: 45vh;
+    overflow-y: auto;
+  }
+
+  /* Minimised feedback: only the round button remains, marked while a draft waits. */
+  /* transition: none — the window's own `display … allow-discrete` transition would
+   * otherwise keep it drawn, and a running transition outranks !important. */
+  .staxx-scaffold .staxx-bugwin-float.staxx-bugwin--min:not(.staxx-probwin) { display: none !important; transition: none !important; }
+  .staxx-bug-host .staxx-bug-btn { position: relative; }
+  .staxx-bug-host .staxx-bug-btn.staxx-bug-btn--draft::after {
+    content: "";
+    position: absolute;
+    top: -0.2rem;
+    right: -0.2rem;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    background: var(--sm-accent, #ff8c2f);
+  }
+}
+
+/* PLAN_255 C — notes as a small line under the value
+   A note is no longer a box in a column of its own. A single-value row draws
+   it inside its value box, straight after the input line (stacks.js passes it
+   to boxHtml()); a row with several boxes (port, mount, device) keeps it as a
+   row child that spans the whole row and sits after the boxes. An EMPTY note
+   shows only while its row has focus; a note with text is never hidden, so
+   nothing the author wrote disappears. Every size, not phones only. */
+.staxx-scaffold .staxx-box--note {
+  display: block;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.staxx-scaffold .staxx-box--note .staxx-input,
+.staxx-scaffold .staxx-box--note .staxx-input:disabled {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.3rem;
+  font-style: italic;
+  color: #fff;
+  padding: 0.2rem 0.4rem;
+}
+.staxx-scaffold .staxx-box--note .staxx-input:focus {
+  outline: 0;
+  border-bottom: 0.1rem dashed var(--sm-accent);
+  padding-bottom: 0.1rem;
+}
+.staxx-scaffold .staxx-box--note .staxx-input::placeholder {
+  color: var(--sm-accent);
+  opacity: 1;
+}
+/* A note with nowhere to be written (no line in the file yet) shows no prompt. */
+.staxx-scaffold .staxx-box--note .staxx-input:disabled::placeholder {
+  color: transparent;
+}
+.staxx-scaffold .staxx-fieldrow:not(:focus-within) .staxx-box--note-empty {
+  display: none;
+}
+/* An empty note that cannot be written (disabled flips after render, so :has
+   rather than a class) is never shown, focus or not. */
+.staxx-scaffold .staxx-box--note-empty:has(> .staxx-input:disabled) {
+  display: none;
+}
+/* Multi-box rows: the note is the row's last line, under the boxes and above
+   any advice (order beats source position; the × keeps its default 0 so it
+   stays on the boxes' line). */
+.staxx-fieldrow > .staxx-box--note {
+  grid-column: 1 / -1;
+  order: 50;
+}
+.staxx-fieldrow > .staxx-devmore { order: 55; }
+.staxx-fieldrow > .staxx-advice  { order: 60; }
+
+/* The note's old column is gone, so the value box takes its track and the ×
+   stays in the last one. Ports keep their six tracks and pin the × to the
+   sixth (the note's track used to lead into it). Desktop only: the phone
+   template below 990px has two tracks and its own × rule. */
+@media (min-width: 991px) {
+  .staxx-formgroup--container .staxx-fieldrow > .staxx-box--value,
+  .staxx-formgroup--advanced .staxx-fieldrow > .staxx-box--value,
+  .staxx-formgroup--pair .staxx-fieldrow > .staxx-box--value,
+  .staxx-formgroup--declared .staxx-fieldrow > .staxx-box--value,
+  .staxx-formgroup--single .staxx-fieldrow > .staxx-box--value {
+    grid-column: span 2;
+  }
+  .staxx-formgroup--device .staxx-fieldrow > .staxx-box:not(.staxx-box--note) {
+    grid-column: span 2;
+  }
+  .staxx-formgroup--ports .staxx-fieldrow > .staxx-kill {
+    grid-row: 1;
+    grid-column: 6;
+  }
+  .staxx-webchip--near { grid-column: 4; }
 }

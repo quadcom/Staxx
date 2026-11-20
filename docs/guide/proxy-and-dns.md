@@ -18,7 +18,7 @@ Manager; Pi-hole is optional.
 
 ## Setting up the connection
 
-![The Integrations tab showing the Proxy and DNS box: the Nginx Proxy Manager box with an example address and email, the Pi-hole box with an example address, Allow insecure connections switched on and the Test connection button; below it the Error explanations, App icons in emails and Feedback board lines](../images/guide/settings-integrations-proxy.png)
+![The Integrations tab showing the Proxy and DNS box: the Nginx Proxy Manager box with an example address and email and a greyed-out QUIC switch, the Pi-hole box with an example address, Allow insecure connections switched on and the Test connection button; below it the Error explanations, App icons in emails and Feedback board lines](../images/guide/settings-integrations-proxy.png)
 
 Under **Settings**, on the **Integrations** tab, in the **Proxy and DNS** box, fill in the address of Nginx Proxy Manager's admin page
 (the one on port 81) and the email and password you sign in with there. Fill in Pi-hole's address too if
@@ -46,13 +46,15 @@ appears after **Updates**. Start the app at least once before you save a domain 
 
 ## The Proxy and DNS section
 
-![The form side of the stack editor with the Proxy and DNS section open: Enabled on, the domain jellyfin.example.com, Certificate set to None (plain http), WebSockets and Add to Pi-hole on, two Status lines each marked with a red cross, reading Nginx Proxy Manager: no proxy entry yet and Pi-hole: the DNS name is missing, with an Apply button, and the Remove from proxy and DNS button](../images/guide/proxy-and-dns-group.png)
+![The Proxy and DNS section of a service in the stack editor: the domain web.example.com, Nginx Proxy Manager enabled with the address it will forward to, Certificate set to None (plain http), WebSockets on, HTTP/2 and QUIC greyed out, Pi-hole off, the Status line reading Not set up yet. Save to set it up., and the Remove from proxy and DNS button](../images/guide/proxy-and-dns-group.png)
 
 | Row | What it does |
 |---|---|
 | **Domain name** | The address the app answers on, such as `sonarr.home.lan`. Typing one gives the app a proxy entry. |
 | **Certificate** | Which certificate Nginx Proxy Manager uses for this domain, picked from the certificates already stored there. Leave it unset for a plain, unencrypted entry. |
 | **WebSockets** | Whether the proxy allows WebSocket connections through to the app. On by default. |
+| **HTTP/2** | With this on, the proxy entry uses HTTP/2. With it off, it does not. For an app already in Nginx Proxy Manager it shows what the entry has now, and a new entry starts off. Choose a certificate first. |
+| **QUIC** | Not available yet. It stays off. |
 | **DNS name** | Adds a matching name in Pi-hole, pointing at Nginx Proxy Manager. Only shown once Pi-hole is connected. |
 | **Status** | Whether the entry in Nginx Proxy Manager and Pi-hole currently matches what is set here. |
 

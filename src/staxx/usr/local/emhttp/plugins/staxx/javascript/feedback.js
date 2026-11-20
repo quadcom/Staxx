@@ -428,9 +428,8 @@
   var busy = false;
   var minimised = false;
   var savedPos = null;
-  var placed = false;
 
-  var formWin, titleEl, minBtn, formView, sentView, titleIn, editor, asEl;
+  var formWin, titleEl, minBtn, formView, kindsRow, sentView, titleIn, editor, asEl;
   var thanksEl, sentUrlEl, copyTitle, copyBody, copyFoot;
   var formMsg, rowBtns, cancelBtn, sendBtn, askBox, keepBtn, discardBtn;
   var detailsBox, detailsList, attachNote, sentFilesBox, sentFilesList;
@@ -485,6 +484,7 @@
   function formStep(name) {
     var sent = name === 'sent';
     formView.hidden = sent;
+    kindsRow.hidden = sent;
     sentView.hidden = !sent;
     sendBtn.hidden = sent;
     cancelBtn.textContent = sent ? 'Close' : 'Cancel';
@@ -496,11 +496,25 @@
     formWin.style.top = top + 'px';
   }
 
+  // Keeps the window's bottom on screen as the message grows: slides it up (never
+  // above 8px from the top). Not while minimised, closed or being dragged.
+  function keepOnScreen() {
+    if (!formWin || !formOpen || minimised) return;
+    if (formWin.classList.contains('staxx-bugwin--dragging')) return;
+    var r = formWin.getBoundingClientRect();
+    var newTop = Math.max(8, Math.min(r.top, window.innerHeight - r.height - 8));
+    if (newTop === r.top) return;
+    formWin.classList.add('staxx-bugwin--moving');   // no glide for a nudge
+    moveTo(r.left, newTop);
+    setTimeout(function () { formWin.classList.remove('staxx-bugwin--moving'); }, 80);
+  }
+
   function setMinimised(on) {
     var icon = minBtn.firstChild;
     if (on === minimised) return;
     minimised = on;
     formWin.classList.toggle('staxx-bugwin--min', on);
+    bugBtn.classList.toggle('staxx-bug-btn--draft', on);   // phones: the dot says a draft waits behind the button
     icon.className = on ? 'fa fa-chevron-down' : 'fa fa-chevron-up';
     minBtn.title = on ? 'Restore' : 'Minimise';
     minBtn.setAttribute('aria-label', minBtn.title);
@@ -580,6 +594,8 @@
     var h = head('staxx-bugwin-title', 'StaXX feedback');
     titleEl = h.label;
     formWin = popoverWindow('staxx-bugwin-float', 'manual', 'staxx-bugwin-title');
+    if (typeof ResizeObserver === 'function') new ResizeObserver(keepOnScreen).observe(formWin);
+    window.addEventListener('resize', keepOnScreen);
 
     minBtn = el('button', 'staxx-bugwin-min');
     minBtn.type = 'button';
@@ -605,9 +621,9 @@
       kinds.appendChild(b);
       kindBtns.push(b);
     });
-    var kindsRow = el('div', 'staxx-bugwin-kinds');
+    // Outside the scrolling body, so a scroll (a phone keyboard opening) can never push the choice out of sight.
+    kindsRow = el('div', 'staxx-bugwin-kinds');
     kindsRow.appendChild(kinds);
-    formView.appendChild(kindsRow);
     var tl = el('label', 'staxx-bugwin-label', 'Title');
     titleIn = el('input', 'staxx-bugwin-input');
     titleIn.type = 'text';
@@ -712,6 +728,7 @@
     foot.appendChild(askBox);
 
     formWin.appendChild(h.box);
+    formWin.appendChild(kindsRow);
     formWin.appendChild(body);
     formWin.appendChild(foot);
     (scaffold() || document.body).appendChild(formWin);
@@ -749,19 +766,21 @@
       return;
     }
     screenAtPress = screenName();
-    if (!placed) {
-      placed = true;
-      var w = Math.min(96 * pxPerRem(), window.innerWidth * 0.94);
-      moveTo(Math.max(0, window.innerWidth - w - 40), 150);
-    }
     formOpen = true;
     var target = newestModal() || scaffold() || document.body;
     if (formWin.parentNode !== target) { hidePop(formWin); target.appendChild(formWin); }
     showPop(formWin);
+    // Centred in the view on every fresh open. It can only be measured once shown, and
+    // the window glides between positions, so the glide is switched off for the jump.
+    var r = formWin.getBoundingClientRect();
+    formWin.classList.add('staxx-bugwin--moving');
+    moveTo(Math.max(8, (window.innerWidth - r.width) / 2), Math.max(8, (window.innerHeight - r.height) / 2));
+    setTimeout(function () { formWin.classList.remove('staxx-bugwin--moving'); }, 80);
     if (opts && opts.title) titleIn.value = opts.title;
     // A caller that knows what it is reporting picks the kind (a failed Import is a bug).
     if (opts && opts.kind) setKind(opts.kind);
-    titleIn.focus();
+    // On a phone, focusing Title raises the keyboard and Chrome scrolls the form.
+    if (!window.matchMedia || !matchMedia('(pointer: coarse)').matches) titleIn.focus();
     loadDetails();
   }
 

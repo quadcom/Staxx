@@ -708,6 +708,40 @@
   // offer and the author's-example field notes once the dialog is narrower
   // than a desktop. See syncNoteStrip() below for what it holds.
   var noteStrip = document.getElementById('staxx-notestrip');
+  // PLAN_255 B — on phones the footer's messages fold behind one toggle so the
+  // code keeps the height (the fold itself is CSS, ≤990px only). The count is
+  // refreshed by an observer on the items' `hidden` flags rather than by a call
+  // from each place that shows or fills one — there are a dozen, and some
+  // live in other files' flows. attributeFilter keeps it quiet; the toggle's
+  // own changes are ignored so it cannot trigger itself.
+  var msgFoot = errorBox && errorBox.parentNode;
+  var msgToggle = document.createElement('button');
+  msgToggle.type = 'button';
+  msgToggle.className = 'staxx-msgfold';
+  msgToggle.hidden = true;
+  function syncMsgFold() {
+    if (!msgFoot) return;
+    var n = 0;
+    ['staxx-missing', 'staxx-watch-note', 'staxx-link-note', 'staxx-notestrip'].forEach(function (id) {
+      var e = document.getElementById(id);
+      // The watch note lives inside the strip while folded; the strip counts as one.
+      if (e && !e.hidden && !(id === 'staxx-watch-note' && noteStrip && noteStrip.contains(e))) n++;
+    });
+    var open = msgFoot.classList.contains('staxx-msgfold--open');
+    var text = (open ? '▾ ' : '▸ ') + n + (n === 1 ? ' message' : ' messages') + ' about this file';
+    if (msgToggle.textContent !== text) msgToggle.textContent = text;
+    if (msgToggle.hidden !== (n === 0)) msgToggle.hidden = (n === 0);
+  }
+  if (msgFoot) {
+    msgFoot.insertBefore(msgToggle, msgFoot.firstChild);
+    msgToggle.addEventListener('click', function () {
+      msgFoot.classList.toggle('staxx-msgfold--open');
+      syncMsgFold();
+    });
+    new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) if (muts[i].target !== msgToggle) { syncMsgFold(); return; }
+    }).observe(msgFoot, { attributes: true, attributeFilter: ['hidden'], childList: true, subtree: true });
+  }
   // PLAN_106 phase 4: latches true the first time this editor session's
   // reparse() finds a flagged dollar sign, so the modal is offered once per
   // open rather than reopening itself on every keystroke reparse() already
@@ -1061,34 +1095,34 @@
   // The caption text named per group; container has no trailing blank for a ×
   // column, since it never grows one.
   var CAPTIONS = {
-    container: ['setting', 'value', 'Notes'],
+    container: ['setting', 'value', ''],
     // Ports are captioned in single words where mounts get phrases: the two
     // boxes hold a five-digit number, so the columns are narrow and anything
     // longer wrapped the heading onto a second line. The fuller wording is
     // still what a screen reader hears — see the hints passed to boxHtml().
-    port:      ['Host', 'Container', 'protocol', 'Notes'],
+    port:      ['Host', 'Container', 'protocol', ''],
     // Two headings only: a mount is a two-line row now (see
     // .staxx-formgroup--volumes), and its second line has no caption above
     // it. The note box there names itself through its hint; the mode box
     // beside it needs no name, since its options read "read and write" and
     // "read-only" already.
     volume:    ['path on the server', 'path in the container'],
-    device:    ['device', 'Notes'],
-    env:       ['variable name', 'value', 'Notes'],
-    label:     ['label name', 'value', 'Notes'],
-    health:    ['setting', 'value', 'Notes'],
-    resources: ['setting', 'value', 'Notes'],
-    build:     ['setting', 'value', 'Notes'],
+    device:    ['device', ''],
+    env:       ['variable name', 'value', ''],
+    label:     ['label name', 'value', ''],
+    health:    ['setting', 'value', ''],
+    resources: ['setting', 'value', ''],
+    build:     ['setting', 'value', ''],
     // Short form only this phase — one box per dependency, the same shape as
     // any other dynamic list. The three-column shape phase 1 wrote here was
     // for the long form's name/condition pair, which does not exist yet.
-    depends:   ['service', 'Notes'],
-    logging:   ['setting', 'value', 'Notes'],
-    advanced:  ['setting', 'value', 'Notes'],
+    depends:   ['service', ''],
+    logging:   ['setting', 'value', ''],
+    advanced:  ['setting', 'value', ''],
     // PLAN_176 — the Proxy and DNS group reuses Container's own three
     // headings; its own head carries the Enabled switch instead of a
     // fourth column.
-    expose:    ['setting', 'value', 'Notes']
+    expose:    ['setting', 'value', '']
   };
 
   // Where a field lands. `fixed` wins outright, even over `locked` — that is
@@ -1195,7 +1229,7 @@
       head[i] = (longForm || !shortForm)
         ? { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--pair',
             add: 'depends', flag: 'depends',
-            cols: ['service', 'wait until', 'Notes'] }
+            cols: ['service', 'wait until', ''] }
         : { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--single',
             add: 'list:depends_on', flag: 'depends' };
       break;
@@ -1208,7 +1242,7 @@
       for (i = 0; i < head.length; i++) {
         if (head[i].key !== 'port') continue;
         head[i] = { key: 'port', heading: 'Ports', cls: 'staxx-formgroup--mapped staxx-formgroup--ports',
-                    add: 'port', flag: 'port', cols: ['', 'Container', 'protocol', 'Notes'] };
+                    add: 'port', flag: 'port', cols: ['', 'Container', 'protocol', ''] };
         break;
       }
     }
@@ -3533,7 +3567,7 @@
   // set only for a declared network's name box (see fieldHtml's declared
   // branch) so the input/change listeners can route it away from the
   // ordinary debounce-and-setPart path and into YAML.renameDeclared instead.
-  function boxHtml(f, index, which, hint, tool, head, noChoice, rename) {
+  function boxHtml(f, index, which, hint, tool, head, noChoice, rename, withNote) {
     var p = f.parts[which];
     if (!p) return '';
     // Absent counts as writable — typing into an empty Container slot is what
@@ -3680,6 +3714,8 @@
                  : '') +
                xHtml +
              '</div>' +
+             // PLAN_255 C: a single-value row's note sits inside its value box.
+             (withNote ? noteBoxHtml(f, index) : '') +
              '<span class="staxx-boxhint">' + esc(hint) + '</span>' +
            '</div>';
   }
@@ -3702,12 +3738,15 @@
   // The note box is identical wherever it appears, so it is built once rather
   // than four times over.
   function noteBoxHtml(f, index) {
-    return '<label class="staxx-box staxx-box--note">' +
+    // PLAN_255 C: drawn as a small line under the value, not a box of its own.
+    // An empty note carries --note-empty so the stylesheet can hide it until
+    // its row has focus; a note with text is never hidden (rule 2).
+    return '<label class="staxx-box staxx-box--note' + (f.note ? '' : ' staxx-box--note-empty') + '">' +
              '<input type="text" class="staxx-input" data-row="' + index + '"' +
                    ' data-note="1" value="' + esc(f.note) + '"' +
+                   ' placeholder="+ add a note" aria-label="Notes"' +
                    ' spellcheck="false"' + NOFILL +
                    (f.commentSpot ? '' : ' disabled') + '>' +
-             '<span class="staxx-boxhint">Notes</span>' +
            '</label>';
   }
 
@@ -5331,7 +5370,30 @@
       document.querySelectorAll('[data-expose-status]').forEach(function (el) {
         el.innerHTML = exposeStatusHtml(el.dataset.exposeStatus);
       });
+      // An HTTP/2 switch whose file has no key shows Proxy Manager's own
+      // value, which is only known now. One the file already answers
+      // (data-expose-http2-file) is left as the file says.
+      document.querySelectorAll('input[data-expose-http2]:not([data-expose-http2-file])').forEach(function (cb) {
+        cb.checked = exposeHttp2Live(cb.dataset.exposeHttp2);
+      });
     }).catch(function () { /* the row just stays on "Checking…" */ });
+  }
+
+  // Proxy Manager's current HTTP/2 value for one service, as expose-check
+  // reported it; null (no entry yet) or no answer yet reads as off.
+  function exposeHttp2Live(svcName) {
+    var entry = exposeCheckCache && exposeCheckCache[svcName];
+    return !!(entry && entry.http2Now === true);
+  }
+
+  // The HTTP/2 row's enabled state follows the certificate and the domain:
+  // HTTP/2 only works over https, and the schema wants a domain. Called after
+  // either box changes without a redraw. The QUIC row is never enabled.
+  function syncExposeHttp2(grp) {
+    var domBox = grp.querySelector('.staxx-groupbody .staxx-fieldrow input[data-part="value"]');
+    var certSel = grp.querySelector('select[data-expose-cert]');
+    var none = !domBox || domBox.value.trim() === '' || !certSel || certSel.value === '';
+    grp.querySelectorAll('input[data-expose-http2]').forEach(function (cb) { cb.disabled = none; });
   }
 
   function exposeStatusHtml(svcName) {
@@ -5391,8 +5453,8 @@
       by[f.target.split('.').pop()] = { f: f, idx: idx };
     });
     var domain = by.domain, cert = by.certificate, ws = by.websockets,
-        dns = by.dns, enabled = by.enabled;
-    // harvestExpose() (compose-model.js) always offers all five, so this
+        dns = by.dns, enabled = by.enabled, http2 = by.http2;
+    // harvestExpose() (compose-model.js) always offers all six, so this
     // only trips if that ever changes underneath this — refuse to draw a
     // half-wired group rather than throw reading .idx off undefined.
     if (!domain || !enabled) return '';
@@ -5439,6 +5501,26 @@
                       ' staxx-fieldrow--exposesub'));
       if (cert) out.push(tagged(exposeCertRowHtml(cert.f, cert.idx, inert), dimNginx));
       if (ws) out.push(tagged(exposeSwitchRowHtml(ws.f, ws.idx, 'WebSockets', 'Allow WebSockets', wsOn, inert), dimNginx));
+      if (http2) {
+        // Three states, unlike WebSockets: the file's true/false when the key
+        // is there, otherwise Proxy Manager's own value (redrawn once
+        // expose-check answers). Inert without a certificate, since HTTP/2
+        // only runs over https.
+        var h2Val  = http2.f.absent ? '' : http2.f.parts.value.value;
+        var h2On   = (h2Val === 'true' || h2Val === 'false') ? h2Val === 'true' : exposeHttp2Live(svc.name);
+        var h2Attr = ' data-expose-http2="' + esc(svc.name) + '"' + (h2Val === '' ? '' : ' data-expose-http2-file');
+        var noCert = String(cert && cert.f.parts.value ? cert.f.parts.value.value : '').trim() === '';
+        out.push(tagged(exposeSwitchRowHtml(http2.f, http2.idx, 'HTTP/2', 'Allow HTTP/2', h2On, inert || noCert)
+                          .replace('<input type="checkbox"', '<input type="checkbox"' + h2Attr), dimNginx));
+      }
+      // QUIC: drawn off and unclickable, with no field behind it, until a
+      // Proxy Manager that supports it is in use.
+      out.push('<div class="staxx-fieldrow staxx-fieldrow--exposeswitch staxx-fieldrow--quic' + dimNginx + '">' +
+               '<span class="staxx-fieldlabel">QUIC</span>' +
+               '<label class="staxx-switch"><input type="checkbox" disabled data-expose-quic aria-label="QUIC">' +
+               '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+               '<span class="staxx-switch-text">Allow QUIC</span></label>' +
+               '<span class="staxx-boxgap" aria-hidden="true"></span></div>');
     }
     if (dns && PIHOLE_CONFIGURED) {
       out.push(tagged(exposeSwitchRowHtml(dns.f, dns.idx, 'Pi-hole', 'Enabled', dnsOn, inert, svc.name + '|dns'),
@@ -6680,7 +6762,6 @@
       // named by a label column because a single box on its own could not
       // say what it holds.
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
-      bits.push(boxHtml(f, index, 'value', 'value'));
       // The web page port has nowhere to put a note until the address line
       // it lives on exists, so its Notes box would be a box that can never
       // be typed in. Drawn only when it can hold something — writable, or
@@ -6688,7 +6769,7 @@
       // the empty column instead of sitting a track further out.
       var webui    = f.target === 'x-unraid.webui';
       var showNote = !webui || !!(f.commentSpot || f.note);
-      if (showNote) bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'value', '', '', false, '', showNote));
       // The web page port is the one Container row the WebUI button actually
       // follows (PLAN_51) — filled in, the button opens this port; cleared,
       // it turns off. Said here rather than left for the button to explain
@@ -6802,15 +6883,13 @@
                 f.binder === 'label' ? 'label name' : 'variable name'));
       // Nearly every image takes one of these, and it has to be an IANA
       // name — getting it wrong is quiet, and every log line is hours out.
-      bits.push(boxHtml(f, index, 'value', 'value', isTzField(f) ? 'tz' : ''));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'value', isTzField(f) ? 'tz' : '', '', false, '', true));
     } else if (f.binder === 'list') {
       // A plain list entry is one whole value with no second half to pair it
       // with — networks, secrets, configs, depends_on and the rest, all of
       // which share this one shape. boxHtml() turns it into a dropdown on
       // its own whenever f.from names a namespace the file declares.
-      bits.push(boxHtml(f, index, 'value', 'value', f.tool));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'value', f.tool, '', false, '', true));
       if (f.listKey === 'networks' && f.from === 'networks') bits.push(webuiNetTickHtml(f));
 
       // A networks: map entry's own settings beyond its name (fixed IP,
@@ -6873,8 +6952,7 @@
       } else {
         bits.push(declNameHtml(f, index));
       }
-      bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting'));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting', '', '', false, '', true));
 
       var foldIdx = foldFieldsFor(f);
       if (foldIdx.length) {
@@ -6890,8 +6968,7 @@
       // services, written through its key) beside its condition — restart and
       // required fold away below, same shape as a declaration's own extras.
       bits.push(boxHtml(f, index, 'name', 'service name'));
-      bits.push(boxHtml(f, index, 'value', 'when it counts as ready'));
-      bits.push(noteBoxHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', 'when it counts as ready', '', '', false, '', true));
 
       var depFoldIdx = foldFieldsFor(f);
       if (depFoldIdx.length) {
@@ -7054,8 +7131,8 @@
     // would otherwise show — depends_on's long form needs a third column
     // CAPTIONS' static 'depends' row does not carry (see groupsForService).
     var cols = grp.cols || CAPTIONS[grp.key] ||
-               (grp.cls === 'staxx-formgroup--single' ? ['value', 'Notes'] : null) ||
-               (declared ? ['name', 'setting', 'Notes'] : null);
+               (grp.cls === 'staxx-formgroup--single' ? ['value', ''] : null) ||
+               (declared ? ['name', 'setting', ''] : null);
     if (!cols) return '';
     var bits = ['<div class="staxx-caption" aria-hidden="true">'];
     // Ports alone carry a leading grip column (PLAN_40) with nothing to name
@@ -9971,10 +10048,31 @@
     if (!grp || event.target.type !== 'text' || event.target.dataset.part !== 'value') return;
     if (event.target.closest('.staxx-fieldrow') !== grp.querySelector('.staxx-groupbody .staxx-fieldrow')) return;
     var none = event.target.value.trim() === '';
-    grp.querySelectorAll('select[data-expose-cert], input[type=checkbox]').forEach(function (c) { c.disabled = none; });
+    grp.querySelectorAll('select[data-expose-cert], input[type=checkbox]:not([data-expose-http2]):not([data-expose-quic])')
+      .forEach(function (c) { c.disabled = none; });
+    syncExposeHttp2(grp);
     var rm = grp.querySelector('.staxx-expose-remove');
     if (rm) rm.hidden = none;
   });
+
+  // Choosing or clearing the certificate makes HTTP/2 usable or inert at once.
+  formHost.addEventListener('change', function (event) {
+    var t = event.target;
+    if (!t.matches || !t.matches('select[data-expose-cert]')) return;
+    var grp = t.closest('.staxx-formgroup--expose');
+    if (grp) syncExposeHttp2(grp);
+  });
+
+  // PLAN_255 C: keep an empty note's --note-empty class in step with what is
+  // typed, so the stylesheet shows it only while its row has focus. Delegated,
+  // so rows added later need nothing of their own.
+  function syncNoteEmpty(event) {
+    var el = event.target;
+    if (!el.dataset || el.dataset.note === undefined || !el.parentNode) return;
+    el.parentNode.classList.toggle('staxx-box--note-empty', el.value === '');
+  }
+  formHost.addEventListener('input', syncNoteEmpty);
+  formHost.addEventListener('focusout', syncNoteEmpty);
 
   formHost.addEventListener('input', function (event) {
     if (!event.target.dataset.row) return;
@@ -17999,6 +18097,7 @@
     // renderTabs() below draws the bare compose tab and leaves it at that).
     resetFileTabs();
     dollarModalOffered = false;   // a fresh session gets its own one-time offer
+    if (msgFoot) { msgFoot.classList.remove('staxx-msgfold--open'); syncMsgFold(); }   // PLAN_255 B: messages start folded
     hideYamlNotice(); // ditto for a previous Tidy result — a caller wanting one shown re-shows it below
 
     // Yesterday's history is meaningless against today's stack — bumping the
@@ -21171,17 +21270,22 @@
   // breakpoint (PLAN_128) the same cell instead spans the top of the card in
   // full, icon included, so the sheet switches from the left offset to the
   // top one — both are written here on every repaint so the query only has
-  // to pick which one it wants.
+  // to pick which one it wants. The right edge is read from the address
+  // cell so the overlay stops there and the stats columns stay clear.
   function progressOverlayOffsets(row) {
     var nameCell = row.querySelector('.staxx-cell--name');
+    var addrCell = row.querySelector('.staxx-cell--address');
     var rect = nameCell ? nameCell.getBoundingClientRect() : null;
-    return { left: (rect ? rect.width : 0) + 'px', top: (rect ? rect.height : 0) + 'px' };
+    var right = addrCell ? row.getBoundingClientRect().right - addrCell.getBoundingClientRect().right : 0;
+    if (!(right > 0)) right = 0;
+    return { left: (rect ? rect.width : 0) + 'px', top: (rect ? rect.height : 0) + 'px', right: right + 'px' };
   }
 
   function applyProgressOverlayOffsets(el, row) {
     var off = progressOverlayOffsets(row);
     el.style.setProperty('--staxx-rowprog-left', off.left);
     el.style.setProperty('--staxx-rowprog-top', off.top);
+    el.style.setProperty('--staxx-rowprog-right', off.right);
   }
 
   // Turns a seconds estimate into the wording the download bar's info
@@ -25469,6 +25573,14 @@
     return dot === -1 ? '' : clean.slice(dot + 1).toLowerCase();
   }
 
+  // A file link dragged off a GitHub page is the /blob/ page, not the picture;
+  // the tile would fail to load it. Mirrors staxx_icon_raw_url() in
+  // include/Icons.php — keep the two in step.
+  function iconRawUrl(address) {
+    return address.replace(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/(?:blob|raw)\/(.+)$/i,
+      'https://raw.githubusercontent.com/$1/$2/$3');
+  }
+
   function handleIconDrop(node, dt) {
     var service = iconDropServiceOf(node);
     if (!service) return;
@@ -25530,7 +25642,7 @@
       return;
     }
 
-    var address = (dt.getData('text/uri-list') || dt.getData('text/plain') || '').trim().split('\n')[0].trim();
+    var address = iconRawUrl((dt.getData('text/uri-list') || dt.getData('text/plain') || '').trim().split('\n')[0].trim());
     if (!address) { iconDropRefuse(node, 'Not a picture'); return; }
     if (!/^https:\/\//i.test(address)) { iconDropRefuse(node, 'That address is not secure'); return; }
     if (ICON_DROP_EXTS.indexOf(iconDropAddressExt(address)) === -1) {
@@ -25784,12 +25896,12 @@
   // PLAN_181 Part D — the storage alert's "Review stored images" link opens
   // both halves of what it is pointing at: the Storage tab (where the two
   // alert thresholds and the Scan stored images button live) behind it, and
-  // the scan window itself on top, the same layering openBackupDialog() uses
-  // over Settings.
+  // the scan window itself on top. The scan window waits for Settings because
+  // Settings only opens once the server answers; opening the scan window first
+  // left it underneath.
   var storageAlertReviewBtn = document.getElementById('staxx-storage-alert-review');
   if (storageAlertReviewBtn) storageAlertReviewBtn.addEventListener('click', function () {
-    openSettings('staxx-setting-images-cleanup');
-    openImagesDialog();
+    (openSettings('staxx-setting-images-cleanup') || Promise.resolve()).then(openImagesDialog);
   });
 
   // PLAN_186 — "Check your backup" on the notice telling someone their
@@ -25804,6 +25916,46 @@
   // Add a blank stack, From Apps and Import now live inside buildAddMenu()
   // (PLAN_173) — the toolbar's own #staxx-add-btn opens that through the
   // shared #staxx-menu rather than each keeping its own click listener.
+
+  // PLAN_255 A: the phone-width "⋯" menu. Each item clicks the real, hidden
+  // control. stopPropagation + setTimeout are both needed: the same click
+  // would otherwise bubble to the page, count as an outside click and shut
+  // the Password panel / Outline menu the moment it opened.
+  (function () {
+    var moreBtn  = document.getElementById('staxx-moretools-btn');
+    var moreMenu = document.getElementById('staxx-moretools');
+    if (!moreBtn || !moreMenu) return;
+    function closeMore() {
+      moreMenu.hidden = true;
+      moreBtn.setAttribute('aria-expanded', 'false');
+    }
+    function openMore() {
+      Array.prototype.forEach.call(moreMenu.querySelectorAll('.staxx-moretools-item'), function (item) {
+        var real = document.getElementById(item.getAttribute('data-target'));
+        item.disabled = !real || real.disabled;
+        item.title = real ? real.title : '';
+        if (real && real.type === 'checkbox') item.setAttribute('aria-checked', real.checked ? 'true' : 'false');
+      });
+      moreMenu.hidden = false;
+      moreBtn.setAttribute('aria-expanded', 'true');
+    }
+    moreBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (moreMenu.hidden) openMore(); else closeMore();
+    });
+    moreMenu.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var item = e.target.closest('.staxx-moretools-item');
+      if (!item || item.disabled) return;
+      var real = document.getElementById(item.getAttribute('data-target'));
+      closeMore();
+      if (real) setTimeout(function () { real.click(); }, 0);
+    });
+    document.addEventListener('click', function () { if (!moreMenu.hidden) closeMore(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !moreMenu.hidden) { closeMore(); moreBtn.focus(); }
+    });
+  })();
 
   document.getElementById('staxx-modal-close').addEventListener('click', function () {
     confirmDiscard().then(function (go) { if (go) closeEditor(); });
@@ -29677,6 +29829,13 @@
       block: 'npm-access', sublabel: 'Password'
     },
     {
+      // Drawn off and unclickable; nothing is saved (see the 'inert' guards
+      // in settingsDirty()/saveSettings()). Stays until a Proxy Manager with
+      // QUIC is in use.
+      outer: 'proxy-dns', key: 'NPM_QUIC', control: 'inert', label: 'QUIC', tab: 'registries',
+      block: 'npm-access', sublabel: 'QUIC'
+    },
+    {
       outer: 'proxy-dns', key: 'PIHOLE_URL', control: 'text', label: 'Pi-hole address', tab: 'registries',
       block: 'pihole-access', sublabel: 'Address', placeholder: 'http://192.168.1.30'
     },
@@ -29852,6 +30011,11 @@
       // once the panel is open, not a value settingsControlValue() can read
       // off an input. Skipped by settingsDirty() and saveSettings() below.
       return '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+    } else if (row.control === 'inert') {
+      return '<label class="staxx-switch staxx-switch--inert"><input type="checkbox" role="switch" id="' + row.id +
+             '" disabled aria-label="' + esc(row.label) + '">' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(row.label) + '</span></label>';
     } else if (row.control === 'toggle') {
       // A checkbox rather than a select, so the two stored values never
       // appear as option text — data-on/data-off is all settingsControlValue()
@@ -30782,7 +30946,7 @@
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
-      if (row.control === 'readout' || row.control === 'action') return false;   // nothing to save, so never dirty
+      if (row.control === 'readout' || row.control === 'action' || row.control === 'inert') return false;   // nothing to save, so never dirty
       return settingsControlValue(row) !== settingsOpenValues[row.key];
     });
   }
@@ -31206,7 +31370,7 @@
   // a request that was never honoured cannot scroll a later open.
   function openSettings(focusId, tab, scrollTo) {
     if (!settingsModal) return;
-    call('settings', {}).then(function (res) {
+    return call('settings', {}).then(function (res) {
       if (!res.ok || !res.settings) {
         failed('Could not open Settings', res.error || 'The server did not return anything usable.');
         return;
@@ -31378,7 +31542,7 @@
 
     var fields = {};
     SETTINGS_ROWS.forEach(function (row) {
-      if (row.control === 'readout' || row.control === 'action') return;   // a report, not a setting
+      if (row.control === 'readout' || row.control === 'action' || row.control === 'inert') return;   // a report or a placeholder, not a setting
       fields[row.key] = settingsControlValue(row);
     });
 
@@ -32499,7 +32663,9 @@
     imagesCancel.textContent = 'Cancel';
     imagesRemove.hidden = true;
     imagesBody.innerHTML = '<p class="staxx-hint">Checking…</p>';
-    if (!imagesModal.open) imagesModal.showModal();
+    // A window already open behind Settings would otherwise stay hidden and the button would seem to do nothing.
+    if (imagesModal.open) imagesModal.close();
+    imagesModal.showModal();
     call('images_unused', {}, 30000).then(function (res) {
       if (!imagesModal.open) return;
       if (!res.ok) {
