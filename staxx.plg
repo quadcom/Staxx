@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.07.00">
+<!ENTITY version              "00.07.00_dev20261120">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "21bc8f43575cf149df5265de72bcc6af">
-<!ENTITY packageSHA256        "649cebee416f4a08da83d2b2247b5e1984dffc2247c37b2ac15ddf0646e62344">
+<!ENTITY packageMD5           "1410c22e88005a14c31123c6aea7f2d5">
+<!ENTITY packageSHA256        "642c8edd07103d8733e23374eff80ccb0f34412ac48665715af106ea04005121">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,7 +37,8 @@
 >
 
 <CHANGES>
-###00.06.01_dev20261116
+###00.07.00_dev20261120
+- Each exposed app now has an HTTP/2 switch in Proxy and DNS. An app already in Nginx Proxy Manager shows what Proxy Manager has, a new entry starts with it off, and StaXX changes it only when you flip the switch.
 - A picture link dragged from a GitHub page onto an app's icon now shows straight away, without waiting for Save.
 - The download and unpack bars shown while an app is pulled or recreated no longer cover the CPU figure on wide screens. They now stop at the end of the Address column.
 - The Scan stored images window now always opens on top of Settings. Before, after following the storage warning's link, it could open hidden behind Settings, and the button seemed to do nothing until Settings was closed.
@@ -554,7 +555,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.06.01_dev20261116-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.07.00_dev20261120-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
