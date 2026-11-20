@@ -4,6 +4,8 @@ What changed in StaXX, newest first.
 
 ---
 
+## Unreleased
+
 ## 00.07.00 — released 2026-11-20
 
 - Each exposed app now has an HTTP/2 switch in Proxy and DNS. An app already in Nginx Proxy Manager shows what Proxy Manager has, a new entry starts with it off, and StaXX changes it only when you flip the switch.
